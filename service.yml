@@ -1,6 +1,6 @@
 name: kcp
-lang: unknown
-lang_version: unknown
+lang: go
+lang_version: 1.24.2
 git:
   enable: true
 codeowners:
@@ -9,3 +9,6 @@ renovatebot:
   enable: true
   automerge:
     enable: true
+semaphore:
+  enable: true
+  pipeline_enable: false
