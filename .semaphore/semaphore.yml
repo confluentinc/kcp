@@ -25,7 +25,7 @@ global_job_config:
       - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
       - checkout
 
-# blocks:
+blocks:
 #   - name: "quality assurance"
 #     task:
 #       env_vars:
