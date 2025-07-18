@@ -1,4 +1,4 @@
-# kcp Migration CLI
+# KCP CLI
 
 [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal?ref=badge_shield&issueType=license) [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal?ref=badge_shield&issueType=security)
 
@@ -37,6 +37,8 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 - **Generate** migration assets and infrastructure configurations.
 
 A short demo of kcp can be viewed here:
+
+https://github.com/user-attachments/assets/11ecd725-9172-47a5-8872-bfb4914a8ed7
 
 ### Key Features
 
