@@ -1,0 +1,3 @@
+{{range .MirrorTopics}}
+kafka-mirrors --bootstrap-server {{$.BootstrapServers}}:9092 --command-config destination-cluster.properties --create --mirror-topic {{.}} --link cp-initiated-msk-link
+{{end}}

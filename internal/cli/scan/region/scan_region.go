@@ -1,0 +1,77 @@
+package region
+
+import (
+	"fmt"
+
+	"github.com/confluentinc/kcp-internal/internal/client"
+	rs "github.com/confluentinc/kcp-internal/internal/generators/scan/region"
+	"github.com/confluentinc/kcp-internal/internal/utils"
+
+	"github.com/spf13/cobra"
+)
+
+func NewScanRegionCmd() *cobra.Command {
+	regionCmd := &cobra.Command{
+		Use:   "region",
+		Short: "Scan an AWS region for MSK clusters",
+		Long: `Scan an AWS region for MSK clusters and gather information about them.
+
+All flags can be provided via environment variables (uppercase, with underscores):
+
+FLAG                     | ENV_VAR
+-------------------------|---------------------------
+--region                 | REGION=us-east-1
+`,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		PreRunE:       preRunScanRegion,
+		RunE:          runScanRegion,
+	}
+
+	regionCmd.Flags().StringP("region", "r", "", "The AWS region")
+
+	regionCmd.MarkFlagRequired("region")
+
+	return regionCmd
+}
+
+// sets flag values from corresponding environment variables if flags weren't explicitly provided
+func preRunScanRegion(cmd *cobra.Command, args []string) error {
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runScanRegion(cmd *cobra.Command, args []string) error {
+	opts, err := parseScanRegionOpts(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to parse scan region opts: %v", err)
+	}
+
+	mskClient, err := client.NewMSKClient(opts.Region)
+	if err != nil {
+		return fmt.Errorf("failed to create msk client: %v", err)
+	}
+
+	regionScanner := rs.NewRegionScanner(mskClient, *opts)
+	if err := regionScanner.Run(); err != nil {
+		return fmt.Errorf("failed to scan region: %v", err)
+	}
+
+	return nil
+}
+
+func parseScanRegionOpts(cmd *cobra.Command) (*rs.ScanRegionOpts, error) {
+	region, err := cmd.Flags().GetString("region")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get region: %v", err)
+	}
+
+	opts := rs.ScanRegionOpts{
+		Region: region,
+	}
+
+	return &opts, nil
+}
