@@ -1,0 +1,7 @@
+{{range .MirrorTopics}}
+curl --request POST \
+  --url '{{$.ConfluentCloudEndpoint}}/kafka/v3/clusters/{{$.ClusterId}}/links/msk-to-cc-link/mirrors' \
+  --header 'Authorization: Basic {{$.AuthToken}}' \
+  --header "Content-Type: application/json" \
+  --data '{"source_topic_name":"{{.}}","mirror_topic_name":"{{.}}"}'
+{{end}}
