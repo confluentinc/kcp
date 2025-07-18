@@ -1,0 +1,51 @@
+# IDE
+.idea/
+.vscode
+
+# Local .terraform directories
+**/.terraform/*
+
+# Ignore variables files
+*.auto.tfvars
+
+# Ignore override files
+*.tfoverride
+
+# Ignore environment-specific files
+.envrc
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+# .tfstate files - NEVER commit state files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files, which are likely to contain sensitive data
+*.tfvars
+*.tfvars.json
+
+# keep generated json files out of commits
+*.json
+
+# Ignore coverage files
+coverage.out
+
+# Ignore migration-plan directory
+migration-plan/
+
+.ssh/
+*.pem
+
+.env
+.DS_Store
+
+# Added by goreleaser init:
+dist/
+
+local/
