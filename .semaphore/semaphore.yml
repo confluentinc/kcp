@@ -1,5 +1,5 @@
 version: v1.0
-name: build-test
+name: kcp
 agent:
   machine:
     type: s1-prod-ubuntu24-04-amd64-1
@@ -18,25 +18,25 @@ queue:
 global_job_config:
   prologue:
     commands:
-      - sem-version go 1.23.10
+      - sem-version go 1.24.2
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
       - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
       - checkout
 
-# blocks:
-#   - name: "quality assurance"
-#     task:
-#       env_vars:
-#         - name: TRIVY_DB_REPOSITORIES
-#           value: "ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db"
+blocks:
+  - name: "test and security scan"
+    task:
+      env_vars:
+        - name: TRIVY_DB_REPOSITORIES
+          value: "ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db"
 
-#       jobs:
-#         - name: "run tests"
-#           commands:
-#             - go get ./...
-#             - go test ./...
-#         - name: "trivy scan"
-#           commands:
-#             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+      jobs:
+        - name: "run tests"
+          commands:
+            - make test
+
+        - name: "trivy scan"
+          commands:
+            - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .

@@ -1,0 +1,97 @@
+package migration_scripts
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/confluentinc/kcp-internal/internal/generators/create_asset/migration_scripts"
+	"github.com/confluentinc/kcp-internal/internal/types"
+	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/spf13/cobra"
+)
+
+func NewMigrationCmd() *cobra.Command {
+	migrationCmd := &cobra.Command{
+		Use:   "migration-scripts",
+		Short: "Create assets for the migration scripts",
+		Long: `Create assets for the migration scripts
+
+All flags can be provided via environment variables (uppercase, with underscores):
+
+FLAG                     | ENV_VAR
+-------------------------|---------------------------
+--cluster-file           | CLUSTER_FILE=path/to/cluster.json
+--migration-infra-folder | MIGRATION_INFRA_FOLDER=path/to/migration_infra
+`,
+		SilenceErrors: true,
+		PreRunE:       preRunCreateMigrationScripts,
+		RunE:          runCreateMigrationScripts,
+	}
+
+	migrationCmd.Flags().String("cluster-file", "", "The cluster json file produced from 'scan cluster' command")
+	migrationCmd.Flags().String("migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
+
+	migrationCmd.MarkFlagRequired("cluster-file")
+	migrationCmd.MarkFlagRequired("migration-infra-folder")
+
+	return migrationCmd
+}
+
+func preRunCreateMigrationScripts(cmd *cobra.Command, args []string) error {
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
+	opts, err := parseMigrationScriptsOpts(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to parse migration scripts opts: %v", err)
+	}
+
+	migrationAssetGenerator := migration_scripts.NewMigrationAssetGenerator(*opts)
+	if err := migrationAssetGenerator.Run(); err != nil {
+		return fmt.Errorf("failed to create migration assets: %v", err)
+	}
+
+	return nil
+}
+
+func parseMigrationScriptsOpts(cmd *cobra.Command) (*migration_scripts.MigrationScriptsOpts, error) {
+	clusterFile, err := cmd.Flags().GetString("cluster-file")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster file: %v", err)
+	}
+
+	migrationInfraFolder, err := cmd.Flags().GetString("migration-infra-folder")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get migration infra folder: %v", err)
+	}
+
+	// Parse cluster information from JSON file
+	file, err := os.ReadFile(clusterFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cluster file: %v", err)
+	}
+
+	var clusterInfo types.ClusterInformation
+	if err := json.Unmarshal(file, &clusterInfo); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
+	}
+
+	// Parse terraform state from target environment folder
+	terraformState, err := utils.ParseTerraformState(migrationInfraFolder)
+	if err != nil {
+		return nil, fmt.Errorf("error: %v\n please run terraform apply in the migration infra folder", err)
+	}
+
+	opts := migration_scripts.MigrationScriptsOpts{
+		ClusterInformation: clusterInfo,
+		TerraformOutput:    terraformState.Outputs,
+	}
+
+	return &opts, nil
+}
