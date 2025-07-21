@@ -100,7 +100,7 @@ func parseReportRegionMetricsOpts() (*rrm.RegionMetricsOpts, error) {
 	}
 
 	if startDate.After(endDate) {
-		return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", startDate, endDate)
+		return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
 	}
 
 	opts := rrm.RegionMetricsOpts{

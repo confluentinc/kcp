@@ -132,7 +132,7 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 	}
 
 	if startDate.After(endDate) {
-		return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", startDate, endDate)
+		return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
 	}
 
 	opts := rrc.RegionCosterOpts{
