@@ -2,7 +2,6 @@ package init
 
 import (
 	"fmt"
-	"log/slog"
 
 	i "github.com/confluentinc/kcp-internal/internal/generators/init"
 	"github.com/spf13/cobra"
@@ -29,7 +28,6 @@ etc
 }
 
 func runInitConfig(cmd *cobra.Command, args []string) error {
-	slog.Info("Running init config")
 	initializer := i.NewInitializer()
 	if err := initializer.Run(); err != nil {
 		return fmt.Errorf("failed to generate config: %v", err)
