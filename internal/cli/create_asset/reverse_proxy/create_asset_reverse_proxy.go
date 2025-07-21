@@ -8,6 +8,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	region               string
+	vpcId                string
+	reverseProxyCidr     string
+	migrationInfraFolder string
+)
+
 func NewReverseProxyCmd() *cobra.Command {
 	reverseProxyCmd := &cobra.Command{
 		Use:   "reverse-proxy",
@@ -28,10 +35,10 @@ FLAG                     | ENV_VAR
 		RunE:          runCreateReverseProxy,
 	}
 
-	reverseProxyCmd.Flags().String("region", "", "The AWS region")
-	reverseProxyCmd.Flags().String("vpc-id", "", "The VPC ID")
-	reverseProxyCmd.Flags().String("reverse-proxy-cidr", "", "The public subnet CIDR")
-	reverseProxyCmd.Flags().String("migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
+	reverseProxyCmd.Flags().StringVar(&region, "region", "", "The AWS region")
+	reverseProxyCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID")
+	reverseProxyCmd.Flags().StringVar(&reverseProxyCidr, "reverse-proxy-cidr", "", "The public subnet CIDR")
+	reverseProxyCmd.Flags().StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
 
 	reverseProxyCmd.MarkFlagRequired("region")
 	reverseProxyCmd.MarkFlagRequired("vpc-id")
@@ -50,7 +57,7 @@ func preRunCreateReverseProxy(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateReverseProxy(cmd *cobra.Command, args []string) error {
-	opts, err := parseReverseProxyOpts(cmd)
+	opts, err := parseReverseProxyOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse reverse proxy opts: %v", err)
 	}
@@ -63,27 +70,7 @@ func runCreateReverseProxy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseReverseProxyOpts(cmd *cobra.Command) (*reverse_proxy.ReverseProxyOpts, error) {
-	region, err := cmd.Flags().GetString("region")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get region: %v", err)
-	}
-
-	vpcId, err := cmd.Flags().GetString("vpc-id")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get vpc id: %v", err)
-	}
-
-	reverseProxyCidr, err := cmd.Flags().GetString("reverse-proxy-cidr")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get reverse proxy cidr: %v", err)
-	}
-
-	migrationInfraFolder, err := cmd.Flags().GetString("migration-infra-folder")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get migration infra folder: %v", err)
-	}
-
+func parseReverseProxyOpts() (*reverse_proxy.ReverseProxyOpts, error) {
 	requiredTFStateFields := []string{"confluent_cloud_cluster_bootstrap_endpoint"}
 	terraformState, err := utils.ParseTerraformState(migrationInfraFolder, requiredTFStateFields)
 	if err != nil {

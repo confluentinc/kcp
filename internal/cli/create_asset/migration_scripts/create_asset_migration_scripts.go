@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	clusterFile          string
+	migrationInfraFolder string
+)
+
 func NewMigrationCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
 		Use:   "migration-scripts",
@@ -30,8 +35,8 @@ FLAG                     | ENV_VAR
 		RunE:          runCreateMigrationScripts,
 	}
 
-	migrationCmd.Flags().String("cluster-file", "", "The cluster json file produced from 'scan cluster' command")
-	migrationCmd.Flags().String("migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
+	migrationCmd.Flags().StringVar(&clusterFile, "cluster-file", "", "The cluster json file produced from 'scan cluster' command")
+	migrationCmd.Flags().StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
 
 	migrationCmd.MarkFlagRequired("cluster-file")
 	migrationCmd.MarkFlagRequired("migration-infra-folder")
@@ -48,7 +53,7 @@ func preRunCreateMigrationScripts(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationScriptsOpts(cmd)
+	opts, err := parseMigrationScriptsOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse migration scripts opts: %v", err)
 	}
@@ -61,17 +66,7 @@ func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationScriptsOpts(cmd *cobra.Command) (*migration_scripts.MigrationScriptsOpts, error) {
-	clusterFile, err := cmd.Flags().GetString("cluster-file")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster file: %v", err)
-	}
-
-	migrationInfraFolder, err := cmd.Flags().GetString("migration-infra-folder")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get migration infra folder: %v", err)
-	}
-
+func parseMigrationScriptsOpts() (*migration_scripts.MigrationScriptsOpts, error) {
 	// Parse cluster information from JSON file
 	file, err := os.ReadFile(clusterFile)
 	if err != nil {
