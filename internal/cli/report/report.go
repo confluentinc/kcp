@@ -1,8 +1,8 @@
 package report
 
 import (
-	rc "github.com/confluentinc/kcp-internal/internal/cli/report/cluster"
-	rr "github.com/confluentinc/kcp-internal/internal/cli/report/region"
+	rc "github.com/confluentinc/kcp/internal/cli/report/cluster"
+	rr "github.com/confluentinc/kcp/internal/cli/report/region"
 	"github.com/spf13/cobra"
 )
 

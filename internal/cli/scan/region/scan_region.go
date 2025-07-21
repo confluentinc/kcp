@@ -3,9 +3,9 @@ package region
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp-internal/internal/client"
-	rs "github.com/confluentinc/kcp-internal/internal/generators/scan/region"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/client"
+	rs "github.com/confluentinc/kcp/internal/generators/scan/region"
+	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
 )

@@ -12,8 +12,8 @@ import (
 	"text/template"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/confluentinc/kcp-internal/internal/types"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 //go:embed assets

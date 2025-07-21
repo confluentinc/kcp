@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/confluentinc/kcp-internal/internal/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 //go:embed assets
