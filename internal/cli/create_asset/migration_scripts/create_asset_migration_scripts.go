@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/confluentinc/kcp-internal/internal/generators/create_asset/migration_scripts"
-	"github.com/confluentinc/kcp-internal/internal/types"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_scripts"
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
 

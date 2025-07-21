@@ -1,4 +1,4 @@
-module github.com/confluentinc/kcp-internal
+module github.com/confluentinc/kcp
 
 go 1.24.2
 

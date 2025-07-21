@@ -3,8 +3,8 @@ package bastion_host
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp-internal/internal/generators/create_asset/bastion_host"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/generators/create_asset/bastion_host"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
 

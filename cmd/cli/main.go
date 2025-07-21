@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/confluentinc/kcp-internal/internal/cli"
+	"github.com/confluentinc/kcp/internal/cli"
 )
 
 // Default values for build information during local development. Real values injected at release time by GoReleaser.

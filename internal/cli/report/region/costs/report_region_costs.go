@@ -6,10 +6,10 @@ import (
 	"time"
 
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
-	"github.com/confluentinc/kcp-internal/internal/client"
-	rrc "github.com/confluentinc/kcp-internal/internal/generators/report/region/costs"
-	"github.com/confluentinc/kcp-internal/internal/services/cost"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/client"
+	rrc "github.com/confluentinc/kcp/internal/generators/report/region/costs"
+	"github.com/confluentinc/kcp/internal/services/cost"
+	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
 )

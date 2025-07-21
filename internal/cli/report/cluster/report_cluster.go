@@ -1,7 +1,7 @@
 package cluster
 
 import (
-	rcm "github.com/confluentinc/kcp-internal/internal/cli/report/cluster/metrics"
+	rcm "github.com/confluentinc/kcp/internal/cli/report/cluster/metrics"
 	"github.com/spf13/cobra"
 )
 
