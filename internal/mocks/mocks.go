@@ -2,7 +2,7 @@ package mocks
 
 import (
 	"github.com/IBM/sarama"
-	"github.com/confluentinc/kcp-internal/internal/client"
+	"github.com/confluentinc/kcp/internal/client"
 )
 
 // MockKafkaAdmin is a mock implementation of the KafkaAdmin interface

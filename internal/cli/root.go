@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp-internal/internal/cli/create_asset"
-	i "github.com/confluentinc/kcp-internal/internal/cli/init"
-	"github.com/confluentinc/kcp-internal/internal/cli/report"
-	"github.com/confluentinc/kcp-internal/internal/cli/scan"
+	"github.com/confluentinc/kcp/internal/cli/create_asset"
+	i "github.com/confluentinc/kcp/internal/cli/init"
+	"github.com/confluentinc/kcp/internal/cli/report"
+	"github.com/confluentinc/kcp/internal/cli/scan"
 	"github.com/spf13/cobra"
 )
 

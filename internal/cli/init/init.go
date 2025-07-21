@@ -3,7 +3,7 @@ package init
 import (
 	"fmt"
 
-	i "github.com/confluentinc/kcp-internal/internal/generators/init"
+	i "github.com/confluentinc/kcp/internal/generators/init"
 	"github.com/spf13/cobra"
 )
 
