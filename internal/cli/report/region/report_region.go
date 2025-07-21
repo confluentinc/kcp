@@ -1,8 +1,8 @@
 package region
 
 import (
-	rrc "github.com/confluentinc/kcp-internal/internal/cli/report/region/costs"
-	rrm "github.com/confluentinc/kcp-internal/internal/cli/report/region/metrics"
+	rrc "github.com/confluentinc/kcp/internal/cli/report/region/costs"
+	rrm "github.com/confluentinc/kcp/internal/cli/report/region/metrics"
 	"github.com/spf13/cobra"
 )
 

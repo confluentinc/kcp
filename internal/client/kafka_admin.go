@@ -12,7 +12,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-msk-iam-sasl-signer-go/signer"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp-internal/internal/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // AdminConfig holds the configuration for creating a Kafka admin client

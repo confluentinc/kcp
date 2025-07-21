@@ -13,7 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
-	"github.com/confluentinc/kcp-internal/internal/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // AuthenticationSummarizer defines the interface for summarizing cluster authentication

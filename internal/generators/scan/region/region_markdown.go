@@ -3,8 +3,8 @@ package region
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp-internal/internal/services/markdown"
-	"github.com/confluentinc/kcp-internal/internal/types"
+	"github.com/confluentinc/kcp/internal/services/markdown"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // generateMarkdownReport creates a comprehensive markdown report of the scan results

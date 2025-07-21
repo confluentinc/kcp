@@ -3,8 +3,8 @@ package reverse_proxy
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp-internal/internal/generators/create_asset/reverse_proxy"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/generators/create_asset/reverse_proxy"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
 

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/confluentinc/kcp-internal/internal/services/markdown"
-	"github.com/confluentinc/kcp-internal/internal/types"
+	"github.com/confluentinc/kcp/internal/services/markdown"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 func (rc *RegionCoster) writeCostReportMarkdown(metrics types.RegionCosts, outputFolder string) error {
