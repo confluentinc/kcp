@@ -11,6 +11,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	region                        string
+	vpcId                         string
+	ccEnvName                     string
+	ccClusterName                 string
+	ccClusterType                 string
+	clusterFile                   string
+	migrationInfraType            string
+	jumpClusterBrokerSubnetConfig string
+	ansibleControlNodeSubnetCIDR  string
+	jumpClusterBrokerIAMRoleName  string
+)
+
 func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd := &cobra.Command{
 		Use:   "migration-infra",
@@ -46,18 +59,18 @@ Provide with --type 2
 		RunE:          runCreateMigrationInfra,
 	}
 
-	migrationInfraCmd.Flags().String("region", "", "The AWS region")
-	migrationInfraCmd.Flags().String("vpc-id", "", "The VPC ID")
-	migrationInfraCmd.Flags().String("cc-env-name", "", "The Confluent Cloud environment name")
-	migrationInfraCmd.Flags().String("cc-cluster-name", "", "The Confluent Cloud cluster name")
-	migrationInfraCmd.Flags().String("cc-cluster-type", "", "The Confluent Cloud cluster type")
-	migrationInfraCmd.Flags().String("cluster-file", "", "The cluster json file produced from 'scan cluster' command")
-	migrationInfraCmd.Flags().String("type", "", "The migration infra type")
+	migrationInfraCmd.Flags().StringVar(&region, "region", "", "The AWS region")
+	migrationInfraCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID")
+	migrationInfraCmd.Flags().StringVar(&ccEnvName, "cc-env-name", "", "The Confluent Cloud environment name")
+	migrationInfraCmd.Flags().StringVar(&ccClusterName, "cc-cluster-name", "", "The Confluent Cloud cluster name")
+	migrationInfraCmd.Flags().StringVar(&ccClusterType, "cc-cluster-type", "", "The Confluent Cloud cluster type")
+	migrationInfraCmd.Flags().StringVar(&clusterFile, "cluster-file", "", "The cluster json file produced from 'scan cluster' command")
+	migrationInfraCmd.Flags().StringVar(&migrationInfraType, "type", "", "The migration infra type")
 
 	//optional depending on type
-	migrationInfraCmd.Flags().String("jump-cluster-broker-subnet-config", "", "The Jump cluster broker subnet config")
-	migrationInfraCmd.Flags().String("ansible-control-node-subnet-cidr", "", "The Ansible control node subnet CIDR")
-	migrationInfraCmd.Flags().String("jump-cluster-broker-iam-role-name", "", "The Jump cluster broker IAM role name")
+	migrationInfraCmd.Flags().StringVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", "", "The Jump cluster broker subnet config")
+	migrationInfraCmd.Flags().StringVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", "", "The Ansible control node subnet CIDR")
+	migrationInfraCmd.Flags().StringVar(&jumpClusterBrokerIAMRoleName, "jump-cluster-broker-iam-role-name", "", "The Jump cluster broker IAM role name")
 
 	migrationInfraCmd.MarkFlagRequired("region")
 	migrationInfraCmd.MarkFlagRequired("vpc-id")
@@ -75,17 +88,12 @@ func preRunCreateMigrationInfra(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	targetType, err := cmd.Flags().GetString("type")
-	if err != nil {
-		return fmt.Errorf("failed to get --type: %v", err)
-	}
-
-	migrationInfraType, err := types.ToMigrationInfraType(targetType)
+	targetType, err := types.ToMigrationInfraType(migrationInfraType)
 	if err != nil {
 		return fmt.Errorf("invalid --type: %v", err)
 	}
 
-	switch migrationInfraType {
+	switch targetType {
 	case types.MskCpCcPrivateSaslIam:
 		cmd.MarkFlagRequired("jump-cluster-broker-subnet-config")
 		cmd.MarkFlagRequired("ansible-control-node-subnet-cidr")
@@ -102,7 +110,7 @@ func preRunCreateMigrationInfra(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateMigrationInfra(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationInfraOpts(cmd)
+	opts, err := parseMigrationInfraOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse migration infra opts: %v", err)
 	}
@@ -115,59 +123,9 @@ func runCreateMigrationInfra(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationInfraOpts(cmd *cobra.Command) (*migration_infra.MigrationInfraOpts, error) {
-	region, err := cmd.Flags().GetString("region")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get region: %v", err)
-	}
-
-	vpcId, err := cmd.Flags().GetString("vpc-id")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get vpc id: %v", err)
-	}
-
-	jumpClusterBrokerSubnetConfig, err := cmd.Flags().GetString("jump-cluster-broker-subnet-config")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get jump cluster broker subnet configs: %v", err)
-	}
-
-	ccEnvName, err := cmd.Flags().GetString("cc-env-name")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cc env name: %v", err)
-	}
-
-	ccClusterName, err := cmd.Flags().GetString("cc-cluster-name")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cc cluster name: %v", err)
-	}
-
-	ccClusterType, err := cmd.Flags().GetString("cc-cluster-type")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cc cluster type: %v", err)
-	}
-
-	ansibleControlNodeSubnetCIDR, err := cmd.Flags().GetString("ansible-control-node-subnet-cidr")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ansible control node subnet cidr: %v", err)
-	}
-
-	jumpClusterBrokerIAMRoleName, err := cmd.Flags().GetString("jump-cluster-broker-iam-role-name")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get jump cluster broker iam role name: %v", err)
-	}
-
-	clusterFile, err := cmd.Flags().GetString("cluster-file")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster file: %v", err)
-	}
-
-	targetType, err := cmd.Flags().GetString("type")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth type: %v", err)
-	}
-
+func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 	// ignoring error as already validated in preRunCreateMigrationInfra
-	migrationInfraType, _ := types.ToMigrationInfraType(targetType)
+	migrationInfraType, _ := types.ToMigrationInfraType(migrationInfraType)
 
 	// Parse cluster information from JSON file
 	file, err := os.ReadFile(clusterFile)

@@ -10,6 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	region string
+)
+
 func NewScanRegionCmd() *cobra.Command {
 	regionCmd := &cobra.Command{
 		Use:   "region",
@@ -28,7 +32,7 @@ FLAG                     | ENV_VAR
 		RunE:          runScanRegion,
 	}
 
-	regionCmd.Flags().StringP("region", "r", "", "The AWS region")
+	regionCmd.Flags().StringVar(&region, "region", "", "The AWS region")
 
 	regionCmd.MarkFlagRequired("region")
 
@@ -45,7 +49,7 @@ func preRunScanRegion(cmd *cobra.Command, args []string) error {
 }
 
 func runScanRegion(cmd *cobra.Command, args []string) error {
-	opts, err := parseScanRegionOpts(cmd)
+	opts, err := parseScanRegionOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse scan region opts: %v", err)
 	}
@@ -63,12 +67,7 @@ func runScanRegion(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseScanRegionOpts(cmd *cobra.Command) (*rs.ScanRegionOpts, error) {
-	region, err := cmd.Flags().GetString("region")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get region: %v", err)
-	}
-
+func parseScanRegionOpts() (*rs.ScanRegionOpts, error) {
 	opts := rs.ScanRegionOpts{
 		Region: region,
 	}
