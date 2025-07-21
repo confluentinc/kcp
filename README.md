@@ -59,7 +59,7 @@ https://github.com/user-attachments/assets/11ecd725-9172-47a5-8872-bfb4914a8ed7
 ```bash
 # Clone the repository
 git clone https://github.com/confluentinc/kcp.git
-cd kcp-internal
+cd kcp
 
 # Install to system path (requires sudo)
 make install
