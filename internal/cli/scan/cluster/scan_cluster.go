@@ -13,6 +13,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	clusterArn         string
+	saslScramUsername  string
+	saslScramPassword  string
+	tlsCaCert          string
+	tlsClientCert      string
+	tlsClientKey       string
+	skipKafka          bool
+	useSaslIam         bool
+	useSaslScram       bool
+	useUnauthenticated bool
+	useTls             bool
+)
+
 func NewScanClusterCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
 		Use:   "cluster",
@@ -48,19 +62,19 @@ Provide with --use-tls
 		RunE:          runScanCluster,
 	}
 
-	clusterCmd.Flags().String("cluster-arn", "", "cluster arn")
+	clusterCmd.Flags().StringVar(&clusterArn, "cluster-arn", "", "cluster arn")
 
-	clusterCmd.Flags().String("sasl-scram-username", "", "The SASL SCRAM username")
-	clusterCmd.Flags().String("sasl-scram-password", "", "The SASL SCRAM password")
-	clusterCmd.Flags().String("tls-ca-cert", "", "The TLS CA certificate")
-	clusterCmd.Flags().String("tls-client-cert", "", "The TLS client certificate")
-	clusterCmd.Flags().String("tls-client-key", "", "The TLS client key")
+	clusterCmd.Flags().StringVar(&saslScramUsername, "sasl-scram-username", "", "The SASL SCRAM username")
+	clusterCmd.Flags().StringVar(&saslScramPassword, "sasl-scram-password", "", "The SASL SCRAM password")
+	clusterCmd.Flags().StringVar(&tlsCaCert, "tls-ca-cert", "", "The TLS CA certificate")
+	clusterCmd.Flags().StringVar(&tlsClientCert, "tls-client-cert", "", "The TLS client certificate")
+	clusterCmd.Flags().StringVar(&tlsClientKey, "tls-client-key", "", "The TLS client key")
 
-	clusterCmd.Flags().Bool("skip-kafka", false, "skip kafka level cluster scan, use when brokers are not reachable")
-	clusterCmd.Flags().Bool("use-sasl-iam", false, "use sasl iam authentication")
-	clusterCmd.Flags().Bool("use-sasl-scram", false, "use sasl scram authentication")
-	clusterCmd.Flags().Bool("use-unauthenticated", false, "use unauthenticated authentication")
-	clusterCmd.Flags().Bool("use-tls", false, "use TLS authentication")
+	clusterCmd.Flags().BoolVar(&skipKafka, "skip-kafka", false, "skip kafka level cluster scan, use when brokers are not reachable")
+	clusterCmd.Flags().BoolVar(&useSaslIam, "use-sasl-iam", false, "use sasl iam authentication")
+	clusterCmd.Flags().BoolVar(&useSaslScram, "use-sasl-scram", false, "use sasl scram authentication")
+	clusterCmd.Flags().BoolVar(&useUnauthenticated, "use-unauthenticated", false, "use unauthenticated authentication")
+	clusterCmd.Flags().BoolVar(&useTls, "use-tls", false, "use TLS authentication")
 
 	clusterCmd.MarkFlagRequired("cluster-arn")
 	clusterCmd.MarkFlagsMutuallyExclusive("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
@@ -75,13 +89,11 @@ func preRunScanCluster(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	useSaslScram, _ := cmd.Flags().GetBool("use-sasl-scram")
 	if useSaslScram {
 		cmd.MarkFlagRequired("sasl-scram-username")
 		cmd.MarkFlagRequired("sasl-scram-password")
 	}
 
-	useTls, _ := cmd.Flags().GetBool("use-tls")
 	if useTls {
 		cmd.MarkFlagRequired("tls-ca-cert")
 		cmd.MarkFlagRequired("tls-client-cert")
@@ -92,7 +104,7 @@ func preRunScanCluster(cmd *cobra.Command, args []string) error {
 }
 
 func runScanCluster(cmd *cobra.Command, args []string) error {
-	opts, err := parseScanClusterOpts(cmd)
+	opts, err := parseScanClusterOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse scan cluster opts: %v", err)
 	}
@@ -126,12 +138,7 @@ func runScanCluster(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseScanClusterOpts(cmd *cobra.Command) (*cluster.ClusterScannerOpts, error) {
-	clusterArn, err := cmd.Flags().GetString("cluster-arn")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster arn: %v", err)
-	}
-
+func parseScanClusterOpts() (*cluster.ClusterScannerOpts, error) {
 	// Extract region from ARN (format: arn:aws:service:region:account:resource)
 	arnParts := strings.Split(clusterArn, ":")
 	if len(arnParts) < 4 {
@@ -140,56 +147,6 @@ func parseScanClusterOpts(cmd *cobra.Command) (*cluster.ClusterScannerOpts, erro
 	region := arnParts[3]
 	if region == "" {
 		return nil, fmt.Errorf("region not found in cluster ARN: %s", clusterArn)
-	}
-
-	saslScramUsername, err := cmd.Flags().GetString("sasl-scram-username")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sasl scram username: %v", err)
-	}
-
-	saslScramPassword, err := cmd.Flags().GetString("sasl-scram-password")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sasl scram password: %v", err)
-	}
-
-	tlsCaCert, err := cmd.Flags().GetString("tls-ca-cert")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tls ca cert: %v", err)
-	}
-
-	tlsClientCert, err := cmd.Flags().GetString("tls-client-cert")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tls client cert: %v", err)
-	}
-
-	tlsClientKey, err := cmd.Flags().GetString("tls-client-key")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tls client key: %v", err)
-	}
-
-	skipKafka, err := cmd.Flags().GetBool("skip-kafka")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get skip kafka: %v", err)
-	}
-
-	useSaslIam, err := cmd.Flags().GetBool("use-sasl-iam")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get use sasl iam: %v", err)
-	}
-
-	useSaslScram, err := cmd.Flags().GetBool("use-sasl-scram")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get use sasl scram: %v", err)
-	}
-
-	useUnauthenticated, err := cmd.Flags().GetBool("use-unauthenticated")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get use unauthenticated: %v", err)
-	}
-
-	useTls, err := cmd.Flags().GetBool("use-tls")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get use TLS: %v", err)
 	}
 
 	var authType types.AuthType

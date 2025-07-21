@@ -8,6 +8,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	region          string
+	vpcId           string
+	bastionHostCidr string
+)
+
 func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd := &cobra.Command{
 		Use:   "bastion-host",
@@ -27,9 +33,9 @@ FLAG                     | ENV_VAR
 		RunE:          runCreateBastionHost,
 	}
 
-	bastionHostCmd.Flags().String("region", "", "The AWS region to target")
-	bastionHostCmd.Flags().String("vpc-id", "", "The VPC ID to target")
-	bastionHostCmd.Flags().String("bastion-host-cidr", "", "The bastion host CIDR to target")
+	bastionHostCmd.Flags().StringVar(&region, "region", "", "The AWS region to target")
+	bastionHostCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID to target")
+	bastionHostCmd.Flags().StringVar(&bastionHostCidr, "bastion-host-cidr", "", "The bastion host CIDR to target")
 
 	bastionHostCmd.MarkFlagRequired("region")
 	bastionHostCmd.MarkFlagRequired("vpc-id")
@@ -48,7 +54,7 @@ func preRunCreateBastionHost(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateBastionHost(cmd *cobra.Command, args []string) error {
-	opts, err := parseBastionHostOpts(cmd)
+	opts, err := parseBastionHostOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse bastion host opts: %v", err)
 	}
@@ -61,22 +67,7 @@ func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseBastionHostOpts(cmd *cobra.Command) (*bastion_host.BastionHostOpts, error) {
-	region, err := cmd.Flags().GetString("region")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get region: %v", err)
-	}
-
-	vpcId, err := cmd.Flags().GetString("vpc-id")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get vpc id: %v", err)
-	}
-
-	bastionHostCidr, err := cmd.Flags().GetString("bastion-host-cidr")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bastion host cidr: %v", err)
-	}
-
+func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
 	opts := bastion_host.BastionHostOpts{
 		Region:           region,
 		VPCId:            vpcId,
