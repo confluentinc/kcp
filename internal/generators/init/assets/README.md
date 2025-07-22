@@ -264,7 +264,7 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 ### `kcp create-asset`
 
-The `kcp scan` command includes the following sub-commands:
+The `kcp create-asset` command includes the following sub-commands:
 
 - `bastion-host`
 - `migration-infra`
