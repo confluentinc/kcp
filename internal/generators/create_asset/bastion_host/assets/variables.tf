@@ -12,3 +12,9 @@ variable "aws_region" {
   description = "The AWS region"
   type        = string
 }
+
+variable "create_igw" {
+  description = "Whether to create a new internet gateway or use the existing one in the VPC"
+  type        = bool
+  default     = false
+}
