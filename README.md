@@ -61,13 +61,17 @@ cd kcp
 make install
 ```
 
-#### Installing from GitHub Releases (macOS)
+#### Installing from GitHub Releases
 
-If you're downloading pre-built binaries directly from 'GitHub Releases' on macOS, as a temporary workaround until we sign and notorize the binary.
-You will need to remove the quarantine attribute after extracting the tar.gz file:
+You can also download kcp from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). We provide support for Linux and Darwin arm64/amd64 systems respectively.
 
-```bash
-xattr -d com.apple.quarantine ./kcp
+Once downloaded, make sure to set the binary permissions to executable by running `chmod +x <binary name>`.
+
+If you wish to run the downloaded kcp binary from anywhere on your system, you may run the following (requires sudo permissions):
+
+```shell
+# Update the binary suffix to your respective architecture.
+sudo mv ./kcp_<ARCH> /usr/local/bin/kcp
 ```
 
 ## Authentication
