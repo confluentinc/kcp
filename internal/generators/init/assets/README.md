@@ -566,7 +566,7 @@ This command generates Terraform configurations to provision a new bastion host 
 - `--vpc-id`: The VPC ID of the VPC that the **MSK cluster is deployed in**
 
 **Optional Arguments**:
-- `--create-igw`: Whether to create a new internet gateway or use the existing one in the VPC. Defaults to false.
+- `--create-igw`: When set, Terraform will create a new internet gateway in the VPC. If an Internet Gateway is not required, do not set this flag.
 
 **Example Usage**
 

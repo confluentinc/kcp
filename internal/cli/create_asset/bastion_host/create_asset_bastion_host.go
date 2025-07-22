@@ -38,7 +38,7 @@ FLAG                     | ENV_VAR
 	bastionHostCmd.Flags().StringVar(&region, "region", "", "The AWS region to target")
 	bastionHostCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID to target")
 	bastionHostCmd.Flags().StringVar(&bastionHostCidr, "bastion-host-cidr", "", "The bastion host CIDR to target")
-	bastionHostCmd.Flags().BoolVar(&createIGW, "create-igw", false, "Whether to create a new internet gateway or use the existing one in the VPC. Defaults to false.")
+	bastionHostCmd.Flags().BoolVar(&createIGW, "create-igw", false, "When set, Terraform will create a new internet gateway in the VPC.")
 
 	bastionHostCmd.MarkFlagRequired("region")
 	bastionHostCmd.MarkFlagRequired("vpc-id")
