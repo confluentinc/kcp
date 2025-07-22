@@ -12,6 +12,7 @@ var (
 	region          string
 	vpcId           string
 	bastionHostCidr string
+	createIGW       bool
 )
 
 func NewBastionHostCmd() *cobra.Command {
@@ -27,6 +28,7 @@ FLAG                     | ENV_VAR
 --region                 | REGION=us-east-1
 --vpc-id                 | VPC_ID=vpc-1234567890
 --bastion-host-cidr      | BASTION_HOST_CIDR=10.0.0.0/16
+--create-igw             | CREATE_IGW=false
 `,
 		SilenceErrors: true,
 		PreRunE:       preRunCreateBastionHost,
@@ -36,6 +38,7 @@ FLAG                     | ENV_VAR
 	bastionHostCmd.Flags().StringVar(&region, "region", "", "The AWS region to target")
 	bastionHostCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID to target")
 	bastionHostCmd.Flags().StringVar(&bastionHostCidr, "bastion-host-cidr", "", "The bastion host CIDR to target")
+	bastionHostCmd.Flags().BoolVar(&createIGW, "create-igw", false, "Whether to create a new internet gateway or use the existing one in the VPC. Defaults to false.")
 
 	bastionHostCmd.MarkFlagRequired("region")
 	bastionHostCmd.MarkFlagRequired("vpc-id")
@@ -72,6 +75,7 @@ func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
 		Region:           region,
 		VPCId:            vpcId,
 		PublicSubnetCidr: bastionHostCidr,
+		CreateIGW:        createIGW,
 	}
 
 	return &opts, nil
