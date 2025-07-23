@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -204,8 +205,33 @@ func (cs *ClusterScanner) addVpcConnectionsSection(md *markdown.Markdown, cluste
 func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
 	headers := []string{"Operation ARN", "Operation Type", "Status", "Start Time"}
 
+	// Create a copy of operations and sort by start time (most recent first)
+	operations := make([]kafkatypes.ClusterOperationV2Summary, len(clusterInfo.ClusterOperations))
+	copy(operations, clusterInfo.ClusterOperations)
+
+	// Sort operations by start time in descending order (most recent first)
+	sort.Slice(operations, func(i, j int) bool {
+		if operations[i].StartTime == nil && operations[j].StartTime == nil {
+			return false
+		}
+		if operations[i].StartTime == nil {
+			return false
+		}
+		if operations[j].StartTime == nil {
+			return true
+		}
+		return operations[i].StartTime.After(*operations[j].StartTime)
+	})
+
+	// Limit to 5 most recent operations
+	maxOperations := 5
+	if len(operations) < maxOperations {
+		maxOperations = len(operations)
+	}
+	operations = operations[:maxOperations]
+
 	var tableData [][]string
-	for _, operation := range clusterInfo.ClusterOperations {
+	for _, operation := range operations {
 		startTime := "N/A"
 		if operation.StartTime != nil {
 			startTime = operation.StartTime.Format("2006-01-02 15:04:05")
@@ -230,6 +256,11 @@ func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clu
 		tableData = append(tableData, row)
 	}
 
+	// Add note about limitation if there were more operations
+	if len(clusterInfo.ClusterOperations) > 5 {
+		md.AddParagraph(fmt.Sprintf("**Note:** Only showing 5 of %d most recent cluster operations.", len(clusterInfo.ClusterOperations)))
+	}
+
 	md.AddTable(headers, tableData)
 }
 
@@ -238,18 +269,33 @@ func (cs *ClusterScanner) addNodesSection(md *markdown.Markdown, clusterInfo *ty
 	headers := []string{"Node ARN", "Node Type", "Instance Type"}
 
 	var tableData [][]string
+	filteredNodes := 0
+
 	for _, node := range clusterInfo.Nodes {
 		instanceType := "N/A"
 		if node.InstanceType != nil {
 			instanceType = *node.InstanceType
 		}
 
+		nodeARN := aws.ToString(node.NodeARN)
+
+		// Skip nodes with empty ARN and N/A instance type
+		if nodeARN == "" && instanceType == "N/A" {
+			filteredNodes++
+			continue
+		}
+
 		row := []string{
-			aws.ToString(node.NodeARN),
+			nodeARN,
 			string(node.NodeType),
 			instanceType,
 		}
 		tableData = append(tableData, row)
+	}
+
+	// Add note about filtered nodes if any were hidden
+	if filteredNodes > 0 {
+		md.AddParagraph(fmt.Sprintf("**Note:** %d nodes with empty ARN and no instance type information are hidden from this table.", filteredNodes))
 	}
 
 	md.AddTable(headers, tableData)
