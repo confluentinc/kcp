@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/confluentinc/kcp-internal/internal/client"
-	rrm "github.com/confluentinc/kcp-internal/internal/generators/report/cluster/metrics"
-	"github.com/confluentinc/kcp-internal/internal/services/metrics"
-	"github.com/confluentinc/kcp-internal/internal/services/msk"
-	"github.com/confluentinc/kcp-internal/internal/utils"
+	"github.com/confluentinc/kcp/internal/client"
+	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
+	"github.com/confluentinc/kcp/internal/services/metrics"
+	"github.com/confluentinc/kcp/internal/services/msk"
+	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
 )
