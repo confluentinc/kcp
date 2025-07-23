@@ -3,12 +3,12 @@ package metrics
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/services/markdown"
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp-internal/internal/services/markdown"
+	"github.com/confluentinc/kcp-internal/internal/types"
 )
 
 // generateMarkdownReport creates a comprehensive markdown report of the region metrics
-func (rm *RegionMetricsCollector) generateMarkdownReport(metrics types.RegionMetrics, filePath string) error {
+func (rm *ClusterMetricsCollector) generateMarkdownReport(metrics types.RegionMetrics, filePath string) error {
 	md := markdown.New()
 
 	// Title and overview
@@ -26,7 +26,7 @@ func (rm *RegionMetricsCollector) generateMarkdownReport(metrics types.RegionMet
 }
 
 // addIndividualClusterSections adds individual sections for each cluster
-func (rm *RegionMetricsCollector) addIndividualClusterSections(md *markdown.Markdown, metrics types.RegionMetrics) {
+func (rm *ClusterMetricsCollector) addIndividualClusterSections(md *markdown.Markdown, metrics types.RegionMetrics) {
 	for i, cluster := range metrics.ClusterMetrics {
 		// Add cluster heading
 		md.AddHeading(fmt.Sprintf("%d. %s", i+1, cluster.ClusterName), 3)
@@ -50,7 +50,7 @@ func (rm *RegionMetricsCollector) addIndividualClusterSections(md *markdown.Mark
 }
 
 // addClusterOverview adds basic cluster information
-func (rm *RegionMetricsCollector) addClusterOverview(md *markdown.Markdown, cluster types.ClusterMetrics) {
+func (rm *ClusterMetricsCollector) addClusterOverview(md *markdown.Markdown, cluster types.ClusterMetrics) {
 	md.AddHeading("Overview", 4)
 
 	overviewItems := []string{
@@ -70,7 +70,7 @@ func (rm *RegionMetricsCollector) addClusterOverview(md *markdown.Markdown, clus
 }
 
 // addClusterMetricsSummary adds cluster-level metrics summary
-func (rm *RegionMetricsCollector) addClusterMetricsSummary(md *markdown.Markdown, cluster types.ClusterMetrics) {
+func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdown, cluster types.ClusterMetrics) {
 	md.AddHeading("Metrics Summary (TCO Calculator Inputs)", 4)
 
 	summaryItems := []string{}
@@ -129,7 +129,7 @@ func (rm *RegionMetricsCollector) addClusterMetricsSummary(md *markdown.Markdown
 }
 
 // addNodeDetails adds detailed node metrics
-func (rm *RegionMetricsCollector) addNodeDetails(md *markdown.Markdown, cluster types.ClusterMetrics) {
+func (rm *ClusterMetricsCollector) addNodeDetails(md *markdown.Markdown, cluster types.ClusterMetrics) {
 	md.AddHeading("Broker Details", 4)
 
 	headers := []string{

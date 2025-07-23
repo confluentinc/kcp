@@ -1,8 +1,7 @@
 package region
 
 import (
-	rrc "github.com/confluentinc/kcp/internal/cli/report/region/costs"
-	rrm "github.com/confluentinc/kcp/internal/cli/report/region/metrics"
+	rrc "github.com/confluentinc/kcp-internal/internal/cli/report/region/costs"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +14,6 @@ func NewReportRegionCmd() *cobra.Command {
 
 	regionCmd.AddCommand(
 		rrc.NewReportRegionCostsCmd(),
-		rrm.NewReportRegionMetricsCmd(),
 	)
 
 	return regionCmd

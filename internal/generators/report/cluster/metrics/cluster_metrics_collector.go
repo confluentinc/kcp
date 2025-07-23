@@ -11,16 +11,16 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp-internal/internal/types"
 )
 
-type RegionMetricsOpts struct {
+type ClusterMetricsOpts struct {
 	Region    string
 	StartDate time.Time
 	EndDate   time.Time
 }
 
-type RegionMetricsCollector struct {
+type ClusterMetricsCollector struct {
 	region        string
 	mskService    MSKService
 	metricService MetricService
@@ -40,8 +40,8 @@ type MetricService interface {
 	GetServerlessPeakMetric(clusterName string, metricName string) (float64, error)
 }
 
-func NewRegionMetrics(mskService MSKService, metricService MetricService, opts RegionMetricsOpts) *RegionMetricsCollector {
-	return &RegionMetricsCollector{
+func NewClusterMetrics(mskService MSKService, metricService MetricService, opts ClusterMetricsOpts) *ClusterMetricsCollector {
+	return &ClusterMetricsCollector{
 		region:        opts.Region,
 		mskService:    mskService,
 		metricService: metricService,
@@ -50,7 +50,7 @@ func NewRegionMetrics(mskService MSKService, metricService MetricService, opts R
 	}
 }
 
-func (rm *RegionMetricsCollector) Run() error {
+func (rm *ClusterMetricsCollector) Run() error {
 	slog.Info("🚀 starting region metrics report", "region", rm.region)
 
 	clusters, err := rm.mskService.GetClusters(context.Background())
@@ -77,34 +77,43 @@ func (rm *RegionMetricsCollector) Run() error {
 	return nil
 }
 
-func (rm *RegionMetricsCollector) processClusters(clusters []kafkatypes.Cluster) ([]types.ClusterMetrics, error) {
+func (rm *ClusterMetricsCollector) processClusters(clusters []kafkatypes.Cluster) ([]types.ClusterMetrics, error) {
 	clusterMetrics := []types.ClusterMetrics{}
 
 	for _, cluster := range clusters {
-		slog.Info("🔄 processing cluster", "cluster", *cluster.ClusterName)
-		if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-			clusterMetric, err := rm.processProvisionedCluster(cluster)
-			if err != nil {
-				return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
-			}
 
-			clusterMetrics = append(clusterMetrics, *clusterMetric)
-		} else {
-			clusterMetric, err := rm.processServerlessCluster(cluster)
-			if err != nil {
-				return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
-			}
-
-			clusterMetrics = append(clusterMetrics, *clusterMetric)
+		clusterMetric, err := rm.processCluster(cluster)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process cluster: %v", err)
 		}
-		slog.Info("✅ cluster complete", "cluster", *cluster.ClusterName)
-		slog.Info("")
+		clusterMetrics = append(clusterMetrics, *clusterMetric)
+
 	}
 
 	return clusterMetrics, nil
 }
 
-func (rm *RegionMetricsCollector) calculateClusterMetricsSummary(nodesMetrics []types.NodeMetrics) types.ClusterMetricsSummary {
+func (rm *ClusterMetricsCollector) processCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
+	slog.Info("🔄 processing cluster", "cluster", *cluster.ClusterName)
+	var clusterMetric *types.ClusterMetrics
+	var err error
+	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		clusterMetric, err = rm.processProvisionedCluster(cluster)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
+		}
+	} else {
+		clusterMetric, err = rm.processServerlessCluster(cluster)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
+		}
+	}
+	slog.Info("✅ cluster complete", "cluster", *cluster.ClusterName)
+	slog.Info("")
+	return clusterMetric, nil
+}
+
+func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics []types.NodeMetrics) types.ClusterMetricsSummary {
 
 	var avgIngressThroughputMegabytesPerSecond float64
 	for _, nodeMetric := range nodesMetrics {
@@ -168,7 +177,7 @@ func (rm *RegionMetricsCollector) calculateClusterMetricsSummary(nodesMetrics []
 	return clusterMetricsSummary
 }
 
-func (rm *RegionMetricsCollector) processProvisionedCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
+func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName)
 	authentication, err := structToMap(cluster.Provisioned.ClientAuthentication)
 	if err != nil {
@@ -223,7 +232,7 @@ func (rm *RegionMetricsCollector) processProvisionedCluster(cluster kafkatypes.C
 	return &clusterMetric, nil
 }
 
-func (rm *RegionMetricsCollector) processServerlessCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
+func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
 	slog.Info("☁️ processing serverless cluster", "cluster", *cluster.ClusterName)
 	authentication, err := structToMap(cluster.Serverless.ClientAuthentication)
 	if err != nil {
@@ -257,7 +266,7 @@ func (rm *RegionMetricsCollector) processServerlessCluster(cluster kafkatypes.Cl
 	return &clusterMetric, nil
 }
 
-func (rm *RegionMetricsCollector) processProvisionedNode(clusterName string, nodeID int, instanceType string) (*types.NodeMetrics, error) {
+func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, nodeID int, instanceType string) (*types.NodeMetrics, error) {
 	slog.Info("🏗️ processing provisioned node", "cluster", clusterName, "node", nodeID)
 	nodeMetric := types.NodeMetrics{
 		NodeID:       nodeID,
@@ -352,7 +361,7 @@ func (rm *RegionMetricsCollector) processProvisionedNode(clusterName string, nod
 	return &nodeMetric, nil
 }
 
-func (rm *RegionMetricsCollector) processServerlessNode(clusterName string) (*types.NodeMetrics, error) {
+func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*types.NodeMetrics, error) {
 	slog.Info("☁️ processing serverless node", "cluster", clusterName)
 	nodeMetric := types.NodeMetrics{
 		NodeID:       1,
@@ -447,7 +456,7 @@ func (rm *RegionMetricsCollector) processServerlessNode(clusterName string) (*ty
 	return &nodeMetric, nil
 }
 
-func (rm *RegionMetricsCollector) writeOutput(metrics types.RegionMetrics) error {
+func (rm *ClusterMetricsCollector) writeOutput(metrics types.RegionMetrics) error {
 	data, err := json.MarshalIndent(metrics, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cluster information: %v", err)

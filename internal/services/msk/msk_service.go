@@ -29,10 +29,10 @@ func (ms *MSKService) GetClusters(ctx context.Context) ([]kafkatypes.Cluster, er
 
 func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {
 
-	if cluster.Provisioned == nil || 
-	cluster.Provisioned.CurrentBrokerSoftwareInfo == nil || 
-	cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn == nil || 
-	cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationRevision == nil {
+	if cluster.Provisioned == nil ||
+		cluster.Provisioned.CurrentBrokerSoftwareInfo == nil ||
+		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn == nil ||
+		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationRevision == nil {
 		return nil, nil
 	}
 
@@ -54,7 +54,6 @@ func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster ka
 	// ServerProperties is already a []byte containing plain text configuration
 	// First try to use it directly as plain text
 	propertiesText := string(serverProperties)
-
 
 	if strings.Contains(propertiesText, "replica.selector.class=org.apache.kafka.common.replica.RackAwareReplicaSelector") {
 		return aws.Bool(true), nil
