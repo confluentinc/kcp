@@ -45,6 +45,8 @@ migration-plan/
 .env
 .DS_Store
 
+cluster_scan_*.md
+
 # Added by goreleaser init:
 dist/
 

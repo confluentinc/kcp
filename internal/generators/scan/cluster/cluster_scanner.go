@@ -467,6 +467,12 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 	clusterInfo.Topics = topics
 
+	acls, err := cs.scanKafkaAcls(admin)
+	if err != nil {
+		return err
+	}
+	clusterInfo.Acls = acls
+
 	return nil
 }
 
