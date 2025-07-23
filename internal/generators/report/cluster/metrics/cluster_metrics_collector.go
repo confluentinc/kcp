@@ -15,9 +15,10 @@ import (
 )
 
 type ClusterMetricsOpts struct {
-	Region    string
-	StartDate time.Time
-	EndDate   time.Time
+	Region     string
+	StartDate  time.Time
+	EndDate    time.Time
+	ClusterArn string
 }
 
 type ClusterMetricsCollector struct {
@@ -26,10 +27,11 @@ type ClusterMetricsCollector struct {
 	metricService MetricService
 	startDate     time.Time
 	endDate       time.Time
+	clusterArn    string
 }
 
 type MSKService interface {
-	GetClusters(ctx context.Context) ([]kafkatypes.Cluster, error)
+	DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error)
 	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
 }
 
@@ -47,50 +49,30 @@ func NewClusterMetrics(mskService MSKService, metricService MetricService, opts 
 		metricService: metricService,
 		startDate:     opts.StartDate,
 		endDate:       opts.EndDate,
+		clusterArn:    opts.ClusterArn,
 	}
 }
 
 func (rm *ClusterMetricsCollector) Run() error {
-	slog.Info("🚀 starting region metrics report", "region", rm.region)
+	slog.Info("🚀 starting cluster metrics report", "cluster", rm.clusterArn)
 
-	clusters, err := rm.mskService.GetClusters(context.Background())
+	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to get clusters: %v", err)
 	}
 
-	clusterMetrics, err := rm.processClusters(clusters)
+	clusterMetrics, err := rm.processCluster(*cluster)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to process clusters: %v", err)
 	}
 
-	metrics := types.RegionMetrics{
-		Region:         rm.region,
-		ClusterMetrics: clusterMetrics,
-	}
-
-	err = rm.writeOutput(metrics)
+	err = rm.writeOutput(*clusterMetrics)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to write output: %v", err)
 	}
 
-	slog.Info("✅ region metrics report complete", "region", rm.region)
+	slog.Info("✅ cluster metrics report complete", "cluster", rm.clusterArn)
 	return nil
-}
-
-func (rm *ClusterMetricsCollector) processClusters(clusters []kafkatypes.Cluster) ([]types.ClusterMetrics, error) {
-	clusterMetrics := []types.ClusterMetrics{}
-
-	for _, cluster := range clusters {
-
-		clusterMetric, err := rm.processCluster(cluster)
-		if err != nil {
-			return nil, fmt.Errorf("failed to process cluster: %v", err)
-		}
-		clusterMetrics = append(clusterMetrics, *clusterMetric)
-
-	}
-
-	return clusterMetrics, nil
 }
 
 func (rm *ClusterMetricsCollector) processCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
@@ -456,19 +438,19 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 	return &nodeMetric, nil
 }
 
-func (rm *ClusterMetricsCollector) writeOutput(metrics types.RegionMetrics) error {
+func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics) error {
 	data, err := json.MarshalIndent(metrics, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cluster information: %v", err)
 	}
 
-	filePath := fmt.Sprintf("%s-metrics.json", rm.region)
+	filePath := fmt.Sprintf("%s-metrics.json", metrics.ClusterName)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
 
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("%s-metrics.md", rm.region)
+	mdFilePath := fmt.Sprintf("%s-metrics.md", metrics.ClusterName)
 	if err := rm.generateMarkdownReport(metrics, mdFilePath); err != nil {
 		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}

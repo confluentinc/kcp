@@ -8,14 +8,13 @@ import (
 )
 
 // generateMarkdownReport creates a comprehensive markdown report of the region metrics
-func (rm *ClusterMetricsCollector) generateMarkdownReport(metrics types.RegionMetrics, filePath string) error {
+func (rm *ClusterMetricsCollector) generateMarkdownReport(metrics types.ClusterMetrics, filePath string) error {
 	md := markdown.New()
 
 	// Title and overview
-	md.AddHeading("MSK Region Metrics Report", 1)
-	md.AddParagraph(fmt.Sprintf("This report provides comprehensive metrics for MSK clusters in the **%s** region.", rm.region))
+	md.AddHeading("MSK Cluster Metrics Report", 1)
+	md.AddParagraph(fmt.Sprintf("This report provides comprehensive metrics for MSK cluster **%s**.", rm.clusterArn))
 	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s", rm.startDate.Format("2006-01-02"), rm.endDate.Format("2006-01-02")))
-	md.AddParagraph(fmt.Sprintf("**Total Clusters Analyzed:** %d", len(metrics.ClusterMetrics)))
 
 	// Individual cluster sections
 	md.AddHeading("Cluster Details", 2)
@@ -26,27 +25,20 @@ func (rm *ClusterMetricsCollector) generateMarkdownReport(metrics types.RegionMe
 }
 
 // addIndividualClusterSections adds individual sections for each cluster
-func (rm *ClusterMetricsCollector) addIndividualClusterSections(md *markdown.Markdown, metrics types.RegionMetrics) {
-	for i, cluster := range metrics.ClusterMetrics {
-		// Add cluster heading
-		md.AddHeading(fmt.Sprintf("%d. %s", i+1, cluster.ClusterName), 3)
+func (rm *ClusterMetricsCollector) addIndividualClusterSections(md *markdown.Markdown, cluster types.ClusterMetrics) {
+	// Add cluster heading
+	md.AddHeading(cluster.ClusterName, 3)
 
-		// Add cluster overview
-		rm.addClusterOverview(md, cluster)
+	// Add cluster overview
+	rm.addClusterOverview(md, cluster)
 
-		// Add node details if available
-		if len(cluster.NodesMetrics) > 0 {
-			rm.addNodeDetails(md, cluster)
-		}
-
-		// Add cluster metrics summary
-		rm.addClusterMetricsSummary(md, cluster)
-
-		// Add horizontal rule between clusters
-		if i < len(metrics.ClusterMetrics)-1 {
-			md.AddHorizontalRule()
-		}
+	// Add node details if available
+	if len(cluster.NodesMetrics) > 0 {
+		rm.addNodeDetails(md, cluster)
 	}
+
+	// Add cluster metrics summary
+	rm.addClusterMetricsSummary(md, cluster)
 }
 
 // addClusterOverview adds basic cluster information

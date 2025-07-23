@@ -19,12 +19,14 @@ func NewMSKService(client *kafka.Client) *MSKService {
 	return &MSKService{client: client}
 }
 
-func (ms *MSKService) GetClusters(ctx context.Context) ([]kafkatypes.Cluster, error) {
-	clusters, err := ms.client.ListClustersV2(ctx, &kafka.ListClustersV2Input{})
+func (ms *MSKService) DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error) {
+	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
+		ClusterArn: clusterArn,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
 	}
-	return clusters.ClusterInfoList, nil
+	return cluster.ClusterInfo, nil
 }
 
 func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {

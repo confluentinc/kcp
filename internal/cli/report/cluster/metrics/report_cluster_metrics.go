@@ -141,7 +141,6 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 		return nil, fmt.Errorf("region not found in cluster ARN: %s", clusterArn)
 	}
 
-
 	const dateFormat = "2006-01-02"
 
 	startDate, err := time.Parse(dateFormat, start)
@@ -159,9 +158,10 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 	}
 
 	opts := rrm.ClusterMetricsOpts{
-		Region:    region,
-		StartDate: startDate,
-		EndDate:   endDate,
+		Region:     region,
+		StartDate:  startDate,
+		EndDate:    endDate,
+		ClusterArn: clusterArn,
 	}
 
 	return &opts, nil
