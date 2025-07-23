@@ -76,6 +76,11 @@ func (cs *ClusterScanner) generateMarkdownReport(clusterInfo *types.ClusterInfor
 		cs.addTopicsSection(md, clusterInfo)
 	}
 
+	if len(clusterInfo.Acls) > 0 {
+		md.AddHeading("Kafka ACLs", 2)
+		cs.addAclsSection(md, clusterInfo)
+	}
+
 	// Save to file
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }
@@ -88,6 +93,7 @@ func (cs *ClusterScanner) addSummarySection(md *markdown.Markdown, clusterInfo *
 		fmt.Sprintf("**Status:** %s", string(clusterInfo.Cluster.State)),
 		fmt.Sprintf("**Region:** %s", clusterInfo.Region),
 		fmt.Sprintf("**Topics:** %d", len(clusterInfo.Topics)),
+		fmt.Sprintf("**ACLs:** %d", len(clusterInfo.Acls)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(clusterInfo.ClientVpcConnections)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(clusterInfo.ClusterOperations)),
 		fmt.Sprintf("**Brokers:** %d", len(clusterInfo.Nodes)),
@@ -339,6 +345,16 @@ func (cs *ClusterScanner) addCompatibleVersionsSection(md *markdown.Markdown, cl
 // addTopicsSection adds Kafka topics list
 func (cs *ClusterScanner) addTopicsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
 	md.AddList(clusterInfo.Topics)
+}
+
+// addAclsSection adds Kafka ACLs list
+func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
+	acls := []string{}
+	for _, acl := range clusterInfo.Acls {
+		for _, x := range acl.
+	}
+
+	md.AddList(acls)
 }
 
 // getAuthenticationInfo extracts authentication information for provisioned clusters
