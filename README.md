@@ -36,6 +36,9 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 - **Create** reports for migration planning and cost analysis.
 - **Generate** migration assets and infrastructure configurations.
 
+A demonstration of the tool can be viewed here:
+https://github.com/user-attachments/assets/c592d539-08d1-46d3-ad09-f7e5ebe540c5
+
 ### Key Features
 
 | Feature                     | Description                                                                             |
