@@ -144,6 +144,7 @@ type KafkaAdmin interface {
 	ListTopics() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
+	ListAcls() ([]sarama.ResourceAcls, error)
 	Close() error
 }
 
@@ -164,6 +165,7 @@ type KafkaAdminClient struct {
 	region       string
 	config       AdminConfig
 	saramaConfig *sarama.Config
+	resourceAcls map[string]sarama.ResourceAcls
 }
 
 func (k *KafkaAdminClient) ListTopics() (map[string]sarama.TopicDetail, error) {
@@ -225,6 +227,25 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 	return *metadata.ClusterID, nil
 }
 
+func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
+	aclFilter := sarama.AclFilter{
+		ResourceType:              sarama.AclResourceAny,
+		ResourceName:              nil, // nil means any resource name
+		ResourcePatternTypeFilter: sarama.AclPatternAny,
+		Principal:                 nil, // nil means any principal
+		Host:                      nil, // nil means any host
+		Operation:                 sarama.AclOperationAny,
+		PermissionType:            sarama.AclPermissionAny,
+	}
+
+	result, err := k.admin.ListAcls(aclFilter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ACLs: %w", err)
+	}
+
+	return result, nil
+}
+
 func (k *KafkaAdminClient) Close() error {
 	return k.admin.Close()
 }
@@ -270,5 +291,6 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		region:       region,
 		config:       config,
 		saramaConfig: saramaConfig,
+		resourceAcls: make(map[string]sarama.ResourceAcls),
 	}, nil
 }
