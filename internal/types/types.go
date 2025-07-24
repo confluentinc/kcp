@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )
@@ -37,6 +38,7 @@ type ClusterInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
 	Topics               []string                               `json:"topics"`
+	Acls                 []sarama.ResourceAcls                  `json:"acls"`
 }
 
 // ClusterSummary contains summary information about an MSK cluster
