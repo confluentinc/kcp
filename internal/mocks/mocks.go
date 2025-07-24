@@ -10,6 +10,7 @@ type MockKafkaAdmin struct {
 	ListTopicsFunc              func() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadataFunc func() (*client.ClusterKafkaMetadata, error)
 	DescribeConfigFunc          func() ([]sarama.ConfigEntry, error)
+	ListAclsFunc                func() ([]sarama.ResourceAcls, error)
 	CloseFunc                   func() error
 }
 
@@ -23,6 +24,10 @@ func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata
 
 func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
 	return m.DescribeConfigFunc()
+}
+
+func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
+	return m.ListAclsFunc()
 }
 
 func (m *MockKafkaAdmin) Close() error {
