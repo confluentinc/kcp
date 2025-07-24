@@ -211,7 +211,6 @@ func (cs *ClusterScanner) addVpcConnectionsSection(md *markdown.Markdown, cluste
 func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
 	headers := []string{"Operation ARN", "Operation Type", "Status", "Start Time"}
 
-	// Create a copy of operations and sort by start time (most recent first)
 	operations := make([]kafkatypes.ClusterOperationV2Summary, len(clusterInfo.ClusterOperations))
 	copy(operations, clusterInfo.ClusterOperations)
 
@@ -229,11 +228,7 @@ func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clu
 		return operations[i].StartTime.After(*operations[j].StartTime)
 	})
 
-	// Limit to 5 most recent operations
-	maxOperations := 5
-	if len(operations) < maxOperations {
-		maxOperations = len(operations)
-	}
+	maxOperations := min(5, len(operations))
 	operations = operations[:maxOperations]
 
 	var tableData [][]string
@@ -262,7 +257,6 @@ func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clu
 		tableData = append(tableData, row)
 	}
 
-	// Add note about limitation if there were more operations
 	if len(clusterInfo.ClusterOperations) > 5 {
 		md.AddParagraph(fmt.Sprintf("**Note:** Only showing 5 of %d most recent cluster operations.", len(clusterInfo.ClusterOperations)))
 	}
@@ -285,7 +279,6 @@ func (cs *ClusterScanner) addNodesSection(md *markdown.Markdown, clusterInfo *ty
 
 		nodeARN := aws.ToString(node.NodeARN)
 
-		// Skip nodes with empty ARN and N/A instance type
 		if nodeARN == "" && instanceType == "N/A" {
 			filteredNodes++
 			continue
@@ -299,7 +292,6 @@ func (cs *ClusterScanner) addNodesSection(md *markdown.Markdown, clusterInfo *ty
 		tableData = append(tableData, row)
 	}
 
-	// Add note about filtered nodes if any were hidden
 	// TODO: Investigate and add further info about what these nodes actually are.
 	if filteredNodes > 0 {
 		md.AddParagraph(fmt.Sprintf("**Note:** %d nodes with empty ARN and no instance type information are hidden from this table.", filteredNodes))
@@ -348,9 +340,8 @@ func (cs *ClusterScanner) addTopicsSection(md *markdown.Markdown, clusterInfo *t
 	md.AddList(clusterInfo.Topics)
 }
 
-// addAclsSection adds Kafka ACLs in a traditional table format
+// addAclsSection adds Kafka ACLs in a table format
 func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
-	// Collect all ACL entries
 	type aclEntry struct {
 		Principal      string
 		ResourceType   string
@@ -389,9 +380,11 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 		if aclEntries[i].Principal != aclEntries[j].Principal {
 			return aclEntries[i].Principal < aclEntries[j].Principal
 		}
+
 		if aclEntries[i].ResourceType != aclEntries[j].ResourceType {
 			return aclEntries[i].ResourceType < aclEntries[j].ResourceType
 		}
+
 		if aclEntries[i].ResourceName != aclEntries[j].ResourceName {
 			return aclEntries[i].ResourceName < aclEntries[j].ResourceName
 		}

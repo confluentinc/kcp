@@ -229,11 +229,12 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 
 func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
 	aclFilter := sarama.AclFilter{
+		// nil means any resource name, principal, or host.
 		ResourceType:              sarama.AclResourceAny,
-		ResourceName:              nil, // nil means any resource name
+		ResourceName:              nil,
 		ResourcePatternTypeFilter: sarama.AclPatternAny,
-		Principal:                 nil, // nil means any principal
-		Host:                      nil, // nil means any host
+		Principal:                 nil,
+		Host:                      nil,
 		Operation:                 sarama.AclOperationAny,
 		PermissionType:            sarama.AclPermissionAny,
 	}
