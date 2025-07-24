@@ -263,6 +263,131 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 ---
 
+### `kcp report region`
+
+The `kcp report region` command includes the following sub-commands:
+
+- `costs`
+- `metrics`
+
+The sub-commands require the following minimum AWS IAM permissions:
+
+`costs`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ce:GetCostAndUsage"
+            ],
+            "Resource": [
+                "*"
+            ]
+        }
+    ]
+}
+```
+
+`metrics`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "kafka:ListClustersV2",
+                "kafka:DescribeConfigurationRevision"
+            ],
+            "Resource": [
+                "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:ListMetrics",
+                "cloudwatch:GetMetricData"
+            ],
+            "Resource": [
+                "*"
+            ]
+        }
+    ]
+}
+```
+
+#### `kcp report region costs`
+
+This command discovers all MSK clusters in a specified AWS region and generates a comprehensive report.
+
+**Required Arguments**:
+
+- `--region`: The region where the cost report will be created for
+- `--start`: The inclusive start date for cost report (YYYY-MM-DD)
+- `--end`: The exclusive end date for cost report (YYYY-MM-DD)
+
+**Granularity Options** (required, choose one):
+- `--hourly`: Generate hourly cost report
+- `--daily`: Generate daily cost report
+- `--monthly`: Generate monthly cost report
+
+**Optional Arguments**:
+- `--tag`: Scope report to tagged resources (key=value)
+
+**Example Usage**
+
+```shell
+kcp report region costs \
+--monthly \
+--start 2025-07-01 \
+--end 2025-08-01 \
+--region us-east-1 \
+--tag Environment=Staging \
+--tag Owner=kcp-team
+```
+
+**Output:**
+The command generates a `cost_report` directory, splitting reports by region which contain three files - `cost_report-<aws-region>.csv`, `cost_report-<aws-region>.md` and `cost_report-<aws-region>.json` file containing:
+
+- Total cost of MSK based on the time granularity specified.
+- Itemised cost of each usage type.
+
+---
+
+#### `kcp report region metrics`
+
+This command collates important MSK Kafka metrics per cluster in a specified AWS region and generates a comprehensive report.
+
+**Required Arguments**:
+
+- `--region`: The region where the cost report will be created for
+- `--start`: The inclusive start date for cost report (YYYY-MM-DD)
+- `--end`: The exclusive end date for cost report (YYYY-MM-DD)
+
+**Example Usage**
+
+```shell
+kcp report region costs \
+--start 2025-07-01 \
+--end 2025-08-01 \
+--region us-east-1
+```
+
+**Output:**
+The command generates two files - `<aws-region>-metrics.md` and `<aws-region>-metrics.json` file containing:
+
+- Broker details
+- Metrics summary - average ingress/egress throughput, total partitions
+- Easy-to-copy metrics values for a TCO calculator
+
+---
+
 ### `kcp create-asset`
 
 The `kcp create-asset` command includes the following sub-commands:
