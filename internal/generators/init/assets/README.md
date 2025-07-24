@@ -7,7 +7,7 @@ This README provides an overview of the kcp migration CLI workflow and the decis
 The kcp migration CLI helps you migrate from Kafka deployments to Confluent Cloud. The workflow consists of several steps that you can execute based on your infrastructure setup and requirements.
 
 > [!NOTE]
-> Currently, only migrations from AWS MSK are supported. Therefore, until later Apache Kafka deployments are supported, AWS MSK will be the reference point for the source of a migration.
+> Currently, only migrations from AWS MSK are supported. Therefore, until later Apache Kafka migrations are supported, AWS MSK will be the reference point for the source of a migration.
 
 ## Workflow steps
 
@@ -15,8 +15,9 @@ The migration process follows these general steps:
 
 1. **Initialize the environment**: Set up the CLI and configure your environment.
 2. **Scan clusters**: Discover and analyze your Kafka deployment.
-3. **Generate migration assets**: Create the necessary infrastructure and scripts.
-4. **Execute migration**: Perform the actual migration process.
+3. **Generate reports**: Produce reports on the cost and metrics of the MSK cluster.
+4. **Generate migration assets**: Create the necessary infrastructure and scripts.
+5. **Execute migration**: Perform the actual migration process.
 
 ## Prerequisites
 
