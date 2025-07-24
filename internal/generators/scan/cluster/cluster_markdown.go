@@ -300,6 +300,7 @@ func (cs *ClusterScanner) addNodesSection(md *markdown.Markdown, clusterInfo *ty
 	}
 
 	// Add note about filtered nodes if any were hidden
+	// TODO: Investigate and add further info about what these nodes actually are.
 	if filteredNodes > 0 {
 		md.AddParagraph(fmt.Sprintf("**Note:** %d nodes with empty ARN and no instance type information are hidden from this table.", filteredNodes))
 	}
@@ -354,6 +355,7 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 		Principal      string
 		ResourceType   string
 		ResourceName   string
+		Host           string
 		Operation      string
 		PermissionType string
 	}
@@ -369,6 +371,7 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 				Principal:      acl.Principal,
 				ResourceType:   resourceType,
 				ResourceName:   resourceName,
+				Host:           acl.Host,
 				Operation:      acl.Operation.String(),
 				PermissionType: acl.PermissionType.String(),
 			}
@@ -395,7 +398,7 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 		return aclEntries[i].Operation < aclEntries[j].Operation
 	})
 
-	headers := []string{"Principal", "Resource Type", "Resource Name", "Operation", "Permission Type"}
+	headers := []string{"Principal", "Resource Type", "Resource Name", "Host", "Operation", "Permission Type"}
 
 	var tableData [][]string
 	var lastPrincipal string
@@ -412,6 +415,7 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 			principal,
 			entry.ResourceType,
 			entry.ResourceName,
+			entry.Host,
 			entry.Operation,
 			entry.PermissionType,
 		}
