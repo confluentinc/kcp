@@ -40,3 +40,7 @@ blocks:
         - name: "trivy scan"
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+        - name: "run fossa"
+          commands:
+            - fossa --help
