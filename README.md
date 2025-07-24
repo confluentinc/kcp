@@ -21,10 +21,14 @@ Please see the CHANGELOG.md for details of recent updates.
 ## Table of Contents
 
 - [Overview](#overview)
-- [Installation](#installation)
-- [Authentication](#authentication)
+  - [Installation](#installation)
+  - [Authentication](#authentication)
+- [Getting Started](#getting-started)
+  - [kcp Commands](#kcp-commands)
+    - [`kcp init`](#kcp-init)
+    - [`kcp scan`](#kcp-scan)
+    - [`kcp create-asset`](#kcp-create-asset)
 - [Development](#development)
-- [Overview](#overview)
 
 ## Overview
 
@@ -93,7 +97,7 @@ The easiest way to test authentication is to run a kcp command that requires AWS
 aws sts get-caller-identity
 ```
 
-## Overview
+# Getting Started
 
 > [!NOTE]
 > Currently, only migrations from AWS MSK are supported. Therefore, until later Apache Kafka migrations are supported, AWS MSK will be the reference point for the source of a migration.
@@ -107,25 +111,6 @@ The migration process follows these general steps:
 3. **Generate reports**: Produce reports on the cost and metrics of the MSK cluster.
 4. **Generate migration assets**: Create the necessary infrastructure and scripts.
 5. **Execute migration**: Perform the actual migration process.
-
-## Prerequisites
-
-Ensure that your terminal session is authenticated with AWS. The kcp CLI uses the standard AWS credential chain and supports multiple authentication methods:
-
-**Authentication options:**
-
-- **Environment variables**: Export `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`
-- **AWS credentials file**: Configure with `aws configure` (requires AWS CLI)
-- **AWS SSO/Identity Center**: Use `aws sso login` (requires AWS CLI)
-- **IAM Roles**: Assume roles or use instance profiles
-- **Other tools**: Any tool that sets AWS credentials in the standard locations such as `granted`.
-
-**Verify your authentication:**
-The easiest way to test authentication is to run a kcp command that requires AWS access such as `kcp scan region`, or if you have AWS CLI installed:
-
-```bash
-aws sts get-caller-identity
-```
 
 ## Make Key Infrastructure Decisions
 
@@ -189,11 +174,11 @@ Both sub-commands require the following minimum AWS IAM permissions:
         "kafka:ListReplicators",
         "kafka:ListVpcConnections",
         "kafka:GetCompatibleKafkaVersions",
-        "cloudwatch:GetMetricData",
         "kafka:ListKafkaVersions",
         "kafka:GetBootstrapBrokers",
         "kafka:ListConfigurations",
         "ce:GetCostAndUsage",
+        "cloudwatch:GetMetricData",
         "cloudwatch:GetMetricStatistics",
         "cloudwatch:ListMetrics"
       ],
@@ -349,6 +334,67 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 - Topic metadata
 - Consumer group details
 - Cluster metrics
+
+---
+
+### `kcp report region`
+
+The `kcp report region` command includes the following sub-commands:
+
+- `costs`
+- `metrics`
+
+The sub-commands require the following minimum AWS IAM permissions:
+
+`costs`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ce:GetCostAndUsage"
+            ],
+            "Resource": [
+                "*"
+            ]
+        }
+    ]
+}
+```
+
+`metrics`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "kafka:ListClustersV2",
+                "kafka:DescribeConfigurationRevision"
+            ],
+            "Resource": [
+                "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:ListMetrics",
+                "cloudwatch:GetMetricData"
+            ],
+            "Resource": [
+                "*"
+            ]
+        }
+    ]
+}
+```
 
 ---
 
