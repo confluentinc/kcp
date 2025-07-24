@@ -381,6 +381,20 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 		return
 	}
 
+	// Sort entries by principal first, then by resource type, resource name, operation
+	sort.Slice(aclEntries, func(i, j int) bool {
+		if aclEntries[i].Principal != aclEntries[j].Principal {
+			return aclEntries[i].Principal < aclEntries[j].Principal
+		}
+		if aclEntries[i].ResourceType != aclEntries[j].ResourceType {
+			return aclEntries[i].ResourceType < aclEntries[j].ResourceType
+		}
+		if aclEntries[i].ResourceName != aclEntries[j].ResourceName {
+			return aclEntries[i].ResourceName < aclEntries[j].ResourceName
+		}
+		return aclEntries[i].Operation < aclEntries[j].Operation
+	})
+
 	headers := []string{"Principal", "Resource Type", "Resource Name", "Operation", "Permission Type"}
 
 	var tableData [][]string
