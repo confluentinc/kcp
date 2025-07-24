@@ -347,14 +347,70 @@ func (cs *ClusterScanner) addTopicsSection(md *markdown.Markdown, clusterInfo *t
 	md.AddList(clusterInfo.Topics)
 }
 
-// addAclsSection adds Kafka ACLs list
+// addAclsSection adds Kafka ACLs in a traditional table format
 func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
-	acls := []string{}
-	for _, acl := range clusterInfo.Acls {
-		for _, x := range acl.
+	// Collect all ACL entries
+	type aclEntry struct {
+		Principal      string
+		ResourceType   string
+		ResourceName   string
+		Operation      string
+		PermissionType string
 	}
 
-	md.AddList(acls)
+	var aclEntries []aclEntry
+
+	for _, resourceAcls := range clusterInfo.Acls {
+		resourceType := resourceAcls.ResourceType.String()
+		resourceName := resourceAcls.ResourceName
+
+		for _, acl := range resourceAcls.Acls {
+			entry := aclEntry{
+				Principal:      acl.Principal,
+				ResourceType:   resourceType,
+				ResourceName:   resourceName,
+				Operation:      acl.Operation.String(),
+				PermissionType: acl.PermissionType.String(),
+			}
+			aclEntries = append(aclEntries, entry)
+		}
+	}
+
+	if len(aclEntries) == 0 {
+		md.AddParagraph("No ACLs found.")
+		return
+	}
+
+	headers := []string{"Principal", "Resource Type", "Resource Name", "Operation", "Permission Type"}
+
+	var tableData [][]string
+	var lastPrincipal string
+
+	for _, entry := range aclEntries {
+		principal := entry.Principal
+		if principal == lastPrincipal {
+			principal = ""
+		} else {
+			lastPrincipal = entry.Principal
+		}
+
+		row := []string{
+			principal,
+			entry.ResourceType,
+			entry.ResourceName,
+			entry.Operation,
+			entry.PermissionType,
+		}
+		tableData = append(tableData, row)
+	}
+
+	md.AddTable(headers, tableData)
+
+	uniquePrincipals := make(map[string]bool)
+	for _, entry := range aclEntries {
+		uniquePrincipals[entry.Principal] = true
+	}
+	md.AddParagraph(fmt.Sprintf("**Summary:** %d ACL entries for %d principals", len(aclEntries), len(uniquePrincipals)))
 }
 
 // getAuthenticationInfo extracts authentication information for provisioned clusters
