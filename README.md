@@ -1,6 +1,6 @@
 # KCP CLI
 
-[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal?ref=badge_shield&issueType=license) [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp-internal?ref=badge_shield&issueType=security)
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=license) [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=security)
 
 This repository is part of the Confluent organization on GitHub.
 It is public and open to contributions from the community.
@@ -310,11 +310,11 @@ Scan a specific MSK cluster for detailed information
     ```
 
   - **Skip Kafka-level scanning:**
-    ```shell
+    `shell
     kcp scan cluster --cluster-arn <cluster-arn> --skip-kafka
-    ```
-> [!NOTE]
-> Use this option when brokers are not reachable or you only need infrastructure-level information.
+    `
+    > [!NOTE]
+    > Use this option when brokers are not reachable or you only need infrastructure-level information.
 
 **Example Usage**
 
@@ -353,18 +353,14 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ce:GetCostAndUsage"
-            ],
-            "Resource": [
-                "*"
-            ]
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ce:GetCostAndUsage"],
+      "Resource": ["*"]
+    }
+  ]
 }
 ```
 
@@ -372,30 +368,23 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "kafka:ListClustersV2",
-                "kafka:DescribeConfigurationRevision"
-            ],
-            "Resource": [
-                "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "cloudwatch:GetMetricStatistics",
-                "cloudwatch:ListMetrics",
-                "cloudwatch:GetMetricData"
-            ],
-            "Resource": [
-                "*"
-            ]
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["kafka:ListClustersV2", "kafka:DescribeConfigurationRevision"],
+      "Resource": ["arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:GetMetricData"
+      ],
+      "Resource": ["*"]
+    }
+  ]
 }
 ```
 
@@ -410,11 +399,13 @@ This command discovers all MSK clusters in a specified AWS region and generates 
 - `--end`: The exclusive end date for cost report (YYYY-MM-DD)
 
 **Granularity Options** (required, choose one):
+
 - `--hourly`: Generate hourly cost report
 - `--daily`: Generate daily cost report
 - `--monthly`: Generate monthly cost report
 
 **Optional Arguments**:
+
 - `--tag`: Scope report to tagged resources (key=value)
 
 **Example Usage**
@@ -769,6 +760,7 @@ This command generates Terraform configurations to provision a new bastion host 
 - `--vpc-id`: The VPC ID of the VPC that the **MSK cluster is deployed in**
 
 **Optional Arguments**:
+
 - `--create-igw`: When set, Terraform will create a new internet gateway in the VPC. If an Internet Gateway is not required, do not set this flag.
 
 **Example Usage**
@@ -891,14 +883,15 @@ This command generates the required Terraform to provision your migration enviro
 - 3: MSK public cluster w/ SASL_SCRAM authentication to Confluent Cloud public cluster.
 
 For type 1 additional flags required:
+
 - `--ansible-control-node-subnet-cidr`: The CIDR of the subnet associated with the ansible control node
 - `--jump-cluster-broker-subnet-config`: The availability zone and CIDR for each of the three Confluent Platform jump cluster brokers
 - `--jump-cluster-broker-iam-role-name`: The Jump cluster broker iam role name that will be used to establish the cluster link
 
 For type 2 additional flags required:
+
 - `--ansible-control-node-subnet-cidr`: The CIDR of the subnet associated with the ansible control node
 - `--jump-cluster-broker-subnet-config`: The availability zone and CIDR for each of the three Confluent Platform jump cluster brokers
-
 
 **Example Usage**
 
@@ -919,7 +912,6 @@ kcp create-asset migration-infra \
   --ansible-control-node-subnet-cidr 10.0.XXX.0/24 \
   --jump-cluster-broker-subnet-config us-east-1a:10.0.XXX.0/24,us-east-1b:10.0.XXX.0/24,us-east-1c:10.0.XXX.0/24
 ```
-
 
 **Output:**
 The command creates a `migration-infra` directory containing Terraform configurations that provision:
@@ -995,7 +987,6 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 > [!NOTE]
 > A `README.md` is generated in the `reverse-proxy` directory to further assist in setting up the reverse proxy on your local machine to view the private networked Confluent Cloud cluster.
-
 
 ## Development
 
