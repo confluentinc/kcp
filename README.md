@@ -436,6 +436,34 @@ The command generates a `cost_report` directory, splitting reports by region whi
 
 ---
 
+#### `kcp report region metrics`
+
+This command collates important MSK Kafka metrics per cluster in a specified AWS region and generates a comprehensive report.
+
+**Required Arguments**:
+
+- `--region`: The region where the cost report will be created for
+- `--start`: The inclusive start date for cost report (YYYY-MM-DD)
+- `--end`: The exclusive end date for cost report (YYYY-MM-DD)
+
+**Example Usage**
+
+```shell
+kcp report region costs \
+--start 2025-07-01 \
+--end 2025-08-01 \
+--region us-east-1
+```
+
+**Output:**
+The command generates two files - `<aws-region>-metrics.md` and `<aws-region>-metrics.json` file containing:
+
+- Broker details
+- Metrics summary - average ingress/egress throughput, total partitions
+- Easy-to-copy metrics values for a TCO calculator
+
+---
+
 ### `kcp create-asset`
 
 The `kcp create-asset` command includes the following sub-commands:
