@@ -153,6 +153,8 @@ You can also set environment variables individually if you opt not to use the sc
 >
 > However, they can be mixed and matched, for example if you are only planning to run commands within the region `us-east-1`, setting the environment variable `REGION` will avoid having to set the flag on all commands that need it.
 
+---
+
 ### `kcp scan`
 
 The `kcp scan` command includes the following sub-commands:
@@ -395,6 +397,42 @@ The sub-commands require the following minimum AWS IAM permissions:
     ]
 }
 ```
+
+#### `kcp report region costs`
+
+This command discovers all MSK clusters in a specified AWS region and generates a comprehensive report.
+
+**Required Arguments**:
+
+- `--region`: The region where the cost report will be created for
+- `--start`: The inclusive start date for cost report (YYYY-MM-DD)
+- `--end`: The exclusive end date for cost report (YYYY-MM-DD)
+
+**Granularity Options** (required, choose one):
+- `--hourly`: Generate hourly cost report
+- `--daily`: Generate daily cost report
+- `--monthly`: Generate monthly cost report
+
+**Optional Arguments**:
+- `--tag`: Scope report to tagged resources (key=value)
+
+**Example Usage**
+
+```shell
+kcp report region costs \
+--monthly \
+--start 2025-07-01 \
+--end 2025-08-01 \
+--region us-east-1 \
+--tag Environment=Staging \
+--tag Owner=kcp-team
+```
+
+**Output:**
+The command generates a `cost_report` directory, splitting reports by region which contain three files - `cost_report-<aws-region>.csv`, `cost_report-<aws-region>.md` and `cost_report-<aws-region>.json` file containing:
+
+- Total cost of MSK based on the time granularity specified.
+- Itemised cost of each usage type.
 
 ---
 
