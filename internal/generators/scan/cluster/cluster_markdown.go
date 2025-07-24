@@ -93,7 +93,7 @@ func (cs *ClusterScanner) addSummarySection(md *markdown.Markdown, clusterInfo *
 		fmt.Sprintf("**Status:** %s", string(clusterInfo.Cluster.State)),
 		fmt.Sprintf("**Region:** %s", clusterInfo.Region),
 		fmt.Sprintf("**Topics:** %d", len(clusterInfo.Topics)),
-		fmt.Sprintf("**ACLs:** %d", len(clusterInfo.Acls)),
+		fmt.Sprintf("**ACLs:** %d", cs.getTotalAcls(clusterInfo)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(clusterInfo.ClientVpcConnections)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(clusterInfo.ClusterOperations)),
 		fmt.Sprintf("**Brokers:** %d", len(clusterInfo.Nodes)),
@@ -475,4 +475,14 @@ func (cs *ClusterScanner) getServerlessAuthenticationInfo(cluster kafkatypes.Clu
 	}
 
 	return strings.Join(authTypes, ", ")
+}
+
+func (cs *ClusterScanner) getTotalAcls(clusterInfo *types.ClusterInformation) int {
+	// Sarama groups ACLs by resource type --> name --> pattern. This is required to get
+	// total number of ACLs for the cluster.
+	totalAcls := 0
+	for _, resourceAcls := range clusterInfo.Acls {
+		totalAcls += len(resourceAcls.Acls)
+	}
+	return totalAcls
 }
