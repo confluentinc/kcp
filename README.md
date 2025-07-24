@@ -27,6 +27,7 @@ Please see the CHANGELOG.md for details of recent updates.
   - [kcp Commands](#kcp-commands)
     - [`kcp init`](#kcp-init)
     - [`kcp scan`](#kcp-scan)
+    - [`kcp report region`](#kcp-report-region)
     - [`kcp create-asset`](#kcp-create-asset)
 - [Development](#development)
 
