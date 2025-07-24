@@ -264,7 +264,7 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 ### `kcp create-asset`
 
-The `kcp scan` command includes the following sub-commands:
+The `kcp create-asset` command includes the following sub-commands:
 
 - `bastion-host`
 - `migration-infra`
@@ -564,6 +564,9 @@ This command generates Terraform configurations to provision a new bastion host 
 - `--region`: The region where the bastion host will be provisioned in
 - `--bastion-host-cidr`: The CIDR of the public subnet associated with the bastion host
 - `--vpc-id`: The VPC ID of the VPC that the **MSK cluster is deployed in**
+
+**Optional Arguments**:
+- `--create-igw`: When set, Terraform will create a new internet gateway in the VPC. If an Internet Gateway is not required, do not set this flag.
 
 **Example Usage**
 
