@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -466,5 +467,22 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 	clusterInfo.Topics = topics
 
+	acls, err := cs.scanKafkaAcls(admin)
+	if err != nil {
+		return err
+	}
+	clusterInfo.Acls = acls
+
 	return nil
+}
+
+func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]sarama.ResourceAcls, error) {
+	slog.Info("🔍 scanning for kafka acls", "clusterArn", cs.clusterArn)
+
+	acls, err := admin.ListAcls()
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
+	}
+
+	return acls, nil
 }
