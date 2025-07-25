@@ -191,6 +191,9 @@ func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 						ClusterID:    "test-cluster-id",
 					}, nil
 				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
+				},
 				CloseFunc: func() error { return nil },
 			}
 
@@ -505,6 +508,9 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						ClusterID:    "test-cluster-id",
 					}, nil
 				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
+				},
 				CloseFunc: func() error { return nil },
 			}
 
@@ -770,6 +776,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClusterID: "test-cluster-id",
 							}, nil
 						},
+						ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+							return []sarama.ResourceAcls{}, nil
+						},
 						CloseFunc: func() error {
 							adminClosed = true
 							return nil
@@ -792,6 +801,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							return &client.ClusterKafkaMetadata{
 								ClusterID: "test-cluster-id",
 							}, nil
+						},
+						ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+							return []sarama.ResourceAcls{}, nil
 						},
 						CloseFunc: func() error {
 							adminClosed = true
@@ -1085,6 +1097,9 @@ func TestClusterScanner_Run(t *testing.T) {
 					},
 					GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
 						return &client.ClusterKafkaMetadata{ClusterID: "test-cluster-id"}, nil
+					},
+					ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+						return []sarama.ResourceAcls{}, nil
 					},
 					CloseFunc: func() error { return nil },
 				}, nil
@@ -1891,6 +1906,9 @@ func TestClusterScanner_DescribeKafkaCluster(t *testing.T) {
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
 					return tt.mockClusterMetadata, tt.mockError
 				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
+				},
 				CloseFunc: func() error { return nil },
 			}
 
@@ -1959,6 +1977,9 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				},
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
 					return tt.mockClusterMetadata, tt.mockDescribeError
+				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
 				},
 				CloseFunc: func() error { return nil },
 			}
@@ -2161,6 +2182,9 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 						ControllerID: 1,
 						ClusterID:    "test-cluster-id",
 					}, nil
+				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
 				},
 				CloseFunc: func() error {
 					return tt.adminCloseErr
@@ -2406,6 +2430,9 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 					return &client.ClusterKafkaMetadata{
 						ClusterID: "test-cluster-id",
 					}, nil
+				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
 				},
 				CloseFunc: func() error { return nil },
 			}

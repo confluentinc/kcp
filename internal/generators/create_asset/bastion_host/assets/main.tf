@@ -1,3 +1,20 @@
+resource "random_string" "suffix" {
+  length  = 4
+  special = false
+  numeric = false
+  upper   = false
+}
+
+data "http" "ec2_instance_connect" {
+  url = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+}
+
+locals {
+  ec2_instance_connect_ip = [
+    for e in jsondecode(data.http.ec2_instance_connect.response_body)["prefixes"] : e.ip_prefix if e.region == "${var.aws_region}" && e.service == "EC2_INSTANCE_CONNECT"
+  ]
+}
+
 resource "tls_private_key" "ssh_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -16,13 +33,13 @@ resource "local_file" "public_key" {
 }
 
 resource "aws_key_pair" "deployer" {
-  key_name   = "migration-ssh-key"
+  key_name   = "migration-ssh-key-${random_string.suffix.result}"
   public_key = tls_private_key.ssh_key.public_key_openssh
 }
 
 data "aws_ami" "amzn_linux_ami" {
   most_recent = true
-  owners      = ["137112412989"] # Amazon's official account ID
+  owners      = ["137112412989"]
 
   filter {
     name   = "name"
@@ -45,11 +62,21 @@ data "aws_ami" "amzn_linux_ami" {
   }
 }
 
-
 resource "aws_internet_gateway" "igw" {
+  count = var.create_igw ? 1 : 0
+
   vpc_id = var.vpc_id
   tags = {
-    Name = "migration-bastion-host-igw"
+    Name = "migration-jumpserver-igw"
+  }
+}
+
+data "aws_internet_gateway" "existing_internet_gateway" {
+  count = var.create_igw ? 0 : 1
+
+  filter {
+    name   = "attachment.vpc-id"
+    values = [var.vpc_id]
   }
 }
 
@@ -57,7 +84,7 @@ resource "aws_route_table" "public_rt" {
   vpc_id = var.vpc_id
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
+    gateway_id = var.create_igw ? aws_internet_gateway.igw[0].id : data.aws_internet_gateway.existing_internet_gateway[0].id
   }
 
   tags = {
@@ -67,6 +94,12 @@ resource "aws_route_table" "public_rt" {
 
 data "aws_availability_zones" "available" {
   state = "available"
+
+  # Filter out wavelength zones that restrict `map_public_ip_on_launch`.
+  filter {
+    name   = "opt-in-status"
+    values = ["opt-in-not-required"]
+  }
 }
 
 resource "aws_subnet" "public_subnet" {
@@ -89,10 +122,10 @@ resource "aws_security_group" "bastion_host_security_group" {
   vpc_id = var.vpc_id
 
   ingress {
-    from_port   = 22
+    from_port   = 0
     to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    protocol    = "TCP"
+    cidr_blocks = ["${local.ec2_instance_connect_ip[0]}"]
   }
 
   egress {

@@ -565,12 +565,6 @@ func TestNewKafkaAdmin(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, admin)
-
-				// Verify the admin client implements the interface
-				_, ok := admin.(KafkaAdmin)
-				assert.True(t, ok)
-
-				// Clean up
 				admin.Close()
 			}
 		})
