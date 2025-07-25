@@ -505,7 +505,7 @@ kcp report cluster metrics \
 ```
 
 **Output:**
-The command generates two files - `<aws-region>-metrics.md` and `<aws-region>-metrics.json` file containing:
+The command generates two files - `<aws-cluster>-metrics.md` and `<aws-cluster>-metrics.json` file containing:
 
 - Broker details
 - Metrics summary - average ingress/egress throughput, total partitions
