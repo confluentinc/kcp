@@ -34,7 +34,6 @@ var (
 
 func NewReportClusterMetricsCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
-		Hidden: true,
 		Use:    "metrics",
 		Short:  "Generate metrics report on an msk cluster",
 		Long: `Generate a metrics report on an msk cluster.
