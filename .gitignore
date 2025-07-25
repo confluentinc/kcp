@@ -45,7 +45,12 @@ migration-plan/
 .env
 .DS_Store
 
+# Ignore kcp generated files
+*-metrics.md
+*-metrics.json
+cost_report/
 cluster_scan_*.md
+cluster_scan_*.json
 
 # Added by goreleaser init:
 dist/
