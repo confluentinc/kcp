@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -75,6 +76,11 @@ func (cs *ClusterScanner) generateMarkdownReport(clusterInfo *types.ClusterInfor
 		cs.addTopicsSection(md, clusterInfo)
 	}
 
+	if len(clusterInfo.Acls) > 0 {
+		md.AddHeading("Kafka ACLs", 2)
+		cs.addAclsSection(md, clusterInfo)
+	}
+
 	// Save to file
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }
@@ -87,6 +93,7 @@ func (cs *ClusterScanner) addSummarySection(md *markdown.Markdown, clusterInfo *
 		fmt.Sprintf("**Status:** %s", string(clusterInfo.Cluster.State)),
 		fmt.Sprintf("**Region:** %s", clusterInfo.Region),
 		fmt.Sprintf("**Topics:** %d", len(clusterInfo.Topics)),
+		fmt.Sprintf("**ACLs:** %d", cs.getTotalAcls(clusterInfo)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(clusterInfo.ClientVpcConnections)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(clusterInfo.ClusterOperations)),
 		fmt.Sprintf("**Brokers:** %d", len(clusterInfo.Nodes)),
@@ -204,8 +211,28 @@ func (cs *ClusterScanner) addVpcConnectionsSection(md *markdown.Markdown, cluste
 func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
 	headers := []string{"Operation ARN", "Operation Type", "Status", "Start Time"}
 
+	operations := make([]kafkatypes.ClusterOperationV2Summary, len(clusterInfo.ClusterOperations))
+	copy(operations, clusterInfo.ClusterOperations)
+
+	// Sort operations by start time in descending order (most recent first)
+	sort.Slice(operations, func(i, j int) bool {
+		if operations[i].StartTime == nil && operations[j].StartTime == nil {
+			return false
+		}
+		if operations[i].StartTime == nil {
+			return false
+		}
+		if operations[j].StartTime == nil {
+			return true
+		}
+		return operations[i].StartTime.After(*operations[j].StartTime)
+	})
+
+	maxOperations := min(5, len(operations))
+	operations = operations[:maxOperations]
+
 	var tableData [][]string
-	for _, operation := range clusterInfo.ClusterOperations {
+	for _, operation := range operations {
 		startTime := "N/A"
 		if operation.StartTime != nil {
 			startTime = operation.StartTime.Format("2006-01-02 15:04:05")
@@ -230,6 +257,10 @@ func (cs *ClusterScanner) addClusterOperationsSection(md *markdown.Markdown, clu
 		tableData = append(tableData, row)
 	}
 
+	if len(clusterInfo.ClusterOperations) > 5 {
+		md.AddParagraph(fmt.Sprintf("**Note:** Only showing 5 of %d most recent cluster operations.", len(clusterInfo.ClusterOperations)))
+	}
+
 	md.AddTable(headers, tableData)
 }
 
@@ -238,18 +269,32 @@ func (cs *ClusterScanner) addNodesSection(md *markdown.Markdown, clusterInfo *ty
 	headers := []string{"Node ARN", "Node Type", "Instance Type"}
 
 	var tableData [][]string
+	filteredNodes := 0
+
 	for _, node := range clusterInfo.Nodes {
 		instanceType := "N/A"
 		if node.InstanceType != nil {
 			instanceType = *node.InstanceType
 		}
 
+		nodeARN := aws.ToString(node.NodeARN)
+
+		if nodeARN == "" && instanceType == "N/A" {
+			filteredNodes++
+			continue
+		}
+
 		row := []string{
-			aws.ToString(node.NodeARN),
+			nodeARN,
 			string(node.NodeType),
 			instanceType,
 		}
 		tableData = append(tableData, row)
+	}
+
+	// TODO: Investigate and add further info about what these nodes actually are.
+	if filteredNodes > 0 {
+		md.AddParagraph(fmt.Sprintf("**Note:** %d nodes with empty ARN and no instance type information are hidden from this table.", filteredNodes))
 	}
 
 	md.AddTable(headers, tableData)
@@ -293,6 +338,90 @@ func (cs *ClusterScanner) addCompatibleVersionsSection(md *markdown.Markdown, cl
 // addTopicsSection adds Kafka topics list
 func (cs *ClusterScanner) addTopicsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
 	md.AddList(clusterInfo.Topics)
+}
+
+// addAclsSection adds Kafka ACLs in a table format
+func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
+	type aclEntry struct {
+		Principal      string
+		ResourceType   string
+		ResourceName   string
+		Host           string
+		Operation      string
+		PermissionType string
+	}
+
+	var aclEntries []aclEntry
+
+	for _, resourceAcls := range clusterInfo.Acls {
+		resourceType := resourceAcls.ResourceType.String()
+		resourceName := resourceAcls.ResourceName
+
+		for _, acl := range resourceAcls.Acls {
+			entry := aclEntry{
+				Principal:      acl.Principal,
+				ResourceType:   resourceType,
+				ResourceName:   resourceName,
+				Host:           acl.Host,
+				Operation:      acl.Operation.String(),
+				PermissionType: acl.PermissionType.String(),
+			}
+			aclEntries = append(aclEntries, entry)
+		}
+	}
+
+	if len(aclEntries) == 0 {
+		md.AddParagraph("No ACLs found.")
+		return
+	}
+
+	// Sort entries by principal first, then by resource type, resource name, operation
+	sort.Slice(aclEntries, func(i, j int) bool {
+		if aclEntries[i].Principal != aclEntries[j].Principal {
+			return aclEntries[i].Principal < aclEntries[j].Principal
+		}
+
+		if aclEntries[i].ResourceType != aclEntries[j].ResourceType {
+			return aclEntries[i].ResourceType < aclEntries[j].ResourceType
+		}
+
+		if aclEntries[i].ResourceName != aclEntries[j].ResourceName {
+			return aclEntries[i].ResourceName < aclEntries[j].ResourceName
+		}
+		return aclEntries[i].Operation < aclEntries[j].Operation
+	})
+
+	headers := []string{"Principal", "Resource Type", "Resource Name", "Host", "Operation", "Permission Type"}
+
+	var tableData [][]string
+	var lastPrincipal string
+
+	for _, entry := range aclEntries {
+		principal := entry.Principal
+		if principal == lastPrincipal {
+			principal = ""
+		} else {
+			lastPrincipal = entry.Principal
+		}
+
+		row := []string{
+			principal,
+			entry.ResourceType,
+			entry.ResourceName,
+			entry.Host,
+			entry.Operation,
+			entry.PermissionType,
+		}
+		tableData = append(tableData, row)
+	}
+
+	md.AddTable(headers, tableData)
+
+	uniquePrincipals := make(map[string]bool)
+	for _, entry := range aclEntries {
+		uniquePrincipals[entry.Principal] = true
+	}
+	md.AddParagraph(fmt.Sprintf("**Summary:** %d ACL entries for %d principals", len(aclEntries), len(uniquePrincipals)))
 }
 
 // getAuthenticationInfo extracts authentication information for provisioned clusters
@@ -346,4 +475,14 @@ func (cs *ClusterScanner) getServerlessAuthenticationInfo(cluster kafkatypes.Clu
 	}
 
 	return strings.Join(authTypes, ", ")
+}
+
+func (cs *ClusterScanner) getTotalAcls(clusterInfo *types.ClusterInformation) int {
+	// Sarama groups ACLs by resource type --> name --> pattern. This is required to get
+	// total number of ACLs for the cluster.
+	totalAcls := 0
+	for _, resourceAcls := range clusterInfo.Acls {
+		totalAcls += len(resourceAcls.Acls)
+	}
+	return totalAcls
 }
