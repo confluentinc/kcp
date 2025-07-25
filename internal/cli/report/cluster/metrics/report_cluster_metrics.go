@@ -9,6 +9,8 @@ import (
 	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
+	"github.com/confluentinc/kcp/internal/types"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
@@ -113,6 +115,21 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create msk client: %v", err)
 	}
 
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+		switch opts.AuthType {
+		case types.AuthTypeIAM:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithIAMAuth())
+		case types.AuthTypeSASLSCRAM:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithSASLSCRAMAuth(opts.SASLScramUsername, opts.SASLScramPassword))
+		case types.AuthTypeUnauthenticated:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithUnauthenticatedAuth())
+		case types.AuthTypeTLS:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithTLSAuth(opts.TLSCACert, opts.TLSClientCert, opts.TLSClientKey))
+		default:
+			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", opts.AuthType)
+		}
+	}
+
 	mskService := msk.NewMSKService(mskClient)
 
 	cloudWatchClient, err := client.NewCloudWatchClient(opts.Region)
@@ -122,7 +139,7 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 
 	metricService := metrics.NewMetricService(cloudWatchClient, opts.StartDate, opts.EndDate)
 
-	regionMetrics := rrm.NewClusterMetrics(mskService, metricService, *opts)
+	regionMetrics := rrm.NewClusterMetrics(mskService, metricService, kafkaAdminFactory, *opts)
 	if err := regionMetrics.Run(); err != nil {
 		return fmt.Errorf("failed to report region metrics: %v", err)
 	}
@@ -139,6 +156,18 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 	region := arnParts[3]
 	if region == "" {
 		return nil, fmt.Errorf("region not found in cluster ARN: %s", clusterArn)
+	}
+
+	var authType types.AuthType
+	switch {
+	case useSaslIam:
+		authType = types.AuthTypeIAM
+	case useSaslScram:
+		authType = types.AuthTypeSASLSCRAM
+	case useUnauthenticated:
+		authType = types.AuthTypeUnauthenticated
+	case useTls:
+		authType = types.AuthTypeTLS
 	}
 
 	const dateFormat = "2006-01-02"
@@ -158,10 +187,17 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 	}
 
 	opts := rrm.ClusterMetricsOpts{
-		Region:     region,
-		StartDate:  startDate,
-		EndDate:    endDate,
-		ClusterArn: clusterArn,
+		Region:            region,
+		StartDate:         startDate,
+		EndDate:           endDate,
+		ClusterArn:        clusterArn,
+		SkipKafka:         skipKafka,
+		AuthType:          authType,
+		SASLScramUsername: saslScramUsername,
+		SASLScramPassword: saslScramPassword,
+		TLSCACert:         tlsCaCert,
+		TLSClientKey:      tlsClientKey,
+		TLSClientCert:     tlsClientCert,
 	}
 
 	return &opts, nil

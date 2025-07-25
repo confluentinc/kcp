@@ -12,28 +12,40 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/client"
 )
 
 type ClusterMetricsOpts struct {
-	Region     string
-	StartDate  time.Time
-	EndDate    time.Time
-	ClusterArn string
+	Region            string
+	StartDate         time.Time
+	EndDate           time.Time
+	ClusterArn        string
+	SkipKafka         bool
+	AuthType          types.AuthType
+	SASLScramUsername string
+	SASLScramPassword string
+	TLSCACert         string
+	TLSClientCert     string
+	TLSClientKey      string
 }
 
 type ClusterMetricsCollector struct {
 	region        string
 	mskService    MSKService
 	metricService MetricService
+	kafkaAdminFactory KafkaAdminFactory
 	startDate     time.Time
 	endDate       time.Time
 	clusterArn    string
+	authType      types.AuthType
 }
 
 type MSKService interface {
 	DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error)
 	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
 }
+
+type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
 
 type MetricService interface {
 	GetAverageMetric(clusterName string, metricName string, node *int) (float64, error)
@@ -42,14 +54,16 @@ type MetricService interface {
 	GetServerlessPeakMetric(clusterName string, metricName string) (float64, error)
 }
 
-func NewClusterMetrics(mskService MSKService, metricService MetricService, opts ClusterMetricsOpts) *ClusterMetricsCollector {
+func NewClusterMetrics(mskService MSKService, metricService MetricService, kafkaAdminFactory KafkaAdminFactory, opts ClusterMetricsOpts) *ClusterMetricsCollector {
 	return &ClusterMetricsCollector{
 		region:        opts.Region,
 		mskService:    mskService,
 		metricService: metricService,
+		kafkaAdminFactory: kafkaAdminFactory,		
 		startDate:     opts.StartDate,
 		endDate:       opts.EndDate,
 		clusterArn:    opts.ClusterArn,
+		authType:      opts.AuthType,
 	}
 }
 
@@ -60,6 +74,8 @@ func (rm *ClusterMetricsCollector) Run() error {
 	if err != nil {
 		return fmt.Errorf("❌ Failed to get clusters: %v", err)
 	}
+
+	
 
 	clusterMetrics, err := rm.processCluster(*cluster)
 	if err != nil {
@@ -183,6 +199,10 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 			return nil, fmt.Errorf("failed to process node: %v", err)
 		}
 
+		if cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo != nil {
+			nodeMetric.VolumeSizeGB = aws.Int(int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize))
+		}
+
 		nodesMetrics = append(nodesMetrics, *nodeMetric)
 	}
 
@@ -253,7 +273,7 @@ func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, no
 	nodeMetric := types.NodeMetrics{
 		NodeID:       nodeID,
 		InstanceType: &instanceType,
-		VolumeSizeGB: 0,
+		VolumeSizeGB: nil,
 	}
 
 	averageMetricAssignments := []struct {
@@ -264,6 +284,7 @@ func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, no
 		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecAvg},
 		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecAvg},
 		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedAvg},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesAvg},
 	}
 
 	var wg sync.WaitGroup
@@ -303,6 +324,7 @@ func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, no
 		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecMax},
 		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecMax},
 		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedMax},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesMax},
 		{"ClientConnectionCount", &nodeMetric.ClientConnectionCountMax},
 		{"PartitionCount", &nodeMetric.PartitionCountMax},
 		{"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
@@ -348,7 +370,7 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 	nodeMetric := types.NodeMetrics{
 		NodeID:       1,
 		InstanceType: nil,
-		VolumeSizeGB: 0,
+		VolumeSizeGB: nil,
 	}
 
 	averageMetricAssignments := []struct {
@@ -359,6 +381,7 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecAvg},
 		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecAvg},
 		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedAvg},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesAvg},
 	}
 
 	var wg sync.WaitGroup
@@ -398,6 +421,7 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecMax},
 		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecMax},
 		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedMax},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesMax},
 		{"ClientConnectionCount", &nodeMetric.ClientConnectionCountMax},
 		{"PartitionCount", &nodeMetric.PartitionCountMax},
 		{"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
