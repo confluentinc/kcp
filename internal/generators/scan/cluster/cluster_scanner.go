@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -476,7 +475,7 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	return nil
 }
 
-func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]sarama.ResourceAcls, error) {
+func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, error) {
 	slog.Info("🔍 scanning for kafka acls", "clusterArn", cs.clusterArn)
 
 	acls, err := admin.ListAcls()
@@ -484,5 +483,22 @@ func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]sarama.Resou
 		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
 	}
 
-	return acls, nil
+	// Flatten the ACLs for easier processing
+	var flattenedAcls []types.Acls
+	for _, resourceAcl := range acls {
+		for _, acl := range resourceAcl.Acls {
+			flattenedAcl := types.Acls{
+				ResourceType:        resourceAcl.ResourceType.String(),
+				ResourceName:        resourceAcl.ResourceName,
+				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
+				Principal:           acl.Principal,
+				Host:                acl.Host,
+				Operation:           acl.Operation.String(),
+				PermissionType:      acl.PermissionType.String(),
+			}
+			flattenedAcls = append(flattenedAcls, flattenedAcl)
+		}
+	}
+
+	return flattenedAcls, nil
 }
