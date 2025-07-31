@@ -41,17 +41,15 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
 		Use:   "acls",
 		Short: "Convert Kafka ACLs to Confluent Cloud ACLs.",
-		Long: `Convert Kafka ACLs to Confluent Cloud ACLs as individual Terraform resources.
-
-		TODO: ...
-
-`,
+		Long:  "Convert Kafka ACLs to Confluent Cloud ACLs as individual Terraform resources.",
+		
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConvertKafkaAcls()
 		},
 	}
 
 	aclsCmd.Flags().StringVar(&clusterFile, "cluster-file", "", "The cluster json file produced from 'scan cluster' command")
+	aclsCmd.Flags().StringVar(&outputDir, "output-dir", "", "The directory to write the ACL files to")
 
 	aclsCmd.MarkFlagRequired("cluster-file")
 
@@ -74,7 +72,9 @@ func runConvertKafkaAcls() error {
 		return fmt.Errorf("failed to parse cluster JSON: %w", err)
 	}
 
-	outputDir = fmt.Sprintf("%s_acls", *clusterData.Cluster.ClusterName)
+	if outputDir == "" {
+		outputDir = fmt.Sprintf("%s_acls", *clusterData.Cluster.ClusterName)
+	}
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)

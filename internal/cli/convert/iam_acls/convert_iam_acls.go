@@ -2,6 +2,7 @@ package iam_acls
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed assets
+var assetsFS embed.FS
 
 type ACLMapping struct {
 	Operation       string
@@ -154,18 +158,15 @@ var aclMap = map[string]ACLMapping{
 
 var (
 	roleArn string
+	outputDir string
 )
 
 func NewConvertIamAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
 		Use:   "iam-acls",
 		Short: "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
-		Long: `Convert IAM ACLs to Confluent Cloud IAM ACLs as individual Terraform resources.
-
-		Example:
-		  kcp convert iam-acls --role-arn arn:aws:iam::123456789012:role/MyRole
-
-`,
+		Long: "Convert IAM ACLs to Confluent Cloud IAM ACLs as individual Terraform resources.",
+		
 		RunE: func(cmd *cobra.Command, args []string) error {
 			roleArn, _ = cmd.Flags().GetString("role-arn")
 
@@ -174,7 +175,10 @@ func NewConvertIamAclsCmd() *cobra.Command {
 	}
 
 	aclsCmd.Flags().StringP("role-arn", "r", "", "IAM Role ARN to convert ACLs from (required)")
+	aclsCmd.Flags().StringVar(&outputDir, "output-dir", "", "The directory to write the ACL files to")
+
 	aclsCmd.MarkFlagRequired("role-arn")
+	aclsCmd.MarkFlagRequired("output-dir")
 
 	return aclsCmd
 }
