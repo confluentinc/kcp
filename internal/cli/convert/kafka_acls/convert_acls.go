@@ -39,7 +39,7 @@ type TemplateData struct {
 
 func NewConvertKafkaAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
-		Use:   "acls",
+		Use:   "kafka-acls",
 		Short: "Convert Kafka ACLs to Confluent Cloud ACLs.",
 		Long:  "Convert Kafka ACLs to Confluent Cloud ACLs as individual Terraform resources.",
 		
@@ -130,10 +130,10 @@ func runConvertKafkaAcls() error {
 			return fmt.Errorf("failed to execute template for principal %s: %w", principal, err)
 		}
 
-		fmt.Printf("Generated ACL file: %s (%d ACLs)\n", filepath, len(acls))
+		fmt.Printf("📝 Generated ACL file: %s (%d ACLs)\n", filepath, len(acls))
 	}
 
-	fmt.Printf("Successfully generated ACL files for %d principals in %s\n", len(aclsByPrincipal), outputDir)
+	fmt.Printf("\n✅ Successfully generated ACL files for %d principals in %s\n", len(aclsByPrincipal), outputDir)
 	return nil
 }
 

@@ -240,11 +240,9 @@ func runConvertIamAcls(roleArn string) error {
 		if err := tmpl.Execute(file, templateData); err != nil {
 			return fmt.Errorf("failed to execute template for principal %s: %w", principal, err)
 		}
-
-		fmt.Printf("Generated ACL file: %s (%d ACLs)\n", filepath, len(acls))
 	}
 
-	fmt.Printf("Successfully generated ACL files for %d principals in %s\n", len(aclsByPrincipal), outputDir)
+	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", getPrincipalFromRoleName(), outputDir)
 
 	return nil
 }
