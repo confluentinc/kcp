@@ -4,6 +4,9 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"html/template"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -16,148 +19,122 @@ import (
 //go:embed assets
 var assetsFS embed.FS
 
+type TemplateACL struct {
+	Permission   string
+	ResourceType string
+	Operation    string
+	ResourceName string
+	PatternType  string
+	Principal    string
+	Host         string
+}
+
+type TemplateData struct {
+	Principal string
+	Acls      []TemplateACL
+}
+
 type ACLMapping struct {
 	Operation       string
 	ResourceType    string
-	Description     string
 	RequiresPattern bool
 }
 
 var aclMap = map[string]ACLMapping{
-	// Cluster-level permissions
-	"kafka-cluster:Connect": {
-		Operation:       "CLUSTER_ACTION",
-		ResourceType:    "Cluster",
-		Description:     "Allows connecting to the cluster.",
-		RequiresPattern: false,
-	},
-	"kafka-cluster:DescribeCluster": {
-		Operation:    "DESCRIBE",
-		ResourceType: "Cluster",
-		Description:  "Allows retrieving information about the cluster, including brokers and nodes.",
-
-		RequiresPattern: false,
-	},
 	"kafka-cluster:AlterCluster": {
-		Operation:    "ALTER",
+		Operation:    "Alter",
 		ResourceType: "Cluster",
-		Description:  "Allows altering the cluster, such as updating broker counts.",
-
-		RequiresPattern: false,
-	},
-	"kafka-cluster:DescribeClusterDynamicConfiguration": {
-		Operation:    "DESCRIBE_CONFIGS",
-		ResourceType: "Cluster",
-		Description:  "Allows viewing the dynamic configuration of the cluster.",
-
 		RequiresPattern: false,
 	},
 	"kafka-cluster:AlterClusterDynamicConfiguration": {
-		Operation:    "ALTER_CONFIGS",
+		Operation:    "AlterConfigs",
 		ResourceType: "Cluster",
-		Description:  "Allows modifying the dynamic configuration of the cluster.",
-
 		RequiresPattern: false,
 	},
-
-	// Topic-level permissions (prefixed with 'kafka-cluster:' in IAM)
-	"kafka-cluster:WriteData": {
-		Operation:    "WRITE",
-		ResourceType: "Topic",
-		Description:  "Allows a producer to send messages to a topic.",
-
-		RequiresPattern: true,
-	},
-	"kafka-cluster:ReadData": {
-		Operation:    "READ",
-		ResourceType: "Topic",
-		Description:  "Allows a consumer to fetch messages from a topic.",
-
-		RequiresPattern: true,
-	},
-	"kafka-cluster:CreateTopic": {
-		Operation:    "CREATE",
-		ResourceType: "Topic",
-		Description:  "Allows creating a new topic.",
-
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DeleteTopic": {
-		Operation:    "DELETE",
-		ResourceType: "Topic",
-		Description:  "Allows deleting an existing topic.",
-
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DescribeTopic": {
-		Operation:    "DESCRIBE",
-		ResourceType: "Topic",
-		Description:  "Allows retrieving metadata and configuration for a topic.",
-
+	"kafka-cluster:AlterGroup": {
+		Operation:    "Read",
+		ResourceType: "Group",
 		RequiresPattern: true,
 	},
 	"kafka-cluster:AlterTopic": {
-		Operation:    "ALTER",
+		Operation:    "Alter",
 		ResourceType: "Topic",
-		Description:  "Allows altering topic configurations, like partition counts.",
-
 		RequiresPattern: true,
 	},
-	"kafka-cluster:DescribeTopicConfig": {
-		Operation:    "DESCRIBE_CONFIGS",
+	"kafka-cluster:AlterTopicDynamicConfiguration": {
+		Operation:    "AlterConfigs",
 		ResourceType: "Topic",
-		Description:  "Allows viewing topic-specific configurations.",
-
 		RequiresPattern: true,
 	},
-	"kafka-cluster:AlterTopicConfig": {
-		Operation:    "ALTER_CONFIGS",
+	"kafka-cluster:AlterTransactionalId": {
+		Operation:    "Write",
+		ResourceType: "TransactionalId",
+		RequiresPattern: true,
+	},
+	"kafka-cluster:CreateTopic": {
+		Operation:    "Create",
 		ResourceType: "Topic",
-		Description:  "Allows modifying topic-specific configurations.",
-
-		RequiresPattern: true,
-	},
-
-	// Group and Transactional ID permissions
-	"kafka-cluster:DescribeGroup": {
-		Operation:    "DESCRIBE",
-		ResourceType: "Group",
-		Description:  "Allows describing a consumer group, including its members and offsets.",
-
-		RequiresPattern: true,
-	},
-	"kafka-cluster:AlterGroup": {
-		Operation:    "READ", // Note: AlterGroup maps to READ for consumer group operations like offset commits.
-		ResourceType: "Group",
-		Description:  "Allows a consumer to commit offsets.",
-
 		RequiresPattern: true,
 	},
 	"kafka-cluster:DeleteGroup": {
-		Operation:    "DELETE",
+		Operation:    "Delete",
 		ResourceType: "Group",
-		Description:  "Allows deleting a consumer group.",
-
+		RequiresPattern: true,
+	},
+	"kafka-cluster:DeleteTopic": {
+		Operation:    "Delete",
+		ResourceType: "Topic",
+		RequiresPattern: true,
+	},
+	"kafka-cluster:DescribeCluster": {
+		Operation:    "Describe",
+		ResourceType: "Cluster",
+		RequiresPattern: false,
+	},
+	"kafka-cluster:DescribeClusterDynamicConfiguration": {
+		Operation:    "DescribeConfigs",
+		ResourceType: "Cluster",
+		RequiresPattern: false,
+	},
+	"kafka-cluster:DescribeGroup": {
+		Operation:    "Describe",
+		ResourceType: "Group",
+		RequiresPattern: true,
+	},
+	"kafka-cluster:DescribeTopic": {
+		Operation:    "Describe",
+		ResourceType: "Topic",
+		RequiresPattern: true,
+	},
+	"kafka-cluster:DescribeTopicDynamicConfiguration": {
+		Operation:    "DescribeConfigs",
+		ResourceType: "Topic",
 		RequiresPattern: true,
 	},
 	"kafka-cluster:DescribeTransactionalId": {
-		Operation:    "DESCRIBE",
+		Operation:    "Describe",
 		ResourceType: "TransactionalId",
-		Description:  "Allows describing a transactional ID.",
-
 		RequiresPattern: true,
 	},
-	"kafka-cluster:WriteTransactionalId": {
-		Operation:    "WRITE",
-		ResourceType: "TransactionalId",
-		Description:  "Allows producers to use transactional capabilities.",
-
+	"kafka-cluster:ReadData": {
+		Operation:    "Read",
+		ResourceType: "Topic",
+		RequiresPattern: true,
+	},
+	"kafka-cluster:WriteData": {
+		Operation:    "Write",
+		ResourceType: "Topic",
+		RequiresPattern: true,
+	},
+	"kafka-cluster:WriteDataIdempotently": {
+		Operation:    "IdempotentWrite",
+		ResourceType: "Cluster",
 		RequiresPattern: true,
 	},
 }
 
 var (
-	roleArn string
+	roleArn   string
 	outputDir string
 )
 
@@ -165,8 +142,8 @@ func NewConvertIamAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
 		Use:   "iam-acls",
 		Short: "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
-		Long: "Convert IAM ACLs to Confluent Cloud IAM ACLs as individual Terraform resources.",
-		
+		Long:  "Convert IAM ACLs to Confluent Cloud IAM ACLs as individual Terraform resources.",
+
 		RunE: func(cmd *cobra.Command, args []string) error {
 			roleArn, _ = cmd.Flags().GetString("role-arn")
 
@@ -209,7 +186,63 @@ func runConvertIamAcls(roleArn string) error {
 		return nil
 	}
 
-	fmt.Println(extractedACLs)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	aclsByPrincipal := make(map[string][]TemplateACL)
+	for _, acl := range extractedACLs {
+		principal := cleanPrincipalName(getPrincipalFromRoleName())
+
+		templateACL := TemplateACL{
+			Permission:   acl.PermissionType,
+			ResourceType: acl.ResourceType,
+			Operation:    acl.Operation,
+			ResourceName: acl.ResourceName,
+			PatternType:  acl.ResourcePatternType,
+			Principal:    principal,
+			Host:         acl.Host,
+		}
+
+		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], templateACL)
+	}
+
+	tmplContent, err := assetsFS.ReadFile("assets/acls.tmpl")
+	if err != nil {
+		return fmt.Errorf("failed to read template file: %w", err)
+	}
+
+	tmpl, err := template.New("acls").Funcs(template.FuncMap{
+		"lower": strings.ToLower,
+	}).Parse(string(tmplContent))
+	if err != nil {
+		return fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	// Generate a separate file for each principal
+	for principal, acls := range aclsByPrincipal {
+		filename := fmt.Sprintf("%s-acls.tf", principal)
+		filepath := filepath.Join(outputDir, filename)
+
+		file, err := os.Create(filepath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %w", filepath, err)
+		}
+		defer file.Close()
+
+		templateData := TemplateData{
+			Principal: principal,
+			Acls:      acls,
+		}
+
+		if err := tmpl.Execute(file, templateData); err != nil {
+			return fmt.Errorf("failed to execute template for principal %s: %w", principal, err)
+		}
+
+		fmt.Printf("Generated ACL file: %s (%d ACLs)\n", filepath, len(acls))
+	}
+
+	fmt.Printf("Successfully generated ACL files for %d principals in %s\n", len(aclsByPrincipal), outputDir)
 
 	return nil
 }
@@ -275,7 +308,7 @@ func createACLFromMapping(mapping ACLMapping, effect string) types.Acls {
 		ResourceType:        mapping.ResourceType,
 		ResourceName:        resourceName,
 		ResourcePatternType: patternType,
-		Principal:           getPrincipalFromRoleName(),
+		Principal:           cleanPrincipalName(getPrincipalFromRoleName()),
 		Host:                "*",
 		Operation:           mapping.Operation,
 		PermissionType:      effect,
@@ -286,4 +319,18 @@ func getPrincipalFromRoleName() string {
 	principal := strings.Split(roleArn, "/")[1]
 
 	return fmt.Sprintf("User:%s", principal)
+}
+
+// Clean the principal name for filename (remove User: prefix and special chars).
+func cleanPrincipalName(principal string) string {
+	name := strings.TrimPrefix(principal, "User:")
+
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.ReplaceAll(name, "@", "_")
+	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, "\\", "_")
+
+	return strings.ToLower(name)
 }
