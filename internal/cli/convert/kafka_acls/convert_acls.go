@@ -1,4 +1,4 @@
-package acls
+package kafka_acls
 
 import (
 	"embed"
@@ -37,7 +37,7 @@ type TemplateData struct {
 	Acls      []TemplateACL
 }
 
-func NewConvertAclsCmd() *cobra.Command {
+func NewConvertKafkaAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
 		Use:   "acls",
 		Short: "Convert Kafka ACLs to Confluent Cloud ACLs.",
@@ -47,7 +47,7 @@ func NewConvertAclsCmd() *cobra.Command {
 
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConvertAcls()
+			return runConvertKafkaAcls()
 		},
 	}
 
@@ -58,7 +58,7 @@ func NewConvertAclsCmd() *cobra.Command {
 	return aclsCmd
 }
 
-func runConvertAcls() error {
+func runConvertKafkaAcls() error {
 	if clusterFile == "" {
 		return fmt.Errorf("cluster-file flag is required")
 	}

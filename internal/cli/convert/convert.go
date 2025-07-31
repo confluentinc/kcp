@@ -1,7 +1,9 @@
 package convert
 
 import (
-	"github.com/confluentinc/kcp/internal/cli/convert/acls"
+	"github.com/confluentinc/kcp/internal/cli/convert/iam_acls"
+	"github.com/confluentinc/kcp/internal/cli/convert/kafka_acls"
+
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +15,8 @@ func NewConvertCmd() *cobra.Command {
 	}
 
 	convertCmd.AddCommand(
-		acls.NewConvertAclsCmd(),
+		kafka_acls.NewConvertKafkaAclsCmd(),
+		iam_acls.NewConvertIamAclsCmd(),
 	)
 
 	return convertCmd
