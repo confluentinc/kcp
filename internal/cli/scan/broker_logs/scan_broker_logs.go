@@ -3,13 +3,16 @@ package broker_logs
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/generators/scan/broker_logs"
+	"github.com/confluentinc/kcp/internal/services/s3"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
 
 var (
-	s3Uri string
+	s3Uri  string
+	region string
 )
 
 func NewScanBrokerLogsCmd() *cobra.Command {
@@ -23,6 +26,8 @@ All flags can be provided via environment variables (uppercase, with underscores
 FLAG                        | ENV_VAR
 ----------------------------|-----------------------------------------------------
 Required flags:
+--s3-uri                    | S3_URI=s3://my-bucket/kafka-logs/folder/
+--region                    | REGION=us-east-1
 `,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -30,8 +35,12 @@ Required flags:
 		RunE:          runScanBrokerLogs,
 	}
 
-	brokerLogsCmd.Flags().StringVar(&s3Uri, "s3-uri", "", "S3 URI to the broker log file (e.g., s3://bucket/path/to/logs.txt)")
+	brokerLogsCmd.Flags().StringVar(&s3Uri, "s3-uri", "", "S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
+	brokerLogsCmd.Flags().StringVar(&region, "region", "", "The AWS region")
+
 	brokerLogsCmd.MarkFlagRequired("s3-uri")
+	brokerLogsCmd.MarkFlagRequired("region")
+
 	return brokerLogsCmd
 }
 
@@ -49,9 +58,19 @@ func runScanBrokerLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse scan broker logs opts: %v", err)
 	}
 
-	scanner := broker_logs.NewBrokerLogsScanner(*opts)
+	s3Client, err := client.NewS3Client(opts.Region)
+	if err != nil {
+		return fmt.Errorf("failed to create S3 client: %w", err)
+	}
 
-	if err := scanner.Run(); err != nil {
+	s3Service := s3.NewS3Service(s3Client)
+
+	brokerLogsScanner, err := broker_logs.NewBrokerLogsScanner(s3Service, *opts)
+	if err != nil {
+		return fmt.Errorf("failed to create broker logs scanner: %v", err)
+	}
+
+	if err := brokerLogsScanner.Run(); err != nil {
 		return err
 	}
 
@@ -60,7 +79,8 @@ func runScanBrokerLogs(cmd *cobra.Command, args []string) error {
 
 func parseScanBrokerLogsOpts() (*broker_logs.BrokerLogsScannerOpts, error) {
 	opts := broker_logs.BrokerLogsScannerOpts{
-		S3Uri: s3Uri,
+		S3Uri:  s3Uri,
+		Region: region,
 	}
 
 	return &opts, nil
