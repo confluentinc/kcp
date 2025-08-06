@@ -32,7 +32,7 @@ func NewBastionHostCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&region, "region", "", "The AWS region to target")
+	requiredFlags.StringVar(&region, "region", "", "AWS region the cost report is generated for")
 	requiredFlags.StringVar(&vpcId, "vpc-id", "", "The VPC ID to target")
 	requiredFlags.IPNetVar(&bastionHostCidr, "bastion-host-cidr", net.IPNet{}, "The bastion host CIDR (e.g. 10.0.255.0/24)")
 	bastionHostCmd.Flags().AddFlagSet(requiredFlags)
