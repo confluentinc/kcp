@@ -2,43 +2,66 @@ package bastion_host
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/confluentinc/kcp/internal/generators/create_asset/bastion_host"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
 	region          string
 	vpcId           string
-	bastionHostCidr string
+	bastionHostCidr net.IPNet
 	createIGW       bool
 )
 
 func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd := &cobra.Command{
-		Use:   "bastion-host",
-		Short: "Create assets for the bastion host",
-		Long: `Create assets for the bastion host
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                     | ENV_VAR
--------------------------|---------------------------
---region                 | REGION=us-east-1
---vpc-id                 | VPC_ID=vpc-1234567890
---bastion-host-cidr      | BASTION_HOST_CIDR=10.0.0.0/16
---create-igw             | CREATE_IGW=false
-`,
+		Use:           "bastion-host",
+		Short:         "Create assets for the bastion host",
+		Long:          "Create Terraform assets for the deploying a bastion host in AWS within you an existing VPC.",
 		SilenceErrors: true,
 		PreRunE:       preRunCreateBastionHost,
 		RunE:          runCreateBastionHost,
 	}
 
-	bastionHostCmd.Flags().StringVar(&region, "region", "", "The AWS region to target")
-	bastionHostCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID to target")
-	bastionHostCmd.Flags().StringVar(&bastionHostCidr, "bastion-host-cidr", "", "The bastion host CIDR to target")
-	bastionHostCmd.Flags().BoolVar(&createIGW, "create-igw", false, "When set, Terraform will create a new internet gateway in the VPC.")
+	groups := map[*pflag.FlagSet]string{}
+
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&region, "region", "", "The AWS region to target")
+	requiredFlags.StringVar(&vpcId, "vpc-id", "", "The VPC ID to target")
+	requiredFlags.IPNetVar(&bastionHostCidr, "bastion-host-cidr", net.IPNet{}, "The bastion host CIDR (e.g. 10.0.255.0/24)")
+	bastionHostCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.BoolVar(&createIGW, "create-igw", false, "When set, Terraform will create a new internet gateway in the VPC.")
+	bastionHostCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
+	bastionHostCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	bastionHostCmd.MarkFlagRequired("region")
 	bastionHostCmd.MarkFlagRequired("vpc-id")
@@ -74,7 +97,7 @@ func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
 	opts := bastion_host.BastionHostOpts{
 		Region:           region,
 		VPCId:            vpcId,
-		PublicSubnetCidr: bastionHostCidr,
+		PublicSubnetCidr: bastionHostCidr.String(),
 		CreateIGW:        createIGW,
 	}
 
