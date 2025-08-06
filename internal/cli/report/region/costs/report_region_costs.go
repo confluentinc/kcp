@@ -97,17 +97,9 @@ func NewReportRegionCostsCmd() *cobra.Command {
 
 	regionCmd.MarkFlagRequired("region")
 
-	// Make start/end pair mutually exclusive with last-X flags.
-	regionCmd.MarkFlagsMutuallyExclusive("start", "last-day")
-	regionCmd.MarkFlagsMutuallyExclusive("start", "last-week")
-	regionCmd.MarkFlagsMutuallyExclusive("start", "last-month")
-	regionCmd.MarkFlagsMutuallyExclusive("end", "last-day")
-	regionCmd.MarkFlagsMutuallyExclusive("end", "last-week")
-	regionCmd.MarkFlagsMutuallyExclusive("end", "last-month")
-	regionCmd.MarkFlagsMutuallyExclusive("last-day", "last-week")
-	regionCmd.MarkFlagsMutuallyExclusive("last-day", "last-month")
-	regionCmd.MarkFlagsMutuallyExclusive("last-week", "last-month")
-	regionCmd.MarkFlagsOneRequired("start", "end", "last-day", "last-week", "last-month")
+	regionCmd.MarkFlagsMutuallyExclusive("start", "last-day", "last-week", "last-month")
+	regionCmd.MarkFlagsOneRequired("start", "last-day", "last-week", "last-month")
+	regionCmd.MarkFlagsRequiredTogether("start", "end")
 
 	regionCmd.MarkFlagsMutuallyExclusive("hourly", "daily", "monthly")
 	regionCmd.MarkFlagsOneRequired("hourly", "daily", "monthly")
