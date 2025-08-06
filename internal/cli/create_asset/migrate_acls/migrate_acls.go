@@ -11,7 +11,10 @@ func NewMigrateAclsCmd() *cobra.Command {
 	migrateAclsCmd := &cobra.Command{
 		Use:   "migrate-acls",
 		Short: "Migrate ACLs from MSK to Confluent Cloud",
-		Long:  "Migrate ACLs (Kafka and IAM) from MSK to executable Terraform assets for Confluent Cloud.",
+		Long: `Migrate ACLs (Kafka and IAM) from MSK to executable Terraform assets for Confluent Cloud.
+
+This command provides subcommands to convert both Kafka ACLs and IAM ACLs to Confluent Cloud compatible formats.`,
+		SilenceErrors: true,
 	}
 
 	migrateAclsCmd.AddCommand(
