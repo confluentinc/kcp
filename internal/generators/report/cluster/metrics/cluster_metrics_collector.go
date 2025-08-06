@@ -111,15 +111,36 @@ func (rm *ClusterMetricsCollector) processCluster(cluster kafkatypes.Cluster) (*
 	return clusterMetric, nil
 }
 
+func (rm *ClusterMetricsCollector) calculateRetention(nodesMetrics []types.NodeMetrics) (float64, float64) {
+	var totalBytesInPerDay, totalLocalStorageUsed, totalRemoteStorageUsed float64
+
+
+	for _, nodeMetric := range nodesMetrics {
+		totalBytesInPerDay += nodeMetric.BytesInPerSecAvg * 60 * 60 * 24
+		totalLocalStorageUsed += ((nodeMetric.KafkaDataLogsDiskUsedAvg/100) * float64(*nodeMetric.VolumeSizeGB)) * 1024 * 1024 * 1024
+		totalRemoteStorageUsed += nodeMetric.RemoteLogSizeBytesAvg
+	}
+	slog.Info("🔄 total bytes in per sec", "totalBytesInPerSec", totalBytesInPerDay)
+	slog.Info("🔄 total local storage used", "totalLocalStorageUsed", totalLocalStorageUsed)
+	slog.Info("🔄 total remote storage used", "totalRemoteStorageUsed", totalRemoteStorageUsed)
+
+
+	retention_days := (totalLocalStorageUsed + totalRemoteStorageUsed) / totalBytesInPerDay
+	local_retention_days := totalLocalStorageUsed / totalBytesInPerDay
+
+
+	return retention_days, local_retention_days
+}
+
 func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics []types.NodeMetrics) types.ClusterMetricsSummary {
+
+	if len(nodesMetrics) == 0 {
+		return types.ClusterMetricsSummary{}
+	}
 
 	var avgIngressThroughputMegabytesPerSecond float64
 	for _, nodeMetric := range nodesMetrics {
 		avgIngressThroughputMegabytesPerSecond += nodeMetric.BytesInPerSecAvg
-	}
-
-	if len(nodesMetrics) == 0 {
-		return types.ClusterMetricsSummary{}
 	}
 	avgIngressThroughputMegabytesPerSecond = avgIngressThroughputMegabytesPerSecond / 1024 / 1024
 
@@ -158,11 +179,15 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 		peakEgressThroughputMegabytesPerSecond += nodeMetric.BytesOutPerSecMax
 	}
 	peakEgressThroughputMegabytesPerSecond = peakEgressThroughputMegabytesPerSecond / 1024 / 1024
+	
 
 	var partitions float64
 	for _, nodeMetric := range nodesMetrics {
 		partitions += float64(nodeMetric.PartitionCountMax)
 	}
+
+	retention_days, local_retention_hours := rm.calculateRetention(nodesMetrics)
+
 
 	clusterMetricsSummary := types.ClusterMetricsSummary{
 		AvgIngressThroughputMegabytesPerSecond:  &avgIngressThroughputMegabytesPerSecond,
@@ -170,6 +195,8 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 		AvgEgressThroughputMegabytesPerSecond:   &avgEgressThroughputMegabytesPerSecond,
 		PeakEgressThroughputMegabytesPerSecond:  &peakEgressThroughputMegabytesPerSecond,
 		Partitions:                              &partitions,
+		RetentionDays:                      	 &retention_days,
+		LocalRetentionInPrimaryStorageHours:     &local_retention_hours,
 	}
 
 	return clusterMetricsSummary
@@ -209,6 +236,9 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetricsSummary := rm.calculateClusterMetricsSummary(nodesMetrics)
 	clusterMetricsSummary.InstanceType = &instanceType
 	clusterMetricsSummary.TieredStorage = aws.Bool(cluster.Provisioned.StorageMode == kafkatypes.StorageModeTiered)
+	if !*clusterMetricsSummary.TieredStorage {
+		clusterMetricsSummary.LocalRetentionInPrimaryStorageHours = nil
+	}
 
 	followerFetching, err := rm.mskService.IsFetchFromFollowerEnabled(context.Background(), cluster)
 	if err != nil {
@@ -217,8 +247,6 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
 	// // Replication Factor (Optional, Default = 3)
-	// // Retention (Days)
-	// // "Local Retention in Primary Storage (Hrs) ** leave blank if TS = FALSE"
 
 	clusterMetric := types.ClusterMetrics{
 		ClusterName:           *cluster.ClusterName,
@@ -381,7 +409,7 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecAvg},
 		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecAvg},
 		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedAvg},
-		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesAvg},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesAvg},	
 	}
 
 	var wg sync.WaitGroup
