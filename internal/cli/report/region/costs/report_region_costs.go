@@ -16,19 +16,19 @@ import (
 )
 
 var (
-	region  string
+	region string
 
-	start   string
-	end     string
-	lastDay bool
+	start     string
+	end       string
+	lastDay   bool
 	lastWeek  bool
 	lastMonth bool
-	
+
 	hourly  bool
 	daily   bool
 	monthly bool
-	
-	tag     []string
+
+	tag []string
 )
 
 func NewReportRegionCostsCmd() *cobra.Command {
@@ -90,7 +90,7 @@ func NewReportRegionCostsCmd() *cobra.Command {
 			}
 		}
 
-		fmt.Println("\nAll flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})
@@ -177,18 +177,24 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 	if start != "" && end != "" {
 		timeRangeMethods++
 	}
+
+	if lastDay {
+		timeRangeMethods++
+	}
+
 	if lastWeek {
 		timeRangeMethods++
 	}
+
 	if lastMonth {
 		timeRangeMethods++
 	}
 
 	if timeRangeMethods == 0 {
-		return nil, fmt.Errorf("must provide either start/end dates, --last-week, or --last-month")
+		return nil, fmt.Errorf("must provide either start/end dates, --last-day, --last-week, or --last-month")
 	}
 	if timeRangeMethods > 1 {
-		return nil, fmt.Errorf("cannot combine start/end dates with --last-week or --last-month")
+		return nil, fmt.Errorf("cannot combine start/end dates with --last-day, --last-week, or --last-month")
 	}
 
 	// Handle different time range methods
@@ -208,17 +214,22 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 			return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
 		}
 
+	case lastDay:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour).In(now.Location())
+		endDate = now.UTC().Truncate(24 * time.Hour).In(now.Location())
+
+		fmt.Println(startDate, endDate)
+
 	case lastWeek:
 		now := time.Now()
-		// Calculate start of last week (7 days ago)
-		startDate = now.AddDate(0, 0, -7).Truncate(24 * time.Hour)
-		endDate = now.Truncate(24 * time.Hour)
+		startDate = now.AddDate(0, 0, -7).UTC().Truncate(24 * time.Hour).In(now.Location())
+		endDate = now.UTC().Truncate(24 * time.Hour).In(now.Location())
 
 	case lastMonth:
 		now := time.Now()
-		// Calculate start of last month (30 days ago)
-		startDate = now.AddDate(0, 0, -30).Truncate(24 * time.Hour)
-		endDate = now.Truncate(24 * time.Hour)
+		startDate = now.AddDate(0, 0, -30).UTC().Truncate(24 * time.Hour).In(now.Location())
+		endDate = now.UTC().Truncate(24 * time.Hour).In(now.Location())
 	}
 
 	opts := rrc.RegionCosterOpts{
