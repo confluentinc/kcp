@@ -10,8 +10,6 @@ import (
 	"text/template"
 
 	"github.com/confluentinc/kcp/internal/types"
-
-	"github.com/spf13/cobra"
 )
 
 //go:embed assets
@@ -37,26 +35,10 @@ type TemplateData struct {
 	Acls      []TemplateACL
 }
 
-func NewConvertKafkaAclsCmd() *cobra.Command {
-	aclsCmd := &cobra.Command{
-		Use:   "kafka-acls",
-		Short: "Convert Kafka ACLs to Confluent Cloud ACLs.",
-		Long:  "Convert Kafka ACLs to Confluent Cloud ACLs as individual Terraform resources.",
-		
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConvertKafkaAcls()
-		},
-	}
+func RunConvertKafkaAcls(userClusterFile, userOutputDir string) error {
+	clusterFile = userClusterFile
+	outputDir = userOutputDir
 
-	aclsCmd.Flags().StringVar(&clusterFile, "cluster-file", "", "The cluster json file produced from 'scan cluster' command")
-	aclsCmd.Flags().StringVar(&outputDir, "output-dir", "", "The directory to write the ACL files to")
-
-	aclsCmd.MarkFlagRequired("cluster-file")
-
-	return aclsCmd
-}
-
-func runConvertKafkaAcls() error {
 	if clusterFile == "" {
 		return fmt.Errorf("cluster-file flag is required")
 	}

@@ -12,8 +12,6 @@ import (
 	"github.com/confluentinc/kcp/internal/client"
 	iamservice "github.com/confluentinc/kcp/internal/services/iam"
 	"github.com/confluentinc/kcp/internal/types"
-
-	"github.com/spf13/cobra"
 )
 
 //go:embed assets
@@ -140,30 +138,11 @@ var (
 	outputDir string
 )
 
-func NewConvertIamAclsCmd() *cobra.Command {
-	aclsCmd := &cobra.Command{
-		Use:   "iam-acls",
-		Short: "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
-		Long:  "Convert IAM ACLs to Confluent Cloud IAM ACLs as individual Terraform resources.",
-
-		RunE: func(cmd *cobra.Command, args []string) error {
-			roleArn, _ = cmd.Flags().GetString("role-arn")
-
-			return runConvertIamAcls(roleArn)
-		},
-	}
-
-	aclsCmd.Flags().StringP("role-arn", "r", "", "IAM Role ARN to convert ACLs from (required)")
-	aclsCmd.Flags().StringVar(&outputDir, "output-dir", "", "The directory to write the ACL files to")
-
-	aclsCmd.MarkFlagRequired("role-arn")
-	aclsCmd.MarkFlagRequired("output-dir")
-
-	return aclsCmd
-}
-
-func runConvertIamAcls(roleArn string) error {
+func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
 	ctx := context.Background()
+
+	roleArn = userRoleArn
+	outputDir = userOutputDir
 
 	fmt.Printf("🚀 Converting IAM ACLs for role: %s\n", roleArn)
 
@@ -194,7 +173,7 @@ func runConvertIamAcls(roleArn string) error {
 
 	aclsByPrincipal := make(map[string][]TemplateACL)
 	for _, acl := range extractedACLs {
-		principal := cleanPrincipalName(getPrincipalFromRoleName())
+		principal := cleanPrincipalName(getPrincipalFromRoleName(roleArn))
 
 		templateACL := TemplateACL{
 			Permission:   acl.PermissionType,
@@ -242,7 +221,7 @@ func runConvertIamAcls(roleArn string) error {
 		}
 	}
 
-	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", getPrincipalFromRoleName(), outputDir)
+	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", getPrincipalFromRoleName(roleArn), outputDir)
 
 	return nil
 }
@@ -291,7 +270,7 @@ func extractKafkaPermissions(policies *iamservice.RolePolicies) ([]types.Acls, e
 				if strings.HasPrefix(action, "kafka-cluster:") {
 					mapping, found := TranslateIAMToKafkaACL(action)
 					if found {
-						acl := createACLFromMapping(mapping, effect, resources)
+						acl := createACLFromMapping(mapping, effect, resources, roleArn)
 						extractedACLs = append(extractedACLs, acl)
 					} else {
 						continue
@@ -310,7 +289,7 @@ func TranslateIAMToKafkaACL(iamPermission string) (ACLMapping, bool) {
 	return acl, found
 }
 
-func createACLFromMapping(mapping ACLMapping, effect string, resources []string) types.Acls {
+func createACLFromMapping(mapping ACLMapping, effect string, resources []string, roleArn string) types.Acls {
 	// Set defaults
 	resourceName := "*"
 	patternType := "LITERAL"
@@ -328,7 +307,7 @@ func createACLFromMapping(mapping ACLMapping, effect string, resources []string)
 		ResourceType:        mapping.ResourceType,
 		ResourceName:        resourceName,
 		ResourcePatternType: patternType,
-		Principal:           cleanPrincipalName(getPrincipalFromRoleName()),
+		Principal:           cleanPrincipalName(getPrincipalFromRoleName(roleArn)),
 		Host:                "*", // Unsure how we would retrieve this from the IAM policy.
 		Operation:           mapping.Operation,
 		PermissionType:      effect,
@@ -441,7 +420,7 @@ func determineResourceNameAndPattern(resourceName string) (string, string) {
 	return resourceName, "LITERAL"
 }
 
-func getPrincipalFromRoleName() string {
+func getPrincipalFromRoleName(roleArn string) string {
 	principal := strings.Split(roleArn, "/")[1]
 
 	return fmt.Sprintf("User:%s", principal)

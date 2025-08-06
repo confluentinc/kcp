@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/cli/convert"
 	"github.com/confluentinc/kcp/internal/cli/create_asset"
 	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
@@ -46,7 +45,6 @@ var RootCmd = &cobra.Command{
 func init() {
 	RootCmd.AddCommand(
 		i.NewInitCmd(),
-		convert.NewConvertCmd(),
 		create_asset.NewCreateAssetCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
