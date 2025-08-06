@@ -216,20 +216,18 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 
 	case lastDay:
 		now := time.Now()
-		startDate = now.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour).In(now.Location())
-		endDate = now.UTC().Truncate(24 * time.Hour).In(now.Location())
-
-		fmt.Println(startDate, endDate)
+		startDate = now.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
 
 	case lastWeek:
 		now := time.Now()
-		startDate = now.AddDate(0, 0, -7).UTC().Truncate(24 * time.Hour).In(now.Location())
-		endDate = now.UTC().Truncate(24 * time.Hour).In(now.Location())
+		startDate = now.AddDate(0, 0, -7).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
 
 	case lastMonth:
 		now := time.Now()
-		startDate = now.AddDate(0, 0, -30).UTC().Truncate(24 * time.Hour).In(now.Location())
-		endDate = now.UTC().Truncate(24 * time.Hour).In(now.Location())
+		startDate = now.AddDate(0, 0, -30).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
 	}
 
 	opts := rrc.RegionCosterOpts{
