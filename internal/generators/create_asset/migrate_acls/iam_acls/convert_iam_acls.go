@@ -167,6 +167,11 @@ func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
 		return nil
 	}
 
+	if outputDir == "" {
+		principal := cleanPrincipalName(getPrincipalFromRoleName(roleArn))
+		outputDir = fmt.Sprintf("%s_iam_acls", principal)
+	}
+
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}

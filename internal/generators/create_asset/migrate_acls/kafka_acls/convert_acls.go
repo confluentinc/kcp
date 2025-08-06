@@ -39,11 +39,6 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string) error {
 	clusterFile = userClusterFile
 	outputDir = userOutputDir
 
-	if clusterFile == "" {
-		return fmt.Errorf("cluster-file flag is required")
-	}
-
-	// Read and parse the cluster file
 	data, err := os.ReadFile(clusterFile)
 	if err != nil {
 		return fmt.Errorf("failed to read cluster file: %w", err)

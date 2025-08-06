@@ -15,7 +15,7 @@ var (
 
 func NewMigrateIamAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
-		Use:   "iam-acls",
+		Use:   "iam",
 		Short: "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
 		Long: `Convert IAM ACLs to Confluent Cloud IAM ACLs as individual Terraform resources.
 
@@ -32,15 +32,13 @@ FLAG                     | ENV_VAR
 	}
 
 	aclsCmd.Flags().StringVar(&roleArn, "role-arn", "", "IAM Role ARN to convert ACLs from")
-	aclsCmd.Flags().StringVar(&outputDir, "output-dir", "", "The directory to write the ACL files to")
+	aclsCmd.Flags().StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform ACL assets will be written to")
 
 	aclsCmd.MarkFlagRequired("role-arn")
-	aclsCmd.MarkFlagRequired("output-dir")
 
 	return aclsCmd
 }
 
-// sets flag values from corresponding environment variables if flags weren't explicitly provided
 func preRunMigrateIamAcls(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
