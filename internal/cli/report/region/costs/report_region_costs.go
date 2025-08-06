@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -26,35 +27,53 @@ var (
 
 func NewReportRegionCostsCmd() *cobra.Command {
 	regionCmd := &cobra.Command{
-		Use:   "costs",
-		Short: "Generate costs report on an AWS region",
-		Long: `Generate a costs report on an AWS region.
-Specify exactly one granularity flag: --hourly, --daily, or --monthly.
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                     | ENV_VAR
--------------------------|---------------------------
---region                 | REGION=us-east-1
---start                  | START=2024-01-01
---end                    | END=2024-01-02
---hourly                 | HOURLY=true
---daily                  | DAILY=true
---monthly                | MONTHLY=true
---tag                    | TAG=key=value
-`,
+		Use:           "costs",
+		Short:         "Generate costs report on an AWS region",
+		Long:          "Generate a costs report on an AWS region.",
 		SilenceErrors: true,
 		PreRunE:       preRunReportRegionCosts,
 		RunE:          runReportRegionCosts,
 	}
 
-	regionCmd.Flags().StringVar(&region, "region", "", "The AWS region")
-	regionCmd.Flags().StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD format)")
-	regionCmd.Flags().StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD format)")
-	regionCmd.Flags().BoolVar(&hourly, "hourly", false, "generate hourly cost report")
-	regionCmd.Flags().BoolVar(&daily, "daily", false, "generate daily cost report")
-	regionCmd.Flags().BoolVar(&monthly, "monthly", false, "generate monthly cost report")
-	regionCmd.Flags().StringSliceVar(&tag, "tag", []string{}, "generate cost report for a specific tag(key=value)")
+	groups := map[*pflag.FlagSet]string{}
+
+
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.StringVar(&region, "region", "", "The AWS region")
+	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD format)")
+	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD format)")
+	regionCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	granularityFlags := pflag.NewFlagSet("granularity", pflag.ExitOnError)
+	granularityFlags.BoolVar(&hourly, "hourly", false, "generate hourly cost report")
+	granularityFlags.BoolVar(&daily, "daily", false, "generate daily cost report")
+	granularityFlags.BoolVar(&monthly, "monthly", false, "generate monthly cost report")
+	regionCmd.Flags().AddFlagSet(granularityFlags)
+	groups[granularityFlags] = "Granularity Flags (choose one)"
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.StringSliceVar(&tag, "tag", []string{}, "generate cost report for a specific tag(key=value)")
+	regionCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
+	regionCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, granularityFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Granularity Flags (choose one)", "Optional Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("\nAll flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	regionCmd.MarkFlagRequired("region")
 	regionCmd.MarkFlagRequired("start")
@@ -62,6 +81,8 @@ FLAG                     | ENV_VAR
 
 	regionCmd.MarkFlagsMutuallyExclusive("hourly", "daily", "monthly")
 	regionCmd.MarkFlagsOneRequired("hourly", "daily", "monthly")
+
+	regionCmd.Flags().SortFlags = false
 
 	return regionCmd
 }
