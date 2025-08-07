@@ -13,25 +13,7 @@ import (
 )
 
 var (
-	// KafkaApiPattern  = regexp.MustCompile(`^\[.*\] TRACE \[KafkaApi-\d+\].*\(kafka\.server\.KafkaApis\)$`)
-	TimestampPattern = regexp.MustCompile(`^\[([^\]]+)\]`)
-
-	KafkaApiPattern = regexp.MustCompile(`^\[([^\]]+)\] TRACE \[KafkaApi-\d+\].*\(kafka\.server\.KafkaApis\)$`)
-	ApiKeyPattern   = regexp.MustCompile(`apiKey=([^,\)]+)`)
-	ClientIdPattern = regexp.MustCompile(`clientId=([^,\)]+)`)
-
-	// Producer patterns (PRODUCE operations)
-	ProducerTopicPattern     = regexp.MustCompile(`partitionSizes=\[([^-]+)-`)
-	ProducerIpPattern        = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
-	ProducerAuthPattern      = regexp.MustCompile(`principal:\[([^\]]+)\]:`)
-	ProducerPrincipalPattern = regexp.MustCompile(`principal:\[[^\]]+\]:\[([^\]]+)\]`)
-
-	// Consumer patterns (FETCH operations)
-	ConsumerTopicPattern     = regexp.MustCompile(`topics=\[([^\]]*)\]`)
-	ConsumerIpPattern        = regexp.MustCompile(`from connection ([^;]+);`)
-	ConsumerAuthPattern      = regexp.MustCompile(`principal:([^(]+)`)
-	ConsumerPrincipalPattern = regexp.MustCompile(`principal:([^(]+)`)
-	BrokerFetcherPattern     = regexp.MustCompile(`broker-(\d+)-fetcher-(\d+)`)
+	KafkaApiTracePattern = regexp.MustCompile(`^\[.*\] TRACE \[KafkaApi-\d+\].*\(kafka\.server\.KafkaApis\)$`)
 )
 
 type BrokerLogsScannerOpts struct {
@@ -96,7 +78,7 @@ func (bs *BrokerLogsScanner) Run() error {
 	errorCount := 0
 
 	for _, file := range logFiles {
-		apiRequests, err := bs.extractApiRequests(ctx, bucket, file)
+		apiRequests, err := bs.extractKafkaApiRequests(ctx, bucket, file)
 		if err != nil {
 			slog.Error("failed to extract API requests", "file", file, "error", err)
 			errorCount++
@@ -108,7 +90,6 @@ func (bs *BrokerLogsScanner) Run() error {
 	}
 
 	// Write results to CSV
-	fmt.Println("allApiRequests", len(allApiRequests))
 	if len(allApiRequests) > 0 {
 		if err := bs.writeToCSV(allApiRequests); err != nil {
 			slog.Error("failed to write CSV file", "error", err)
@@ -124,7 +105,7 @@ func (bs *BrokerLogsScanner) Run() error {
 	return nil
 }
 
-func (bs *BrokerLogsScanner) extractApiRequests(ctx context.Context, bucket, key string) ([]ApiRequest, error) {
+func (bs *BrokerLogsScanner) extractKafkaApiRequests(ctx context.Context, bucket, key string) ([]ApiRequest, error) {
 	content, err := bs.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
@@ -136,64 +117,22 @@ func (bs *BrokerLogsScanner) extractApiRequests(ctx context.Context, bucket, key
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		lineNumber++
 
-		kafkaApiMatches := KafkaApiPattern.FindStringSubmatch(line)
-		if len(kafkaApiMatches) != 2 {
-			continue
-		}
-
-		timestamp, err := time.Parse("2006-01-02 15:04:05,000", kafkaApiMatches[1])
-		if err != nil {
-			slog.Debug("failed to parse timestamp", "line", lineNumber, "timestamp", kafkaApiMatches[1], "error", err)
-			continue
-		}
-
-		apiKey := extractField(line, ApiKeyPattern)
-		clientId := extractField(line, ClientIdPattern)
-
-		var topic, ipAddress, auth, principal string
-
-		// Use different patterns based on API key
-		switch apiKey {
-		case "FETCH":
-			topic = extractField(line, ConsumerTopicPattern)
-			ipAddress = extractField(line, ConsumerIpPattern)
-			auth = extractField(line, ConsumerAuthPattern)
-			principal = extractField(line, ConsumerPrincipalPattern)
-
-			// if internal broker thread we don't have information
-			if BrokerFetcherPattern.MatchString(clientId) {
-				topic = "n/a"
-				ipAddress = "n/a"
-				auth = "n/a"
-				principal = "n/a"
+		switch {
+		case KafkaApiTracePattern.MatchString(line):
+			kafkaTraceLineParser := &KafkaApiTraceLineParser{}
+			apiRequest, err := kafkaTraceLineParser.Parse(line, lineNumber, key)
+			if err != nil {
+				slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
+				continue
 			}
-		case "PRODUCE":
-			topic = extractField(line, ProducerTopicPattern)
-			ipAddress = extractField(line, ProducerIpPattern)
-			auth = extractField(line, ProducerAuthPattern)
-			principal = extractField(line, ProducerPrincipalPattern)
-
+			apiRequests = append(apiRequests, *apiRequest)
 		default:
-			slog.Debug("unknown API key", "apiKey", apiKey)
+			slog.Debug("not a log line we want to process", "line", line)
 			continue
 		}
 
-		apiRequest := ApiRequest{
-			Timestamp:  timestamp,
-			ApiKey:     apiKey,
-			ClientId:   clientId,
-			Topic:      topic, // Topic might be empty for some API calls
-			IPAddress:  ipAddress,
-			Auth:       auth,
-			Principal:  principal,
-			FileName:   key,
-			LineNumber: lineNumber,
-			LogLine:    line,
-		}
-
-		apiRequests = append(apiRequests, apiRequest)
+		lineNumber++
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -203,7 +142,6 @@ func (bs *BrokerLogsScanner) extractApiRequests(ctx context.Context, bucket, key
 	return apiRequests, nil
 }
 
-// writeToCSV writes the API requests to a CSV file
 func (bs *BrokerLogsScanner) writeToCSV(apiRequests []ApiRequest) error {
 	fileName := "broker_logs_scan_results.csv"
 
@@ -253,73 +191,4 @@ func (bs *BrokerLogsScanner) writeToCSV(apiRequests []ApiRequest) error {
 	}
 
 	return nil
-}
-
-// extractField extracts a field from a log line using the provided regex pattern
-func extractField(line string, pattern *regexp.Regexp) string {
-	matches := pattern.FindStringSubmatch(line)
-	if len(matches) >= 2 {
-		return matches[1]
-	}
-	return ""
-}
-
-type KafkaApiLineProcessor struct{}
-
-func (p *KafkaApiLineProcessor) Parse(line string, lineNumber int, fileName string) (ApiRequest, error) {
-	timestampMatches := TimestampPattern.FindStringSubmatch(line)
-	if len(timestampMatches) != 2 {
-		slog.Debug("not a KafkaApi log line", "line", line)
-	}
-
-	timestamp, err := time.Parse("2006-01-02 15:04:05,000", timestampMatches[1])
-	fmt.Println("timestamp in here", timestamp)
-	if err != nil {
-		slog.Debug("failed to parse timestamp", "timestamp", timestampMatches[1], "error", err)
-	}
-
-	apiKey := extractField(line, ApiKeyPattern)
-	clientId := extractField(line, ClientIdPattern)
-
-	var topic, ipAddress, auth, principal string
-
-	// Use different patterns based on API key
-	switch apiKey {
-	case "FETCH":
-		topic = extractField(line, ConsumerTopicPattern)
-		ipAddress = extractField(line, ConsumerIpPattern)
-		auth = extractField(line, ConsumerAuthPattern)
-		principal = extractField(line, ConsumerPrincipalPattern)
-
-		// if internal broker thread we don't have information
-		if BrokerFetcherPattern.MatchString(clientId) {
-			topic = "n/a"
-			ipAddress = "n/a"
-			auth = "n/a"
-			principal = "n/a"
-		}
-	case "PRODUCE":
-		topic = extractField(line, ProducerTopicPattern)
-		ipAddress = extractField(line, ProducerIpPattern)
-		auth = extractField(line, ProducerAuthPattern)
-		principal = extractField(line, ProducerPrincipalPattern)
-
-	default:
-		slog.Debug("unknown API key", "apiKey", apiKey)
-	}
-
-	apiRequest := ApiRequest{
-		Timestamp:  timestamp,
-		ApiKey:     apiKey,
-		ClientId:   clientId,
-		Topic:      topic, // Topic might be empty for some API calls
-		IPAddress:  ipAddress,
-		Auth:       auth,
-		Principal:  principal,
-		FileName:   fileName,
-		LineNumber: lineNumber,
-		LogLine:    line,
-	}
-
-	return apiRequest, nil
 }
