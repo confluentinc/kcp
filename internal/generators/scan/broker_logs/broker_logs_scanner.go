@@ -13,6 +13,7 @@ import (
 )
 
 var (
+	// lines that match this pattern will be parsed by kafka trace line parser
 	KafkaApiTracePattern = regexp.MustCompile(`^\[.*\] TRACE \[KafkaApi-\d+\].*\(kafka\.server\.KafkaApis\)$`)
 )
 
@@ -33,14 +34,17 @@ type S3Service interface {
 	DownloadAndDecompressLogFile(ctx context.Context, bucket, key string) ([]byte, error)
 }
 
-type ApiRequest struct {
-	Timestamp  time.Time
-	ApiKey     string
+type RequestMetadata struct {
 	ClientId   string
+	ClientType string
 	Topic      string
-	Auth       string
+	Role       string
+	GroupId    string
 	Principal  string
+	Auth       string
 	IPAddress  string
+	ApiKey     string
+	Timestamp  time.Time
 	FileName   string
 	LineNumber int
 	LogLine    string
@@ -74,44 +78,53 @@ func (bs *BrokerLogsScanner) Run() error {
 		return nil
 	}
 
-	var allApiRequests []ApiRequest
-	errorCount := 0
+	requestMetadataByClientId := bs.handleLogFiles(ctx, bucket, logFiles)
 
-	for _, file := range logFiles {
-		apiRequests, err := bs.extractKafkaApiRequests(ctx, bucket, file)
-		if err != nil {
-			slog.Error("failed to extract API requests", "file", file, "error", err)
-			errorCount++
-			continue
-		}
-
-		slog.Info("found API requests", "file", file, "count", len(apiRequests))
-		allApiRequests = append(allApiRequests, apiRequests...)
-	}
-
-	// Write results to CSV
-	if len(allApiRequests) > 0 {
-		if err := bs.writeToCSV(allApiRequests); err != nil {
-			slog.Error("failed to write CSV file", "error", err)
-		}
-	}
-
-	if errorCount > 0 {
-		slog.Warn("processing completed with errors", "total_files", len(logFiles), "errors", errorCount)
-	} else {
-		slog.Info("successfully processed all log files", "total_files", len(logFiles))
+	if err := bs.generateCSV(requestMetadataByClientId); err != nil {
+		slog.Error("failed to write CSV file", "error", err)
 	}
 
 	return nil
 }
 
-func (bs *BrokerLogsScanner) extractKafkaApiRequests(ctx context.Context, bucket, key string) ([]ApiRequest, error) {
+func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) map[string]*RequestMetadata {
+	requestMetadataByClientId := make(map[string]*RequestMetadata)
+
+	for _, file := range logFiles {
+		requestsMetadata, err := bs.handleLogFile(ctx, bucket, file)
+		if err != nil {
+			slog.Error("failed to extract API requests", "file", file, "error", err)
+			continue
+		}
+
+		slog.Info("found API requests", "file", file, "count", len(requestsMetadata))
+
+		// deduplicate requests by client id to most recent request
+		for _, metadata := range requestsMetadata {
+			existingRequestMetadata, exists := requestMetadataByClientId[metadata.ClientId]
+			if !exists {
+				// first time we've seen this client
+				requestMetadataByClientId[metadata.ClientId] = &metadata
+				continue
+			}
+
+			// if the new request has a more recent timestamp, we should update the map
+			if metadata.Timestamp.After(existingRequestMetadata.Timestamp) {
+				requestMetadataByClientId[metadata.ClientId] = &metadata
+			}
+		}
+	}
+
+	return requestMetadataByClientId
+}
+
+func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
 	content, err := bs.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
 	}
 
-	var apiRequests []ApiRequest
+	var requestsMetadata []RequestMetadata
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
 	lineNumber := 0
 
@@ -121,12 +134,12 @@ func (bs *BrokerLogsScanner) extractKafkaApiRequests(ctx context.Context, bucket
 		switch {
 		case KafkaApiTracePattern.MatchString(line):
 			kafkaTraceLineParser := &KafkaApiTraceLineParser{}
-			apiRequest, err := kafkaTraceLineParser.Parse(line, lineNumber, key)
+			metadata, err := kafkaTraceLineParser.Parse(line, lineNumber, key)
 			if err != nil {
 				slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
 				continue
 			}
-			apiRequests = append(apiRequests, *apiRequest)
+			requestsMetadata = append(requestsMetadata, *metadata)
 		default:
 			slog.Debug("not a log line we want to process", "line", line)
 			continue
@@ -139,10 +152,10 @@ func (bs *BrokerLogsScanner) extractKafkaApiRequests(ctx context.Context, bucket
 		return nil, fmt.Errorf("error reading file content: %w", err)
 	}
 
-	return apiRequests, nil
+	return requestsMetadata, nil
 }
 
-func (bs *BrokerLogsScanner) writeToCSV(apiRequests []ApiRequest) error {
+func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*RequestMetadata) error {
 	fileName := "broker_logs_scan_results.csv"
 
 	file, err := os.Create(fileName)
@@ -154,15 +167,15 @@ func (bs *BrokerLogsScanner) writeToCSV(apiRequests []ApiRequest) error {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	// Write CSV header
 	header := []string{
-		"Timestamp",
-		"API Key",
 		"Client ID",
+		"Client Type",
+		"Role",
 		"Topic",
 		"IP Address",
 		"Auth",
 		"Principal",
+		"Timestamp",
 		"File Name",
 		"Line Number",
 		"Log Line",
@@ -171,19 +184,25 @@ func (bs *BrokerLogsScanner) writeToCSV(apiRequests []ApiRequest) error {
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
-	// Write data rows
-	for _, req := range apiRequests {
+	if len(requestMetadataByClientId) == 0 {
+		slog.Info("no requests to write to CSV")
+		return nil
+	}
+
+	for _, metadata := range requestMetadataByClientId {
 		record := []string{
-			req.Timestamp.Format("2006-01-02 15:04:05"),
-			req.ApiKey,
-			req.ClientId,
-			req.Topic,
-			req.IPAddress,
-			req.Auth,
-			req.Principal,
-			req.FileName,
-			fmt.Sprintf("%d", req.LineNumber),
-			req.LogLine,
+			metadata.ClientId,
+			metadata.ClientType,
+			metadata.Role,
+			metadata.Topic,
+			metadata.IPAddress,
+			metadata.Auth,
+			metadata.Principal,
+			metadata.Timestamp.Format("2006-01-02 15:04:05"),
+			// these are just for debugging
+			metadata.FileName,
+			fmt.Sprintf("%d", metadata.LineNumber),
+			metadata.LogLine,
 		}
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write CSV record: %w", err)

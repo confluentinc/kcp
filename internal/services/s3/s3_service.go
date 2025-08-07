@@ -69,6 +69,56 @@ func (s *S3Service) ListLogFiles(ctx context.Context, bucket, prefix string) ([]
 	return logFiles, nil
 }
 
+// type LogFileInfo struct {
+// 	Key          string
+// 	LastModified time.Time
+// }
+
+// func (s *S3Service) ListLogFiles(ctx context.Context, bucket, prefix string) ([]string, error) {
+// 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+// 		prefix += "/"
+// 	}
+
+// 	input := &s3.ListObjectsV2Input{
+// 		Bucket: &bucket,
+// 		Prefix: &prefix,
+// 	}
+
+// 	var logFiles []LogFileInfo
+// 	paginator := s3.NewListObjectsV2Paginator(s.client, input)
+
+// 	for paginator.HasMorePages() {
+// 		page, err := paginator.NextPage(ctx)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to list objects: %w", err)
+// 		}
+
+// 		for _, obj := range page.Contents {
+// 			if obj.Key != nil && strings.HasSuffix(*obj.Key, ".log.gz") {
+// 				logFiles = append(logFiles, LogFileInfo{
+// 					Key:          *obj.Key,
+// 					LastModified: *obj.LastModified,
+// 				})
+// 			}
+// 		}
+// 	}
+
+// 	sort.Slice(logFiles, func(i, j int) bool {
+// 		return logFiles[i].LastModified.After(logFiles[j].LastModified)
+// 	})
+
+// 	for _, file := range logFiles {
+// 		slog.Info("log file", "key", file.Key, "lastModified", file.LastModified)
+// 	}
+
+// 	keys := make([]string, len(logFiles))
+// 	for i, file := range logFiles {
+// 		keys[i] = file.Key
+// 	}
+
+// 	return keys, nil
+// }
+
 // DownloadAndDecompressLogFile downloads and decompresses a log file from S3
 func (s *S3Service) DownloadAndDecompressLogFile(ctx context.Context, bucket, key string) ([]byte, error) {
 	input := &s3.GetObjectInput{

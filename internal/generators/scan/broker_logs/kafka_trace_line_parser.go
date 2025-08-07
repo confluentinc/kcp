@@ -35,7 +35,7 @@ var (
 
 type KafkaApiTraceLineParser struct{}
 
-func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName string) (*ApiRequest, error) {
+func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName string) (*RequestMetadata, error) {
 	timestampMatches := TimestampPattern.FindStringSubmatch(line)
 	if len(timestampMatches) != 2 {
 		slog.Debug("failed to match timestamp", "line", line)
@@ -51,47 +51,50 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 	apiKey := p.extractField(line, ApiKeyPattern)
 	clientId := p.extractField(line, ClientIdPattern)
 
-	// Only process FETCH and PRODUCE operations
+	// how do we handle these?
 	if apiKey != "FETCH" && apiKey != "PRODUCE" {
-		slog.Debug("unsupported API key", "apiKey", apiKey)
-		return nil, ErrorUnsupportedApiKey
+		return nil, ErrorUnsupportedLogLine
 	}
 
-	// how do we handle these?
 	if clientId == "amazon.msk.canary.client" || BrokerFetcherPattern.MatchString(clientId) {
 		return nil, ErrorUnsupportedLogLine
 	}
 
-	var topic, ipAddress, auth, principal string
+	var role, topic, ipAddress, auth, principal string
 
 	switch apiKey {
 	case "FETCH":
+		role = "Consumer"
 		topic = p.extractField(line, ConsumerTopicPattern)
 		ipAddress = p.extractField(line, ConsumerIpPattern)
 		auth = p.extractField(line, ConsumerAuthPattern)
 		principal = p.extractField(line, ConsumerPrincipalPattern)
 
 	case "PRODUCE":
+		role = "Producer"
 		topic = p.extractField(line, ProducerTopicPattern)
 		ipAddress = p.extractField(line, ProducerIpPattern)
 		auth = p.extractField(line, ProducerAuthPattern)
 		principal = p.extractField(line, ProducerPrincipalPattern)
 	}
 
-	apiRequest := ApiRequest{
-		Timestamp:  timestamp,
-		ApiKey:     apiKey,
+	requestMetadata := RequestMetadata{
 		ClientId:   clientId,
+		ClientType: "External App",
 		Topic:      topic,
-		IPAddress:  ipAddress,
-		Auth:       auth,
+		Role:       role,
+		GroupId:    "N/A",
 		Principal:  principal,
+		Auth:       auth,
+		IPAddress:  ipAddress,
+		ApiKey:     apiKey,
+		Timestamp:  timestamp,
 		FileName:   fileName,
 		LineNumber: lineNumber,
 		LogLine:    line,
 	}
 
-	return &apiRequest, nil
+	return &requestMetadata, nil
 }
 
 func (p *KafkaApiTraceLineParser) extractField(line string, pattern *regexp.Regexp) string {
