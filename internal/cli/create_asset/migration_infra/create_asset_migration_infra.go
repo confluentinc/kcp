@@ -23,7 +23,7 @@ var (
 	migrationInfraType string
 
 	ccClusterType                 string
-	jumpClusterBrokerSubnetConfig net.IPNet
+	jumpClusterBrokerSubnetConfig string
 	ansibleControlNodeSubnetCIDR  net.IPNet
 
 	jumpClusterBrokerIAMRoleName string
@@ -53,27 +53,29 @@ func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	// Private Networking Migration flags.
-	privNetworkMigrationFlags := pflag.NewFlagSet("private-network-migration", pflag.ExitOnError)
-	privNetworkMigrationFlags.SortFlags = false
-	privNetworkMigrationFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
-	privNetworkMigrationFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
-	privNetworkMigrationFlags.IPNetVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", net.IPNet{}, "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
-	migrationInfraCmd.Flags().AddFlagSet(privNetworkMigrationFlags)
-	groups[privNetworkMigrationFlags] = "Private Network Migration Flags"
-
 	// Type 1 flags.
 	typeOneFlags := pflag.NewFlagSet("type-1", pflag.ExitOnError)
 	typeOneFlags.SortFlags = false
+	typeOneFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
+	typeOneFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
+	typeOneFlags.StringVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", "", "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
 	typeOneFlags.StringVar(&jumpClusterBrokerIAMRoleName, "jump-cluster-broker-iam-role-name", "", "The Jump cluster broker IAM role name")
 	migrationInfraCmd.Flags().AddFlagSet(typeOneFlags)
 	groups[typeOneFlags] = "Type 1 Flags"
 
+	typeTwoFlags := pflag.NewFlagSet("type-2", pflag.ExitOnError)
+	typeTwoFlags.SortFlags = false
+	typeTwoFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
+	typeTwoFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
+	typeTwoFlags.StringVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", "", "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
+	migrationInfraCmd.Flags().AddFlagSet(typeTwoFlags)
+	groups[typeTwoFlags] = "Type 2 Flags"
+
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, privNetworkMigrationFlags, typeOneFlags}
-		groupNames := []string{"Required Flags", "Private Network Migration Flags", "'Type 1' Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, typeOneFlags, typeTwoFlags}
+		groupNames := []string{"Required Flags", "Type 1 Flags", "Type 2 Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -156,7 +158,7 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 	opts := migration_infra.MigrationInfraOpts{
 		Region:                        region,
 		VPCId:                         vpcId,
-		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig.String(),
+		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig,
 		CCEnvName:                     ccEnvName,
 		CCClusterName:                 ccClusterName,
 		CCClusterType:                 strings.ToLower(ccClusterType),
