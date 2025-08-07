@@ -18,11 +18,11 @@ import (
 var (
 	region string
 
-	start     string
-	end       string
-	lastDay   bool
-	lastWeek  bool
-	lastMonth bool
+	start          string
+	end            string
+	lastDay        bool
+	lastWeek       bool
+	lastThirtyDays bool
 
 	hourly  bool
 	daily   bool
@@ -55,9 +55,9 @@ func NewReportRegionCostsCmd() *cobra.Command {
 	timeRangeFlags.SortFlags = false
 	timeRangeFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
 	timeRangeFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
-	timeRangeFlags.BoolVar(&lastDay, "last-day", false, "generate cost report for the last day")
-	timeRangeFlags.BoolVar(&lastWeek, "last-week", false, "generate cost report for the last 7 days")
-	timeRangeFlags.BoolVar(&lastMonth, "last-month", false, "generate cost report for the last 30 days")
+	timeRangeFlags.BoolVar(&lastDay, "last-day", false, "generate cost report for the previous day")
+	timeRangeFlags.BoolVar(&lastWeek, "last-week", false, "generate cost report for the previous 7 days (not including today)")
+	timeRangeFlags.BoolVar(&lastThirtyDays, "last-thirty-days", false, "generate cost report for the previous 30 days (not including today)")
 	regionCmd.Flags().AddFlagSet(timeRangeFlags)
 	groups[timeRangeFlags] = "Time Range Flags"
 
@@ -97,8 +97,8 @@ func NewReportRegionCostsCmd() *cobra.Command {
 
 	regionCmd.MarkFlagRequired("region")
 
-	regionCmd.MarkFlagsMutuallyExclusive("start", "last-day", "last-week", "last-month")
-	regionCmd.MarkFlagsOneRequired("start", "last-day", "last-week", "last-month")
+	regionCmd.MarkFlagsMutuallyExclusive("start", "last-day", "last-week", "last-thirty-days")
+	regionCmd.MarkFlagsOneRequired("start", "last-day", "last-week", "last-thirty-days")
 	regionCmd.MarkFlagsRequiredTogether("start", "end")
 
 	regionCmd.MarkFlagsMutuallyExclusive("hourly", "daily", "monthly")
@@ -187,10 +187,10 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 
 	case lastWeek:
 		now := time.Now()
-		startDate = now.AddDate(0, 0, -7).UTC().Truncate(24 * time.Hour)
+		startDate = now.AddDate(0, 0, -8).UTC().Truncate(24 * time.Hour)
 		endDate = now.UTC().Truncate(24 * time.Hour)
 
-	case lastMonth:
+	case lastThirtyDays:
 		now := time.Now()
 		startDate = now.AddDate(0, 0, -30).UTC().Truncate(24 * time.Hour)
 		endDate = now.UTC().Truncate(24 * time.Hour)
