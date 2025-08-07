@@ -157,7 +157,7 @@ func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
 		return fmt.Errorf("failed to get role policies: %v", err)
 	}
 
-	extractedACLs, err := extractKafkaPermissions(policies)
+	extractedACLs, err := extractKafkaPermissionsFromPolicies(policies)
 	if err != nil {
 		return fmt.Errorf("failed to extract Kafka permissions: %v", err)
 	}
@@ -231,51 +231,71 @@ func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
 	return nil
 }
 
-func extractKafkaPermissions(policies *iamservice.RolePolicies) ([]types.Acls, error) {
+func extractKafkaPermissionsFromPolicies(policies *iamservice.RolePolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
-		fmt.Printf("📝 Processing policy: %s\n", policy.PolicyName)
+		fmt.Printf("📝 Processing attached policy: %s\n", policy.PolicyName)
+		acls := processPolicy(policy.PolicyDocument)
+		extractedACLs = append(extractedACLs, acls...)
+	}
 
-		for _, statement := range policy.PolicyDocument["Statement"].([]any) {
-			statementMap := statement.(map[string]any)
+	for _, policy := range policies.InlinePolicies {
+		fmt.Printf("📝 Processing inline policy: %s\n", policy.PolicyName)
+		acls := processPolicy(policy.PolicyDocument)
+		extractedACLs = append(extractedACLs, acls...)
+	}
 
-			effect := "ALLOW"
-			if effectVal, ok := statementMap["Effect"]; ok {
-				effect = strings.ToUpper(effectVal.(string))
-			}
+	return extractedACLs, nil
+}
 
-			// Extract resources from the policy statement
-			var resources []string
-			if resourceData, ok := statementMap["Resource"]; ok {
-				switch resData := resourceData.(type) {
-				case string:
-					resources = append(resources, resData)
-				case []any:
-					for _, res := range resData {
-						if resStr, ok := res.(string); ok {
-							resources = append(resources, resStr)
-						}
+func processPolicy(policyDocument map[string]any) []types.Acls {
+	var extractedACLs []types.Acls
+
+	for _, statement := range policyDocument["Statement"].([]any) {
+		statementMap := statement.(map[string]any)
+
+		var effect string
+		if effectVal, ok := statementMap["Effect"]; ok {
+			effect = strings.ToUpper(effectVal.(string))
+		}
+
+		var resources []string
+		if resourceData, ok := statementMap["Resource"]; ok {
+			switch resData := resourceData.(type) {
+			case string:
+				resources = append(resources, resData)
+			case []any:
+				for _, res := range resData {
+					if resStr, ok := res.(string); ok {
+						resources = append(resources, resStr)
 					}
 				}
 			}
+		}
 
-			// Handle JSON object of actions.
-			var actions []string
-			switch actionData := statementMap["Action"].(type) {
-			case string:
-				actions = append(actions, actionData)
-			case []any:
-				for _, action := range actionData {
-					actions = append(actions, action.(string))
-				}
+		var actions []string
+		switch actionData := statementMap["Action"].(type) {
+		case string:
+			actions = append(actions, actionData)
+		case []any:
+			for _, action := range actionData {
+				actions = append(actions, action.(string))
 			}
+		}
 
-			for _, action := range actions {
-				if strings.HasPrefix(action, "kafka-cluster:") {
+		for _, action := range actions {
+			if strings.HasPrefix(action, "kafka-cluster:") {
+				if action == "kafka-cluster:*" {
+					// If wildcard on action - apply all ACL mappings.
+					for _, mapping := range aclMap {
+						acl := createACLFromMapping(mapping, effect, resources)
+						extractedACLs = append(extractedACLs, acl)
+					}
+				} else {
 					mapping, found := TranslateIAMToKafkaACL(action)
 					if found {
-						acl := createACLFromMapping(mapping, effect, resources, roleArn)
+						acl := createACLFromMapping(mapping, effect, resources)
 						extractedACLs = append(extractedACLs, acl)
 					} else {
 						continue
@@ -285,7 +305,7 @@ func extractKafkaPermissions(policies *iamservice.RolePolicies) ([]types.Acls, e
 		}
 	}
 
-	return extractedACLs, nil
+	return extractedACLs
 }
 
 func TranslateIAMToKafkaACL(iamPermission string) (ACLMapping, bool) {
@@ -294,7 +314,7 @@ func TranslateIAMToKafkaACL(iamPermission string) (ACLMapping, bool) {
 	return acl, found
 }
 
-func createACLFromMapping(mapping ACLMapping, effect string, resources []string, roleArn string) types.Acls {
+func createACLFromMapping(mapping ACLMapping, effect string, resources []string) types.Acls {
 	// Set defaults
 	resourceName := "*"
 	patternType := "LITERAL"
