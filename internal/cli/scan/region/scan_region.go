@@ -8,6 +8,7 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -18,21 +19,39 @@ func NewScanRegionCmd() *cobra.Command {
 	regionCmd := &cobra.Command{
 		Use:   "region",
 		Short: "Scan an AWS region for MSK clusters",
-		Long: `Scan an AWS region for MSK clusters and gather information about them.
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                     | ENV_VAR
--------------------------|---------------------------
---region                 | REGION=us-east-1
-`,
+		Long: "Scan an AWS region for MSK clusters and gather information about them",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanRegion,
 		RunE:          runScanRegion,
 	}
 
-	regionCmd.Flags().StringVar(&region, "region", "", "The AWS region")
+	groups := map[*pflag.FlagSet]string{}
+
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&region, "region", "", "AWS region")
+	regionCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	regionCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	regionCmd.MarkFlagRequired("region")
 

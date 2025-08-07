@@ -3,74 +3,89 @@ package migration_infra
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_infra"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
-	region                        string
-	vpcId                         string
-	ccEnvName                     string
-	ccClusterName                 string
+	region             string
+	vpcId              string
+	ccEnvName          string
+	ccClusterName      string
+	clusterFile        string
+	migrationInfraType string
+
 	ccClusterType                 string
-	clusterFile                   string
-	migrationInfraType            string
-	jumpClusterBrokerSubnetConfig string
-	ansibleControlNodeSubnetCIDR  string
-	jumpClusterBrokerIAMRoleName  string
+	jumpClusterBrokerSubnetConfig net.IPNet
+	ansibleControlNodeSubnetCIDR  net.IPNet
+
+	jumpClusterBrokerIAMRoleName string
 )
 
 func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd := &cobra.Command{
-		Use:   "migration-infra",
-		Short: "Create assets for the migration infrastructure",
-		Long: `Create assets for the migration infrastructure
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                                            | ENV_VAR
-------------------------------------------------|--------------------------------------------------
-Required flags:
---region                                        | REGION=us-east-1
---vpc-id                                        | VPC_ID=vpc-1234567890
---cc-env-name                                   | CC_ENV_NAME=prod-env
---cc-cluster-name                               | CC_CLUSTER_NAME=my-cluster
---cluster-file                                  | CLUSTER_FILE=path/to/cluster.json
---type                                          | TYPE=1
-
-Optional flags:
-Provide with --type 1
---ansible-control-node-subnet-cidr              | ANSIBLE_CONTROL_NODE_SUBNET_CIDR=10.0.24.0/24
---jump-cluster-broker-subnet-config            	| JUMP_CLUSTER_BROKER_SUBNET_CONFIG="us-east-1a:10.0.34.0/24,us-east-1b:10.0.35.0/24,us-east-1c:10.0.36.0/24"
---jump-cluster-broker-iam-role-name             | JUMP_CLUSTER_BROKER_IAM_ROLE_NAME=msk-broker-role
---cc-cluster-type                               | CC_CLUSTER_TYPE=enterprise
-
-Provide with --type 2
---jump-cluster-broker-subnet-config            	| JUMP_CLUSTER_BROKER_SUBNET_CONFIG="us-east-1a:10.0.34.0/24,us-east-1b:10.0.35.0/24,us-east-1c:10.0.36.0/24"
---ansible-control-node-subnet-cidr              | ANSIBLE_CONTROL_NODE_SUBNET_CIDR=10.0.24.0/24
---cc-cluster-type                               | CC_CLUSTER_TYPE=enterprise
-`,
+		Use:           "migration-infra",
+		Short:         "Create assets for the migration infrastructure",
+		Long:          "Create Terraform assets that provision the migration infrastructure - Confluent Cloud, cluster linking, etc.",
 		SilenceErrors: true,
 		PreRunE:       preRunCreateMigrationInfra,
 		RunE:          runCreateMigrationInfra,
 	}
 
-	migrationInfraCmd.Flags().StringVar(&region, "region", "", "The AWS region")
-	migrationInfraCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID")
-	migrationInfraCmd.Flags().StringVar(&ccEnvName, "cc-env-name", "", "The Confluent Cloud environment name")
-	migrationInfraCmd.Flags().StringVar(&ccClusterName, "cc-cluster-name", "", "The Confluent Cloud cluster name")
-	migrationInfraCmd.Flags().StringVar(&ccClusterType, "cc-cluster-type", "", "The Confluent Cloud cluster type")
-	migrationInfraCmd.Flags().StringVar(&clusterFile, "cluster-file", "", "The cluster json file produced from 'scan cluster' command")
-	migrationInfraCmd.Flags().StringVar(&migrationInfraType, "type", "", "The migration infra type")
+	groups := map[*pflag.FlagSet]string{}
 
-	//optional depending on type
-	migrationInfraCmd.Flags().StringVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", "", "The Jump cluster broker subnet config")
-	migrationInfraCmd.Flags().StringVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", "", "The Ansible control node subnet CIDR")
-	migrationInfraCmd.Flags().StringVar(&jumpClusterBrokerIAMRoleName, "jump-cluster-broker-iam-role-name", "", "The Jump cluster broker IAM role name")
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&region, "region", "", "AWS region the cost report is generated for")
+	requiredFlags.StringVar(&vpcId, "vpc-id", "", "Existing MSK VPC ID")
+	requiredFlags.StringVar(&ccEnvName, "cc-env-name", "", "Confluent Cloud environment name")
+	requiredFlags.StringVar(&ccClusterName, "cc-cluster-name", "", "Confluent Cloud cluster name")
+	requiredFlags.StringVar(&clusterFile, "cluster-file", "", "Cluster scan JSON file produced from 'kcp scan cluster' command")
+	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options")
+	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	// Private Networking Migration flags.
+	privNetworkMigrationFlags := pflag.NewFlagSet("private-network-migration", pflag.ExitOnError)
+	privNetworkMigrationFlags.SortFlags = false
+	privNetworkMigrationFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
+	privNetworkMigrationFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
+	privNetworkMigrationFlags.IPNetVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", net.IPNet{}, "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
+	migrationInfraCmd.Flags().AddFlagSet(privNetworkMigrationFlags)
+	groups[privNetworkMigrationFlags] = "Private Network Migration Flags"
+
+	// Type 1 flags.
+	typeOneFlags := pflag.NewFlagSet("type-1", pflag.ExitOnError)
+	typeOneFlags.SortFlags = false
+	typeOneFlags.StringVar(&jumpClusterBrokerIAMRoleName, "jump-cluster-broker-iam-role-name", "", "The Jump cluster broker IAM role name")
+	migrationInfraCmd.Flags().AddFlagSet(typeOneFlags)
+	groups[typeOneFlags] = "Type 1 Flags"
+
+	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, privNetworkMigrationFlags, typeOneFlags}
+		groupNames := []string{"Required Flags", "Private Network Migration Flags", "'Type 1' Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	migrationInfraCmd.MarkFlagRequired("region")
 	migrationInfraCmd.MarkFlagRequired("vpc-id")
@@ -141,11 +156,11 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 	opts := migration_infra.MigrationInfraOpts{
 		Region:                        region,
 		VPCId:                         vpcId,
-		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig,
+		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig.String(),
 		CCEnvName:                     ccEnvName,
 		CCClusterName:                 ccClusterName,
-		CCClusterType:                 ccClusterType,
-		AnsibleControlNodeSubnetCIDR:  ansibleControlNodeSubnetCIDR,
+		CCClusterType:                 strings.ToLower(ccClusterType),
+		AnsibleControlNodeSubnetCIDR:  ansibleControlNodeSubnetCIDR.String(),
 		JumpClusterBrokerIAMRoleName:  jumpClusterBrokerIAMRoleName,
 		ClusterInfo:                   clusterInfo,
 		MigrationInfraType:            migrationInfraType,

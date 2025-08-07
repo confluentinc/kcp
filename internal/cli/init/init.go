@@ -10,12 +10,14 @@ import (
 func NewInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Generate a set of env vars to export",
-		Long: `Generate a comprehensive set of environment variables to export.
+		Short: "Generate a README.md and set of env vars to export",
+		Long: `Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands.
 eg.
 export VPC_ID=vpc-1234567890
 export REGION=us-east-1
 
+export SASL_SCRAM_USERNAME=<msk-username>
+export SASL_SCRAM_PASSWORD=<msk-password>
 etc
 		`,
 		Example: `
