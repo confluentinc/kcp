@@ -164,32 +164,6 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 	var startDate, endDate time.Time
 	var err error
 
-	// Validate that exactly one time range method is provided
-	timeRangeMethods := 0
-	if start != "" && end != "" {
-		timeRangeMethods++
-	}
-
-	if lastDay {
-		timeRangeMethods++
-	}
-
-	if lastWeek {
-		timeRangeMethods++
-	}
-
-	if lastMonth {
-		timeRangeMethods++
-	}
-
-	if timeRangeMethods == 0 {
-		return nil, fmt.Errorf("must provide either start/end dates, --last-day, --last-week, or --last-month")
-	}
-	if timeRangeMethods > 1 {
-		return nil, fmt.Errorf("cannot combine start/end dates with --last-day, --last-week, or --last-month")
-	}
-
-	// Handle different time range methods
 	switch {
 	case start != "" && end != "":
 		startDate, err = time.Parse(dateFormat, start)
