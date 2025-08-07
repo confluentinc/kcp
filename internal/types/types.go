@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )
@@ -25,6 +24,17 @@ func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.C
 	return DefaultClientBrokerEncryptionInTransit
 }
 
+// Preferred over sarama.ResourceAcls because it is flattened vs sarama's nested structure.
+type Acls struct {
+	ResourceType        string `json:"ResourceType"`
+	ResourceName        string `json:"ResourceName"`
+	ResourcePatternType string `json:"ResourcePatternType"`
+	Principal           string `json:"Principal"`
+	Host                string `json:"Host"`
+	Operation           string `json:"Operation"`
+	PermissionType      string `json:"PermissionType"`
+}
+
 type ClusterInformation struct {
 	ClusterID            string                                 `json:"cluster_id"`
 	Region               string                                 `json:"region"`
@@ -38,7 +48,7 @@ type ClusterInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
 	Topics               []string                               `json:"topics"`
-	Acls                 []sarama.ResourceAcls                  `json:"acls"`
+	Acls                 []Acls                                 `json:"acls"`
 }
 
 // ClusterSummary contains summary information about an MSK cluster
