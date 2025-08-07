@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_infra"
 	"github.com/confluentinc/kcp/internal/types"
@@ -55,9 +56,9 @@ func NewMigrationInfraCmd() *cobra.Command {
 	// Private Networking Migration flags.
 	privNetworkMigrationFlags := pflag.NewFlagSet("private-network-migration", pflag.ExitOnError)
 	privNetworkMigrationFlags.SortFlags = false
-	privNetworkMigrationFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type")
-	privNetworkMigrationFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR")
-	privNetworkMigrationFlags.IPNetVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", net.IPNet{}, "Jump cluster broker subnet config")
+	privNetworkMigrationFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
+	privNetworkMigrationFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
+	privNetworkMigrationFlags.IPNetVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", net.IPNet{}, "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
 	migrationInfraCmd.Flags().AddFlagSet(privNetworkMigrationFlags)
 	groups[privNetworkMigrationFlags] = "Private Network Migration Flags"
 
@@ -72,7 +73,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, privNetworkMigrationFlags, typeOneFlags}
-		groupNames := []string{"Required Flags", "Private Network Migration Flags", "Type 1 Required Flags"}
+		groupNames := []string{"Required Flags", "Private Network Migration Flags", "'Type 1' Required Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -158,7 +159,7 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig.String(),
 		CCEnvName:                     ccEnvName,
 		CCClusterName:                 ccClusterName,
-		CCClusterType:                 ccClusterType,
+		CCClusterType:                 strings.ToLower(ccClusterType),
 		AnsibleControlNodeSubnetCIDR:  ansibleControlNodeSubnetCIDR.String(),
 		JumpClusterBrokerIAMRoleName:  jumpClusterBrokerIAMRoleName,
 		ClusterInfo:                   clusterInfo,
