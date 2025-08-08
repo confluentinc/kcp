@@ -17,9 +17,9 @@ var (
 
 func NewScanRegionCmd() *cobra.Command {
 	regionCmd := &cobra.Command{
-		Use:   "region",
-		Short: "Scan an AWS region for MSK clusters",
-		Long: "Scan an AWS region for MSK clusters and gather information about them",
+		Use:           "region",
+		Short:         "Scan an AWS region for MSK clusters",
+		Long:          "Scan an AWS region for MSK clusters and gather information about them",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanRegion,
