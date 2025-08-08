@@ -94,13 +94,11 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userAuditReport 
 
 	if auditReport {
 		reportPath := filepath.Join(outputDir, "migrated-acls-report.md")
-		var allAcls []types.Acls
-		for _, list := range aclsByPrincipal {
-			allAcls = append(allAcls, list...)
-		}
-		if err := migrate_acls.GenerateKafkaAuditReport(allAcls, reportPath); err != nil {
+
+		if err := migrate_acls.GenerateKafkaAuditReport(aclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
+
 		fmt.Printf("\n📝 Generated audit report: %s\n", reportPath)
 	}
 
