@@ -369,6 +369,21 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	clusterMetricsSummary := rm.calculateClusterMetricsSummary(nodesMetrics)
 	clusterMetricsSummary.InstanceType = nil
 
+	clusterMetricsSummary.TieredStorage = aws.Bool(false)
+
+	followerFetching, err := rm.mskService.IsFetchFromFollowerEnabled(context.Background(), cluster)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
+	}
+	clusterMetricsSummary.FollowerFetching = followerFetching
+
+	// // Replication Factor (Optional, Default = 3)
+	replicationFactor, err := rm.calculateReplicationFactor(cluster)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate replication factor: %v", err)
+	}
+	clusterMetricsSummary.ReplicationFactor = replicationFactor	
+
 	clusterMetric := types.ClusterMetrics{
 		ClusterName:           *cluster.ClusterName,
 		ClusterType:           string(cluster.ClusterType),
