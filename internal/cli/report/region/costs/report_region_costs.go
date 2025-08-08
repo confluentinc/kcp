@@ -12,53 +12,94 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
-	region  string
-	start   string
-	end     string
+	region string
+
+	start          string
+	end            string
+	lastDay        bool
+	lastWeek       bool
+	lastThirtyDays bool
+
 	hourly  bool
 	daily   bool
 	monthly bool
-	tag     []string
+
+	tag []string
 )
 
 func NewReportRegionCostsCmd() *cobra.Command {
 	regionCmd := &cobra.Command{
-		Use:   "costs",
-		Short: "Generate costs report on an AWS region",
-		Long: `Generate a costs report on an AWS region.
-Specify exactly one granularity flag: --hourly, --daily, or --monthly.
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                     | ENV_VAR
--------------------------|---------------------------
---region                 | REGION=us-east-1
---start                  | START=2024-01-01
---end                    | END=2024-01-02
---hourly                 | HOURLY=true
---daily                  | DAILY=true
---monthly                | MONTHLY=true
---tag                    | TAG=key=value
-`,
+		Use:           "costs",
+		Short:         "Generate costs report on an AWS region",
+		Long:          "Generate a costs report on an AWS region.",
 		SilenceErrors: true,
 		PreRunE:       preRunReportRegionCosts,
 		RunE:          runReportRegionCosts,
 	}
 
-	regionCmd.Flags().StringVar(&region, "region", "", "The AWS region")
-	regionCmd.Flags().StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD format)")
-	regionCmd.Flags().StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD format)")
-	regionCmd.Flags().BoolVar(&hourly, "hourly", false, "generate hourly cost report")
-	regionCmd.Flags().BoolVar(&daily, "daily", false, "generate daily cost report")
-	regionCmd.Flags().BoolVar(&monthly, "monthly", false, "generate monthly cost report")
-	regionCmd.Flags().StringSliceVar(&tag, "tag", []string{}, "generate cost report for a specific tag(key=value)")
+	groups := map[*pflag.FlagSet]string{}
+
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&region, "region", "", "AWS region the cost report is generated for")
+	regionCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	// Time range flags.
+	timeRangeFlags := pflag.NewFlagSet("time-range", pflag.ExitOnError)
+	timeRangeFlags.SortFlags = false
+	timeRangeFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
+	timeRangeFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	timeRangeFlags.BoolVar(&lastDay, "last-day", false, "generate cost report for the previous day")
+	timeRangeFlags.BoolVar(&lastWeek, "last-week", false, "generate cost report for the previous 7 days (not including today)")
+	timeRangeFlags.BoolVar(&lastThirtyDays, "last-thirty-days", false, "generate cost report for the previous 30 days (not including today)")
+	regionCmd.Flags().AddFlagSet(timeRangeFlags)
+	groups[timeRangeFlags] = "Time Range Flags"
+
+	// Granularity flags.
+	granularityFlags := pflag.NewFlagSet("granularity", pflag.ExitOnError)
+	granularityFlags.SortFlags = false
+	granularityFlags.BoolVar(&hourly, "hourly", false, "generate hourly cost report")
+	granularityFlags.BoolVar(&daily, "daily", false, "generate daily cost report")
+	granularityFlags.BoolVar(&monthly, "monthly", false, "generate monthly cost report")
+	regionCmd.Flags().AddFlagSet(granularityFlags)
+	groups[granularityFlags] = "Granularity Flags (choose one)"
+
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringSliceVar(&tag, "tag", []string{}, "generate cost report for a specific tag(key=value)")
+	regionCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
+	regionCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, timeRangeFlags, granularityFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Time Range Flags", "Granularity Flags (choose one)", "Optional Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	regionCmd.MarkFlagRequired("region")
-	regionCmd.MarkFlagRequired("start")
-	regionCmd.MarkFlagRequired("end")
+
+	regionCmd.MarkFlagsMutuallyExclusive("start", "last-day", "last-week", "last-thirty-days")
+	regionCmd.MarkFlagsOneRequired("start", "last-day", "last-week", "last-thirty-days")
+	regionCmd.MarkFlagsRequiredTogether("start", "end")
 
 	regionCmd.MarkFlagsMutuallyExclusive("hourly", "daily", "monthly")
 	regionCmd.MarkFlagsOneRequired("hourly", "daily", "monthly")
@@ -120,19 +161,39 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 	}
 
 	const dateFormat = "2006-01-02"
+	var startDate, endDate time.Time
+	var err error
 
-	startDate, err := time.Parse(dateFormat, start)
-	if err != nil {
-		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
-	}
+	switch {
+	case start != "" && end != "":
+		startDate, err = time.Parse(dateFormat, start)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
+		}
 
-	endDate, err := time.Parse(dateFormat, end)
-	if err != nil {
-		return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
-	}
+		endDate, err = time.Parse(dateFormat, end)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
+		}
 
-	if startDate.After(endDate) {
-		return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
+		if startDate.After(endDate) {
+			return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
+		}
+
+	case lastDay:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
+
+	case lastWeek:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -8).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
+
+	case lastThirtyDays:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -31).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
 	}
 
 	opts := rrc.RegionCosterOpts{

@@ -11,70 +11,91 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
 	clusterArn         string
+
+	useSaslIam         bool
+	useSaslScram       bool
+	useTls             bool
+	useUnauthenticated bool
+	skipKafka          bool
+
 	saslScramUsername  string
 	saslScramPassword  string
+	
 	tlsCaCert          string
 	tlsClientCert      string
 	tlsClientKey       string
-	skipKafka          bool
-	useSaslIam         bool
-	useSaslScram       bool
-	useUnauthenticated bool
-	useTls             bool
 )
 
 func NewScanClusterCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
-		Use:   "cluster",
-		Short: "Scan a given cluster",
-		Long: `Scan a given cluster for information that will help with migration.
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                        | ENV_VAR
-----------------------------|-----------------------------------------------------
-Required flags:
---cluster-arn               | CLUSTER_ARN=arn:aws:kafka:us-east-1:1234567890:cluster/my-cluster/1234567890
-
-Auth flags [choose one of the following]
---skip-kafka                | SKIP_KAFKA=true
---use-sasl-iam              | USE_SASL_IAM=true
---use-sasl-scram            | USE_SASL_SCRAM=true
---use-unauthenticated       | USE_UNAUTHENTICATED=true
---use-tls                   | USE_TLS=true
-
-Provide with --use-sasl-scram
---sasl-scram-username       | SASL_SCRAM_USERNAME=msk-username
---sasl-scram-password       | SASL_SCRAM_PASSWORD=msk-password
-
-Provide with --use-tls
---tls-ca-cert               | TLS_CA_CERT=path/to/ca-cert.pem
---tls-client-cert           | TLS_CLIENT_CERT=path/to/client-cert.pem
---tls-client-key            | TLS_CLIENT_KEY=path/to/client-key.pem
-`,
+		Use:           "cluster",
+		Short:         "Scan a given cluster",
+		Long:          "Scan a given cluster for information that will help with migration",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanCluster,
 		RunE:          runScanCluster,
 	}
 
-	clusterCmd.Flags().StringVar(&clusterArn, "cluster-arn", "", "cluster arn")
+	groups := map[*pflag.FlagSet]string{}
 
-	clusterCmd.Flags().StringVar(&saslScramUsername, "sasl-scram-username", "", "The SASL SCRAM username")
-	clusterCmd.Flags().StringVar(&saslScramPassword, "sasl-scram-password", "", "The SASL SCRAM password")
-	clusterCmd.Flags().StringVar(&tlsCaCert, "tls-ca-cert", "", "The TLS CA certificate")
-	clusterCmd.Flags().StringVar(&tlsClientCert, "tls-client-cert", "", "The TLS client certificate")
-	clusterCmd.Flags().StringVar(&tlsClientKey, "tls-client-key", "", "The TLS client key")
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The MSK cluster ARN")
+	clusterCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
 
-	clusterCmd.Flags().BoolVar(&skipKafka, "skip-kafka", false, "skip kafka level cluster scan, use when brokers are not reachable")
-	clusterCmd.Flags().BoolVar(&useSaslIam, "use-sasl-iam", false, "use sasl iam authentication")
-	clusterCmd.Flags().BoolVar(&useSaslScram, "use-sasl-scram", false, "use sasl scram authentication")
-	clusterCmd.Flags().BoolVar(&useUnauthenticated, "use-unauthenticated", false, "use unauthenticated authentication")
-	clusterCmd.Flags().BoolVar(&useTls, "use-tls", false, "use TLS authentication")
+	// Authentication flags.
+	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
+	authFlags.SortFlags = false
+	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication")
+	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication")
+	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication")
+	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use unauthenticated authentication")
+	authFlags.BoolVar(&skipKafka, "skip-kafka", false, "Skip kafka level cluster scan, use when brokers are not reachable")
+	clusterCmd.Flags().AddFlagSet(authFlags)
+	groups[authFlags] = "Authentication Flags"
+
+	// SASL/SCRAM flags.
+	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
+	saslScramFlags.SortFlags = false
+	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "The SASL SCRAM username")
+	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "The SASL SCRAM password")
+	clusterCmd.Flags().AddFlagSet(saslScramFlags)
+	groups[saslScramFlags] = "SASL/SCRAM Flags"
+
+	// TLS flags.
+	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
+	tlsFlags.SortFlags = false
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "The TLS CA certificate")
+	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "The TLS client certificate")
+	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "The TLS client key")
+	clusterCmd.Flags().AddFlagSet(tlsFlags)
+	groups[tlsFlags] = "TLS Flags"
+
+	clusterCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	clusterCmd.MarkFlagRequired("cluster-arn")
 	clusterCmd.MarkFlagsMutuallyExclusive("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")

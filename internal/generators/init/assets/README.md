@@ -79,6 +79,8 @@ You can also set environment variables individually if you opt not to use the sc
 >
 > However, they can be mixed and matched, for example if you are only planning to run commands within the region `us-east-1`, setting the environment variable `REGION` will avoid having to set the flag on all commands that need it.
 
+---
+
 ### `kcp scan`
 
 The `kcp scan` command includes the following sub-commands:
@@ -100,11 +102,11 @@ Both sub-commands require the following minimum AWS IAM permissions:
         "kafka:ListReplicators",
         "kafka:ListVpcConnections",
         "kafka:GetCompatibleKafkaVersions",
-        "cloudwatch:GetMetricData",
         "kafka:ListKafkaVersions",
         "kafka:GetBootstrapBrokers",
         "kafka:ListConfigurations",
         "ce:GetCostAndUsage",
+        "cloudwatch:GetMetricData",
         "cloudwatch:GetMetricStatistics",
         "cloudwatch:ListMetrics"
       ],
@@ -585,6 +587,184 @@ The sub-commands require the following minimum AWS IAM permissions:
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "EC2ReadOnlyAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeAddressesAttribute",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeNatGateways",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribePrefixLists",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeInstanceCreditSpecifications",
+        "ec2:DescribeInstanceAttribute"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Route53Management",
+      "Effect": "Allow",
+      "Action": [
+        "route53:CreateHostedZone",
+        "route53:GetChange",
+        "route53:GetHostedZone",
+        "route53:ListResourceRecordSets",
+        "route53:ListTagsForResource",
+        "route53:DeleteHostedZone",
+        "route53:ChangeTagsForResource",
+        "route53:ChangeResourceRecordSets",
+        "ec2:CreateRoute",
+        "ec2:DisassociateAddress"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VPCResourceCreation",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateRouteTable",
+        "ec2:CreateSubnet",
+        "ec2:CreateVpcEndpoint"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:vpc/*"
+    },
+    {
+      "Sid": "SecurityGroupManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:DeleteSecurityGroup",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RunInstances",
+        "ec2:CreateVpcEndpoint"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:security-group/*"
+    },
+    {
+      "Sid": "SubnetManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSubnet",
+        "ec2:CreateTags",
+        "ec2:DeleteSubnet",
+        "ec2:ModifySubnetAttribute",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:CreateNatGateway",
+        "ec2:CreateVpcEndpoint",
+        "ec2:RunInstances"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:subnet/*"
+    },
+    {
+      "Sid": "RouteTableManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:CreateRoute",
+        "ec2:AssociateRouteTable",
+        "ec2:CreateTags",
+        "ec2:DisassociateRouteTable"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:route-table/*"
+    },
+    {
+      "Sid": "ElasticIPManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AllocateAddress",
+        "ec2:CreateTags",
+        "ec2:DeleteTags",
+        "ec2:ReleaseAddress",
+        "ec2:DisassociateAddress",
+        "ec2:CreateNatGateway",
+        "ec2:DeleteNatGateway"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:elastic-ip/*"
+    },
+    {
+      "Sid": "NATGatewayManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNatGateway",
+        "ec2:CreateTags",
+        "ec2:DeleteNatGateway"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:natgateway/*"
+    },
+    {
+      "Sid": "VPCEndpointManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVpcEndpoint",
+        "ec2:CreateTags",
+        "ec2:DeleteVpcEndpoints"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:vpc-endpoint/*"
+    },
+    {
+      "Sid": "MigrationKeyPairManagement",
+      "Effect": "Allow",
+      "Action": ["ec2:ImportKeyPair", "ec2:DeleteKeyPair", "ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:key-pair/*"
+    },
+    {
+      "Sid": "InstanceLifecycleManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateTags",
+        "ec2:TerminateInstances"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:instance/*"
+    },
+    {
+      "Sid": "InstanceLaunchNetworkInterface",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:network-interface/*"
+    },
+    {
+      "Sid": "InstanceLaunchVolume",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:volume/*"
+    },
+    {
+      "Sid": "InstanceLaunchAMI",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>::image/*"
+    }
+  ]
+}
+```
+
+> [!Note]
+> The below IAM permissions are only required if you are using IAM to establish a cluster link between MSK and the jump cluster (Type 1). These will need to be applied to the EC2 Instance Profile role `jump-cluster-broker-iam-role-name`.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
       "Effect": "Allow",
       "Action": [
         "kafka-cluster:Connect",
@@ -738,6 +918,7 @@ This command generates Terraform configurations to provision a new bastion host 
 - `--vpc-id`: The VPC ID of the VPC that the **MSK cluster is deployed in**
 
 **Optional Arguments**:
+
 - `--create-igw`: When set, Terraform will create a new internet gateway in the VPC. If an Internet Gateway is not required, do not set this flag.
 
 **Example Usage**
@@ -860,14 +1041,15 @@ This command generates the required Terraform to provision your migration enviro
 - 3: MSK public cluster w/ SASL_SCRAM authentication to Confluent Cloud public cluster.
 
 For type 1 additional flags required:
+
 - `--ansible-control-node-subnet-cidr`: The CIDR of the subnet associated with the ansible control node
 - `--jump-cluster-broker-subnet-config`: The availability zone and CIDR for each of the three Confluent Platform jump cluster brokers
 - `--jump-cluster-broker-iam-role-name`: The Jump cluster broker iam role name that will be used to establish the cluster link
 
 For type 2 additional flags required:
+
 - `--ansible-control-node-subnet-cidr`: The CIDR of the subnet associated with the ansible control node
 - `--jump-cluster-broker-subnet-config`: The availability zone and CIDR for each of the three Confluent Platform jump cluster brokers
-
 
 **Example Usage**
 
@@ -888,7 +1070,6 @@ kcp create-asset migration-infra \
   --ansible-control-node-subnet-cidr 10.0.XXX.0/24 \
   --jump-cluster-broker-subnet-config us-east-1a:10.0.XXX.0/24,us-east-1b:10.0.XXX.0/24,us-east-1c:10.0.XXX.0/24
 ```
-
 
 **Output:**
 The command creates a `migration-infra` directory containing Terraform configurations that provision:

@@ -311,10 +311,8 @@ Scan a specific MSK cluster for detailed information
 
   - **Skip Kafka-level scanning:**
     `shell
-    kcp scan cluster --cluster-arn <cluster-arn> --skip-kafka
-    `
-    > [!NOTE]
-    > Use this option when brokers are not reachable or you only need infrastructure-level information.
+kcp scan cluster --cluster-arn <cluster-arn> --skip-kafka
+` > [!NOTE] > Use this option when brokers are not reachable or you only need infrastructure-level information.
 
 **Example Usage**
 
@@ -658,6 +656,184 @@ The sub-commands require the following minimum AWS IAM permissions:
 ```
 
 `migration-infra`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EC2ReadOnlyAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeAddressesAttribute",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeNatGateways",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribePrefixLists",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeInstanceCreditSpecifications",
+        "ec2:DescribeInstanceAttribute"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Route53Management",
+      "Effect": "Allow",
+      "Action": [
+        "route53:CreateHostedZone",
+        "route53:GetChange",
+        "route53:GetHostedZone",
+        "route53:ListResourceRecordSets",
+        "route53:ListTagsForResource",
+        "route53:DeleteHostedZone",
+        "route53:ChangeTagsForResource",
+        "route53:ChangeResourceRecordSets",
+        "ec2:CreateRoute",
+        "ec2:DisassociateAddress"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VPCResourceCreation",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateRouteTable",
+        "ec2:CreateSubnet",
+        "ec2:CreateVpcEndpoint"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:vpc/*"
+    },
+    {
+      "Sid": "SecurityGroupManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:DeleteSecurityGroup",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RunInstances",
+        "ec2:CreateVpcEndpoint"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:security-group/*"
+    },
+    {
+      "Sid": "SubnetManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSubnet",
+        "ec2:CreateTags",
+        "ec2:DeleteSubnet",
+        "ec2:ModifySubnetAttribute",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:CreateNatGateway",
+        "ec2:CreateVpcEndpoint",
+        "ec2:RunInstances"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:subnet/*"
+    },
+    {
+      "Sid": "RouteTableManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:CreateRoute",
+        "ec2:AssociateRouteTable",
+        "ec2:CreateTags",
+        "ec2:DisassociateRouteTable"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:route-table/*"
+    },
+    {
+      "Sid": "ElasticIPManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AllocateAddress",
+        "ec2:CreateTags",
+        "ec2:DeleteTags",
+        "ec2:ReleaseAddress",
+        "ec2:DisassociateAddress",
+        "ec2:CreateNatGateway",
+        "ec2:DeleteNatGateway"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:elastic-ip/*"
+    },
+    {
+      "Sid": "NATGatewayManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNatGateway",
+        "ec2:CreateTags",
+        "ec2:DeleteNatGateway"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:natgateway/*"
+    },
+    {
+      "Sid": "VPCEndpointManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVpcEndpoint",
+        "ec2:CreateTags",
+        "ec2:DeleteVpcEndpoints"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:vpc-endpoint/*"
+    },
+    {
+      "Sid": "MigrationKeyPairManagement",
+      "Effect": "Allow",
+      "Action": ["ec2:ImportKeyPair", "ec2:DeleteKeyPair", "ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:key-pair/*"
+    },
+    {
+      "Sid": "InstanceLifecycleManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateTags",
+        "ec2:TerminateInstances"
+      ],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:instance/*"
+    },
+    {
+      "Sid": "InstanceLaunchNetworkInterface",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:network-interface/*"
+    },
+    {
+      "Sid": "InstanceLaunchVolume",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>:<AWS ACCOUNT ID>:volume/*"
+    },
+    {
+      "Sid": "InstanceLaunchAMI",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:<AWS REGION>::image/*"
+    }
+  ]
+}
+```
+
+> [!Note]
+> The below IAM permissions are only required if you are using IAM to establish a cluster link between MSK and the jump cluster (Type 1). These will need to be applied to the EC2 Instance Profile role `jump-cluster-broker-iam-role-name`.
 
 ```json
 {
