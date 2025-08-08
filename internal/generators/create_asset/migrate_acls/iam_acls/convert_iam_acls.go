@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls"
 	iamservice "github.com/confluentinc/kcp/internal/services/iam"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -32,117 +33,18 @@ type TemplateData struct {
 	Acls      []TemplateACL
 }
 
-type ACLMapping struct {
-	Operation       string
-	ResourceType    string
-	RequiresPattern bool
-}
-
-// https://docs.aws.amazon.com/service-authorization/latest/reference/list_apachekafkaapisforamazonmskclusters.html
-// https://docs.confluent.io/cloud/current/security/access-control/acl.html#acl-resources-and-operations-for-ccloud-summary
-var aclMap = map[string]ACLMapping{
-	"kafka-cluster:AlterCluster": {
-		Operation:       "Alter",
-		ResourceType:    "Cluster",
-		RequiresPattern: false,
-	},
-	"kafka-cluster:AlterClusterDynamicConfiguration": {
-		Operation:       "AlterConfigs",
-		ResourceType:    "Cluster",
-		RequiresPattern: false,
-	},
-	"kafka-cluster:AlterGroup": {
-		Operation:       "Read",
-		ResourceType:    "Group",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:AlterTopic": {
-		Operation:       "Alter",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:AlterTopicDynamicConfiguration": {
-		Operation:       "AlterConfigs",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:AlterTransactionalId": {
-		Operation:       "Write",
-		ResourceType:    "TransactionalId",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:CreateTopic": {
-		Operation:       "Create",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DeleteGroup": {
-		Operation:       "Delete",
-		ResourceType:    "Group",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DeleteTopic": {
-		Operation:       "Delete",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DescribeCluster": {
-		Operation:       "Describe",
-		ResourceType:    "Cluster",
-		RequiresPattern: false,
-	},
-	"kafka-cluster:DescribeClusterDynamicConfiguration": {
-		Operation:       "DescribeConfigs",
-		ResourceType:    "Cluster",
-		RequiresPattern: false,
-	},
-	"kafka-cluster:DescribeGroup": {
-		Operation:       "Describe",
-		ResourceType:    "Group",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DescribeTopic": {
-		Operation:       "Describe",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DescribeTopicDynamicConfiguration": {
-		Operation:       "DescribeConfigs",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:DescribeTransactionalId": {
-		Operation:       "Describe",
-		ResourceType:    "TransactionalId",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:ReadData": {
-		Operation:       "Read",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:WriteData": {
-		Operation:       "Write",
-		ResourceType:    "Topic",
-		RequiresPattern: true,
-	},
-	"kafka-cluster:WriteDataIdempotently": {
-		Operation:       "IdempotentWrite",
-		ResourceType:    "Cluster",
-		RequiresPattern: true,
-	},
-}
-
 var (
-	principalArn   string
-	outputDir string
+	principalArn string
+	outputDir    string
+	auditReport  bool
 )
 
-func RunConvertIamAcls(userPrincipalArn, userOutputDir string) error {
+func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userAuditReport bool) error {
 	ctx := context.Background()
 
 	principalArn = userPrincipalArn
 	outputDir = userOutputDir
+	auditReport = userAuditReport
 
 	fmt.Printf("🚀 Converting IAM ACLs for principal: %s\n", principalArn)
 
@@ -226,7 +128,18 @@ func RunConvertIamAcls(userPrincipalArn, userOutputDir string) error {
 		}
 	}
 
-	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", getPrincipalFromArn(principalArn), outputDir)
+	principal := cleanPrincipalName(getPrincipalFromArn(principalArn))
+
+	if auditReport {
+		aclAuditReportPath := filepath.Join(outputDir, "migrated-acls-report.md")
+		if err := migrate_acls.GenerateAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
+			return fmt.Errorf("failed to generate audit report: %w", err)
+		}
+
+		fmt.Printf("\n✅ Successfully generated audit report for '%s' in %s\n", principal, aclAuditReportPath)
+	}
+
+	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", principal, outputDir)
 
 	return nil
 }
@@ -288,7 +201,7 @@ func processPolicy(policyDocument map[string]any) []types.Acls {
 			if strings.HasPrefix(action, "kafka-cluster:") {
 				if action == "kafka-cluster:*" {
 					// If wildcard on action - apply all ACL mappings.
-					for _, mapping := range aclMap {
+					for _, mapping := range types.AclMap {
 						acl := createACLFromMapping(mapping, effect, resources)
 						extractedACLs = append(extractedACLs, acl)
 					}
@@ -308,13 +221,13 @@ func processPolicy(policyDocument map[string]any) []types.Acls {
 	return extractedACLs
 }
 
-func TranslateIAMToKafkaACL(iamPermission string) (ACLMapping, bool) {
+func TranslateIAMToKafkaACL(iamPermission string) (types.ACLMapping, bool) {
 	normalizedPermission := strings.TrimSpace(iamPermission)
-	acl, found := aclMap[normalizedPermission]
+	acl, found := types.AclMap[normalizedPermission]
 	return acl, found
 }
 
-func createACLFromMapping(mapping ACLMapping, effect string, resources []string) types.Acls {
+func createACLFromMapping(mapping types.ACLMapping, effect string, resources []string) types.Acls {
 	// Set defaults
 	resourceName := "*"
 	patternType := "LITERAL"
