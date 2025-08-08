@@ -134,41 +134,41 @@ var aclMap = map[string]ACLMapping{
 }
 
 var (
-	roleArn   string
+	principalArn   string
 	outputDir string
 )
 
-func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
+func RunConvertIamAcls(userPrincipalArn, userOutputDir string) error {
 	ctx := context.Background()
 
-	roleArn = userRoleArn
+	principalArn = userPrincipalArn
 	outputDir = userOutputDir
 
-	fmt.Printf("🚀 Converting IAM ACLs for role: %s\n", roleArn)
+	fmt.Printf("🚀 Converting IAM ACLs for principal: %s\n", principalArn)
 
 	iamClient, err := client.NewIAMClient()
 	if err != nil {
 		return fmt.Errorf("failed to create IAM client: %v", err)
 	}
 
-	fmt.Printf("📋 Retrieving IAM role policies for role: %s\n", roleArn)
-	policies, err := iamservice.GetRolePolicies(ctx, iamClient, roleArn)
+	fmt.Printf("📋 Retrieving IAM policies for principal: %s\n", principalArn)
+	policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
 	if err != nil {
-		return fmt.Errorf("failed to get role policies: %v", err)
+		return fmt.Errorf("failed to get principal policies: %v", err)
 	}
 
-	extractedACLs, err := extractKafkaPermissionsFromPolicies(policies)
+	extractedACLs, err := extractKafkaPermissionsFromPrincipalPolicies(policies)
 	if err != nil {
 		return fmt.Errorf("failed to extract Kafka permissions: %v", err)
 	}
 
 	if len(extractedACLs) == 0 {
-		fmt.Println("No `kafka-cluster` permissions found in the specified role policies so therefore nothing to convert.")
+		fmt.Println("No `kafka-cluster` permissions found in the specified principal's policies so therefore nothing to convert.")
 		return nil
 	}
 
 	if outputDir == "" {
-		principal := cleanPrincipalName(getPrincipalFromRoleName(roleArn))
+		principal := cleanPrincipalName(getPrincipalFromArn(principalArn))
 		outputDir = fmt.Sprintf("%s_iam_acls", principal)
 	}
 
@@ -178,7 +178,7 @@ func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
 
 	aclsByPrincipal := make(map[string][]TemplateACL)
 	for _, acl := range extractedACLs {
-		principal := cleanPrincipalName(getPrincipalFromRoleName(roleArn))
+		principal := acl.Principal
 
 		templateACL := TemplateACL{
 			Permission:   acl.PermissionType,
@@ -226,12 +226,12 @@ func RunConvertIamAcls(userRoleArn, userOutputDir string) error {
 		}
 	}
 
-	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", getPrincipalFromRoleName(roleArn), outputDir)
+	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", getPrincipalFromArn(principalArn), outputDir)
 
 	return nil
 }
 
-func extractKafkaPermissionsFromPolicies(policies *iamservice.RolePolicies) ([]types.Acls, error) {
+func extractKafkaPermissionsFromPrincipalPolicies(policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
@@ -332,7 +332,7 @@ func createACLFromMapping(mapping ACLMapping, effect string, resources []string)
 		ResourceType:        mapping.ResourceType,
 		ResourceName:        resourceName,
 		ResourcePatternType: patternType,
-		Principal:           cleanPrincipalName(getPrincipalFromRoleName(roleArn)),
+		Principal:           cleanPrincipalName(getPrincipalFromArn(principalArn)),
 		Host:                "*", // Unsure how we would retrieve this from the IAM policy.
 		Operation:           mapping.Operation,
 		PermissionType:      effect,
@@ -445,10 +445,9 @@ func determineResourceNameAndPattern(resourceName string) (string, string) {
 	return resourceName, "LITERAL"
 }
 
-func getPrincipalFromRoleName(roleArn string) string {
-	principal := strings.Split(roleArn, "/")[1]
-
-	return fmt.Sprintf("User:%s", principal)
+func getPrincipalFromArn(principalArn string) string {
+	parts := strings.Split(principalArn, "/")[1]
+	return fmt.Sprintf("User:%s", parts)
 }
 
 // Clean the principal name for filename (remove User: prefix and special chars).
