@@ -27,7 +27,7 @@ Please see the CHANGELOG.md for details of recent updates.
   - [kcp Commands](#kcp-commands)
     - [`kcp init`](#kcp-init)
     - [`kcp scan`](#kcp-scan)
-    - [`kcp report region`](#kcp-report-region)
+    - [`kcp report`](#kcp-report)
     - [`kcp create-asset`](#kcp-create-asset)
 - [Development](#development)
 
@@ -338,14 +338,18 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 ---
 
-### `kcp report region`
+### `kcp report`
 
-The `kcp report region` command includes the following sub-commands:
+The `kcp report` command includes the following sub-commands:
+
+- `region`
+- `cluster`
+
+The `kcp report region` command includes the following sub-command:
 
 - `costs`
-- `metrics`
 
-The sub-commands require the following minimum AWS IAM permissions:
+The sub-command requires the following minimum AWS IAM permissions:
 
 `costs`:
 
@@ -361,6 +365,12 @@ The sub-commands require the following minimum AWS IAM permissions:
   ]
 }
 ```
+
+The `kcp report cluster` command includes the following sub-command:
+
+- `metrics`
+
+The sub-command requires the following minimum AWS IAM permissions:
 
 `metrics`:
 
@@ -426,27 +436,74 @@ The command generates a `cost_report` directory, splitting reports by region whi
 
 ---
 
-#### `kcp report region metrics`
+#### `kcp report cluster metrics`
 
-This command collates important MSK Kafka metrics per cluster in a specified AWS region and generates a comprehensive report.
+This command collates important MSK Kafka metrics for a cluster and generates a comprehensive report.  Some of the metrics are obtained from the kafka broker to kafka auth is required.
 
 **Required Arguments**:
 
 - `--region`: The region where the cost report will be created for
 - `--start`: The inclusive start date for cost report (YYYY-MM-DD)
 - `--end`: The exclusive end date for cost report (YYYY-MM-DD)
+-  `--cluster-arn`: Cluster arn
+
+- **Authentication options:**
+  Choose the authentication method that matches your cluster configuration:
+
+  - **SASL SCRAM authentication:**
+
+    ```shell
+    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-scram
+    ```
+
+    Requires additional command flags:
+
+    - `--sasl-scram-username <sasl-scram-username>`
+    - `--sasl-scram-password <sasl-scram-password>`
+
+  - **SASL IAM authentication:**
+
+    ```shell
+    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-iam 
+    ```
+
+  - **TLS authentication:**
+
+    ```shell
+    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-tls  
+    ```
+
+    Requires additional command flags:
+
+    - `--tls-ca-cert <path/to/ca.pem>`
+    - `--tls-client-cert <path/to/client.pem>`
+    - `--tls-client-key <path/to/client-key.pem>`
+
+  - **Unauthenticated access:**
+
+    ```shell
+        kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-unauthenticated
+    ```
+
+  - **Skip Kafka-level scanning:**
+    `shell
+    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --skip-kafka
+    `
+    > [!NOTE]
+    > Use this option when brokers are not reachable or you only need infrastructure-level information.
 
 **Example Usage**
 
 ```shell
-kcp report region costs \
+kcp report cluster metrics \
 --start 2025-07-01 \
 --end 2025-08-01 \
---region us-east-1
+--cluster-arn arn:aws:kafka:eu-north-1:635910096382:cluster/msk-exp1-fff-cluster/f6842864-4a96-4f6c-bf24-2728d32cdef3-2 \
+--use-sasl-iam
 ```
 
 **Output:**
-The command generates two files - `<aws-region>-metrics.md` and `<aws-region>-metrics.json` file containing:
+The command generates two files - `<aws-cluster>-metrics.md` and `<aws-cluster>-metrics.json` file containing:
 
 - Broker details
 - Metrics summary - average ingress/egress throughput, total partitions

@@ -19,9 +19,9 @@ var (
 
 func NewReverseProxyCmd() *cobra.Command {
 	reverseProxyCmd := &cobra.Command{
-		Use:   "reverse-proxy",
-		Short: "Create assets for the reverse proxy",
-		Long: "Create Terraform assets for deploying a reverse proxy to access the privately networked Confluent Cloud cluster",
+		Use:           "reverse-proxy",
+		Short:         "Create assets for the reverse proxy",
+		Long:          "Create Terraform assets for deploying a reverse proxy to access the privately networked Confluent Cloud cluster",
 		SilenceErrors: true,
 		PreRunE:       preRunCreateReverseProxy,
 		RunE:          runCreateReverseProxy,
