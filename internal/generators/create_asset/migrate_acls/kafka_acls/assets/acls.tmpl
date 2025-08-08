@@ -3,13 +3,13 @@ resource "confluent_service_account" "{{.Principal | lower}}" {
   description  = "Service Account for {{.Principal}}"
 }
 {{range $index, $acl := .Acls}}
-resource "confluent_kafka_acl" "{{$acl.Permission | lower}}_{{$acl.ResourceType | lower}}_{{$acl.Operation | lower}}_{{$index}}" {
+resource "confluent_kafka_acl" "{{$acl.PermissionType | lower}}_{{$acl.ResourceType | lower}}_{{$acl.Operation | lower}}_{{$index}}" {
   resource_type = "{{$acl.ResourceType}}"
   resource_name = "{{$acl.ResourceName}}"
-  pattern_type  = "{{$acl.PatternType}}"
+  pattern_type  = "{{$acl.ResourcePatternType}}"
   principal     = "User:${confluent_service_account.{{$.Principal}}.id}"
   host          = "{{$acl.Host}}"
   operation     = "{{$acl.Operation}}"
-  permission    = "{{$acl.Permission}}"
+  permission    = "{{$acl.PermissionType}}"
 }
 {{end}}

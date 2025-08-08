@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -18,26 +19,18 @@ var assetsFS embed.FS
 var (
 	clusterFile string
 	outputDir   string
+	auditReport bool
 )
-
-type TemplateACL struct {
-	Permission   string
-	ResourceType string
-	Operation    string
-	ResourceName string
-	PatternType  string
-	Principal    string
-	Host         string
-}
 
 type TemplateData struct {
 	Principal string
-	Acls      []TemplateACL
+	Acls      []types.Acls
 }
 
-func RunConvertKafkaAcls(userClusterFile, userOutputDir string) error {
+func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userAuditReport bool) error {
 	clusterFile = userClusterFile
 	outputDir = userOutputDir
+	auditReport = userAuditReport
 
 	data, err := os.ReadFile(clusterFile)
 	if err != nil {
@@ -57,21 +50,11 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	aclsByPrincipal := make(map[string][]TemplateACL)
+	aclsByPrincipal := make(map[string][]types.Acls)
 	for _, acl := range clusterData.Acls {
 		principal := cleanPrincipalName(acl.Principal)
 
-		templateACL := TemplateACL{
-			Permission:   acl.PermissionType,
-			ResourceType: acl.ResourceType,
-			Operation:    acl.Operation,
-			ResourceName: acl.ResourceName,
-			PatternType:  acl.ResourcePatternType,
-			Principal:    principal,
-			Host:         acl.Host,
-		}
-
-		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], templateACL)
+		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)
 	}
 
 	// Load template
@@ -87,7 +70,6 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string) error {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// Generate a separate file for each principal
 	for principal, acls := range aclsByPrincipal {
 		filename := fmt.Sprintf("%s-acls.tf", principal)
 		filepath := filepath.Join(outputDir, filename)
@@ -108,6 +90,18 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string) error {
 		}
 
 		fmt.Printf("📝 Generated ACL file: %s (%d ACLs)\n", filepath, len(acls))
+	}
+
+	if auditReport {
+		reportPath := filepath.Join(outputDir, "migrated-acls-report.md")
+		var allAcls []types.Acls
+		for _, list := range aclsByPrincipal {
+			allAcls = append(allAcls, list...)
+		}
+		if err := migrate_acls.GenerateKafkaAuditReport(allAcls, reportPath); err != nil {
+			return fmt.Errorf("failed to generate audit report: %w", err)
+		}
+		fmt.Printf("\n📝 Generated audit report: %s\n", reportPath)
 	}
 
 	fmt.Printf("\n✅ Successfully generated ACL files for %d principals in %s\n", len(aclsByPrincipal), outputDir)

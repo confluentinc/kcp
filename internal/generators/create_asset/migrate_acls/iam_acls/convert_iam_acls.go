@@ -18,19 +18,9 @@ import (
 //go:embed assets
 var assetsFS embed.FS
 
-type TemplateACL struct {
-	Permission   string
-	ResourceType string
-	Operation    string
-	ResourceName string
-	PatternType  string
-	Principal    string
-	Host         string
-}
-
 type TemplateData struct {
 	Principal string
-	Acls      []TemplateACL
+	Acls      []types.Acls
 }
 
 var (
@@ -78,21 +68,10 @@ func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userAuditReport b
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	aclsByPrincipal := make(map[string][]TemplateACL)
+	aclsByPrincipal := make(map[string][]types.Acls)
 	for _, acl := range extractedACLs {
 		principal := acl.Principal
-
-		templateACL := TemplateACL{
-			Permission:   acl.PermissionType,
-			ResourceType: acl.ResourceType,
-			Operation:    acl.Operation,
-			ResourceName: acl.ResourceName,
-			PatternType:  acl.ResourcePatternType,
-			Principal:    principal,
-			Host:         acl.Host,
-		}
-
-		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], templateACL)
+		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)
 	}
 
 	tmplContent, err := assetsFS.ReadFile("assets/acls.tmpl")
@@ -132,7 +111,7 @@ func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userAuditReport b
 
 	if auditReport {
 		aclAuditReportPath := filepath.Join(outputDir, "migrated-acls-report.md")
-		if err := migrate_acls.GenerateAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
+		if err := migrate_acls.GenerateIamAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
 
