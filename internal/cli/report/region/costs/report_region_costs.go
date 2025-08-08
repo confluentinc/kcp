@@ -192,7 +192,7 @@ func parseReportRegionCostsOpts() (*rrc.RegionCosterOpts, error) {
 
 	case lastThirtyDays:
 		now := time.Now()
-		startDate = now.AddDate(0, 0, -30).UTC().Truncate(24 * time.Hour)
+		startDate = now.AddDate(0, 0, -31).UTC().Truncate(24 * time.Hour)
 		endDate = now.UTC().Truncate(24 * time.Hour)
 	}
 
