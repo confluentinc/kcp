@@ -408,7 +408,7 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 	}
 	collector.kafkaAdminFactory = kafkaAdminFactory
 
-	metricService.On("GetAverageBytesInPerSec", "test-serverless-cluster", 3, "test-topic").Return([]float64{100.0, 100.0, 100.0}, nil)
+	metricService.On("GetAverageBytesInPerSec", "test-serverless-cluster", 1, "test-topic").Return([]float64{100.0}, nil)
 
 	result, err := collector.processCluster(cluster)
 

@@ -334,7 +334,13 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 	totalReplicationDataBytes := 0.0
 
 	for _, topic := range topicsData {
-		bytesInPerSec, err := rm.metricService.GetAverageBytesInPerSec(*cluster.ClusterName, 3, topic.Name)
+
+		numNodes := 1
+		if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+			numNodes = int(*cluster.Provisioned.NumberOfBrokerNodes)
+		}
+		
+		bytesInPerSec, err := rm.metricService.GetAverageBytesInPerSec(*cluster.ClusterName, numNodes, topic.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get average bytes in per sec: %v", err)
 		}
