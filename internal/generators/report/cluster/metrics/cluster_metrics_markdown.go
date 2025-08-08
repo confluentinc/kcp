@@ -78,12 +78,12 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 			"Peak Ingress Throughput (MB/s)",
 			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond),
 		},
-		// Avg Egress Throughput (MB/s)			
+		// Avg Egress Throughput (MB/s)
 		{
 			"Avg Egress Throughput (MB/s)",
 			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond),
 		},
-		// Peak Egress Throughput (MB/s)		
+		// Peak Egress Throughput (MB/s)
 		{
 			"Peak Egress Throughput (MB/s)",
 			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond),
@@ -91,7 +91,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// Retention (Days)
 		{
 			"Retention (Days)",
-				func() string {
+			func() string {
 				if cluster.ClusterMetricsSummary.RetentionDays == nil {
 					return ""
 				}
@@ -103,7 +103,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 			"Partitions",
 			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.Partitions),
 		},
-		// Replication Factor 
+		// Replication Factor
 		{
 			"Replication Factor",
 			func() string {
@@ -113,7 +113,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.ReplicationFactor)
 			}(),
 		},
-		// Follower Fetching 
+		// Follower Fetching
 		{
 			"Follower Fetching",
 			func() string {
@@ -142,10 +142,10 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 				}
 				if cluster.ClusterMetricsSummary.LocalRetentionInPrimaryStorageHours == nil {
 					return ""
-				}				
+				}
 				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.LocalRetentionInPrimaryStorageHours)
 			}(),
-		},	
+		},
 		// "Instance Type Override
 		{
 			"Instance Type Override",
@@ -165,10 +165,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		},
 	}
 
-
-
 	md.AddTable([]string{"TCO Calculator Item", "Value (blank=unknown)"}, rows)
-
 
 }
 

@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
@@ -34,8 +34,8 @@ var (
 
 func NewReportClusterMetricsCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
-		Use:    "metrics",
-		Short:  "Generate metrics report on an msk cluster",
+		Use:   "metrics",
+		Short: "Generate metrics report on an msk cluster",
 		Long: `Generate a metrics report on an msk cluster.
 
 All flags can be provided via environment variables (uppercase, with underscores):
