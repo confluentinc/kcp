@@ -370,7 +370,6 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 
 	cluster := createTestServerlessCluster()
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
-	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	// Mock metric service calls for serverless
 	metricService.On("GetServerlessAverageMetric", "test-serverless-cluster", "BytesInPerSec").Return(100.0, nil)
@@ -393,23 +392,6 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
-	// Mock Kafka admin for replication factor calculation
-	mockAdmin := &MockKafkaAdmin{}
-	mockAdmin.On("DescribeConfig").Return([]sarama.ConfigEntry{
-		{Name: "default.replication.factor", Value: "3"},
-	}, nil)
-	mockAdmin.On("ListTopics").Return(map[string]sarama.TopicDetail{
-		"test-topic": {ReplicationFactor: 3},
-	}, nil)
-	mockAdmin.On("Close").Return(nil)
-
-	kafkaAdminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
-		return mockAdmin, nil
-	}
-	collector.kafkaAdminFactory = kafkaAdminFactory
-
-	metricService.On("GetAverageBytesInPerSec", "test-serverless-cluster", 1, "test-topic").Return([]float64{100.0}, nil)
-
 	result, err := collector.processCluster(cluster)
 
 	assert.NoError(t, err)
@@ -421,7 +403,6 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 
 	mskService.AssertExpectations(t)
 	metricService.AssertExpectations(t)
-	mockAdmin.AssertExpectations(t)
 }
 
 func TestClusterMetricsCollector_calculateRetention(t *testing.T) {

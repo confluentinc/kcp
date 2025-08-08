@@ -350,6 +350,10 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 		}
 	}
 
+	if totalBytesInPerSec == 0 {
+		return nil, nil
+	}
+
 	replicationFactor := totalReplicationDataBytes / totalBytesInPerSec
 	return &replicationFactor, nil
 }
@@ -385,12 +389,6 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	}
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
-	// // Replication Factor (Optional, Default = 3)
-	replicationFactor, err := rm.calculateReplicationFactor(cluster)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate replication factor: %v", err)
-	}
-	clusterMetricsSummary.ReplicationFactor = replicationFactor
 
 	clusterMetric := types.ClusterMetrics{
 		ClusterName:           *cluster.ClusterName,

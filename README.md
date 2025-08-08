@@ -180,10 +180,6 @@ Both sub-commands require the following minimum AWS IAM permissions:
         "kafka:ListKafkaVersions",
         "kafka:GetBootstrapBrokers",
         "kafka:ListConfigurations",
-        "ce:GetCostAndUsage",
-        "cloudwatch:GetMetricData",
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics"
       ],
       "Resource": "*"
     },
@@ -225,7 +221,10 @@ Both sub-commands require the following minimum AWS IAM permissions:
         "kafka-cluster:DescribeClusterDynamicConfiguration",
         "kafka-cluster:Connect"
       ],
-      "Resource": "arn:aws:kafka:*:<AWS ACCOUNT ID>:cluster/*/*"
+			"Resource": [
+				"arn:aws:kafka:*:635910096382:topic/*/*/*",
+				"arn:aws:kafka:*:635910096382:cluster/*/*"
+			]
     }
   ]
 }
@@ -391,7 +390,24 @@ The sub-command requires the following minimum AWS IAM permissions:
         "cloudwatch:GetMetricData"
       ],
       "Resource": ["*"]
-    }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kafka-cluster:DescribeTopicDynamicConfiguration",
+        "kafka-cluster:DescribeCluster",
+        "kafka-cluster:ReadData",
+        "kafka-cluster:DescribeTopic",
+        "kafka-cluster:DescribeTransactionalId",
+        "kafka-cluster:DescribeGroup",
+        "kafka-cluster:DescribeClusterDynamicConfiguration",
+        "kafka-cluster:Connect"
+      ],
+			"Resource": [
+				"arn:aws:kafka:*:635910096382:topic/*/*/*",
+				"arn:aws:kafka:*:635910096382:cluster/*/*"
+			]
+    }    
   ]
 }
 ```
