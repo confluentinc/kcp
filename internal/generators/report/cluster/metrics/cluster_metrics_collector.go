@@ -31,7 +31,7 @@ type ClusterMetricsOpts struct {
 }
 
 type Topic struct {
-	Name string
+	Name              string
 	ReplicationFactor int
 }
 
@@ -125,7 +125,9 @@ func (rm *ClusterMetricsCollector) calculateRetention(nodesMetrics []types.NodeM
 
 	for _, nodeMetric := range nodesMetrics {
 		totalBytesInPerDay += nodeMetric.BytesInPerSecAvg * 60 * 60 * 24
-		totalLocalStorageUsed += ((nodeMetric.KafkaDataLogsDiskUsedAvg / 100) * float64(*nodeMetric.VolumeSizeGB)) * 1024 * 1024 * 1024
+		if nodeMetric.VolumeSizeGB != nil {
+			totalLocalStorageUsed += ((nodeMetric.KafkaDataLogsDiskUsedAvg / 100) * float64(*nodeMetric.VolumeSizeGB)) * 1024 * 1024 * 1024
+		}
 		totalRemoteStorageUsed += nodeMetric.RemoteLogSizeBytesAvg
 	}
 	slog.Info("🔄 total bytes in per sec", "totalBytesInPerSec", totalBytesInPerDay)
@@ -323,13 +325,13 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 			replicationFactor = defaultReplicationFactor
 		}
 		topicsData = append(topicsData, Topic{
-			Name: topic,
+			Name:              topic,
 			ReplicationFactor: replicationFactor,
 		})
 	}
 
 	totalBytesInPerSec := 0.0
-	totalReplicationDataBytes := 0.0	
+	totalReplicationDataBytes := 0.0
 
 	for _, topic := range topicsData {
 		bytesInPerSec, err := rm.metricService.GetAverageBytesInPerSec(*cluster.ClusterName, 3, topic.Name)
@@ -382,7 +384,7 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate replication factor: %v", err)
 	}
-	clusterMetricsSummary.ReplicationFactor = replicationFactor	
+	clusterMetricsSummary.ReplicationFactor = replicationFactor
 
 	clusterMetric := types.ClusterMetrics{
 		ClusterName:           *cluster.ClusterName,

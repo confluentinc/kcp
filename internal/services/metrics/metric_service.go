@@ -62,18 +62,18 @@ func (ms *MetricService) buildCloudWatchInputClusterBrokerTopic(clusterName stri
 	period := int32(duration.Seconds())
 
 	dimensions := []cloudwatchtypes.Dimension{
-			{
-				Name:  aws.String("Cluster Name"),
-				Value: aws.String(clusterName),
-			},
-			{
-				Name:  aws.String("Broker ID"),
-				Value: aws.String(strconv.Itoa(node)),
-			},
-			{
-				Name:  aws.String("Topic"),
-				Value: aws.String(topic),
-			},
+		{
+			Name:  aws.String("Cluster Name"),
+			Value: aws.String(clusterName),
+		},
+		{
+			Name:  aws.String("Broker ID"),
+			Value: aws.String(strconv.Itoa(node)),
+		},
+		{
+			Name:  aws.String("Topic"),
+			Value: aws.String(topic),
+		},
 	}
 
 	return &cloudwatch.GetMetricStatisticsInput{
@@ -90,7 +90,7 @@ func (ms *MetricService) buildCloudWatchInputClusterBrokerTopic(clusterName stri
 func (ms *MetricService) GetAverageBytesInPerSec(clusterName string, numNodes int, topic string) ([]float64, error) {
 	slog.Info("📊 getting cloudwatch bytes in per sec", "cluster", clusterName, "numNodes", numNodes, "topics", topic)
 	var results []float64
-	for i := 1 ; i <= numNodes; i++ {
+	for i := 1; i <= numNodes; i++ {
 		metricRequest := ms.buildCloudWatchInputClusterBrokerTopic(clusterName, i, topic, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage})
 		response, err := ms.client.GetMetricStatistics(context.Background(), metricRequest)
 		if err != nil {
@@ -101,7 +101,7 @@ func (ms *MetricService) GetAverageBytesInPerSec(clusterName string, numNodes in
 			continue
 		}
 		slog.Info("🔍 got cloudwatch bytes in per sec", "node", i, "topic", topic, "data", response.Datapoints[0].Average)
-		results = append(results, *response.Datapoints[0].Average)		
+		results = append(results, *response.Datapoints[0].Average)
 	}
 	return results, nil
 }
