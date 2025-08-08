@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -19,24 +20,41 @@ var (
 
 func NewMigrationCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
-		Use:   "migration-scripts",
-		Short: "Create assets for the migration scripts",
-		Long: `Create assets for the migration scripts
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                     | ENV_VAR
--------------------------|---------------------------
---cluster-file           | CLUSTER_FILE=path/to/cluster.json
---migration-infra-folder | MIGRATION_INFRA_FOLDER=path/to/migration_infra
-`,
+		Use:           "migration-scripts",
+		Short:         "Create assets for the migration scripts",
+		Long:          "Create shell scripts for setting up mirror topics used by the cluster links to migrate data to the target cluster in Confluent Cloud",
 		SilenceErrors: true,
 		PreRunE:       preRunCreateMigrationScripts,
 		RunE:          runCreateMigrationScripts,
 	}
 
-	migrationCmd.Flags().StringVar(&clusterFile, "cluster-file", "", "The cluster json file produced from 'scan cluster' command")
-	migrationCmd.Flags().StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
+	groups := map[*pflag.FlagSet]string{}
+
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&clusterFile, "cluster-file", "", "The cluster scan JSON file produced from 'kcp scan cluster' command")
+	requiredFlags.StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration-infra folder produced from 'kcp create-asset migration-infra' command after applying the Terraform")
+	migrationCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	migrationCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	migrationCmd.MarkFlagRequired("cluster-file")
 	migrationCmd.MarkFlagRequired("migration-infra-folder")

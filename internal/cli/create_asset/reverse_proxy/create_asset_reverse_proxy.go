@@ -2,16 +2,18 @@ package reverse_proxy
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/confluentinc/kcp/internal/generators/create_asset/reverse_proxy"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
 	region               string
 	vpcId                string
-	reverseProxyCidr     string
+	reverseProxyCidr     net.IPNet
 	migrationInfraFolder string
 )
 
@@ -19,26 +21,41 @@ func NewReverseProxyCmd() *cobra.Command {
 	reverseProxyCmd := &cobra.Command{
 		Use:   "reverse-proxy",
 		Short: "Create assets for the reverse proxy",
-		Long: `Create assets for the reverse proxy
-		
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                     | ENV_VAR
--------------------------|------------------------------------------
---region                 | REGION=us-east-1
---vpc-id                 | VPC_ID=vpc-1234567890
---reverse-proxy-cidr     | REVERSE_PROXY_CIDR=10.0.0.0/16
---migration-infra-folder | MIGRATION_INFRA_FOLDER=path/to/migration-infra-folder
-`,
+		Long: "Create Terraform assets for deploying a reverse proxy to access the privately networked Confluent Cloud cluster",
 		SilenceErrors: true,
 		PreRunE:       preRunCreateReverseProxy,
 		RunE:          runCreateReverseProxy,
 	}
 
-	reverseProxyCmd.Flags().StringVar(&region, "region", "", "The AWS region")
-	reverseProxyCmd.Flags().StringVar(&vpcId, "vpc-id", "", "The VPC ID")
-	reverseProxyCmd.Flags().StringVar(&reverseProxyCidr, "reverse-proxy-cidr", "", "The public subnet CIDR")
-	reverseProxyCmd.Flags().StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration infra folder produced from 'create-asset migration-infra' command after applying the terraform")
+	groups := map[*pflag.FlagSet]string{}
+
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&region, "region", "", "AWS region")
+	requiredFlags.StringVar(&vpcId, "vpc-id", "", "Existing MSK VPC ID")
+	requiredFlags.IPNetVar(&reverseProxyCidr, "reverse-proxy-cidr", net.IPNet{}, "Revese proxy subnet CIDR (e.g. 10.0.255.0/24)")
+	requiredFlags.StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration-infra folder produced from 'kcp create-asset migration-infra' command after applying the Terraform")
+	reverseProxyCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	reverseProxyCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	reverseProxyCmd.MarkFlagRequired("region")
 	reverseProxyCmd.MarkFlagRequired("vpc-id")
@@ -80,7 +97,7 @@ func parseReverseProxyOpts() (*reverse_proxy.ReverseProxyOpts, error) {
 	opts := reverse_proxy.ReverseProxyOpts{
 		Region:           region,
 		VPCId:            vpcId,
-		PublicSubnetCidr: reverseProxyCidr,
+		PublicSubnetCidr: reverseProxyCidr.String(),
 		TerraformOutput:  terraformState.Outputs,
 	}
 
