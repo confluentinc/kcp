@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.30.3
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.53.0
+	github.com/aws/aws-sdk-go-v2/service/iam v1.39.0
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.41.0
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/spf13/cobra v1.9.1
