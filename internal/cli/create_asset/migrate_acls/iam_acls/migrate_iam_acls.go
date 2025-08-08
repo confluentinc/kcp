@@ -13,7 +13,7 @@ var (
 	roleArn   string
 	userArn   string
 	outputDir string
-	auditReport bool
+	skipAuditReport bool
 )
 
 func NewMigrateIamAclsCmd() *cobra.Command {
@@ -38,7 +38,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform ACL assets will be written to")
-	optionalFlags.BoolVar(&auditReport, "audit-report", false, "Generate an audit report of the converted ACLs")
+	optionalFlags.BoolVar(&skipAuditReport, "skip-audit-report", false, "Skip generating an audit report of the converted ACLs")
 	aclsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -82,7 +82,7 @@ func runMigrateIamAcls(cmd *cobra.Command, args []string) error {
 		principalArn = userArn
 	}
 
-	if err := iam_acls.RunConvertIamAcls(principalArn, outputDir, auditReport); err != nil {
+	if err := iam_acls.RunConvertIamAcls(principalArn, outputDir, skipAuditReport); err != nil {
 		return fmt.Errorf("failed to convert IAM ACLs: %v", err)
 	}
 

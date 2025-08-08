@@ -26,15 +26,15 @@ type TemplateData struct {
 var (
 	principalArn string
 	outputDir    string
-	auditReport  bool
+	skipAuditReport  bool
 )
 
-func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userAuditReport bool) error {
+func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userSkipAuditReport bool) error {
 	ctx := context.Background()
 
 	principalArn = userPrincipalArn
 	outputDir = userOutputDir
-	auditReport = userAuditReport
+	skipAuditReport = userSkipAuditReport
 
 	fmt.Printf("🚀 Converting IAM ACLs for principal: %s\n", principalArn)
 
@@ -109,7 +109,7 @@ func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userAuditReport b
 
 	principal := cleanPrincipalName(getPrincipalFromArn(principalArn))
 
-	if auditReport {
+	if !skipAuditReport {
 		aclAuditReportPath := filepath.Join(outputDir, "migrated-acls-report.md")
 		if err := migrate_acls.GenerateIamAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)

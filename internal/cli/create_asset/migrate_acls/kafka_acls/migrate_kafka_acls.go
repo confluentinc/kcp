@@ -12,7 +12,7 @@ import (
 var (
 	clusterFile string
 	outputDir   string
-	auditReport bool
+	skipAuditReport bool
 )
 
 func NewConvertKafkaAclsCmd() *cobra.Command {
@@ -36,7 +36,7 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform ACL assets will be written to")
-	optionalFlags.BoolVar(&auditReport, "audit-report", false, "Generate an audit report of the converted ACLs")
+	optionalFlags.BoolVar(&skipAuditReport, "skip-audit-report", false, "Skip generating an audit report of the converted ACLs")
 	aclsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -72,7 +72,7 @@ func preRunConvertKafkaAcls(cmd *cobra.Command, args []string) error {
 }
 
 func runConvertKafkaAcls(cmd *cobra.Command, args []string) error {
-	if err := kafka_acls.RunConvertKafkaAcls(clusterFile, outputDir, auditReport); err != nil {
+	if err := kafka_acls.RunConvertKafkaAcls(clusterFile, outputDir, skipAuditReport); err != nil {
 		return fmt.Errorf("failed to convert Kafka ACLs: %v", err)
 	}
 

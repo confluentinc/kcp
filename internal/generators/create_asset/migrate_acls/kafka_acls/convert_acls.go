@@ -19,7 +19,7 @@ var assetsFS embed.FS
 var (
 	clusterFile string
 	outputDir   string
-	auditReport bool
+	skipAuditReport bool
 )
 
 type TemplateData struct {
@@ -27,10 +27,10 @@ type TemplateData struct {
 	Acls      []types.Acls
 }
 
-func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userAuditReport bool) error {
+func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userSkipAuditReport bool) error {
 	clusterFile = userClusterFile
 	outputDir = userOutputDir
-	auditReport = userAuditReport
+	skipAuditReport = userSkipAuditReport
 
 	data, err := os.ReadFile(clusterFile)
 	if err != nil {
@@ -92,7 +92,7 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userAuditReport 
 		fmt.Printf("📝 Generated ACL file: %s (%d ACLs)\n", filepath, len(acls))
 	}
 
-	if auditReport {
+	if !skipAuditReport {
 		reportPath := filepath.Join(outputDir, "migrated-acls-report.md")
 
 		if err := migrate_acls.GenerateKafkaAuditReport(aclsByPrincipal, reportPath); err != nil {
