@@ -51,6 +51,7 @@ migration-plan/
 cost_report/
 cluster_scan_*.md
 cluster_scan_*.json
+cost_reports/
 
 # Added by goreleaser init:
 dist/
