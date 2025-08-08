@@ -14,12 +14,16 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
 	clusterArn         string
 	start              string
 	end                string
+	lastDay            bool
+	lastWeek           bool
+	lastThirtyDays     bool
 	saslScramUsername  string
 	saslScramPassword  string
 	tlsCaCert          string
@@ -34,63 +38,85 @@ var (
 
 func NewReportClusterMetricsCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
-		Use:   "metrics",
-		Short: "Generate metrics report on an msk cluster",
-		Long: `Generate a metrics report on an msk cluster.
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                        | ENV_VAR
-----------------------------|-----------------------------------------------------
-Required flags:   
---cluster-arn               | CLUSTER_ARN=arn:aws:kafka:us-east-1:1234567890:cluster/my-cluster/1234567890
---start                     | START=2024-01-01
---end                       | END=2024-01-02
-
-Auth flags [choose one of the following]
---skip-kafka                | SKIP_KAFKA=true
---use-sasl-iam              | USE_SASL_IAM=true
---use-sasl-scram            | USE_SASL_SCRAM=true
---use-unauthenticated       | USE_UNAUTHENTICATED=true
---use-tls                   | USE_TLS=true
-
-Provide with --use-sasl-scram
---sasl-scram-username       | SASL_SCRAM_USERNAME=msk-username
---sasl-scram-password       | SASL_SCRAM_PASSWORD=msk-password
-
-Provide with --use-tls
---tls-ca-cert               | TLS_CA_CERT=path/to/ca-cert.pem
---tls-client-cert           | TLS_CLIENT_CERT=path/to/client-cert.pem
---tls-client-key            | TLS_CLIENT_KEY=path/to/client-key.pem
-`,
+		Use:           "metrics",
+		Short:         "Generate metrics report on an msk cluster",
+		Long:          "Generate a metrics report on an msk cluster.",
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
 		PreRunE:       preRunReportClusterMetrics,
 		RunE:          runReportClusterMetrics,
 	}
 
-	clusterCmd.Flags().StringVar(&clusterArn, "cluster-arn", "", "cluster arn")
+	groups := map[*pflag.FlagSet]string{}
+	// Required flags.
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "cluster arn")
+	// requiredFlags.StringVar(&start, "start", "", "inclusive start date for metrics report (YYYY-MM-DD format)")
+	// requiredFlags.StringVar(&end, "end", "", "exclusive end date for metrics report (YYYY-MM-DD format)")
+	clusterCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
 
-	clusterCmd.Flags().StringVar(&start, "start", "", "inclusive start date for metrics report (YYYY-MM-DD format)")
-	clusterCmd.Flags().StringVar(&end, "end", "", "exclusive end date for metrics report (YYYY-MM-DD format)")
+	// Time range flags.
+	timeRangeFlags := pflag.NewFlagSet("time-range", pflag.ExitOnError)
+	timeRangeFlags.SortFlags = false
+	timeRangeFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
+	timeRangeFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	timeRangeFlags.BoolVar(&lastDay, "last-day", false, "generate cost report for the previous day")
+	timeRangeFlags.BoolVar(&lastWeek, "last-week", false, "generate cost report for the previous 7 days (not including today)")
+	timeRangeFlags.BoolVar(&lastThirtyDays, "last-thirty-days", false, "generate cost report for the previous 30 days (not including today)")
+	clusterCmd.Flags().AddFlagSet(timeRangeFlags)
+	groups[timeRangeFlags] = "Time Range Flags"
 
-	clusterCmd.Flags().StringVar(&saslScramUsername, "sasl-scram-username", "", "The SASL SCRAM username")
-	clusterCmd.Flags().StringVar(&saslScramPassword, "sasl-scram-password", "", "The SASL SCRAM password")
-	clusterCmd.Flags().StringVar(&tlsCaCert, "tls-ca-cert", "", "The TLS CA certificate")
-	clusterCmd.Flags().StringVar(&tlsClientCert, "tls-client-cert", "", "The TLS client certificate")
-	clusterCmd.Flags().StringVar(&tlsClientKey, "tls-client-key", "", "The TLS client key")
+	// Authentication flags.
+	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
+	authFlags.SortFlags = false
+	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication")
+	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication")
+	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication")
+	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use unauthenticated authentication")
+	authFlags.BoolVar(&skipKafka, "skip-kafka", false, "Skip kafka level cluster scan, use when brokers are not reachable")
+	clusterCmd.Flags().AddFlagSet(authFlags)
+	groups[authFlags] = "Authentication Flags"
 
-	clusterCmd.Flags().BoolVar(&skipKafka, "skip-kafka", false, "skip kafka level cluster scan, use when brokers are not reachable")
-	clusterCmd.Flags().BoolVar(&useSaslIam, "use-sasl-iam", false, "use sasl iam authentication")
-	clusterCmd.Flags().BoolVar(&useSaslScram, "use-sasl-scram", false, "use sasl scram authentication")
-	clusterCmd.Flags().BoolVar(&useUnauthenticated, "use-unauthenticated", false, "use unauthenticated authentication")
-	clusterCmd.Flags().BoolVar(&useTls, "use-tls", false, "use TLS authentication")
+	// SASL/SCRAM flags.
+	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
+	saslScramFlags.SortFlags = false
+	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "The SASL SCRAM username")
+	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "The SASL SCRAM password")
+	clusterCmd.Flags().AddFlagSet(saslScramFlags)
+	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
+	// TLS flags.
+	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
+	tlsFlags.SortFlags = false
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "The TLS CA certificate")
+	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "The TLS client certificate")
+	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "The TLS client key")
+	clusterCmd.Flags().AddFlagSet(tlsFlags)
+	groups[tlsFlags] = "TLS Flags"
+
+	clusterCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+		flagOrder := []*pflag.FlagSet{requiredFlags, timeRangeFlags, authFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Time Range Flags", "Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		return nil
+	})
 	clusterCmd.MarkFlagRequired("cluster-arn")
-	clusterCmd.MarkFlagRequired("start")
-	clusterCmd.MarkFlagRequired("end")
+
+	clusterCmd.MarkFlagsMutuallyExclusive("start", "last-day", "last-week", "last-thirty-days")
+	clusterCmd.MarkFlagsOneRequired("start", "last-day", "last-week", "last-thirty-days")
+	clusterCmd.MarkFlagsRequiredTogether("start", "end")
+
 	clusterCmd.MarkFlagsMutuallyExclusive("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
 	clusterCmd.MarkFlagsOneRequired("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
-
 	return clusterCmd
 }
 
@@ -106,7 +132,7 @@ func preRunReportClusterMetrics(cmd *cobra.Command, args []string) error {
 func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 	opts, err := parseReportRegionMetricsOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse region report opts: %v", err)
+		return fmt.Errorf("failed to parse cluster report opts: %v", err)
 	}
 
 	mskClient, err := client.NewMSKClient(opts.Region)
@@ -170,19 +196,39 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 	}
 
 	const dateFormat = "2006-01-02"
+	var startDate, endDate time.Time
+	var err error
 
-	startDate, err := time.Parse(dateFormat, start)
-	if err != nil {
-		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
-	}
+	switch {
+	case start != "" && end != "":
+		startDate, err = time.Parse(dateFormat, start)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
+		}
 
-	endDate, err := time.Parse(dateFormat, end)
-	if err != nil {
-		return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
-	}
+		endDate, err = time.Parse(dateFormat, end)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
+		}
 
-	if startDate.After(endDate) {
-		return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
+		if startDate.After(endDate) {
+			return nil, fmt.Errorf("start date '%s' cannot be after end date '%s'", start, end)
+		}
+
+	case lastDay:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
+
+	case lastWeek:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -8).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
+
+	case lastThirtyDays:
+		now := time.Now()
+		startDate = now.AddDate(0, 0, -31).UTC().Truncate(24 * time.Hour)
+		endDate = now.UTC().Truncate(24 * time.Hour)
 	}
 
 	opts := rrm.ClusterMetricsOpts{

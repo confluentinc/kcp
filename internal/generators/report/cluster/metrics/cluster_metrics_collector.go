@@ -339,7 +339,7 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 		if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
 			numNodes = int(*cluster.Provisioned.NumberOfBrokerNodes)
 		}
-		
+
 		bytesInPerSec, err := rm.metricService.GetAverageBytesInPerSec(*cluster.ClusterName, numNodes, topic.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get average bytes in per sec: %v", err)
@@ -388,7 +388,6 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
 	}
 	clusterMetricsSummary.FollowerFetching = followerFetching
-
 
 	clusterMetric := types.ClusterMetrics{
 		ClusterName:           *cluster.ClusterName,
