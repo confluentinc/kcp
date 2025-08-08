@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	clusterArn         string
+	clusterArn string
 
 	useSaslIam         bool
 	useSaslScram       bool
@@ -23,12 +23,12 @@ var (
 	useUnauthenticated bool
 	skipKafka          bool
 
-	saslScramUsername  string
-	saslScramPassword  string
-	
-	tlsCaCert          string
-	tlsClientCert      string
-	tlsClientKey       string
+	saslScramUsername string
+	saslScramPassword string
+
+	tlsCaCert     string
+	tlsClientCert string
+	tlsClientKey  string
 )
 
 func NewScanClusterCmd() *cobra.Command {
