@@ -10,6 +10,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
@@ -38,8 +39,16 @@ func (m *MockMSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster
 	return args.Get(0).(*bool), args.Error(1)
 }
 
-func (m *MockMSKService) GetBootstrapBrokers(ctx context.Context, clusterArn *string, authType types.AuthType) ([]string, error) {
-	args := m.Called(ctx, clusterArn, authType)
+func (m *MockMSKService) GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+	args := m.Called(ctx, clusterArn)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*kafka.GetBootstrapBrokersOutput), args.Error(1)
+}
+
+func (m *MockMSKService) ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
+	args := m.Called(brokers, authType)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -221,7 +230,10 @@ func TestClusterMetricsCollector_Run_Success(t *testing.T) {
 	cluster := createTestProvisionedCluster()
 	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
-	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
+	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
+		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
+	}, nil)
+	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	// Mock metric service calls for provisioned cluster
 	for i := 1; i <= 3; i++ {
@@ -303,7 +315,10 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 
 	cluster := createTestProvisionedCluster()
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
-	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
+	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
+		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
+	}, nil)
+	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	// Mock metric service calls
 	for i := 1; i <= 3; i++ {
@@ -508,7 +523,7 @@ func TestClusterMetricsCollector_calculateReplicationFactor_GetBootstrapBrokersE
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
 	cluster := createTestProvisionedCluster()
-	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything, mock.Anything).Return(nil, fmt.Errorf("failed to get brokers"))
+	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("failed to get brokers"))
 
 	result, err := collector.calculateReplicationFactor(cluster)
 
@@ -528,7 +543,10 @@ func TestClusterMetricsCollector_calculateReplicationFactor_KafkaAdminFactoryErr
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
 	cluster := createTestProvisionedCluster()
-	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
+	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
+		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
+	}, nil)
+	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	result, err := collector.calculateReplicationFactor(cluster)
 
@@ -545,7 +563,10 @@ func TestClusterMetricsCollector_calculateReplicationFactor_Success(t *testing.T
 	collector := createTestCollector(mskService, metricService, nil)
 
 	cluster := createTestProvisionedCluster()
-	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
+	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
+		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
+	}, nil)
+	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	// Mock Kafka admin
 	mockAdmin := &MockKafkaAdmin{}

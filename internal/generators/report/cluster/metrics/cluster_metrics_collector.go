@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
@@ -50,7 +51,8 @@ type ClusterMetricsCollector struct {
 type MSKService interface {
 	DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error)
 	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
-	GetBootstrapBrokers(ctx context.Context, clusterArn *string, authType types.AuthType) ([]string, error)
+	GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error)
+	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 }
 
 type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
@@ -282,9 +284,14 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 	}
 
 	// initialize the kafka admin client
-	brokerAddresses, err := rm.mskService.GetBootstrapBrokers(context.Background(), &rm.clusterArn, rm.authType)
+	brokers, err := rm.mskService.GetBootstrapBrokers(context.Background(), &rm.clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get bootstrap brokers: %v", err)
+	}
+
+	brokerAddresses, err := rm.mskService.ParseBrokerAddresses(*brokers, rm.authType)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to parse broker addresses: %v", err)
 	}
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(cluster)
