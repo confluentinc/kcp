@@ -17,18 +17,6 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// ClusterScannerMSKClient defines the MSK client methods used by ClusterScanner
-type ClusterScannerMSKClient interface {
-	GetCompatibleKafkaVersions(ctx context.Context, params *kafka.GetCompatibleKafkaVersionsInput, optFns ...func(*kafka.Options)) (*kafka.GetCompatibleKafkaVersionsOutput, error)
-	GetClusterPolicy(ctx context.Context, params *kafka.GetClusterPolicyInput, optFns ...func(*kafka.Options)) (*kafka.GetClusterPolicyOutput, error)
-	GetBootstrapBrokers(ctx context.Context, params *kafka.GetBootstrapBrokersInput, optFns ...func(*kafka.Options)) (*kafka.GetBootstrapBrokersOutput, error)
-	DescribeClusterV2(ctx context.Context, params *kafka.DescribeClusterV2Input, optFns ...func(*kafka.Options)) (*kafka.DescribeClusterV2Output, error)
-	ListClientVpcConnections(ctx context.Context, params *kafka.ListClientVpcConnectionsInput, optFns ...func(*kafka.Options)) (*kafka.ListClientVpcConnectionsOutput, error)
-	ListClusterOperationsV2(ctx context.Context, params *kafka.ListClusterOperationsV2Input, optFns ...func(*kafka.Options)) (*kafka.ListClusterOperationsV2Output, error)
-	ListNodes(ctx context.Context, params *kafka.ListNodesInput, optFns ...func(*kafka.Options)) (*kafka.ListNodesOutput, error)
-	ListScramSecrets(ctx context.Context, params *kafka.ListScramSecretsInput, optFns ...func(*kafka.Options)) (*kafka.ListScramSecretsOutput, error)
-}
-
 // KafkaAdminFactory is a function type that creates a KafkaAdmin client
 type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
 
@@ -45,7 +33,7 @@ type ClusterScannerOpts struct {
 }
 
 type ClusterScanner struct {
-	mskClient         ClusterScannerMSKClient
+	mskService        MSKService
 	kafkaAdminFactory KafkaAdminFactory
 	region            string
 	clusterArn        string
@@ -53,10 +41,22 @@ type ClusterScanner struct {
 	authType          types.AuthType
 }
 
+type MSKService interface {
+	GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error)
+	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
+	GetCompatibleKafkaVersions(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
+	GetClusterPolicy(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error)
+	DescribeClusterV2(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error)
+	ListClientVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error)
+	ListClusterOperationsV2(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error)
+	ListNodes(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error)
+	ListScramSecrets(ctx context.Context, clusterArn *string) ([]string, error)
+}
+
 // NewClusterScanner creates a new ClusterScanner instance.
-func NewClusterScanner(mskClient ClusterScannerMSKClient, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
+func NewClusterScanner(mskService MSKService, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
 	return &ClusterScanner{
-		mskClient:         mskClient,
+		mskService:        mskService,
 		kafkaAdminFactory: kafkaAdminFactory,
 		region:            opts.Region,
 		clusterArn:        opts.ClusterArn,
@@ -124,7 +124,6 @@ func (cs *ClusterScanner) scanCluster(ctx context.Context) (*types.ClusterInform
 }
 
 func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *types.ClusterInformation) error {
-	maxResults := int32(100)
 
 	cluster, err := cs.describeCluster(ctx, &cs.clusterArn)
 	if err != nil {
@@ -138,25 +137,25 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 	}
 	clusterInfo.BootstrapBrokers = *brokers
 
-	connections, err := cs.scanClusterVpcConnections(ctx, &cs.clusterArn, maxResults)
+	connections, err := cs.scanClusterVpcConnections(ctx, &cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.ClientVpcConnections = connections
 
-	operations, err := cs.scanClusterOperations(ctx, &cs.clusterArn, maxResults)
+	operations, err := cs.scanClusterOperations(ctx, &cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.ClusterOperations = operations
 
-	nodes, err := cs.scanClusterNodes(ctx, &cs.clusterArn, maxResults)
+	nodes, err := cs.scanClusterNodes(ctx, &cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.Nodes = nodes
 
-	scramSecrets, err := cs.scanClusterScramSecrets(ctx, &cs.clusterArn, maxResults)
+	scramSecrets, err := cs.scanClusterScramSecrets(ctx, &cs.clusterArn)
 	if err != nil {
 		return err
 	}
@@ -180,13 +179,14 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 func (cs *ClusterScanner) getCompatibleKafkaVersions(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 	slog.Info("🔍 scanning for compatible kafka versions", "clusterArn", cs.clusterArn)
 
-	versions, err := cs.mskClient.GetCompatibleKafkaVersions(ctx, &kafka.GetCompatibleKafkaVersionsInput{
-		ClusterArn: clusterArn,
-	})
+	versions, err := cs.mskService.GetCompatibleKafkaVersions(ctx, clusterArn)
 	if err != nil {
+		// Check if it's an MSK Serverless error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
 			slog.Warn("⚠️ Compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
-			return new(kafka.GetCompatibleKafkaVersionsOutput), nil
+			return &kafka.GetCompatibleKafkaVersionsOutput{
+				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
+			}, nil
 		}
 		return nil, fmt.Errorf("❌ Failed to get compatible versions: %v", err)
 	}
@@ -196,26 +196,23 @@ func (cs *ClusterScanner) getCompatibleKafkaVersions(ctx context.Context, cluste
 func (cs *ClusterScanner) getClusterPolicy(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
 	slog.Info("🔍 scanning for cluster policy", "clusterArn", cs.clusterArn)
 
-	policy, err := cs.mskClient.GetClusterPolicy(ctx, &kafka.GetClusterPolicyInput{
-		ClusterArn: clusterArn,
-	})
-	if err == nil {
-		return policy, nil
+	policy, err := cs.mskService.GetClusterPolicy(ctx, clusterArn)
+	if err != nil {
+		// Check if it's a NotFoundException - this is expected and should be handled gracefully
+		var notFoundErr *kafkatypes.NotFoundException
+		if errors.As(err, &notFoundErr) {
+			// Return empty policy for NotFoundException - this is expected behavior
+			return &kafka.GetClusterPolicyOutput{}, nil
+		}
+		return nil, err
 	}
-
-	var notFoundErr *kafkatypes.NotFoundException
-	if errors.As(err, &notFoundErr) {
-		return new(kafka.GetClusterPolicyOutput), nil
-	}
-	return nil, err
+	return policy, nil
 }
 
 func (cs *ClusterScanner) getBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
 	slog.Info("🔍 scanning for bootstrap brokers", "clusterArn", cs.clusterArn)
 
-	brokers, err := cs.mskClient.GetBootstrapBrokers(ctx, &kafka.GetBootstrapBrokersInput{
-		ClusterArn: clusterArn,
-	})
+	brokers, err := cs.mskService.GetBootstrapBrokers(ctx, clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to scan brokers: %v", err)
 	}
@@ -225,188 +222,68 @@ func (cs *ClusterScanner) getBootstrapBrokers(ctx context.Context, clusterArn *s
 func (cs *ClusterScanner) describeCluster(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
 	slog.Info("🔍 describing cluster", "clusterArn", cs.clusterArn)
 
-	cluster, err := cs.mskClient.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
-		ClusterArn: clusterArn,
-	})
+	cluster, err := cs.mskService.DescribeClusterV2(ctx, clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
 	}
 	return cluster, nil
 }
 
-func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, clusterArn *string, maxResults int32) ([]kafkatypes.ClientVpcConnection, error) {
+func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
 	slog.Info("🔍 scanning for client vpc connections", "clusterArn", cs.clusterArn)
 
-	var connections []kafkatypes.ClientVpcConnection
-	var nextToken *string
-
-	for {
-		output, err := cs.mskClient.ListClientVpcConnections(ctx, &kafka.ListClientVpcConnectionsInput{
-			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
-				slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
-				return []kafkatypes.ClientVpcConnection{}, nil
-			}
-			return nil, fmt.Errorf("❌ Failed listing client vpc connections: %v", err)
+	connections, err := cs.mskService.ListClientVpcConnections(ctx, clusterArn)
+	if err != nil {
+		// Check if it's an MSK Serverless VPC connectivity error - this should be handled gracefully
+		if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
+			slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
+			return []kafkatypes.ClientVpcConnection{}, nil
 		}
-		connections = append(connections, output.ClientVpcConnections...)
-		if output.NextToken == nil {
-			break
-		}
-		nextToken = output.NextToken
+		return nil, fmt.Errorf("❌ Failed listing client vpc connections: %v", err)
 	}
-
 	return connections, nil
 }
 
-func (cs *ClusterScanner) scanClusterOperations(ctx context.Context, clusterArn *string, maxResults int32) ([]kafkatypes.ClusterOperationV2Summary, error) {
+func (cs *ClusterScanner) scanClusterOperations(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 	slog.Info("🔍 scanning for cluster operations", "clusterArn", cs.clusterArn)
 
-	var operations []kafkatypes.ClusterOperationV2Summary
-	var nextToken *string
-
-	for {
-		output, err := cs.mskClient.ListClusterOperationsV2(ctx, &kafka.ListClusterOperationsV2Input{
-			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("❌ Failed listing operations: %v", err)
-		}
-		operations = append(operations, output.ClusterOperationInfoList...)
-		if output.NextToken == nil {
-			break
-		}
-		nextToken = output.NextToken
+	operations, err := cs.mskService.ListClusterOperationsV2(ctx, clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed listing operations: %v", err)
 	}
-
 	return operations, nil
 }
 
-func (cs *ClusterScanner) scanClusterNodes(ctx context.Context, clusterArn *string, maxResults int32) ([]kafkatypes.NodeInfo, error) {
+func (cs *ClusterScanner) scanClusterNodes(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
 	slog.Info("🔍 scanning for cluster nodes", "clusterArn", cs.clusterArn)
 
-	var nodes []kafkatypes.NodeInfo
-	var nextToken *string
-
-	for {
-		output, err := cs.mskClient.ListNodes(ctx, &kafka.ListNodesInput{
-			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
-				return []kafkatypes.NodeInfo{}, nil
-			}
-			return nil, fmt.Errorf("❌ Failed listing nodes: %v", err)
+	nodes, err := cs.mskService.ListNodes(ctx, clusterArn)
+	if err != nil {
+		// Check if it's an MSK Serverless error - this should be handled gracefully
+		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
+			slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
+			return []kafkatypes.NodeInfo{}, nil
 		}
-		nodes = append(nodes, output.NodeInfoList...)
-		if output.NextToken == nil {
-			break
-		}
-		nextToken = output.NextToken
+		return nil, fmt.Errorf("❌ Failed listing nodes: %v", err)
 	}
 
 	return nodes, nil
 }
 
-func (cs *ClusterScanner) scanClusterScramSecrets(ctx context.Context, clusterArn *string, maxResults int32) ([]string, error) {
+func (cs *ClusterScanner) scanClusterScramSecrets(ctx context.Context, clusterArn *string) ([]string, error) {
 	slog.Info("🔍 scanning for cluster scram secrets", "clusterArn", cs.clusterArn)
 
-	var secrets []string
-	var nextToken *string
-
-	for {
-		output, err := cs.mskClient.ListScramSecrets(ctx, &kafka.ListScramSecretsInput{
-			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
-				return []string{}, nil
-			}
-			return nil, fmt.Errorf("error listing secrets: %v", err)
+	secrets, err := cs.mskService.ListScramSecrets(ctx, clusterArn)
+	if err != nil {
+		// Check if it's an MSK Serverless error - this should be handled gracefully
+		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
+			slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
+			return []string{}, nil
 		}
-		secrets = append(secrets, output.SecretArnList...)
-		if output.NextToken == nil {
-			break
-		}
-		nextToken = output.NextToken
+		return nil, fmt.Errorf("❌ Failed listing secrets: %v", err)
 	}
 
 	return secrets, nil
-}
-
-func (cs *ClusterScanner) parseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput) ([]string, error) {
-	var brokerList string
-	var visibility string
-	slog.Info("🔍 parsing broker addresses", "authType", cs.authType)
-
-	switch cs.authType {
-	case types.AuthTypeIAM:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslIam)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-		}
-	case types.AuthTypeSASLSCRAM:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslScram)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslScram)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
-		}
-	case types.AuthTypeUnauthenticated:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
-		visibility = "PRIVATE"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerString)
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
-		}
-	case types.AuthTypeTLS:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicTls)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
-		}
-	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", cs.authType)
-	}
-
-	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", cs.authType, "addresses", brokerList)
-
-	// Split by comma and trim whitespace from each address, filter out empty strings
-	rawAddresses := strings.Split(brokerList, ",")
-	addresses := make([]string, 0, len(rawAddresses))
-	for _, addr := range rawAddresses {
-		trimmedAddr := strings.TrimSpace(addr)
-		if trimmedAddr != "" {
-			addresses = append(addresses, trimmedAddr)
-		}
-	}
-	return addresses, nil
 }
 
 func (cs *ClusterScanner) scanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
@@ -438,7 +315,7 @@ func (cs *ClusterScanner) describeKafkaCluster(admin client.KafkaAdmin) (*client
 
 func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformation) error {
 
-	brokerAddresses, err := cs.parseBrokerAddresses(clusterInfo.BootstrapBrokers)
+	brokerAddresses, err := cs.mskService.ParseBrokerAddresses(clusterInfo.BootstrapBrokers, cs.authType)
 	if err != nil {
 		return err
 	}
