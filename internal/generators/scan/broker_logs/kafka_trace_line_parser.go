@@ -4,13 +4,21 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"strings"
 	"time"
+)
+
+var (
+	AuthTypeIAM        = "IAM"
+	AuthTypeSASL_SCRAM = "SASL_SCRAM"
+	// AuthTypeTLS = "TLS"
+	// AuthTypeNONE = "NONE"
+	AuthTypeUNKNOWN = "UNKNOWN"
 )
 
 var (
 	ErrorUnableToParseKafkaApiLine = errors.New("unable to parse Kafka API line")
 	ErrorUnableToParseTimestamp    = errors.New("unable to parse timestamp")
-	ErrorUnsupportedApiKey         = errors.New("unsupported API key - only FETCH and PRODUCE are supported")
 	ErrorUnsupportedLogLine        = errors.New("unsupported log line")
 )
 
@@ -22,14 +30,13 @@ var (
 	// Producer patterns (PRODUCE operations)
 	ProducerTopicPattern     = regexp.MustCompile(`partitionSizes=\[(.+)-\d+=`)
 	ProducerIpPattern        = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
-	ProducerAuthPattern      = regexp.MustCompile(`principal:\[([^\]]+)\]:`)
-	ProducerPrincipalPattern = regexp.MustCompile(`principal:\[[^\]]+\]:\[([^\]]+)\]`)
+	ProducerPrincipalPattern = regexp.MustCompile(`principal:([^ ]+)`)
 
 	// Consumer patterns (FETCH operations)
-	ConsumerTopicPattern     = regexp.MustCompile(`topics=\[([^\]]*)\]`)
-	ConsumerIpPattern        = regexp.MustCompile(`from connection ([^;]+);`)
-	ConsumerAuthPattern      = regexp.MustCompile(`principal:([^(]+)`)
-	ConsumerPrincipalPattern = regexp.MustCompile(`principal:([^(]+)`)
+	ConsumerTopicPattern     = regexp.MustCompile(`FetchTopic\(topic='([^']+)'`)
+	// ConsumerIpPattern        = regexp.MustCompile(`from connection ([^;]+);`)
+	ConsumerIpPattern        = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
+	ConsumerPrincipalPattern = regexp.MustCompile(`principal:([^ ]+)`)
 	BrokerFetcherPattern     = regexp.MustCompile(`broker-(\d+)-fetcher-(\d+)`)
 )
 
@@ -48,14 +55,15 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 		return nil, ErrorUnableToParseTimestamp
 	}
 
-	apiKey := p.extractField(line, ApiKeyPattern)
-	clientId := p.extractField(line, ClientIdPattern)
+	apiKey := extractField(line, ApiKeyPattern)
+	clientId := extractField(line, ClientIdPattern)
 
-	// how do we handle these?
+	// are we interested in anything else
 	if apiKey != "FETCH" && apiKey != "PRODUCE" {
 		return nil, ErrorUnsupportedLogLine
 	}
 
+	// do we care about these?
 	if clientId == "amazon.msk.canary.client" || BrokerFetcherPattern.MatchString(clientId) {
 		return nil, ErrorUnsupportedLogLine
 	}
@@ -65,17 +73,17 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 	switch apiKey {
 	case "FETCH":
 		role = "Consumer"
-		topic = p.extractField(line, ConsumerTopicPattern)
-		ipAddress = p.extractField(line, ConsumerIpPattern)
-		auth = p.extractField(line, ConsumerAuthPattern)
-		principal = p.extractField(line, ConsumerPrincipalPattern)
+		topic = extractField(line, ConsumerTopicPattern)
+		ipAddress = extractField(line, ConsumerIpPattern)
+		auth = determineAuthType(line)
+		principal = extractField(line, ConsumerPrincipalPattern)
 
 	case "PRODUCE":
 		role = "Producer"
-		topic = p.extractField(line, ProducerTopicPattern)
-		ipAddress = p.extractField(line, ProducerIpPattern)
-		auth = p.extractField(line, ProducerAuthPattern)
-		principal = p.extractField(line, ProducerPrincipalPattern)
+		topic = extractField(line, ProducerTopicPattern)
+		ipAddress = extractField(line, ProducerIpPattern)
+		auth = determineAuthType(line)
+		principal = extractField(line, ProducerPrincipalPattern)
 	}
 
 	requestMetadata := RequestMetadata{
@@ -97,10 +105,25 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 	return &requestMetadata, nil
 }
 
-func (p *KafkaApiTraceLineParser) extractField(line string, pattern *regexp.Regexp) string {
+func extractField(line string, pattern *regexp.Regexp) string {
 	matches := pattern.FindStringSubmatch(line)
 	if len(matches) >= 2 {
 		return matches[1]
 	}
 	return ""
+}
+
+func determineAuthType(logLine string) string {
+	if strings.Contains(logLine, "principal:[IAM]:") {
+		return AuthTypeIAM
+	} else if strings.Contains(logLine, "principal:User:") {
+		return AuthTypeSASL_SCRAM
+	}
+	// else if strings.Contains(logLine, "securityProtocol:SSL") {
+	// 	return "TLS" // Pure TLS without SASL
+	// } else if strings.Contains(logLine, "securityProtocol:PLAINTEXT") {
+	// 	return "NONE"
+	// }
+	// return "UNKNOWN"
+	return AuthTypeUNKNOWN
 }

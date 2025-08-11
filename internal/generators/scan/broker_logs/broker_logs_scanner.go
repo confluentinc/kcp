@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -119,9 +120,22 @@ func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, 
 }
 
 func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
+	//  temp thing output folder to write all the the files to
+	outputFolder := "log_output"
+	if err := os.MkdirAll(outputFolder, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create output folder: %w", err)
+	}
+
 	content, err := bs.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
+	}
+
+	// remove the .gz extension
+	fileName := filepath.Base(strings.TrimSuffix(filepath.Base(key), ".gz"))
+	filePath := filepath.Join(outputFolder, fileName)
+	if err := os.WriteFile(filePath, content, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
 	var requestsMetadata []RequestMetadata
@@ -155,6 +169,12 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 	return requestsMetadata, nil
 }
 
+// csvColumn represents a CSV column with its header and value extractor function
+type csvColumn struct {
+	header    string
+	extractor func(*RequestMetadata) string
+}
+
 func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*RequestMetadata) error {
 	fileName := "broker_logs_scan_results.csv"
 
@@ -167,18 +187,25 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	header := []string{
-		"Client ID",
-		"Client Type",
-		"Role",
-		"Topic",
-		"IP Address",
-		"Auth",
-		"Principal",
-		"Timestamp",
-		"File Name",
-		"Line Number",
-		"Log Line",
+	columns := []csvColumn{
+		{"Client ID", func(m *RequestMetadata) string { return m.ClientId }},
+		{"Client Type", func(m *RequestMetadata) string { return m.ClientType }},
+		{"Role", func(m *RequestMetadata) string { return m.Role }},
+		{"Topic", func(m *RequestMetadata) string { return m.Topic }},
+		{"IP Address", func(m *RequestMetadata) string { return m.IPAddress }},
+		{"Auth", func(m *RequestMetadata) string { return m.Auth }},
+		{"Principal", func(m *RequestMetadata) string { return m.Principal }},
+		{"Timestamp", func(m *RequestMetadata) string { return m.Timestamp.Format("2006-01-02 15:04:05") }},
+
+		// these are just for debugging
+		{"File Name", func(m *RequestMetadata) string { return m.FileName }},
+		{"Line Number", func(m *RequestMetadata) string { return fmt.Sprintf("%d", m.LineNumber) }},
+		{"Log Line", func(m *RequestMetadata) string { return m.LogLine }},
+	}
+
+	header := make([]string, len(columns))
+	for i, col := range columns {
+		header[i] = col.header
 	}
 	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write CSV header: %w", err)
@@ -189,20 +216,11 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 		return nil
 	}
 
+	// Write data rows
 	for _, metadata := range requestMetadataByClientId {
-		record := []string{
-			metadata.ClientId,
-			metadata.ClientType,
-			metadata.Role,
-			metadata.Topic,
-			metadata.IPAddress,
-			metadata.Auth,
-			metadata.Principal,
-			metadata.Timestamp.Format("2006-01-02 15:04:05"),
-			// these are just for debugging
-			metadata.FileName,
-			fmt.Sprintf("%d", metadata.LineNumber),
-			metadata.LogLine,
+		record := make([]string, len(columns))
+		for i, col := range columns {
+			record[i] = col.extractor(metadata)
 		}
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write CSV record: %w", err)
