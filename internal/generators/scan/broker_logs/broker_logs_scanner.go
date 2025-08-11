@@ -101,16 +101,15 @@ func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, 
 			continue
 		}
 
-		slog.Info("found API requests", "file", file, "count", len(requestsMetadata))
+		slog.Info("found matching log lines", "file", file, "count", len(requestsMetadata))
 
 		for _, metadata := range requestsMetadata {
-			// we cannot guarantee that the client id is unique as it may not be set on clients, s
+			// we cannot guarantee that the client id is unique as it may not be set on clients
 			// a composite key is used to try to deduplicate requests
 			compositeKey := metadata.CompositeKey
-			slog.Info("composite key", "composite_key", compositeKey)
 			existingRequestMetadata, exists := requestMetadataByCompositeKey[compositeKey]
 			if !exists {
-				// first time we've seen this client
+				// first time we've seen this composite key
 				requestMetadataByCompositeKey[compositeKey] = &metadata
 				continue
 			}
@@ -126,18 +125,17 @@ func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, 
 }
 
 func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
-	//  temp thing output folder to write all the the files to
-	outputFolder := "log_output"
-	if err := os.MkdirAll(outputFolder, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create output folder: %w", err)
-	}
-
 	content, err := bs.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
 	}
 
 	// this is temporary to help with debugging
+	outputFolder := "log_output"
+	if err := os.MkdirAll(outputFolder, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create output folder: %w", err)
+	}
+
 	fileName := filepath.Base(strings.TrimSuffix(filepath.Base(key), ".gz"))
 	filePath := filepath.Join(outputFolder, fileName)
 	if err := os.WriteFile(filePath, content, 0644); err != nil {
@@ -175,8 +173,8 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 }
 
 type csvColumn struct {
-	header    string
-	extractor func(*RequestMetadata) string
+	header        string
+	extractorFunc func(*RequestMetadata) string
 }
 
 func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*RequestMetadata) error {
@@ -192,20 +190,38 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 	defer writer.Flush()
 
 	columns := []csvColumn{
-		{"Client ID", func(m *RequestMetadata) string { return m.ClientId }},
-		{"Client Type", func(m *RequestMetadata) string { return m.ClientType }},
-		{"Role", func(m *RequestMetadata) string { return m.Role }},
-		{"Topic", func(m *RequestMetadata) string { return m.Topic }},
-		{"IP Address", func(m *RequestMetadata) string { return m.IPAddress }},
-		{"Auth", func(m *RequestMetadata) string { return m.Auth }},
-		{"Principal", func(m *RequestMetadata) string { return m.Principal }},
-		{"Timestamp", func(m *RequestMetadata) string { return m.Timestamp.Format("2006-01-02 15:04:05") }},
-
-		// this is temporary just for debugging
-		{"File Name", func(m *RequestMetadata) string { return m.FileName }},
-		{"Line Number", func(m *RequestMetadata) string { return fmt.Sprintf("%d", m.LineNumber) }},
-		{"Log Line", func(m *RequestMetadata) string { return m.LogLine }},
-		{"Composite Key", func(m *RequestMetadata) string { return m.CompositeKey }},
+		{
+			header:        "Client ID",
+			extractorFunc: func(m *RequestMetadata) string { return m.ClientId },
+		},
+		{
+			header:        "Client Type",
+			extractorFunc: func(m *RequestMetadata) string { return m.ClientType },
+		},
+		{
+			header:        "Role",
+			extractorFunc: func(m *RequestMetadata) string { return m.Role },
+		},
+		{
+			header:        "Topic",
+			extractorFunc: func(m *RequestMetadata) string { return m.Topic },
+		},
+		{
+			header:        "IP Address",
+			extractorFunc: func(m *RequestMetadata) string { return m.IPAddress },
+		},
+		{
+			header:        "Auth",
+			extractorFunc: func(m *RequestMetadata) string { return m.Auth },
+		},
+		{
+			header:        "Principal",
+			extractorFunc: func(m *RequestMetadata) string { return m.Principal },
+		},
+		{
+			header:        "Timestamp",
+			extractorFunc: func(m *RequestMetadata) string { return m.Timestamp.Format("2006-01-02 15:04:05") },
+		},
 	}
 
 	header := make([]string, len(columns))
@@ -224,7 +240,7 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 	for _, metadata := range requestMetadataByClientId {
 		record := make([]string, len(columns))
 		for i, col := range columns {
-			record[i] = col.extractor(metadata)
+			record[i] = col.extractorFunc(metadata)
 		}
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write CSV record: %w", err)
