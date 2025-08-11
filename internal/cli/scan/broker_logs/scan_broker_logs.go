@@ -8,6 +8,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/s3"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -17,29 +18,43 @@ var (
 
 func NewScanBrokerLogsCmd() *cobra.Command {
 	brokerLogsCmd := &cobra.Command{
-		Use:   "broker-logs",
-		Short: "Scan the broker logs for the cluster",
-		Long: `Scan the broker logs for the cluster for information that will help with migration.
-
-All flags can be provided via environment variables (uppercase, with underscores):
-
-FLAG                        | ENV_VAR
-----------------------------|-----------------------------------------------------
-Required flags:
---s3-uri                    | S3_URI=s3://my-bucket/kafka-logs/folder/
---region                    | REGION=us-east-1
-`,
+		Use:           "broker-logs",
+		Short:         "Scan the broker logs for client activity",
+		Long:          "Scan the broker logs to help identify clients that are using the cluster based on activity in the logs",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanBrokerLogs,
 		RunE:          runScanBrokerLogs,
 	}
 
-	brokerLogsCmd.Flags().StringVar(&s3Uri, "s3-uri", "", "S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
-	brokerLogsCmd.Flags().StringVar(&region, "region", "", "The AWS region")
+	groups := map[*pflag.FlagSet]string{}
 
-	brokerLogsCmd.MarkFlagRequired("s3-uri")
-	brokerLogsCmd.MarkFlagRequired("region")
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&region, "region", "", "The AWS region")
+	requiredFlags.StringVar(&s3Uri, "s3-uri", "", "The S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
+
+	brokerLogsCmd.Flags().AddFlagSet(requiredFlags)
+
+	groups[requiredFlags] = "Required Flags"
+
+	brokerLogsCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
 
 	return brokerLogsCmd
 }

@@ -137,7 +137,7 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
 	}
 
-	// remove the .gz extension
+	// this is temporary to help with debugging
 	fileName := filepath.Base(strings.TrimSuffix(filepath.Base(key), ".gz"))
 	filePath := filepath.Join(outputFolder, fileName)
 	if err := os.WriteFile(filePath, content, 0644); err != nil {
@@ -201,7 +201,7 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 		{"Principal", func(m *RequestMetadata) string { return m.Principal }},
 		{"Timestamp", func(m *RequestMetadata) string { return m.Timestamp.Format("2006-01-02 15:04:05") }},
 
-		// these are just for debugging
+		// this is temporary just for debugging
 		{"File Name", func(m *RequestMetadata) string { return m.FileName }},
 		{"Line Number", func(m *RequestMetadata) string { return fmt.Sprintf("%d", m.LineNumber) }},
 		{"Log Line", func(m *RequestMetadata) string { return m.LogLine }},
