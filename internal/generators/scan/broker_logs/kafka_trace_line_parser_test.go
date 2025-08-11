@@ -1,0 +1,191 @@
+package broker_logs
+
+import (
+	"testing"
+	"time"
+)
+
+func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
+	processor := &KafkaApiTraceLineParser{}
+
+	tests := []struct {
+		name           string
+		line           string
+		lineNumber     int
+		fileName       string
+		expectedResult *RequestMetadata
+		expectedError  error
+	}{
+		{
+			name:       "valid PRODUCE request for IAM auth",
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[customers1-0=107]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			lineNumber: 1,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 7, 25, 14, 45, 53, 662000000, time.UTC),
+				Role:      "Producer",
+				ApiKey:    "PRODUCE",
+				ClientId:  "TESTING_PRODUCER-1",
+				Topic:     "customers1",
+				IPAddress: "65.1.63.214",
+				Auth:      "IAM",
+				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
+			},
+			expectedError: nil,
+		},
+		{
+			name:       "valid PRODUCE request for SASL_SCRAM auth",
+			line:       `[2025-08-07 14:34:27,495] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=producer_with_sasl_scram-9, correlationId=19, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-5=108]} from connection INTERNAL_IP-65.1.63.214:14972-3;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`,
+			lineNumber: 2,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 8, 7, 14, 34, 27, 495000000, time.UTC),
+				Role:      "Producer",
+				ApiKey:    "PRODUCE",
+				ClientId:  "producer_with_sasl_scram-9",
+				Topic:     "test-topic-1",
+				IPAddress: "65.1.63.214",
+				Auth:      "SASL_SCRAM",
+				Principal: "User:kafka-user-2",
+			},
+		},
+		{
+			name:       "PRODUCE request with topic containing hyphens",
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-0=107]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			lineNumber: 8,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 7, 25, 14, 45, 53, 662000000, time.UTC),
+				Role:      "Producer",
+				ApiKey:    "PRODUCE",
+				ClientId:  "TESTING_PRODUCER-1",
+				Topic:     "test-topic",
+				IPAddress: "65.1.63.214",
+				Auth:      "IAM",
+				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
+			},
+			expectedError: nil,
+		},
+		{
+			name:       "PRODUCE request with topic containing underscores",
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test_topic-0=107]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			lineNumber: 9,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 7, 25, 14, 45, 53, 662000000, time.UTC),
+				Role:      "Producer",
+				ApiKey:    "PRODUCE",
+				ClientId:  "TESTING_PRODUCER-1",
+				Topic:     "test_topic",
+				IPAddress: "65.1.63.214",
+				Auth:      "IAM",
+				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
+			},
+			expectedError: nil,
+		},
+		{
+			name:       "PRODUCE request with complex topic name and partition",
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-0=1024]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			lineNumber: 10,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 7, 25, 14, 45, 53, 662000000, time.UTC),
+				Role:      "Producer",
+				ApiKey:    "PRODUCE",
+				ClientId:  "TESTING_PRODUCER-1",
+				Topic:     "test-topic-1",
+				IPAddress: "65.1.63.214",
+				Auth:      "IAM",
+				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
+			},
+			expectedError: nil,
+		},
+		{
+			name:           "unsupported API key (METADATA)",
+			line:           `[2024-01-15 10:33:00,999] TRACE [ReplicaManager broker=1] Completed request:RequestHeader(apiKey=METADATA, apiVersion=9, clientId=metadata-client, correlationId=789) totalTime:0.5ms`,
+			lineNumber:     100,
+			fileName:       "test.log",
+			expectedResult: nil,
+			expectedError:  ErrorUnsupportedLogLine,
+		},
+		{
+			name:       "valid FETCH request for SASL_SCRAM auth",
+			line:       `[2025-08-08 07:30:42,834] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=glenns_consumer_with_sasl_scram, correlationId=2010, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=2, currentLeaderEpoch=0, fetchOffset=20419, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576), FetchPartition(partition=5, currentLeaderEpoch=0, fetchOffset=20258, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-65.1.63.214:25530-59;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`,
+			lineNumber: 1,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 8, 8, 7, 30, 42, 834000000, time.UTC),
+				Role:      "Consumer",
+				ApiKey:    "FETCH",
+				ClientId:  "glenns_consumer_with_sasl_scram",
+				Topic:     "test-topic-1",
+				IPAddress: "65.1.63.214",
+				Auth:      "SASL_SCRAM",
+				Principal: "User:kafka-user-2",
+			},
+			expectedError: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := processor.Parse(tt.line, tt.lineNumber, tt.fileName)
+
+			// Check error
+			if tt.expectedError != nil {
+				if err == nil {
+					t.Errorf("expected error %v, got nil", tt.expectedError)
+					return
+				}
+				if err != tt.expectedError {
+					t.Errorf("expected error %v, got %v", tt.expectedError, err)
+					return
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			// Check result
+			if result == nil {
+				t.Errorf("expected result, got nil")
+				return
+			}
+
+			if !result.Timestamp.Equal(tt.expectedResult.Timestamp) {
+				t.Errorf("expected timestamp %v, got %v", tt.expectedResult.Timestamp, result.Timestamp)
+			}
+
+			if result.ApiKey != tt.expectedResult.ApiKey {
+				t.Errorf("expected ApiKey %q, got %q", tt.expectedResult.ApiKey, result.ApiKey)
+			}
+
+			if result.ClientId != tt.expectedResult.ClientId {
+				t.Errorf("expected ClientId %q, got %q", tt.expectedResult.ClientId, result.ClientId)
+			}
+
+			if result.Role != tt.expectedResult.Role {
+				t.Errorf("expected Role %q, got %q", tt.expectedResult.Role, result.Role)
+			}
+
+			if result.Topic != tt.expectedResult.Topic {
+				t.Errorf("expected Topic %q, got %q", tt.expectedResult.Topic, result.Topic)
+			}
+
+			if result.IPAddress != tt.expectedResult.IPAddress {
+				t.Errorf("expected IPAddress %q, got %q", tt.expectedResult.IPAddress, result.IPAddress)
+			}
+
+			if result.Auth != tt.expectedResult.Auth {
+				t.Errorf("expected Auth %q, got %q", tt.expectedResult.Auth, result.Auth)
+			}
+
+			if result.Principal != tt.expectedResult.Principal {
+				t.Errorf("expected Principal %q, got %q", tt.expectedResult.Principal, result.Principal)
+			}
+		})
+	}
+}
