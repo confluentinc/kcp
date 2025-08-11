@@ -93,7 +93,7 @@ func (cs *ClusterScanner) addSummarySection(md *markdown.Markdown, clusterInfo *
 		fmt.Sprintf("**Status:** %s", string(clusterInfo.Cluster.State)),
 		fmt.Sprintf("**Region:** %s", clusterInfo.Region),
 		fmt.Sprintf("**Topics:** %d", len(clusterInfo.Topics)),
-		fmt.Sprintf("**ACLs:** %d", cs.getTotalAcls(clusterInfo)),
+		fmt.Sprintf("**ACLs:** %d", len(clusterInfo.Acls)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(clusterInfo.ClientVpcConnections)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(clusterInfo.ClusterOperations)),
 		fmt.Sprintf("**Brokers:** %d", len(clusterInfo.Nodes)),
@@ -353,21 +353,16 @@ func (cs *ClusterScanner) addAclsSection(md *markdown.Markdown, clusterInfo *typ
 
 	var aclEntries []aclEntry
 
-	for _, resourceAcls := range clusterInfo.Acls {
-		resourceType := resourceAcls.ResourceType.String()
-		resourceName := resourceAcls.ResourceName
-
-		for _, acl := range resourceAcls.Acls {
-			entry := aclEntry{
-				Principal:      acl.Principal,
-				ResourceType:   resourceType,
-				ResourceName:   resourceName,
-				Host:           acl.Host,
-				Operation:      acl.Operation.String(),
-				PermissionType: acl.PermissionType.String(),
-			}
-			aclEntries = append(aclEntries, entry)
+	for _, acl := range clusterInfo.Acls {
+		entry := aclEntry{
+			Principal:      acl.Principal,
+			ResourceType:   acl.ResourceType,
+			ResourceName:   acl.ResourceName,
+			Host:           acl.Host,
+			Operation:      acl.Operation,
+			PermissionType: acl.PermissionType,
 		}
+		aclEntries = append(aclEntries, entry)
 	}
 
 	if len(aclEntries) == 0 {
@@ -475,14 +470,4 @@ func (cs *ClusterScanner) getServerlessAuthenticationInfo(cluster kafkatypes.Clu
 	}
 
 	return strings.Join(authTypes, ", ")
-}
-
-func (cs *ClusterScanner) getTotalAcls(clusterInfo *types.ClusterInformation) int {
-	// Sarama groups ACLs by resource type --> name --> pattern. This is required to get
-	// total number of ACLs for the cluster.
-	totalAcls := 0
-	for _, resourceAcls := range clusterInfo.Acls {
-		totalAcls += len(resourceAcls.Acls)
-	}
-	return totalAcls
 }
