@@ -8,11 +8,10 @@ import (
 	"time"
 )
 
-var (
+const (
 	AuthTypeIAM        = "IAM"
 	AuthTypeSASL_SCRAM = "SASL_SCRAM"
 	// AuthTypeTLS = "TLS"
-	// AuthTypeNONE = "NONE"
 	AuthTypeUNKNOWN = "UNKNOWN"
 )
 
