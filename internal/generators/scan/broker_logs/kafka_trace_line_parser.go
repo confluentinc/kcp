@@ -2,7 +2,7 @@ package broker_logs
 
 import (
 	"errors"
-	"log/slog"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -23,21 +23,20 @@ var (
 )
 
 var (
-	TimestampPattern = regexp.MustCompile(`^\[([^\]]+)\]`)
-	ApiKeyPattern    = regexp.MustCompile(`apiKey=([^,\)]+)`)
-	ClientIdPattern  = regexp.MustCompile(`clientId=([^,\)]+)`)
+	TimestampPattern     = regexp.MustCompile(`^\[([^\]]+)\]`)
+	ApiKeyPattern        = regexp.MustCompile(`apiKey=([^,\)]+)`)
+	ClientIdPattern      = regexp.MustCompile(`clientId=([^,\)]+)`)
+	BrokerFetcherPattern = regexp.MustCompile(`broker-(\d+)-fetcher-(\d+)`)
+	IpPattern            = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
 
-	// Producer patterns (PRODUCE operations)
-	ProducerTopicPattern     = regexp.MustCompile(`partitionSizes=\[(.+)-\d+=`)
-	ProducerIpPattern        = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
-	ProducerPrincipalPattern = regexp.MustCompile(`principal:([^ ]+)`)
+	ProducerTopicPattern = regexp.MustCompile(`partitionSizes=\[(.+)-\d+=`)
+	ConsumerTopicPattern = regexp.MustCompile(`FetchTopic\(topic='([^']+)'`)
 
-	// Consumer patterns (FETCH operations)
-	ConsumerTopicPattern     = regexp.MustCompile(`FetchTopic\(topic='([^']+)'`)
-	// ConsumerIpPattern        = regexp.MustCompile(`from connection ([^;]+);`)
-	ConsumerIpPattern        = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
-	ConsumerPrincipalPattern = regexp.MustCompile(`principal:([^ ]+)`)
-	BrokerFetcherPattern     = regexp.MustCompile(`broker-(\d+)-fetcher-(\d+)`)
+	// IAM-specific pattern to extract ARN
+	IAMPrincipalArnPattern = regexp.MustCompile(`principal:\[IAM\]:\[(arn:aws:[^\]]+)\]:`)
+
+	// SASL_SCRAM-specific pattern to extract User:username
+	SASLSCRAMPrincipalPattern = regexp.MustCompile(`principal:(User:[^ ]+)`)
 )
 
 type KafkaApiTraceLineParser struct{}
@@ -45,13 +44,11 @@ type KafkaApiTraceLineParser struct{}
 func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName string) (*RequestMetadata, error) {
 	timestampMatches := TimestampPattern.FindStringSubmatch(line)
 	if len(timestampMatches) != 2 {
-		slog.Debug("failed to match timestamp", "line", line)
 		return nil, ErrorUnableToParseKafkaApiLine
 	}
 
 	timestamp, err := time.Parse("2006-01-02 15:04:05,000", timestampMatches[1])
 	if err != nil {
-		slog.Debug("failed to parse timestamp", "timestamp", timestampMatches[1], "error", err)
 		return nil, ErrorUnableToParseTimestamp
 	}
 
@@ -68,38 +65,35 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 		return nil, ErrorUnsupportedLogLine
 	}
 
-	var role, topic, ipAddress, auth, principal string
+	auth, principal := determineAuthTypeAndPrincipal(line)
+	ipAddress := extractField(line, IpPattern)
 
+	var role, topic string
 	switch apiKey {
 	case "FETCH":
 		role = "Consumer"
 		topic = extractField(line, ConsumerTopicPattern)
-		ipAddress = extractField(line, ConsumerIpPattern)
-		auth = determineAuthType(line)
-		principal = extractField(line, ConsumerPrincipalPattern)
 
 	case "PRODUCE":
 		role = "Producer"
 		topic = extractField(line, ProducerTopicPattern)
-		ipAddress = extractField(line, ProducerIpPattern)
-		auth = determineAuthType(line)
-		principal = extractField(line, ProducerPrincipalPattern)
 	}
 
 	requestMetadata := RequestMetadata{
-		ClientId:   clientId,
-		ClientType: "External App",
-		Topic:      topic,
-		Role:       role,
-		GroupId:    "N/A",
-		Principal:  principal,
-		Auth:       auth,
-		IPAddress:  ipAddress,
-		ApiKey:     apiKey,
-		Timestamp:  timestamp,
-		FileName:   fileName,
-		LineNumber: lineNumber,
-		LogLine:    line,
+		CompositeKey: fmt.Sprintf("%s|%s|%s|%s|%s|%s", clientId, topic, role, auth, principal, ipAddress),
+		ClientId:     clientId,
+		ClientType:   "External App",
+		Topic:        topic,
+		Role:         role,
+		GroupId:      "N/A",
+		Principal:    principal,
+		Auth:         auth,
+		IPAddress:    ipAddress,
+		ApiKey:       apiKey,
+		Timestamp:    timestamp,
+		FileName:     fileName,
+		LineNumber:   lineNumber,
+		LogLine:      line,
 	}
 
 	return &requestMetadata, nil
@@ -113,17 +107,21 @@ func extractField(line string, pattern *regexp.Regexp) string {
 	return ""
 }
 
-func determineAuthType(logLine string) string {
+func determineAuthTypeAndPrincipal(logLine string) (string, string) {
+	// iam
 	if strings.Contains(logLine, "principal:[IAM]:") {
-		return AuthTypeIAM
-	} else if strings.Contains(logLine, "principal:User:") {
-		return AuthTypeSASL_SCRAM
+		principal := extractField(logLine, IAMPrincipalArnPattern)
+		return AuthTypeIAM, principal
+	}
+	// sasl scram
+	if strings.Contains(logLine, "principal:User:") {
+		principal := extractField(logLine, SASLSCRAMPrincipalPattern)
+		return AuthTypeSASL_SCRAM, principal
 	}
 	// else if strings.Contains(logLine, "securityProtocol:SSL") {
-	// 	return "TLS" // Pure TLS without SASL
+	// 	return "TLS", "" // Pure TLS without SASL
 	// } else if strings.Contains(logLine, "securityProtocol:PLAINTEXT") {
-	// 	return "NONE"
+	// 	return "NONE", ""
 	// }
-	// return "UNKNOWN"
-	return AuthTypeUNKNOWN
+	return AuthTypeUNKNOWN, ""
 }

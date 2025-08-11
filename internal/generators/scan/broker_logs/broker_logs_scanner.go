@@ -24,9 +24,10 @@ type BrokerLogsScannerOpts struct {
 }
 
 type BrokerLogsScanner struct {
-	s3Service S3Service
-	s3Uri     string
-	region    string
+	s3Service            S3Service
+	kafkaTraceLineParser *KafkaApiTraceLineParser
+	s3Uri                string
+	region               string
 }
 
 type S3Service interface {
@@ -36,26 +37,28 @@ type S3Service interface {
 }
 
 type RequestMetadata struct {
-	ClientId   string
-	ClientType string
-	Topic      string
-	Role       string
-	GroupId    string
-	Principal  string
-	Auth       string
-	IPAddress  string
-	ApiKey     string
-	Timestamp  time.Time
-	FileName   string
-	LineNumber int
-	LogLine    string
+	CompositeKey string
+	ClientId     string
+	ClientType   string
+	Topic        string
+	Role         string
+	GroupId      string
+	Principal    string
+	Auth         string
+	IPAddress    string
+	ApiKey       string
+	Timestamp    time.Time
+	FileName     string
+	LineNumber   int
+	LogLine      string
 }
 
 func NewBrokerLogsScanner(s3Service S3Service, opts BrokerLogsScannerOpts) (*BrokerLogsScanner, error) {
 	return &BrokerLogsScanner{
-		s3Service: s3Service,
-		s3Uri:     opts.S3Uri,
-		region:    opts.Region,
+		s3Service:            s3Service,
+		kafkaTraceLineParser: &KafkaApiTraceLineParser{},
+		s3Uri:                opts.S3Uri,
+		region:               opts.Region,
 	}, nil
 }
 
@@ -79,9 +82,9 @@ func (bs *BrokerLogsScanner) Run() error {
 		return nil
 	}
 
-	requestMetadataByClientId := bs.handleLogFiles(ctx, bucket, logFiles)
+	requestMetadataByCompositeKey := bs.handleLogFiles(ctx, bucket, logFiles)
 
-	if err := bs.generateCSV(requestMetadataByClientId); err != nil {
+	if err := bs.generateCSV(requestMetadataByCompositeKey); err != nil {
 		slog.Error("failed to write CSV file", "error", err)
 	}
 
@@ -89,7 +92,7 @@ func (bs *BrokerLogsScanner) Run() error {
 }
 
 func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) map[string]*RequestMetadata {
-	requestMetadataByClientId := make(map[string]*RequestMetadata)
+	requestMetadataByCompositeKey := make(map[string]*RequestMetadata)
 
 	for _, file := range logFiles {
 		requestsMetadata, err := bs.handleLogFile(ctx, bucket, file)
@@ -100,23 +103,26 @@ func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, 
 
 		slog.Info("found API requests", "file", file, "count", len(requestsMetadata))
 
-		// deduplicate requests by client id to most recent request
 		for _, metadata := range requestsMetadata {
-			existingRequestMetadata, exists := requestMetadataByClientId[metadata.ClientId]
+			// we cannot guarantee that the client id is unique as it may not be set on clients, s
+			// a composite key is used to try to deduplicate requests
+			compositeKey := metadata.CompositeKey
+			slog.Info("composite key", "composite_key", compositeKey)
+			existingRequestMetadata, exists := requestMetadataByCompositeKey[compositeKey]
 			if !exists {
 				// first time we've seen this client
-				requestMetadataByClientId[metadata.ClientId] = &metadata
+				requestMetadataByCompositeKey[compositeKey] = &metadata
 				continue
 			}
 
-			// if the new request has a more recent timestamp, we should update the map
+			// store the most recent request
 			if metadata.Timestamp.After(existingRequestMetadata.Timestamp) {
-				requestMetadataByClientId[metadata.ClientId] = &metadata
+				requestMetadataByCompositeKey[compositeKey] = &metadata
 			}
 		}
 	}
 
-	return requestMetadataByClientId
+	return requestMetadataByCompositeKey
 }
 
 func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
@@ -147,8 +153,7 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 
 		switch {
 		case KafkaApiTracePattern.MatchString(line):
-			kafkaTraceLineParser := &KafkaApiTraceLineParser{}
-			metadata, err := kafkaTraceLineParser.Parse(line, lineNumber, key)
+			metadata, err := bs.kafkaTraceLineParser.Parse(line, lineNumber, key)
 			if err != nil {
 				slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
 				continue
@@ -169,7 +174,6 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 	return requestsMetadata, nil
 }
 
-// csvColumn represents a CSV column with its header and value extractor function
 type csvColumn struct {
 	header    string
 	extractor func(*RequestMetadata) string
@@ -201,6 +205,7 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 		{"File Name", func(m *RequestMetadata) string { return m.FileName }},
 		{"Line Number", func(m *RequestMetadata) string { return fmt.Sprintf("%d", m.LineNumber) }},
 		{"Log Line", func(m *RequestMetadata) string { return m.LogLine }},
+		{"Composite Key", func(m *RequestMetadata) string { return m.CompositeKey }},
 	}
 
 	header := make([]string, len(columns))
@@ -216,7 +221,6 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 		return nil
 	}
 
-	// Write data rows
 	for _, metadata := range requestMetadataByClientId {
 		record := make([]string, len(columns))
 		for i, col := range columns {
