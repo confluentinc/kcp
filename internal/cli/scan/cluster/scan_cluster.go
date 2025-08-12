@@ -9,13 +9,14 @@ import (
 	"github.com/confluentinc/kcp/internal/generators/scan/cluster"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/confluentinc/kcp/internal/services/msk"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 var (
-	clusterArn         string
+	clusterArn string
 
 	useSaslIam         bool
 	useSaslScram       bool
@@ -23,12 +24,12 @@ var (
 	useUnauthenticated bool
 	skipKafka          bool
 
-	saslScramUsername  string
-	saslScramPassword  string
-	
-	tlsCaCert          string
-	tlsClientCert      string
-	tlsClientKey       string
+	saslScramUsername string
+	saslScramPassword string
+
+	tlsCaCert     string
+	tlsClientCert string
+	tlsClientKey  string
 )
 
 func NewScanClusterCmd() *cobra.Command {
@@ -150,8 +151,10 @@ func runScanCluster(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	mskService := msk.NewMSKService(mskClient)
+
 	// Scan the cluster
-	clusterScanner := cluster.NewClusterScanner(mskClient, kafkaAdminFactory, *opts)
+	clusterScanner := cluster.NewClusterScanner(mskService, kafkaAdminFactory, *opts)
 	if err := clusterScanner.Run(); err != nil {
 		return fmt.Errorf("failed to scan cluster: %v", err)
 	}

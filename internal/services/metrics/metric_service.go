@@ -56,6 +56,56 @@ func (ms *MetricService) buildCloudWatchInput(clusterName, metricName string, no
 	}
 }
 
+func (ms *MetricService) buildCloudWatchInputClusterBrokerTopic(clusterName string, node int, topic string, statistics []cloudwatchtypes.Statistic) *cloudwatch.GetMetricStatisticsInput {
+	// Calculate period in seconds based on the time range
+	duration := ms.endTime.Sub(ms.startTime)
+	period := int32(duration.Seconds())
+
+	dimensions := []cloudwatchtypes.Dimension{
+		{
+			Name:  aws.String("Cluster Name"),
+			Value: aws.String(clusterName),
+		},
+		{
+			Name:  aws.String("Broker ID"),
+			Value: aws.String(strconv.Itoa(node)),
+		},
+		{
+			Name:  aws.String("Topic"),
+			Value: aws.String(topic),
+		},
+	}
+
+	return &cloudwatch.GetMetricStatisticsInput{
+		Namespace:  aws.String("AWS/Kafka"),
+		MetricName: aws.String("BytesInPerSec"),
+		Dimensions: dimensions,
+		StartTime:  aws.Time(ms.startTime),
+		EndTime:    aws.Time(ms.endTime),
+		Period:     aws.Int32(period),
+		Statistics: statistics,
+	}
+}
+
+func (ms *MetricService) GetAverageBytesInPerSec(clusterName string, numNodes int, topic string) ([]float64, error) {
+	slog.Info("📊 getting cloudwatch bytes in per sec", "cluster", clusterName, "numNodes", numNodes, "topics", topic)
+	var results []float64
+	for i := 1; i <= numNodes; i++ {
+		metricRequest := ms.buildCloudWatchInputClusterBrokerTopic(clusterName, i, topic, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage})
+		response, err := ms.client.GetMetricStatistics(context.Background(), metricRequest)
+		if err != nil {
+			return []float64{}, fmt.Errorf("failed to get metric statistics: %v", err)
+		}
+		if len(response.Datapoints) == 0 {
+			slog.Info("🔍 No data points found for node", "node", i, "topic", topic)
+			continue
+		}
+		slog.Info("🔍 got cloudwatch bytes in per sec", "node", i, "topic", topic, "data", response.Datapoints[0].Average)
+		results = append(results, *response.Datapoints[0].Average)
+	}
+	return results, nil
+}
+
 func (ms *MetricService) GetAverageMetric(clusterName string, metricName string, node *int) (float64, error) {
 	slog.Info("📊 getting cloudwatch average metric", "cluster", clusterName, "metric", metricName, "node", *node)
 	metricRequest := ms.buildCloudWatchInput(clusterName, metricName, node, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage})

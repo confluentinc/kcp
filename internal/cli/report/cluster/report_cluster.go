@@ -8,8 +8,8 @@ import (
 func NewReportClusterCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
 		Use:   "cluster",
-		Short: "Generate cluster reports",
-		Long:  "Generate reports for cluster costs and metrics",
+		Short: "Generate Report on an AWS MSK cluster",
+		Long:  `Generate a report on an AWS MSK cluster.`,
 	}
 
 	clusterCmd.AddCommand(
