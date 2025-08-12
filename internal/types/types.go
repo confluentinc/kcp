@@ -127,15 +127,17 @@ type ClusterMetrics struct {
 type NodeMetrics struct {
 	NodeID                       int     `json:"node_id"`
 	InstanceType                 *string `json:"instance_type"`
-	VolumeSizeGB                 int     `json:"volume_size_gb"`
+	VolumeSizeGB                 *int    `json:"volume_size_gb"`
 	BytesInPerSecAvg             float64 `json:"bytes_in_per_sec_avg"`
 	BytesOutPerSecAvg            float64 `json:"bytes_out_per_sec_avg"`
 	MessagesInPerSecAvg          float64 `json:"messages_in_per_sec_avg"`
 	KafkaDataLogsDiskUsedAvg     float64 `json:"kafka_data_logs_disk_used_avg"`
+	RemoteLogSizeBytesAvg        float64 `json:"remote_log_size_bytes_avg"`
 	BytesInPerSecMax             float64 `json:"bytes_in_per_sec_max"`
 	BytesOutPerSecMax            float64 `json:"bytes_out_per_sec_max"`
 	MessagesInPerSecMax          float64 `json:"messages_in_per_sec_max"`
 	KafkaDataLogsDiskUsedMax     float64 `json:"kafka_data_logs_disk_used_max"`
+	RemoteLogSizeBytesMax        float64 `json:"remote_log_size_bytes_max"`
 	ClientConnectionCountMax     float64 `json:"client_connection_count_max"`
 	PartitionCountMax            float64 `json:"partition_count_max"`
 	GlobalTopicCountMax          float64 `json:"global_topic_count_max"`
