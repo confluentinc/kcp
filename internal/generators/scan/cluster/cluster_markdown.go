@@ -216,15 +216,15 @@ func (cs *ClusterScanner) addVpcConnectionsSection(md *markdown.Markdown, cluste
 
 // addClusterNetworkingSection adds cluster networking information
 func (cs *ClusterScanner) addClusterNetworkingSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
-	headers := []string{"Broker ID", "Subnet ID", "Availability Zone", "CIDR Block"}
+	headers := []string{"Broker ID", "Subnet ID", "CIDR Block", "Availability Zone"}
 
 	var tableData [][]string
 	for _, subnet := range clusterInfo.ClusterNetworking.Subnets {
 		row := []string{
 			fmt.Sprintf("%d", subnet.SubnetMskBrokerId),
-			aws.ToString(&subnet.AvailabilityZone),
 			aws.ToString(&subnet.SubnetId),
 			aws.ToString(&subnet.CidrBlock),
+			aws.ToString(&subnet.AvailabilityZone),
 		}
 		tableData = append(tableData, row)
 	}
@@ -232,6 +232,9 @@ func (cs *ClusterScanner) addClusterNetworkingSection(md *markdown.Markdown, clu
 	sort.Slice(tableData, func(i, j int) bool {
 		return tableData[i][0] < tableData[j][0]
 	})
+
+	md.AddParagraph(fmt.Sprintf("**VPC ID:** %s", aws.ToString(&clusterInfo.ClusterNetworking.VpcId)))
+	md.AddParagraph(fmt.Sprintf("**Security Groups:** %s", strings.Join(clusterInfo.ClusterNetworking.SecurityGroups, ", ")))
 
 	md.AddTable(headers, tableData)
 }
