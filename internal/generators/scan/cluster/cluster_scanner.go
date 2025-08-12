@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -173,6 +174,12 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 	}
 	clusterInfo.CompatibleVersions = *versions
 
+	networking, err := cs.scanNetworkingInfo(ctx, cluster, nodes)
+	if err != nil {
+		return err
+	}
+	clusterInfo.ClusterNetworking = networking
+
 	return nil
 }
 
@@ -226,7 +233,110 @@ func (cs *ClusterScanner) describeCluster(ctx context.Context, clusterArn *strin
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
 	}
+
 	return cluster, nil
+}
+
+func (cs *ClusterScanner) scanNetworkingInfo(ctx context.Context, cluster *kafka.DescribeClusterV2Output, nodes []kafkatypes.NodeInfo) (types.ClusterNetworking, error) {
+	subnetIds := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets
+	securityGroups := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.SecurityGroups
+
+	vpcId, err := cs.getVpcIdFromSubnets(ctx, subnetIds)
+	if err != nil {
+		return types.ClusterNetworking{}, fmt.Errorf("failed to get VPC ID: %v", err)
+	}
+
+	subnetDetails, err := cs.getSubnetDetails(ctx, subnetIds)
+	if err != nil {
+		return types.ClusterNetworking{}, fmt.Errorf("failed to get subnet details: %v", err)
+	}
+
+	subnetInfo := cs.createCombinedSubnetBrokerInfo(nodes, subnetDetails)
+
+	return types.ClusterNetworking{
+		VpcId:          vpcId,
+		SubnetIds:      subnetIds,
+		SecurityGroups: securityGroups,
+		Subnets:        subnetInfo,
+	}, nil
+}
+
+func (cs *ClusterScanner) getVpcIdFromSubnets(ctx context.Context, subnetIds []string) (string, error) {
+	ec2Client, err := client.NewEC2Client(cs.region)
+	if err != nil {
+		return "", fmt.Errorf("failed to create EC2 client: %v", err)
+	}
+
+	// Only way to get the VPC ID is to query the subnets belonging to the cluster brokers.
+	input := &ec2.DescribeSubnetsInput{
+		SubnetIds: []string{subnetIds[0]},
+	}
+
+	result, err := ec2Client.DescribeSubnets(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("failed to describe subnet %s: %v", subnetIds[0], err)
+	}
+
+	if len(result.Subnets) > 0 && result.Subnets[0].VpcId != nil {
+		return aws.ToString(result.Subnets[0].VpcId), nil
+	}
+
+	return "", fmt.Errorf("no VPC ID found for subnet %s", subnetIds[0])
+}
+
+func (cs *ClusterScanner) getSubnetDetails(ctx context.Context, subnetIds []string) (map[string]types.SubnetInfo, error) {
+	ec2Client, err := client.NewEC2Client(cs.region)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create EC2 client: %v", err)
+	}
+
+	input := &ec2.DescribeSubnetsInput{
+		SubnetIds: subnetIds,
+	}
+
+	result, err := ec2Client.DescribeSubnets(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe subnets: %v", err)
+	}
+
+	subnets := make(map[string]types.SubnetInfo)
+	for _, subnet := range result.Subnets {
+		subnetInfo := types.SubnetInfo{
+			SubnetId:         aws.ToString(subnet.SubnetId),
+			AvailabilityZone: aws.ToString(subnet.AvailabilityZone),
+			CidrBlock:        aws.ToString(subnet.CidrBlock),
+		}
+		subnets[subnetInfo.SubnetId] = subnetInfo
+	}
+
+	return subnets, nil
+}
+
+func (cs *ClusterScanner) createCombinedSubnetBrokerInfo(nodes []kafkatypes.NodeInfo, subnetDetails map[string]types.SubnetInfo) []types.SubnetInfo {
+	var subnetInfo []types.SubnetInfo
+
+	for _, node := range nodes {
+		// Grab subnets only from broker nodes.
+		if node.NodeType == kafkatypes.NodeTypeBroker && node.BrokerNodeInfo != nil {
+			subnetId := aws.ToString(node.BrokerNodeInfo.ClientSubnet)
+
+			if details, exists := subnetDetails[subnetId]; exists {
+				brokerId := 0
+
+				if node.BrokerNodeInfo.BrokerId != nil {
+					brokerId = int(*node.BrokerNodeInfo.BrokerId)
+				}
+
+				combinedSubnet := details
+				combinedSubnet.SubnetMskBrokerId = brokerId
+				combinedSubnet.PrivateIpAddress = aws.ToString(node.BrokerNodeInfo.ClientVpcIpAddress)
+
+				subnetInfo = append(subnetInfo, combinedSubnet)
+			}
+		}
+	}
+
+	return subnetInfo
 }
 
 func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {

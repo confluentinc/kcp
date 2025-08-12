@@ -40,6 +40,12 @@ func (cs *ClusterScanner) generateMarkdownReport(clusterInfo *types.ClusterInfor
 		cs.addVpcConnectionsSection(md, clusterInfo)
 	}
 
+	// Networking section
+	if len(clusterInfo.ClusterNetworking.Subnets) > 0 {
+		md.AddHeading("Cluster Networking", 2)
+		cs.addClusterNetworkingSection(md, clusterInfo)
+	}
+
 	// Cluster Operations section
 	if len(clusterInfo.ClusterOperations) > 0 {
 		md.AddHeading("Cluster Operations", 2)
@@ -95,8 +101,9 @@ func (cs *ClusterScanner) addSummarySection(md *markdown.Markdown, clusterInfo *
 		fmt.Sprintf("**Topics:** %d", len(clusterInfo.Topics)),
 		fmt.Sprintf("**ACLs:** %d", len(clusterInfo.Acls)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(clusterInfo.ClientVpcConnections)),
+		fmt.Sprintf("**VPC ID:** %s", aws.ToString(&clusterInfo.ClusterNetworking.VpcId)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(clusterInfo.ClusterOperations)),
-		fmt.Sprintf("**Brokers:** %d", len(clusterInfo.Nodes)),
+		fmt.Sprintf("**Brokers:** %d", *clusterInfo.Cluster.Provisioned.NumberOfBrokerNodes),
 		fmt.Sprintf("**SCRAM Secrets:** %d", len(clusterInfo.ScramSecrets)),
 	}
 
@@ -203,6 +210,28 @@ func (cs *ClusterScanner) addVpcConnectionsSection(md *markdown.Markdown, cluste
 		}
 		tableData = append(tableData, row)
 	}
+
+	md.AddTable(headers, tableData)
+}
+
+// addClusterNetworkingSection adds cluster networking information
+func (cs *ClusterScanner) addClusterNetworkingSection(md *markdown.Markdown, clusterInfo *types.ClusterInformation) {
+	headers := []string{"Broker ID", "Subnet ID", "Availability Zone", "CIDR Block"}
+
+	var tableData [][]string
+	for _, subnet := range clusterInfo.ClusterNetworking.Subnets {
+		row := []string{
+			fmt.Sprintf("%d", subnet.SubnetMskBrokerId),
+			aws.ToString(&subnet.AvailabilityZone),
+			aws.ToString(&subnet.SubnetId),
+			aws.ToString(&subnet.CidrBlock),
+		}
+		tableData = append(tableData, row)
+	}
+
+	sort.Slice(tableData, func(i, j int) bool {
+		return tableData[i][0] < tableData[j][0]
+	})
 
 	md.AddTable(headers, tableData)
 }
