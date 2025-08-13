@@ -85,22 +85,42 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// Avg Ingress Throughput (MB/s)
 		{
 			"Avg Ingress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Peak Ingress Throughput (MB/s)
 		{
 			"Peak Ingress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Avg Egress Throughput (MB/s)
 		{
 			"Avg Egress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Peak Egress Throughput (MB/s)
 		{
 			"Peak Egress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Retention (Days)
 		{
@@ -115,7 +135,12 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// Partitions
 		{
 			"Partitions",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.Partitions),
+			func() string {
+				if cluster.ClusterMetricsSummary.RetentionDays == nil {
+					return ""
+				}
+				return 	fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.Partitions)
+			}(),			
 		},
 		// Replication Factor
 		{
@@ -131,6 +156,9 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Follower Fetching",
 			func() string {
+				if cluster.ClusterMetricsSummary.FollowerFetching == nil {
+					return ""
+				}
 				if *cluster.ClusterMetricsSummary.FollowerFetching {
 					return "TRUE"
 				}
@@ -141,6 +169,9 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Tiered Storage",
 			func() string {
+				if cluster.ClusterMetricsSummary.TieredStorage == nil {
+					return ""
+				}				
 				if *cluster.ClusterMetricsSummary.TieredStorage {
 					return "TRUE"
 				}
@@ -151,7 +182,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Local Retention in Primary Storage (Hrs)",
 			func() string {
-				if !*cluster.ClusterMetricsSummary.TieredStorage {
+				if cluster.ClusterMetricsSummary.TieredStorage == nil || !*cluster.ClusterMetricsSummary.TieredStorage {
 					return ""
 				}
 				if cluster.ClusterMetricsSummary.LocalRetentionInPrimaryStorageHours == nil {
@@ -163,7 +194,12 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// "Instance Type Override
 		{
 			"Instance Type Override",
-			formatInstanceTypeOverride(cluster.ClusterMetricsSummary.InstanceType),
+			func() string {
+				if cluster.ClusterMetricsSummary.InstanceType == nil {
+					return ""
+				}
+				return formatInstanceTypeOverride(cluster.ClusterMetricsSummary.InstanceType)
+			}(),
 		},
 	}
 
