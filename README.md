@@ -79,6 +79,13 @@ If you wish to run the downloaded kcp binary from anywhere on your system, you m
 sudo mv ./kcp_<ARCH> /usr/local/bin/kcp
 ```
 
+> [!WARNING]
+> If you're downloading pre-built binaries directly from GitHub releases on macOS, as a temporary workaround until we sign and notorize the binary. You will need to remove the quarantine attribute after extracting the tar.gz file:
+
+```shell
+xattr -d com.apple.quarantine ./kcp_darwin_*
+```
+
 ## Authentication
 
 Ensure that your terminal session is authenticated with AWS. The kcp CLI uses the standard AWS credential chain and supports multiple authentication methods:
