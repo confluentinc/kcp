@@ -4,15 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 )
 
 const (
 	AuthTypeIAM        = "IAM"
 	AuthTypeSASL_SCRAM = "SASL_SCRAM"
-	// AuthTypeTLS = "TLS"
-	AuthTypeUNKNOWN = "UNKNOWN"
+	AuthTypeTLS        = "TLS"
+	AuthTypeUNKNOWN    = "UNKNOWN"
 )
 
 var (
@@ -33,9 +32,10 @@ var (
 
 	// IAM-specific pattern to extract ARN
 	IAMPrincipalArnPattern = regexp.MustCompile(`principal:\[IAM\]:\[(arn:aws:[^\]]+)\]:`)
-
 	// SASL_SCRAM-specific pattern to extract User:username
 	SASLSCRAMPrincipalPattern = regexp.MustCompile(`principal:(User:[^ ]+)`)
+	// TLS pattern - extract User:CN= and any additional certificate info (requires SSL protocol)
+	TLSPrincipalPattern = regexp.MustCompile(`securityProtocol:SSL,principal:(User:CN=[^(]+?)\s*\(`)
 )
 
 type KafkaApiTraceLineParser struct{}
@@ -79,9 +79,8 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 	}
 
 	requestMetadata := RequestMetadata{
-		CompositeKey: fmt.Sprintf("%s|%s|%s|%s|%s|%s", clientId, topic, role, auth, principal, ipAddress),
+		CompositeKey: fmt.Sprintf("%s|%s|%s|%s|%s", clientId, topic, role, auth, principal),
 		ClientId:     clientId,
-		ClientType:   "External App",
 		Topic:        topic,
 		Role:         role,
 		GroupId:      "N/A",
@@ -107,20 +106,20 @@ func extractField(line string, pattern *regexp.Regexp) string {
 }
 
 func determineAuthTypeAndPrincipal(logLine string) (string, string) {
-	// iam
-	if strings.Contains(logLine, "principal:[IAM]:") {
-		principal := extractField(logLine, IAMPrincipalArnPattern)
+	// IAM authentication - matches principal:[IAM]:[arn:aws:...] pattern
+	if principal := extractField(logLine, IAMPrincipalArnPattern); principal != "" {
 		return AuthTypeIAM, principal
 	}
-	// sasl scram
-	if strings.Contains(logLine, "principal:User:") {
-		principal := extractField(logLine, SASLSCRAMPrincipalPattern)
+
+	// TLS client certificate - matches securityProtocol:SSL,principal:User:CN=... pattern
+	if principal := extractField(logLine, TLSPrincipalPattern); principal != "" {
+		return AuthTypeTLS, principal
+	}
+
+	// SASL_SCRAM authentication - matches principal:User:<username> (without CN=)
+	if principal := extractField(logLine, SASLSCRAMPrincipalPattern); principal != "" {
 		return AuthTypeSASL_SCRAM, principal
 	}
-	// else if strings.Contains(logLine, "securityProtocol:SSL") {
-	// 	return "TLS", "" // Pure TLS without SASL
-	// } else if strings.Contains(logLine, "securityProtocol:PLAINTEXT") {
-	// 	return "NONE", ""
-	// }
+
 	return AuthTypeUNKNOWN, ""
 }

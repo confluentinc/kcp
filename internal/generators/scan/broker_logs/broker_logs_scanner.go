@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -39,7 +40,6 @@ type S3Service interface {
 type RequestMetadata struct {
 	CompositeKey string
 	ClientId     string
-	ClientType   string
 	Topic        string
 	Role         string
 	GroupId      string
@@ -177,7 +177,7 @@ type csvColumn struct {
 	extractorFunc func(*RequestMetadata) string
 }
 
-func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*RequestMetadata) error {
+func (bs *BrokerLogsScanner) generateCSV(requestMetadataByCompositeKey map[string]*RequestMetadata) error {
 	fileName := "broker_logs_scan_results.csv"
 
 	file, err := os.Create(fileName)
@@ -193,10 +193,6 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 		{
 			header:        "Client ID",
 			extractorFunc: func(m *RequestMetadata) string { return m.ClientId },
-		},
-		{
-			header:        "Client Type",
-			extractorFunc: func(m *RequestMetadata) string { return m.ClientType },
 		},
 		{
 			header:        "Role",
@@ -232,12 +228,22 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByClientId map[string]*R
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
-	if len(requestMetadataByClientId) == 0 {
+	if len(requestMetadataByCompositeKey) == 0 {
 		slog.Info("no requests to write to CSV")
 		return nil
 	}
 
-	for _, metadata := range requestMetadataByClientId {
+	// Convert map to slice and sort by timestamp
+	var allMetadata []*RequestMetadata
+	for _, metadata := range requestMetadataByCompositeKey {
+		allMetadata = append(allMetadata, metadata)
+	}
+
+	sort.Slice(allMetadata, func(i, j int) bool {
+		return allMetadata[i].Timestamp.Before(allMetadata[j].Timestamp)
+	})
+
+	for _, metadata := range allMetadata {
 		record := make([]string, len(columns))
 		for i, col := range columns {
 			record[i] = col.extractorFunc(metadata)
