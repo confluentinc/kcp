@@ -79,6 +79,13 @@ If you wish to run the downloaded kcp binary from anywhere on your system, you m
 sudo mv ./kcp_<ARCH> /usr/local/bin/kcp
 ```
 
+> [!WARNING]
+> If you're downloading pre-built binaries directly from GitHub releases on macOS, as a temporary workaround until we sign and notorize the binary. You will need to remove the quarantine attribute after extracting the tar.gz file:
+
+```shell
+xattr -d com.apple.quarantine ./kcp_darwin_*
+```
+
 ## Authentication
 
 Ensure that your terminal session is authenticated with AWS. The kcp CLI uses the standard AWS credential chain and supports multiple authentication methods:
@@ -160,71 +167,74 @@ You can also set environment variables individually if you opt not to use the sc
 
 The `kcp scan` command includes the following sub-commands:
 
-- `region`
 - `cluster`
+- `region`
 
-Both sub-commands require the following minimum AWS IAM permissions:
+The sub-commands require the following minimum AWS IAM permissions:
+
+`kcp scan cluster`:
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "MSKListAndMetricsAccess",
-      "Effect": "Allow",
-      "Action": [
-        "kafka:ListClustersV2",
-        "kafka:ListReplicators",
-        "kafka:ListVpcConnections",
-        "kafka:GetCompatibleKafkaVersions",
-        "kafka:ListKafkaVersions",
-        "kafka:GetBootstrapBrokers",
-        "kafka:ListConfigurations",
-      ],
-      "Resource": "*"
-    },
-    {
       "Sid": "MSKClusterManagementAccess",
       "Effect": "Allow",
       "Action": [
         "kafka:DescribeClusterV2",
-        "kafka:ListNodes",
-        "kafka:ListClusterOperationsV2",
-        "kafka:ListScramSecrets",
+        "kafka:GetClusterPolicy",
         "kafka:ListClientVpcConnections",
-        "kafka:GetClusterPolicy"
+        "kafka:ListClusterOperationsV2",
+        "kafka:ListNodes",
+        "kafka:ListScramSecrets"
       ],
-      "Resource": "arn:aws:kafka:*:<AWS ACCOUNT ID>:cluster/*/*"
+      "Resource": "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
     },
     {
-      "Sid": "MSKConfigurationAccess",
-      "Effect": "Allow",
-      "Action": "kafka:DescribeConfigurationRevision",
-      "Resource": "arn:aws:kafka:*:<AWS ACCOUNT ID>:configuration/*/*"
-    },
-    {
-      "Sid": "MSKReplicatorAccess",
-      "Effect": "Allow",
-      "Action": "kafka:DescribeReplicator",
-      "Resource": "arn:aws:kafka:*:<AWS ACCOUNT ID>:replicator/*/*"
-    },
-    {
-      "Sid": "MSKClusterDataAccess",
+      "Sid": "MSKClusterKafkaAccess",
       "Effect": "Allow",
       "Action": [
-        "kafka-cluster:DescribeTopicDynamicConfiguration",
+        "kafka-cluster:Connect",
         "kafka-cluster:DescribeCluster",
-        "kafka-cluster:ReadData",
-        "kafka-cluster:DescribeTopic",
-        "kafka-cluster:DescribeTransactionalId",
-        "kafka-cluster:DescribeGroup",
         "kafka-cluster:DescribeClusterDynamicConfiguration",
-        "kafka-cluster:Connect"
+        "kafka-cluster:DescribeTopic"
       ],
-			"Resource": [
-				"arn:aws:kafka:*:635910096382:topic/*/*/*",
-				"arn:aws:kafka:*:635910096382:cluster/*/*"
-			]
+      "Resource": [
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
+      ]
+    },
+    {
+      "Sid": "RegionLevelMSKAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kafka:GetBootstrapBrokers",
+        "kafka:GetCompatibleKafkaVersions",
+        "kafka:ListKafkaVersions",
+        "kafka:ListClustersV2",
+        "kafka:ListConfigurations",
+        "kafka:ListReplicators",
+        "kafka:ListVpcConnections"
+      ],
+      "Resource": ["arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"]
+    },
+    {
+      "Sid": "RegionLevelConfigurationAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kafka:DescribeConfiguration",
+        "kafka:DescribeConfigurationRevision"
+      ],
+      "Resource": [
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:configuration/*/*"
+      ]
+    },
+    {
+      "Sid": "MSKClusterNetworkingAccess",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeSubnets"],
+      "Resource": ["*"]
     }
   ]
 }
@@ -309,9 +319,12 @@ Scan a specific MSK cluster for detailed information
     ```
 
   - **Skip Kafka-level scanning:**
-    `shell
-kcp scan cluster --cluster-arn <cluster-arn> --skip-kafka
-` > [!NOTE] > Use this option when brokers are not reachable or you only need infrastructure-level information.
+
+    ```shell
+    kcp scan cluster --cluster-arn <cluster-arn> --skip-kafka
+    ```
+
+    > [!NOTE] > Use this option when brokers are not reachable or you only need AWS infrastructure-level information.
 
 **Example Usage**
 
@@ -379,35 +392,33 @@ The sub-command requires the following minimum AWS IAM permissions:
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["kafka:ListClustersV2", "kafka:DescribeConfigurationRevision"],
-      "Resource": ["arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics",
-        "cloudwatch:GetMetricData"
-      ],
+      "Action": ["cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricData"],
       "Resource": ["*"]
     },
     {
       "Effect": "Allow",
+      "Action": ["kafka:DescribeClusterV2", "kafka:GetBootstrapBrokers"],
+      "Resource": [
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["kafka:DescribeConfigurationRevision"],
+      "Resource": [
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:configuration/<MSK CLUSTER CONFIG NAME>/<MSK CLUSTER CONFIG ID>"
+      ]
+    },
+    {
+      "Effect": "Allow",
       "Action": [
-        "kafka-cluster:DescribeTopicDynamicConfiguration",
-        "kafka-cluster:DescribeCluster",
-        "kafka-cluster:ReadData",
-        "kafka-cluster:DescribeTopic",
-        "kafka-cluster:DescribeTransactionalId",
-        "kafka-cluster:DescribeGroup",
-        "kafka-cluster:DescribeClusterDynamicConfiguration",
-        "kafka-cluster:Connect"
+        "kafka-cluster:Connect",
+        "kafka-cluster:DescribeClusterDynamicConfiguration"
       ],
-			"Resource": [
-				"arn:aws:kafka:*:635910096382:topic/*/*/*",
-				"arn:aws:kafka:*:635910096382:cluster/*/*"
-			]
-    }    
+      "Resource": [
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
+      ]
+    }
   ]
 }
 ```
@@ -454,14 +465,14 @@ The command generates a `cost_report` directory, splitting reports by region whi
 
 #### `kcp report cluster metrics`
 
-This command collates important MSK Kafka metrics for a cluster and generates a comprehensive report.  Some of the metrics are obtained from the kafka broker to kafka auth is required.
+This command collates important MSK Kafka metrics for a cluster and generates a comprehensive report. Some of the metrics are obtained from the kafka broker to kafka auth is required.
 
 **Required Arguments**:
 
 - `--region`: The region where the cost report will be created for
 - `--start`: The inclusive start date for cost report (YYYY-MM-DD)
 - `--end`: The exclusive end date for cost report (YYYY-MM-DD)
--  `--cluster-arn`: Cluster arn
+- `--cluster-arn`: Cluster arn
 
 - **Authentication options:**
   Choose the authentication method that matches your cluster configuration:
@@ -480,13 +491,13 @@ This command collates important MSK Kafka metrics for a cluster and generates a 
   - **SASL IAM authentication:**
 
     ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-iam 
+    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-iam
     ```
 
   - **TLS authentication:**
 
     ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-tls  
+    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-tls
     ```
 
     Requires additional command flags:
@@ -503,10 +514,8 @@ This command collates important MSK Kafka metrics for a cluster and generates a 
 
   - **Skip Kafka-level scanning:**
     `shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --skip-kafka
-    `
-    > [!NOTE]
-    > Use this option when brokers are not reachable or you only need infrastructure-level information.
+kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --skip-kafka
+` > [!NOTE] > Use this option when brokers are not reachable or you only need infrastructure-level information.
 
 **Example Usage**
 
