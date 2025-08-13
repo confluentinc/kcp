@@ -34,8 +34,7 @@ func TestAddClusterMetricsSummary_WithNilValues_NoPanics(t *testing.T) {
 	// Create a markdown instance
 	md := markdown.New()
 
-	// This should panic due to nil pointer dereference on FollowerFetching (line 133)
 	assert.NotPanics(t, func() {
 		collector.addClusterMetricsSummary(md, cluster)
-	}, "Did not expect panic when ClusterMetricsSummary memners are nil")
+	}, "Did not expect panic when ClusterMetricsSummary members are nil")
 }
