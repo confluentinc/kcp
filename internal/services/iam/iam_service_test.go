@@ -21,7 +21,7 @@ func TestExtractPrincipalFromArn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		
+
 		if name != "mskUserTestARN" || typ != "user" {
 			t.Fatalf("unexpected result: %s %s", name, typ)
 		}

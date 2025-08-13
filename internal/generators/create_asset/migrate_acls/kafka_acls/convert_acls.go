@@ -17,8 +17,8 @@ import (
 var assetsFS embed.FS
 
 var (
-	clusterFile string
-	outputDir   string
+	clusterFile     string
+	outputDir       string
 	skipAuditReport bool
 )
 
