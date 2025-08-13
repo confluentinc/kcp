@@ -220,23 +220,40 @@ The sub-commands require the following minimum AWS IAM permissions:
       "Resource": ["arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"]
     },
     {
-      "Sid": "RegionLevelConfigurationAccess",
-      "Effect": "Allow",
-      "Action": [
-        "kafka:DescribeConfiguration",
-        "kafka:DescribeConfigurationRevision"
-      ],
-      "Resource": [
-        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:configuration/*/*"
-      ]
-    },
-    {
       "Sid": "MSKClusterNetworkingAccess",
       "Effect": "Allow",
       "Action": ["ec2:DescribeSubnets"],
       "Resource": ["*"]
     }
   ]
+}
+```
+
+`kcp scan region`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "RegionLevelMSKAccess",
+            "Effect": "Allow",
+            "Action": [
+                "kafka:DescribeConfiguration",
+                "kafka:DescribeConfigurationRevision",
+                "kafka:GetBootstrapBrokers",
+                "kafka:GetCompatibleKafkaVersions",
+                "kafka:ListClustersV2",
+                "kafka:ListConfigurations",
+                "kafka:ListKafkaVersions",
+                "kafka:ListReplicators",
+                "kafka:ListVpcConnections"
+            ],
+            "Resource": [
+                "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
+            ]
+        }
+    ]
 }
 ```
 
