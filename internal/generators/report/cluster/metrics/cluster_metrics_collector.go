@@ -132,9 +132,14 @@ func (rm *ClusterMetricsCollector) calculateRetention(nodesMetrics []types.NodeM
 		}
 		totalRemoteStorageUsed += nodeMetric.RemoteLogSizeBytesAvg
 	}
+
 	slog.Info("🔄 total bytes in per sec", "totalBytesInPerSec", totalBytesInPerDay)
 	slog.Info("🔄 total local storage used", "totalLocalStorageUsed", totalLocalStorageUsed)
 	slog.Info("🔄 total remote storage used", "totalRemoteStorageUsed", totalRemoteStorageUsed)
+
+	if totalBytesInPerDay == 0 {
+		return 0, 0
+	}
 
 	retention_days := (totalLocalStorageUsed + totalRemoteStorageUsed) / totalBytesInPerDay
 	local_retention_days := totalLocalStorageUsed / totalBytesInPerDay
@@ -602,6 +607,7 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 }
 
 func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics) error {
+
 	data, err := json.MarshalIndent(metrics, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cluster information: %v", err)

@@ -24,9 +24,9 @@ type TemplateData struct {
 }
 
 var (
-	principalArn string
-	outputDir    string
-	skipAuditReport  bool
+	principalArn    string
+	outputDir       string
+	skipAuditReport bool
 )
 
 func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userSkipAuditReport bool) error {

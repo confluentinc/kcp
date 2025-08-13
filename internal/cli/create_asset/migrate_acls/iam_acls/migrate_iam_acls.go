@@ -10,9 +10,9 @@ import (
 )
 
 var (
-	roleArn   string
-	userArn   string
-	outputDir string
+	roleArn         string
+	userArn         string
+	outputDir       string
 	skipAuditReport bool
 )
 
