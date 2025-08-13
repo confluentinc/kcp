@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	clusterFile string
-	outputDir   string
+	clusterFile     string
+	outputDir       string
 	skipAuditReport bool
 )
 

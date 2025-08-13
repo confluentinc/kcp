@@ -85,22 +85,42 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// Avg Ingress Throughput (MB/s)
 		{
 			"Avg Ingress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Peak Ingress Throughput (MB/s)
 		{
 			"Peak Ingress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakIngressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Avg Egress Throughput (MB/s)
 		{
 			"Avg Egress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.AvgEgressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Peak Egress Throughput (MB/s)
 		{
 			"Peak Egress Throughput (MB/s)",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond),
+			func() string {
+				if cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.PeakEgressThroughputMegabytesPerSecond)
+			}(),
 		},
 		// Retention (Days)
 		{
@@ -115,7 +135,12 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// Partitions
 		{
 			"Partitions",
-			fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.Partitions),
+			func() string {
+				if cluster.ClusterMetricsSummary.Partitions == nil {
+					return ""
+				}
+				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.Partitions)
+			}(),
 		},
 		// Replication Factor
 		{
@@ -131,6 +156,9 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Follower Fetching",
 			func() string {
+				if cluster.ClusterMetricsSummary.FollowerFetching == nil {
+					return ""
+				}
 				if *cluster.ClusterMetricsSummary.FollowerFetching {
 					return "TRUE"
 				}
@@ -141,6 +169,9 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Tiered Storage",
 			func() string {
+				if cluster.ClusterMetricsSummary.TieredStorage == nil {
+					return ""
+				}
 				if *cluster.ClusterMetricsSummary.TieredStorage {
 					return "TRUE"
 				}
@@ -151,7 +182,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Local Retention in Primary Storage (Hrs)",
 			func() string {
-				if !*cluster.ClusterMetricsSummary.TieredStorage {
+				if cluster.ClusterMetricsSummary.TieredStorage == nil || !*cluster.ClusterMetricsSummary.TieredStorage {
 					return ""
 				}
 				if cluster.ClusterMetricsSummary.LocalRetentionInPrimaryStorageHours == nil {
@@ -163,7 +194,12 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		// "Instance Type Override
 		{
 			"Instance Type Override",
-			formatInstanceTypeOverride(cluster.ClusterMetricsSummary.InstanceType),
+			func() string {
+				if cluster.ClusterMetricsSummary.InstanceType == nil {
+					return ""
+				}
+				return formatInstanceTypeOverride(cluster.ClusterMetricsSummary.InstanceType)
+			}(),
 		},
 	}
 
@@ -175,75 +211,85 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 func (rm *ClusterMetricsCollector) addNodeDetails(md *markdown.Markdown, cluster types.ClusterMetrics) {
 	md.AddHeading("Broker Details", 4)
 
-	headers := []string{
-		"Node ID",
-		"Instance Type",
-		"Volume Size (GB)",
-		"Avg Ingress (MB/s)",
-		"Peak Ingress (MB/s)",
-		"Avg Egress (MB/s)",
-		"Peak Egress (MB/s)",
-		"Avg Messages/s",
-		"Peak Messages/s",
-		"Avg Kafka Data Logs Disk Used (GB)",
-		"Peak Kafka Data Logs Disk Used (GB)",
-		"Avg Remote Log Size (GB)",
-		"Peak Remote Log Size (GB)",
-		"Peak Client Connection Count",
-		"Peak Partition Count",
-		"Peak Global Topic Count",
-		"Peak Leader Count",
-		"Peak Replication Bytes Out/s",
-		"Peak Replication Bytes In/s",
+	// Create headers with Node IDs as columns
+	headers := []string{"Metric"}
+	for _, node := range cluster.NodesMetrics {
+		headers = append(headers, fmt.Sprintf("Node %d", node.NodeID))
 	}
 
-	var tableData [][]string
-	for _, node := range cluster.NodesMetrics {
-		instanceType := "N/A"
-		if node.InstanceType != nil {
-			instanceType = *node.InstanceType
-		}
-		volumeSize := "N/A"
-		if node.VolumeSizeGB != nil {
-			volumeSize = fmt.Sprintf("%d", *node.VolumeSizeGB)
-		}
-		avgIngress := fmt.Sprintf("%.4f", node.BytesInPerSecAvg/1024/1024)
-		peakIngress := fmt.Sprintf("%.4f", node.BytesInPerSecMax/1024/1024)
-		avgEgress := fmt.Sprintf("%.4f", node.BytesOutPerSecAvg/1024/1024)
-		peakEgress := fmt.Sprintf("%.4f", node.BytesOutPerSecMax/1024/1024)
-		avgMessages := fmt.Sprintf("%.2f", node.MessagesInPerSecAvg)
-		peakMessages := fmt.Sprintf("%.2f", node.MessagesInPerSecMax)
-		avgKafkaDataLogsDiskUsed := fmt.Sprintf("%.2f", node.KafkaDataLogsDiskUsedAvg/1024/1024/1024)
-		peakKafkaDataLogsDiskUsed := fmt.Sprintf("%.2f", node.KafkaDataLogsDiskUsedMax/1024/1024/1024)
-		avgRemoteLogSize := fmt.Sprintf("%.2f", node.RemoteLogSizeBytesAvg/1024/1024/1024)
-		peakRemoteLogSize := fmt.Sprintf("%.2f", node.RemoteLogSizeBytesMax/1024/1024/1024)
-		peakClientConnectionCount := fmt.Sprintf("%.2f", node.ClientConnectionCountMax)
-		peakPartitionCount := fmt.Sprintf("%.2f", node.PartitionCountMax)
-		peakGlobalTopicCount := fmt.Sprintf("%.2f", node.GlobalTopicCountMax)
-		peakLeaderCount := fmt.Sprintf("%.2f", node.LeaderCountMax)
-		peakReplicationBytesOutPerSec := fmt.Sprintf("%.2f", node.ReplicationBytesOutPerSecMax/1024/1024)
-		peakReplicationBytesInPerSec := fmt.Sprintf("%.2f", node.ReplicationBytesInPerSecMax/1024/1024)
+	// Define the metrics and their formatters
+	metrics := []struct {
+		name      string
+		formatter func(node types.NodeMetrics) string
+	}{
+		{"Instance Type", func(node types.NodeMetrics) string {
+			if node.InstanceType != nil {
+				return *node.InstanceType
+			}
+			return "N/A"
+		}},
+		{"Volume Size (GB)", func(node types.NodeMetrics) string {
+			if node.VolumeSizeGB != nil {
+				return fmt.Sprintf("%d", *node.VolumeSizeGB)
+			}
+			return "N/A"
+		}},
+		{"Avg Ingress (MB/s)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.4f", node.BytesInPerSecAvg/1024/1024)
+		}},
+		{"Peak Ingress (MB/s)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.4f", node.BytesInPerSecMax/1024/1024)
+		}},
+		{"Avg Egress (MB/s)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.4f", node.BytesOutPerSecAvg/1024/1024)
+		}},
+		{"Peak Egress (MB/s)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.4f", node.BytesOutPerSecMax/1024/1024)
+		}},
+		{"Avg Messages/s", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.MessagesInPerSecAvg)
+		}},
+		{"Peak Messages/s", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.MessagesInPerSecMax)
+		}},
+		{"Avg Kafka Data Logs Disk Used (GB)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.KafkaDataLogsDiskUsedAvg/1024/1024/1024)
+		}},
+		{"Peak Kafka Data Logs Disk Used (GB)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.KafkaDataLogsDiskUsedMax/1024/1024/1024)
+		}},
+		{"Avg Remote Log Size (GB)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.RemoteLogSizeBytesAvg/1024/1024/1024)
+		}},
+		{"Peak Remote Log Size (GB)", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.RemoteLogSizeBytesMax/1024/1024/1024)
+		}},
+		{"Peak Client Connection Count", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.ClientConnectionCountMax)
+		}},
+		{"Peak Partition Count", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.PartitionCountMax)
+		}},
+		{"Peak Global Topic Count", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.GlobalTopicCountMax)
+		}},
+		{"Peak Leader Count", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.LeaderCountMax)
+		}},
+		{"Peak Replication Bytes Out/s", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.ReplicationBytesOutPerSecMax/1024/1024)
+		}},
+		{"Peak Replication Bytes In/s", func(node types.NodeMetrics) string {
+			return fmt.Sprintf("%.2f", node.ReplicationBytesInPerSecMax/1024/1024)
+		}},
+	}
 
-		row := []string{
-			fmt.Sprintf("%d", node.NodeID),
-			instanceType,
-			volumeSize,
-			avgIngress,
-			peakIngress,
-			avgEgress,
-			peakEgress,
-			avgMessages,
-			peakMessages,
-			avgKafkaDataLogsDiskUsed,
-			peakKafkaDataLogsDiskUsed,
-			avgRemoteLogSize,
-			peakRemoteLogSize,
-			peakClientConnectionCount,
-			peakPartitionCount,
-			peakGlobalTopicCount,
-			peakLeaderCount,
-			peakReplicationBytesOutPerSec,
-			peakReplicationBytesInPerSec,
+	// Build table data with metrics as rows
+	var tableData [][]string
+	for _, metric := range metrics {
+		row := []string{metric.name}
+		for _, node := range cluster.NodesMetrics {
+			row = append(row, metric.formatter(node))
 		}
 		tableData = append(tableData, row)
 	}
