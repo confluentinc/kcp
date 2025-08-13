@@ -136,7 +136,7 @@ func (rm *ClusterMetricsCollector) addClusterMetricsSummary(md *markdown.Markdow
 		{
 			"Partitions",
 			func() string {
-				if cluster.ClusterMetricsSummary.RetentionDays == nil {
+				if cluster.ClusterMetricsSummary.Partitions == nil {
 					return ""
 				}
 				return fmt.Sprintf("%.4f", *cluster.ClusterMetricsSummary.Partitions)
