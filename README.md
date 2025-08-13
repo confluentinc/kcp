@@ -172,7 +172,7 @@ The `kcp scan` command includes the following sub-commands:
 
 The sub-commands require the following minimum AWS IAM permissions:
 
-`kcp scan cluster`:
+`cluster`:
 
 ```json
 {
@@ -229,7 +229,7 @@ The sub-commands require the following minimum AWS IAM permissions:
 }
 ```
 
-`kcp scan region`:
+`region`:
 
 ```json
 {
