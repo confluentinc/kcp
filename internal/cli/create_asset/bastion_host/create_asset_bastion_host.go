@@ -111,23 +111,25 @@ func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 }
 
 func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
-	// Parse cluster information from JSON file
-	file, err := os.ReadFile(clusterFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read cluster file: %v", err)
-	}
+	if clusterFile != "" {
+		// Parse cluster information from JSON file
+		file, err := os.ReadFile(clusterFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read cluster file: %v", err)
+		}
 
-	var clusterInfo types.ClusterInformation
-	if err := json.Unmarshal(file, &clusterInfo); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
-	}
+		var clusterInfo types.ClusterInformation
+		if err := json.Unmarshal(file, &clusterInfo); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
+		}
 
-	if region == "" {
-		region = aws.ToString(&clusterInfo.Region)
-	}
+		if region == "" {
+			region = aws.ToString(&clusterInfo.Region)
+		}
 
-	if vpcId == "" {
-		vpcId = aws.ToString(&clusterInfo.ClusterNetworking.VpcId)
+		if vpcId == "" {
+			vpcId = aws.ToString(&clusterInfo.ClusterNetworking.VpcId)
+		}
 	}
 
 	opts := bastion_host.BastionHostOpts{
