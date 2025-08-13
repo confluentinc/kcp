@@ -312,9 +312,11 @@ Scan a specific MSK cluster for detailed information
     ```
 
   - **Skip Kafka-level scanning:**
-    `shell
+
+    ```shell
     kcp scan cluster --cluster-arn <cluster-arn> --skip-kafka
-    `
+    ```
+
     > [!NOTE] > Use this option when brokers are not reachable or you only need AWS infrastructure-level information.
 
 **Example Usage**
