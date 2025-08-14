@@ -18,7 +18,7 @@ builds:
       - arm64
     binary: kcp
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.branch={{.Branch}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
 archives:
   - formats: [tar.gz]

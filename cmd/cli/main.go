@@ -11,13 +11,12 @@ import (
 // Default values for build information during local development. Real values injected at release time by GoReleaser.
 var (
 	version = "local"
-	commit  = ""
-	branch  = ""
+	commit  = "unknown"
 	date    = string(time.Now().Format(time.RFC3339))
 )
 
 func main() {
-	cli.SetBuildInfo(version, commit, branch, date)
+	cli.SetBuildInfo(version, commit, date)
 
 	if err := cli.RootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
