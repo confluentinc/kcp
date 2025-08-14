@@ -7,9 +7,9 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/generators/scan/cluster"
+	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/confluentinc/kcp/internal/services/msk"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
