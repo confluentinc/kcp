@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -77,7 +78,7 @@ func (rc *RegionCoster) Run() error {
 		CostData: costData,
 	}
 
-	outputFolder := fmt.Sprintf("cost_reports/%s", rc.region)
+	outputFolder := filepath.Join("kcp-scan", rc.region)
 	if err := os.MkdirAll(outputFolder, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create output folder: %v", err)
 	}
@@ -104,7 +105,7 @@ func (rc *RegionCoster) writeCostReportJSON(metrics types.RegionCosts, outputFol
 		return fmt.Errorf("failed to marshal cluster information: %v", err)
 	}
 
-	filePath := fmt.Sprintf("%s/cost_report-%s.json", outputFolder, rc.region)
+	filePath := filepath.Join(outputFolder, fmt.Sprintf("%s-cost-report.json", rc.region))
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
@@ -113,7 +114,7 @@ func (rc *RegionCoster) writeCostReportJSON(metrics types.RegionCosts, outputFol
 }
 
 func (rc *RegionCoster) writeCostReportCSV(metrics types.RegionCosts, outputFolder string) error {
-	filePath := fmt.Sprintf("%s/cost_report-%s.csv", outputFolder, rc.region)
+	filePath := filepath.Join(outputFolder, fmt.Sprintf("%s-cost-report.csv", rc.region))
 
 	file, err := os.Create(filePath)
 	if err != nil {

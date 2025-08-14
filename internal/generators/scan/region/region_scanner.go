@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -142,13 +143,18 @@ func (rs *RegionScanner) Run() error {
 		return fmt.Errorf("❌ Failed to marshal scan results: %v", err)
 	}
 
-	filePath := fmt.Sprintf("region_scan_%s.json", rs.region)
+	dirPath := filepath.Join("kcp-scan", rs.region)
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.json", rs.region))
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Errorf("❌ Failed to write file: %v", err)
 	}
 
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("region_scan_%s.md", rs.region)
+	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.md", rs.region))
 	if err := rs.generateMarkdownReport(scanResult, mdFilePath); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}

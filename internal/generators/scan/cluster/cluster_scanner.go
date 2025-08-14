@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -80,13 +81,18 @@ func (cs *ClusterScanner) Run() error {
 		return fmt.Errorf("❌ Failed to marshal cluster information: %v", err)
 	}
 
-	filePath := fmt.Sprintf("cluster_scan_%s.json", aws.ToString(clusterInfo.Cluster.ClusterName))
+	dirPath := filepath.Join("kcp-scan", clusterInfo.Region, aws.ToString(clusterInfo.Cluster.ClusterName))
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.json", aws.ToString(clusterInfo.Cluster.ClusterName)))
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Errorf("❌ Failed to write file: %v", err)
 	}
 
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("cluster_scan_%s.md", aws.ToString(clusterInfo.Cluster.ClusterName))
+	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s.md", aws.ToString(clusterInfo.Cluster.ClusterName)))
 	if err := cs.generateMarkdownReport(clusterInfo, mdFilePath); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
