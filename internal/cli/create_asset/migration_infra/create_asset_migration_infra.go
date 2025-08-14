@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_infra"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -44,14 +45,20 @@ func NewMigrationInfraCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&region, "region", "", "AWS region the cost report is generated for")
-	requiredFlags.StringVar(&vpcId, "vpc-id", "", "Existing MSK VPC ID")
-	requiredFlags.StringVar(&ccEnvName, "cc-env-name", "", "Confluent Cloud environment name")
-	requiredFlags.StringVar(&ccClusterName, "cc-cluster-name", "", "Confluent Cloud cluster name")
 	requiredFlags.StringVar(&clusterFile, "cluster-file", "", "Cluster scan JSON file produced from 'kcp scan cluster' command")
 	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options")
 	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&region, "region", "", "AWS region the jump migration infrastructure is provisioned in")
+	optionalFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
+	optionalFlags.StringVar(&ccEnvName, "cc-env-name", "", "Confluent Cloud environment name")
+	optionalFlags.StringVar(&ccClusterName, "cc-cluster-name", "", "Confluent Cloud cluster name")
+	migrationInfraCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
 
 	// Type 1 flags.
 	typeOneFlags := pflag.NewFlagSet("type-1", pflag.ExitOnError)
@@ -74,8 +81,8 @@ func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, typeOneFlags, typeTwoFlags}
-		groupNames := []string{"Required Flags", "Type 1 Flags", "Type 2 Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, typeOneFlags, typeTwoFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Type 1 Flags", "Type 2 Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -89,10 +96,6 @@ func NewMigrationInfraCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationInfraCmd.MarkFlagRequired("region")
-	migrationInfraCmd.MarkFlagRequired("vpc-id")
-	migrationInfraCmd.MarkFlagRequired("cc-env-name")
-	migrationInfraCmd.MarkFlagRequired("cc-cluster-name")
 	migrationInfraCmd.MarkFlagRequired("cluster-file")
 	migrationInfraCmd.MarkFlagRequired("type")
 
@@ -153,6 +156,22 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 	var clusterInfo types.ClusterInformation
 	if err := json.Unmarshal(file, &clusterInfo); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
+	}
+
+	if region == "" {
+		region = aws.ToString(&clusterInfo.Region)
+	}
+
+	if vpcId == "" {
+		vpcId = aws.ToString(&clusterInfo.ClusterNetworking.VpcId)
+	}
+
+	if ccEnvName == "" {
+		ccEnvName = aws.ToString(clusterInfo.Cluster.ClusterName)
+	}
+
+	if ccClusterName == "" {
+		ccClusterName = aws.ToString(clusterInfo.Cluster.ClusterName)
 	}
 
 	opts := migration_infra.MigrationInfraOpts{
