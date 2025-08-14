@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func (rm *ClusterMetricsCollector) Run() error {
 		return fmt.Errorf("❌ Failed to process clusters: %v", err)
 	}
 
-	err = rm.writeOutput(*clusterMetrics)
+	err = rm.writeOutput(*clusterMetrics, rm.region)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to write output: %v", err)
 	}
@@ -606,20 +607,25 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 	return &nodeMetric, nil
 }
 
-func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics) error {
+func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics, region string) error {
 
 	data, err := json.MarshalIndent(metrics, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cluster information: %v", err)
 	}
 
-	filePath := fmt.Sprintf("%s-metrics.json", metrics.ClusterName)
+	dirPath := filepath.Join("kcp-scan", region, metrics.ClusterName)
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-metrics.json", metrics.ClusterName))
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
 
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("%s-metrics.md", metrics.ClusterName)
+	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s-metrics.md", metrics.ClusterName))
 	if err := rm.generateMarkdownReport(metrics, mdFilePath); err != nil {
 		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}
