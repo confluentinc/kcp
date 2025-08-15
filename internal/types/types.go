@@ -62,16 +62,6 @@ type ClusterSummary struct {
 	ClientBrokerEncryptionInTransit kafkatypes.ClientBroker `json:"client_broker_encryption_in_transit"`
 }
 
-type RegionScanResult struct {
-	Timestamp      time.Time                                   `json:"timestamp"`
-	Clusters       []ClusterSummary                            `json:"clusters"`
-	VpcConnections []kafkatypes.VpcConnection                  `json:"vpc_connections"`
-	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
-	KafkaVersions  []kafkatypes.KafkaVersion                   `json:"kafka_versions"`
-	Replicators    []kafka.DescribeReplicatorOutput            `json:"replicators"`
-	Region         string                                      `json:"region"`
-}
-
 // MSKClusterMetrics represents detailed metrics for an MSK cluster
 type MSKClusterMetrics struct {
 	Region         string           `json:"region"`
