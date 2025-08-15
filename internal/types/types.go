@@ -3,9 +3,7 @@ package types
 import (
 	"fmt"
 	"strconv"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )
 
@@ -33,22 +31,6 @@ type Acls struct {
 	Host                string `json:"Host"`
 	Operation           string `json:"Operation"`
 	PermissionType      string `json:"PermissionType"`
-}
-
-type ClusterInformation struct {
-	ClusterID            string                                 `json:"cluster_id"`
-	Region               string                                 `json:"region"`
-	Timestamp            time.Time                              `json:"timestamp"`
-	Cluster              kafkatypes.Cluster                     `json:"cluster"`
-	ClientVpcConnections []kafkatypes.ClientVpcConnection       `json:"clientVpcConnections"`
-	ClusterOperations    []kafkatypes.ClusterOperationV2Summary `json:"clusterOperations"`
-	Nodes                []kafkatypes.NodeInfo                  `json:"nodes"`
-	ScramSecrets         []string                               `json:"ScramSecrets"`
-	BootstrapBrokers     kafka.GetBootstrapBrokersOutput        `json:"bootstrapBrokers"`
-	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
-	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
-	Topics               []string                               `json:"topics"`
-	Acls                 []Acls                                 `json:"acls"`
 }
 
 // ClusterSummary contains summary information about an MSK cluster
