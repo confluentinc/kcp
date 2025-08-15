@@ -2,10 +2,8 @@ package region
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -137,19 +135,13 @@ func (rs *RegionScanner) Run() error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(scanResult, "", "  ")
-	if err != nil {
-		return fmt.Errorf("❌ Failed to marshal scan results: %v", err)
+	filePath := fmt.Sprintf("region_scan_%s.json", rs.region)	
+	if err := scanResult.WriteAsJson(filePath); err != nil {
+		return err
 	}
-
-	filePath := fmt.Sprintf("region_scan_%s.json", rs.region)
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("❌ Failed to write file: %v", err)
-	}
-
 	// Generate markdown report
 	mdFilePath := fmt.Sprintf("region_scan_%s.md", rs.region)
-	if err := rs.generateMarkdownReport(scanResult, mdFilePath); err != nil {
+	if err := scanResult.WriteAsMarkdown(mdFilePath); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 
