@@ -294,6 +294,9 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
 								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
+								},
 							},
 						},
 					}, nil
@@ -596,6 +599,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
 					},
 				},
 			},
@@ -625,6 +631,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
 					},
 				},
 			},
@@ -652,6 +661,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
+						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
 					},
 				},
@@ -690,6 +702,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
 					},
 				},
 			},
@@ -718,6 +733,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
+						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
 					},
 				},
@@ -750,6 +768,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
+						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("2.8.1"),
 						},
 					},
 				},
@@ -1080,6 +1101,9 @@ func TestClusterScanner_Run(t *testing.T) {
 											ClientBroker: kafkatypes.ClientBrokerTls,
 										},
 									},
+									CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+										KafkaVersion: aws.String("2.8.1"),
+									},
 								},
 							},
 						}, nil
@@ -1101,6 +1125,9 @@ func TestClusterScanner_Run(t *testing.T) {
 									EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
+								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
 								},
 							},
 						},
@@ -2050,6 +2077,9 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
 								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
+								},
 							},
 						},
 					}, nil
@@ -2176,6 +2206,9 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 									EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
+								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
 								},
 							},
 						},
