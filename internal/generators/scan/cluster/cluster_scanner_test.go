@@ -294,6 +294,9 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
 								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
+								},
 							},
 						},
 					}, nil
@@ -494,7 +497,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 			}
 
 			// Set up admin factory for scanKafkaResources to use internally
-			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 				if tt.mockError != nil {
 					return nil, tt.mockError
 				}
@@ -596,6 +599,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
 					},
 				},
 			},
@@ -625,6 +631,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
 					},
 				},
 			},
@@ -652,6 +661,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
+						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
 					},
 				},
@@ -690,6 +702,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
 					},
 				},
 			},
@@ -718,6 +733,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
+						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
 					},
 				},
@@ -751,6 +769,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClientBroker: kafkatypes.ClientBrokerTls,
 							},
 						},
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: aws.String("2.8.1"),
+						},
 					},
 				},
 			},
@@ -766,7 +787,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 
 			var adminFactory KafkaAdminFactory
 			if tt.name == "successful full cluster scan" {
-				adminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+				adminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 					return &mocks.MockKafkaAdmin{
 						ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
 							return tt.mockTopics, nil
@@ -789,7 +810,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 				adminFactory = tt.adminFactory
 			} else {
 				// Provide a default admin factory for test cases that don't specify one
-				adminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+				adminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 					if tt.mockAdminError != nil {
 						return nil, tt.mockAdminError
 					}
@@ -1080,6 +1101,9 @@ func TestClusterScanner_Run(t *testing.T) {
 											ClientBroker: kafkatypes.ClientBrokerTls,
 										},
 									},
+									CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+										KafkaVersion: aws.String("2.8.1"),
+									},
 								},
 							},
 						}, nil
@@ -1101,6 +1125,9 @@ func TestClusterScanner_Run(t *testing.T) {
 									EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
+								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
 								},
 							},
 						},
@@ -1126,7 +1153,7 @@ func TestClusterScanner_Run(t *testing.T) {
 				},
 			}
 
-			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 				return &mocks.MockKafkaAdmin{
 					ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
 						return tt.mockTopics, tt.mockTopicsError
@@ -1697,7 +1724,7 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 				return mockAdmin, nil
 			}
 
@@ -1953,7 +1980,7 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 				},
 			}
 
-			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 				return mockAdmin, nil
 			}
 
@@ -2049,6 +2076,9 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 									EncryptionInTransit: &kafkatypes.EncryptionInTransit{
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
+								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
 								},
 							},
 						},
@@ -2177,6 +2207,9 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 										ClientBroker: kafkatypes.ClientBrokerTls,
 									},
 								},
+								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+									KafkaVersion: aws.String("2.8.1"),
+								},
 							},
 						},
 					}, nil
@@ -2235,7 +2268,7 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 				adminFactoryCalled = true
 				adminCreated = true
 				return mockAdmin, nil
