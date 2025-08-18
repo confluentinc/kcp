@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	AuthTypeIAM        = "IAM"
-	AuthTypeSASL_SCRAM = "SASL_SCRAM"
-	AuthTypeTLS        = "TLS"
-	AuthTypeUNKNOWN    = "UNKNOWN"
+	AuthTypeIAM             = "IAM"
+	AuthTypeSASL_SCRAM      = "SASL_SCRAM"
+	AuthTypeTLS             = "TLS"
+	AuthTypeUNAUTHENTICATED = "UNAUTHENTICATED"
+	AuthTypeUNKNOWN         = "UNKNOWN"
 )
 
 var (
@@ -25,7 +26,6 @@ var (
 	ApiKeyPattern        = regexp.MustCompile(`apiKey=([^,\)]+)`)
 	ClientIdPattern      = regexp.MustCompile(`clientId=([^,\)]+)`)
 	BrokerFetcherPattern = regexp.MustCompile(`broker-(\d+)-fetcher-(\d+)`)
-	IpPattern            = regexp.MustCompile(`from connection INTERNAL_IP-(\d+\.\d+\.\d+\.\d+):`)
 
 	ProducerTopicPattern = regexp.MustCompile(`partitionSizes=\[(.+)-\d+=`)
 	ConsumerTopicPattern = regexp.MustCompile(`FetchTopic\(topic='([^']+)'`)
@@ -36,36 +36,25 @@ var (
 	SASLSCRAMPrincipalPattern = regexp.MustCompile(`principal:(User:[^ ]+)`)
 	// TLS pattern - extract User:CN= and any additional certificate info (requires SSL protocol)
 	TLSPrincipalPattern = regexp.MustCompile(`securityProtocol:SSL,principal:(User:CN=[^(]+?)\s*\(`)
+	// Anonymous pattern - detect unauthenticated requests with User:ANONYMOUS
+	AnonymousPrincipalPattern = regexp.MustCompile(`principal:(User:ANONYMOUS)`)
 )
 
 type KafkaApiTraceLineParser struct{}
 
 func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName string) (*RequestMetadata, error) {
-	timestampMatches := TimestampPattern.FindStringSubmatch(line)
-	if len(timestampMatches) != 2 {
-		return nil, ErrorUnableToParseKafkaApiLine
-	}
-
-	timestamp, err := time.Parse("2006-01-02 15:04:05,000", timestampMatches[1])
-	if err != nil {
-		return nil, ErrorUnableToParseTimestamp
-	}
-
 	apiKey := extractField(line, ApiKeyPattern)
 	clientId := extractField(line, ClientIdPattern)
 
-	// are we interested in anything else
 	if apiKey != "FETCH" && apiKey != "PRODUCE" {
 		return nil, ErrorUnsupportedLogLine
 	}
 
-	// do we care about these?
 	if clientId == "amazon.msk.canary.client" || BrokerFetcherPattern.MatchString(clientId) {
 		return nil, ErrorUnsupportedLogLine
 	}
 
 	auth, principal := determineAuthTypeAndPrincipal(line)
-	ipAddress := extractField(line, IpPattern)
 
 	var role, topic string
 	switch apiKey {
@@ -78,6 +67,16 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 		topic = extractField(line, ProducerTopicPattern)
 	}
 
+	timestampMatches := TimestampPattern.FindStringSubmatch(line)
+	if len(timestampMatches) != 2 {
+		return nil, ErrorUnableToParseKafkaApiLine
+	}
+
+	timestamp, err := time.Parse("2006-01-02 15:04:05,000", timestampMatches[1])
+	if err != nil {
+		return nil, ErrorUnableToParseTimestamp
+	}
+
 	requestMetadata := RequestMetadata{
 		CompositeKey: fmt.Sprintf("%s|%s|%s|%s|%s", clientId, topic, role, auth, principal),
 		ClientId:     clientId,
@@ -86,7 +85,6 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 		GroupId:      "N/A",
 		Principal:    principal,
 		Auth:         auth,
-		IPAddress:    ipAddress,
 		ApiKey:       apiKey,
 		Timestamp:    timestamp,
 		FileName:     fileName,
@@ -106,6 +104,11 @@ func extractField(line string, pattern *regexp.Regexp) string {
 }
 
 func determineAuthTypeAndPrincipal(logLine string) (string, string) {
+	// Unauthenticated requests - matches principal:User:ANONYMOUS
+	if principal := extractField(logLine, AnonymousPrincipalPattern); principal != "" {
+		return AuthTypeUNAUTHENTICATED, principal
+	}
+
 	// IAM authentication - matches principal:[IAM]:[arn:aws:...] pattern
 	if principal := extractField(logLine, IAMPrincipalArnPattern); principal != "" {
 		return AuthTypeIAM, principal

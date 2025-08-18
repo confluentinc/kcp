@@ -45,7 +45,6 @@ type RequestMetadata struct {
 	GroupId      string
 	Principal    string
 	Auth         string
-	IPAddress    string
 	ApiKey       string
 	Timestamp    time.Time
 	FileName     string
@@ -201,10 +200,6 @@ func (bs *BrokerLogsScanner) generateCSV(requestMetadataByCompositeKey map[strin
 		{
 			header:        "Topic",
 			extractorFunc: func(m *RequestMetadata) string { return m.Topic },
-		},
-		{
-			header:        "IP Address",
-			extractorFunc: func(m *RequestMetadata) string { return m.IPAddress },
 		},
 		{
 			header:        "Auth",

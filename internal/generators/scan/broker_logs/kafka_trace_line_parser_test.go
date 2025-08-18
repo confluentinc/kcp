@@ -18,7 +18,7 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 	}{
 		{
 			name:       "valid PRODUCE request for IAM auth",
-			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[customers1-0=107]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[customers1-0=107]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-INTERNAL_IP-11-5]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
 			lineNumber: 1,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -27,14 +27,13 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "PRODUCE",
 				ClientId:  "TESTING_PRODUCER-1",
 				Topic:     "customers1",
-				IPAddress: "65.1.63.214",
 				Auth:      "IAM",
 				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
 			},
 		},
 		{
 			name:       "valid PRODUCE request for SASL_SCRAM auth",
-			line:       `[2025-08-07 14:34:27,495] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=producer_with_sasl_scram-9, correlationId=19, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-5=108]} from connection INTERNAL_IP-65.1.63.214:14972-3;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`,
+			line:       `[2025-08-07 14:34:27,495] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=producer_with_sasl_scram-9, correlationId=19, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-5=108]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`,
 			lineNumber: 2,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -43,14 +42,13 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "PRODUCE",
 				ClientId:  "producer_with_sasl_scram-9",
 				Topic:     "test-topic-1",
-				IPAddress: "65.1.63.214",
 				Auth:      "SASL_SCRAM",
 				Principal: "User:kafka-user-2",
 			},
 		},
 		{
 			name:       "valid PRODUCE request for TLS auth",
-			line:       `[2025-08-13 12:11:26,271] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=sarama, correlationId=1, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-1=109]} from connection INTERNAL_IP-65.1.63.214:31531-26;securityProtocol:SSL,principal:User:CN=kcp_tls_testing (kafka.server.KafkaApis)`,
+			line:       `[2025-08-13 12:11:26,271] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=sarama, correlationId=1, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-1=109]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SSL,principal:User:CN=kcp_tls_testing (kafka.server.KafkaApis)`,
 			lineNumber: 1,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -59,14 +57,28 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "PRODUCE",
 				ClientId:  "sarama",
 				Topic:     "test-topic-1",
-				IPAddress: "65.1.63.214",
 				Auth:      "TLS",
 				Principal: "User:CN=kcp_tls_testing",
 			},
 		},
 		{
+			name:       "valid PRODUCE request for unauthenticated",
+			line:       `[2025-08-15 08:51:04,815] TRACE [KafkaApi-3] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=sarama, correlationId=33, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-5=105]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SSL,principal:User:ANONYMOUS (kafka.server.KafkaApis)`,
+			lineNumber: 1,
+			fileName:   "test.log",
+			expectedResult: &RequestMetadata{
+				Timestamp: time.Date(2025, 8, 15, 8, 51, 4, 815000000, time.UTC),
+				Role:      "Producer",
+				ApiKey:    "PRODUCE",
+				ClientId:  "sarama",
+				Topic:     "test-topic-1",
+				Auth:      "UNAUTHENTICATED",
+				Principal: "User:ANONYMOUS",
+			},
+		},
+		{
 			name:       "PRODUCE request with topic containing hyphens",
-			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-0=107]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-0=107]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-INTERNAL_IP-11-5]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
 			lineNumber: 8,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -75,14 +87,13 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "PRODUCE",
 				ClientId:  "TESTING_PRODUCER-1",
 				Topic:     "test-topic",
-				IPAddress: "65.1.63.214",
 				Auth:      "IAM",
 				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
 			},
 		},
 		{
 			name:       "PRODUCE request with topic containing underscores",
-			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test_topic-0=107]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test_topic-0=107]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-INTERNAL_IP-11-5]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
 			lineNumber: 9,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -91,14 +102,13 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "PRODUCE",
 				ClientId:  "TESTING_PRODUCER-1",
 				Topic:     "test_topic",
-				IPAddress: "65.1.63.214",
 				Auth:      "IAM",
 				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
 			},
 		},
 		{
 			name:       "PRODUCE request with complex topic name and partition",
-			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-0=1024]} from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
+			line:       `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=TESTING_PRODUCER-1, correlationId=2, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-0=1024]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-INTERNAL_IP-11-5]:[00079d61-baba-497e-87c2-80c46608f1da] (kafka.server.KafkaApis)`,
 			lineNumber: 10,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -107,7 +117,6 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "PRODUCE",
 				ClientId:  "TESTING_PRODUCER-1",
 				Topic:     "test-topic-1",
-				IPAddress: "65.1.63.214",
 				Auth:      "IAM",
 				Principal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
 			},
@@ -122,7 +131,7 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 		},
 		{
 			name:       "valid FETCH request for SASL_SCRAM auth",
-			line:       `[2025-08-08 07:30:42,834] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=glenns_consumer_with_sasl_scram, correlationId=2010, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=2, currentLeaderEpoch=0, fetchOffset=20419, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576), FetchPartition(partition=5, currentLeaderEpoch=0, fetchOffset=20258, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-65.1.63.214:25530-59;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`,
+			line:       `[2025-08-08 07:30:42,834] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=glenns_consumer_with_sasl_scram, correlationId=2010, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=2, currentLeaderEpoch=0, fetchOffset=20419, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576), FetchPartition(partition=5, currentLeaderEpoch=0, fetchOffset=20258, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`,
 			lineNumber: 1,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -131,14 +140,13 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "FETCH",
 				ClientId:  "glenns_consumer_with_sasl_scram",
 				Topic:     "test-topic-1",
-				IPAddress: "65.1.63.214",
 				Auth:      "SASL_SCRAM",
 				Principal: "User:kafka-user-2",
 			},
 		},
 		{
 			name:       "valid FETCH request for TLS auth",
-			line:       `[2025-08-13 12:11:38,087] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=sarama, correlationId=9, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=1, currentLeaderEpoch=0, fetchOffset=180, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-65.1.63.214:21744-27;securityProtocol:SSL,principal:User:CN=kcp_tls_testing (kafka.server.KafkaApis)`,
+			line:       `[2025-08-13 12:11:38,087] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=sarama, correlationId=9, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=1, currentLeaderEpoch=0, fetchOffset=180, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SSL,principal:User:CN=kcp_tls_testing (kafka.server.KafkaApis)`,
 			lineNumber: 1,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -147,14 +155,13 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "FETCH",
 				ClientId:  "sarama",
 				Topic:     "test-topic-1",
-				IPAddress: "65.1.63.214",
 				Auth:      "TLS",
 				Principal: "User:CN=kcp_tls_testing",
 			},
 		},
 		{
 			name:       "valid FETCH request for TLS auth CN with more than one word",
-			line:       `[2025-08-13 12:11:38,087] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=sarama, correlationId=9, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=1, currentLeaderEpoch=0, fetchOffset=180, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-65.1.63.214:21744-27;securityProtocol:SSL,principal:User:CN=kcp testing (kafka.server.KafkaApis)`,
+			line:       `[2025-08-13 12:11:38,087] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=sarama, correlationId=9, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=1, currentLeaderEpoch=0, fetchOffset=180, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SSL,principal:User:CN=kcp testing (kafka.server.KafkaApis)`,
 			lineNumber: 1,
 			fileName:   "test.log",
 			expectedResult: &RequestMetadata{
@@ -163,7 +170,6 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				ApiKey:    "FETCH",
 				ClientId:  "sarama",
 				Topic:     "test-topic-1",
-				IPAddress: "65.1.63.214",
 				Auth:      "TLS",
 				Principal: "User:CN=kcp testing",
 			},
@@ -218,10 +224,6 @@ func TestKafkaApiTraceLineParser_Parse(t *testing.T) {
 				t.Errorf("expected Topic %q, got %q", tt.expectedResult.Topic, result.Topic)
 			}
 
-			if result.IPAddress != tt.expectedResult.IPAddress {
-				t.Errorf("expected IPAddress %q, got %q", tt.expectedResult.IPAddress, result.IPAddress)
-			}
-
 			if result.Auth != tt.expectedResult.Auth {
 				t.Errorf("expected Auth %q, got %q", tt.expectedResult.Auth, result.Auth)
 			}
@@ -242,7 +244,7 @@ func TestDetermineAuthTypeAndPrincipal(t *testing.T) {
 	}{
 		{
 			name:              "IAM authentication with SASL_SSL",
-			logLine:           `securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-65.1.63.214:33245-169]:[00079d61-baba-497e-87c2-80c46608f1da]`,
+			logLine:           `securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io]:[INTERNAL_IP-INTERNAL_IP-11-5]:[00079d61-baba-497e-87c2-80c46608f1da]`,
 			expectedAuthType:  AuthTypeIAM,
 			expectedPrincipal: "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io",
 		},
@@ -290,21 +292,27 @@ func TestDetermineAuthTypeAndPrincipal(t *testing.T) {
 		},
 		{
 			name:              "Full log line context - IAM",
-			logLine:           `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE) from connection INTERNAL_IP-65.1.63.214:33245-169;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/TestRole/user@example.com]:[INTERNAL_IP-65.1.63.214:33245-169]:[uuid] (kafka.server.KafkaApis)`,
+			logLine:           `[2025-07-25 14:45:53,662] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE) from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:[IAM]:[arn:aws:sts::635910096382:assumed-role/TestRole/user@example.com]:[INTERNAL_IP-65.1.63.214:33245-169]:[uuid] (kafka.server.KafkaApis)`,
 			expectedAuthType:  AuthTypeIAM,
 			expectedPrincipal: "arn:aws:sts::635910096382:assumed-role/TestRole/user@example.com",
 		},
 		{
 			name:              "Full log line context - TLS",
-			logLine:           `[2025-08-13 12:11:26,271] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH) from connection INTERNAL_IP-65.1.63.214:31531-26;securityProtocol:SSL,principal:User:CN=test_client_cert (kafka.server.KafkaApis)`,
+			logLine:           `[2025-08-13 12:11:26,271] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH) from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SSL,principal:User:CN=test_client_cert (kafka.server.KafkaApis)`,
 			expectedAuthType:  AuthTypeTLS,
 			expectedPrincipal: "User:CN=test_client_cert",
 		},
 		{
 			name:              "Full log line context - SASL_SCRAM",
-			logLine:           `[2025-08-07 14:34:27,495] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE) from connection INTERNAL_IP-65.1.63.214:14972-3;securityProtocol:SASL_SSL,principal:User:scram_user (kafka.server.KafkaApis)`,
+			logLine:           `[2025-08-07 14:34:27,495] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=PRODUCE) from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:User:scram_user (kafka.server.KafkaApis)`,
 			expectedAuthType:  AuthTypeSASL_SCRAM,
 			expectedPrincipal: "User:scram_user",
+		},
+		{
+			name:              "Unauthenticated request with SSL protocol",
+			logLine:           `[2025-08-15 08:51:04,815] TRACE [KafkaApi-3] Handling request:RequestHeader(apiKey=PRODUCE, apiVersion=7, clientId=sarama, correlationId=33, headerVersion=1) -- {acks=1,timeout=10000,partitionSizes=[test-topic-1-5=105]} from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SSL,principal:User:ANONYMOUS (kafka.server.KafkaApis)`,
+			expectedAuthType:  AuthTypeUNAUTHENTICATED,
+			expectedPrincipal: "User:ANONYMOUS",
 		},
 	}
 
