@@ -15,10 +15,11 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // KafkaAdminFactory is a function type that creates a KafkaAdmin client
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
+type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type ClusterScannerOpts struct {
 	Region            string
@@ -322,7 +323,15 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
 
-	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit)
+	var kafkaVersion string
+	if clusterInfo.Cluster.Provisioned != nil {
+		kafkaVersion = utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	} else {
+		slog.Warn("⚠️ Serverless clusters return nil for Kafka version, defaulting to 4.0.0")
+		kafkaVersion = "4.0.0"
+	}
+
+	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
@@ -343,11 +352,16 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 	clusterInfo.Topics = topics
 
-	acls, err := cs.scanKafkaAcls(admin)
-	if err != nil {
-		return err
+	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
+	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		acls, err := cs.scanKafkaAcls(admin)
+		if err != nil {
+			return err
+		}
+		clusterInfo.Acls = acls
+	} else {
+		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
-	clusterInfo.Acls = acls
 
 	return nil
 }
