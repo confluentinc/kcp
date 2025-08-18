@@ -6,27 +6,43 @@ MAIN_PATH=./cmd/cli
 
 # Build the binary
 build:
-	go build -o $(BINARY_NAME) $(MAIN_PATH)
+	@echo "🔨 Building $(BINARY_NAME)..."
+	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
+	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME) $(MAIN_PATH)
+	@echo "✅ Build complete: $(BINARY_NAME)"
 
 # Individual platform builds
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
+	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
+	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
 
 build-linux-arm64:
-	GOOS=linux GOARCH=arm64 go build -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
+	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
+	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	GOOS=linux GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
 
 build-darwin:
-	GOOS=darwin GOARCH=amd64 go build -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
+	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
+	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
 
 build-darwin-arm64:
-	GOOS=darwin GOARCH=arm64 go build -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
+	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
 
 # Build for all platforms and architectures
 build-all:
-	GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
-	GOOS=linux GOARCH=arm64 go build -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
-	GOOS=darwin GOARCH=amd64 go build -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
-	GOOS=darwin GOARCH=arm64 go build -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	@echo "🔨 Building for all platforms..."
+	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
+	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH); \
+	GOOS=linux GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH); \
+	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH); \
+	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	@echo "✅ All platform builds complete!"
 
 # Clean build artifacts
 clean:
