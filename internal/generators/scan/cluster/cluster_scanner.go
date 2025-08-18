@@ -352,11 +352,16 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 	clusterInfo.Topics = topics
 
-	acls, err := cs.scanKafkaAcls(admin)
-	if err != nil {
-		return err
+	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
+	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		acls, err := cs.scanKafkaAcls(admin)
+		if err != nil {
+			return err
+		}
+		clusterInfo.Acls = acls
+	} else {
+		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
-	clusterInfo.Acls = acls
 
 	return nil
 }
@@ -366,12 +371,6 @@ func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, 
 
 	acls, err := admin.ListAcls()
 	if err != nil {
-		// MSK Serverless does not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
-		if strings.Contains(err.Error(), "EOF") {
-			slog.Warn("⚠️ ACL listing not supported for MSK Serverless clusters, skipping ACLs scan")
-			return []types.Acls{}, nil
-		}
-
 		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
 	}
 

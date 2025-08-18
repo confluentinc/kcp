@@ -295,7 +295,7 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 									},
 								},
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-									KafkaVersion: aws.String("2.8.1"),
+									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
 							},
 						},
@@ -770,7 +770,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							},
 						},
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-							KafkaVersion: aws.String("2.8.1"),
+							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
 					},
 				},
@@ -1102,7 +1102,7 @@ func TestClusterScanner_Run(t *testing.T) {
 										},
 									},
 									CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-										KafkaVersion: aws.String("2.8.1"),
+										KafkaVersion: aws.String("4.0.x.kraft"),
 									},
 								},
 							},
@@ -1127,7 +1127,7 @@ func TestClusterScanner_Run(t *testing.T) {
 									},
 								},
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-									KafkaVersion: aws.String("2.8.1"),
+									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
 							},
 						},
@@ -2078,7 +2078,7 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 									},
 								},
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-									KafkaVersion: aws.String("2.8.1"),
+									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
 							},
 						},
@@ -2208,7 +2208,7 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 									},
 								},
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-									KafkaVersion: aws.String("2.8.1"),
+									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
 							},
 						},
