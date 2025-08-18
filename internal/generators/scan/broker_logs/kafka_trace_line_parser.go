@@ -82,14 +82,10 @@ func (p *KafkaApiTraceLineParser) Parse(line string, lineNumber int, fileName st
 		ClientId:     clientId,
 		Topic:        topic,
 		Role:         role,
-		GroupId:      "N/A",
 		Principal:    principal,
 		Auth:         auth,
 		ApiKey:       apiKey,
 		Timestamp:    timestamp,
-		FileName:     fileName,
-		LineNumber:   lineNumber,
-		LogLine:      line,
 	}
 
 	return &requestMetadata, nil

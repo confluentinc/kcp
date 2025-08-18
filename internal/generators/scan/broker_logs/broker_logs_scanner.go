@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -42,14 +41,10 @@ type RequestMetadata struct {
 	ClientId     string
 	Topic        string
 	Role         string
-	GroupId      string
 	Principal    string
 	Auth         string
 	ApiKey       string
 	Timestamp    time.Time
-	FileName     string
-	LineNumber   int
-	LogLine      string
 }
 
 func NewBrokerLogsScanner(s3Service S3Service, opts BrokerLogsScannerOpts) (*BrokerLogsScanner, error) {
@@ -127,18 +122,6 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 	content, err := bs.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
-	}
-
-	// this is temporary to help with debugging
-	outputFolder := "log_output"
-	if err := os.MkdirAll(outputFolder, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create output folder: %w", err)
-	}
-
-	fileName := filepath.Base(strings.TrimSuffix(filepath.Base(key), ".gz"))
-	filePath := filepath.Join(outputFolder, fileName)
-	if err := os.WriteFile(filePath, content, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
 	var requestsMetadata []RequestMetadata
