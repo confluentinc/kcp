@@ -169,6 +169,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `cluster`
 - `region`
+- `broker-logs`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -251,6 +252,27 @@ The sub-commands require the following minimum AWS IAM permissions:
             ],
             "Resource": [
                 "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
+            ]
+        }
+    ]
+}
+```
+
+`broker-logs`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+                "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
             ]
         }
     ]
@@ -370,6 +392,10 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 #### `kcp scan broker-logs`
 
 This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
+
+**Prerequisites**
+- Enable trace logging for `kafka.server.KafkaApis=TRACE` for each broker
+- Enable s3 broker log delivery for the cluster
 
 **Example Usage**
 

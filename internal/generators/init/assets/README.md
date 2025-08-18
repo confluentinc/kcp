@@ -292,6 +292,10 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
 
+**Prerequisites**
+- Enable trace logging for `kafka.server.KafkaApis=TRACE` for each broker
+- Enable s3 broker log delivery for the cluster
+
 **Example Usage**
 
 ```shell
