@@ -322,7 +322,14 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-	kafkaVersion := utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+
+	var kafkaVersion string
+	if clusterInfo.Cluster.Provisioned != nil {
+		kafkaVersion = utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	} else {
+		slog.Warn("⚠️ Serverless clusters return nil for Kafka version, defaulting to 4.0.0")
+		kafkaVersion = "4.0.0"
+	}
 
 	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
@@ -359,6 +366,12 @@ func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, 
 
 	acls, err := admin.ListAcls()
 	if err != nil {
+		// MSK Serverless does not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
+		if strings.Contains(err.Error(), "EOF") {
+			slog.Warn("⚠️ ACL listing not supported for MSK Serverless clusters, skipping ACLs scan")
+			return []types.Acls{}, nil
+		}
+
 		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
 	}
 
