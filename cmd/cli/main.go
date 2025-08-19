@@ -3,15 +3,16 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/cli"
 )
 
 // Default values for build information during local development. Real values injected at release time by GoReleaser.
 var (
-	version = "dev"
+	version = "local"
 	commit  = "unknown"
-	date    = "unknown"
+	date    = string(time.Now().Format(time.RFC3339))
 )
 
 func main() {

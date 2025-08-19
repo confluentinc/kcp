@@ -16,10 +16,11 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // KafkaAdminFactory is a function type that creates a KafkaAdmin client
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
+type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type ClusterScannerOpts struct {
 	Region            string
@@ -419,8 +420,9 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
+	kafkaVersion := cs.getKafkaVersion(clusterInfo)
 
-	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit)
+	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
@@ -441,11 +443,16 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 	clusterInfo.Topics = topics
 
-	acls, err := cs.scanKafkaAcls(admin)
-	if err != nil {
-		return err
+	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
+	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		acls, err := cs.scanKafkaAcls(admin)
+		if err != nil {
+			return err
+		}
+		clusterInfo.Acls = acls
+	} else {
+		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
-	clusterInfo.Acls = acls
 
 	return nil
 }
@@ -476,4 +483,17 @@ func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, 
 	}
 
 	return flattenedAcls, nil
+}
+
+func (cs *ClusterScanner) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
+	switch clusterInfo.Cluster.ClusterType {
+	case kafkatypes.ClusterTypeProvisioned:
+		return utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	case kafkatypes.ClusterTypeServerless:
+		slog.Warn("⚠️ Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
+		return "4.0.0"
+	default:
+		slog.Warn(fmt.Sprintf("⚠️ Unknown cluster type: %v, defaulting to 4.0.0", clusterInfo.Cluster.ClusterType))
+		return "4.0.0"
+	}
 }
