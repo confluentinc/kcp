@@ -115,8 +115,8 @@ func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile s
 	return nil
 }
 
-func configureCommonSettings(config *sarama.Config, clientID string) {
-	config.Version = sarama.V4_0_0_0
+func configureCommonSettings(config *sarama.Config, clientID string, kafkaVersion sarama.KafkaVersion) {
+	config.Version = kafkaVersion
 	config.ClientID = clientID
 
 	// Network-level timeout configurations
@@ -252,7 +252,7 @@ func (k *KafkaAdminClient) Close() error {
 }
 
 // NewKafkaAdmin creates a new Kafka admin client for the given broker addresses and region
-func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, opts ...AdminOption) (KafkaAdmin, error) {
+func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, opts ...AdminOption) (KafkaAdmin, error) {
 	// Default configuration
 	config := AdminConfig{
 		authType: types.AuthTypeIAM, // Default to IAM auth
@@ -263,8 +263,13 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		opt(&config)
 	}
 
+	saramaKafkaVersion, err := sarama.ParseKafkaVersion(kafkaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to parse Kafka version: %v", err)
+	}
+
 	saramaConfig := sarama.NewConfig()
-	configureCommonSettings(saramaConfig, "kcp-cli")
+	configureCommonSettings(saramaConfig, "kcp-cli", saramaKafkaVersion)
 
 	switch config.authType {
 	case types.AuthTypeIAM:

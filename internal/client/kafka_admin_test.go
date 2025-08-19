@@ -17,6 +17,7 @@ import (
 	"github.com/IBM/sarama"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -296,7 +297,7 @@ func TestConfigureCommonSettings(t *testing.T) {
 	config := sarama.NewConfig()
 	clientID := "test-client"
 
-	configureCommonSettings(config, clientID)
+	configureCommonSettings(config, clientID, sarama.V4_0_0_0)
 
 	// Verify common settings
 	assert.Equal(t, sarama.V4_0_0_0, config.Version)
@@ -556,7 +557,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			admin, err := NewKafkaAdmin(tt.brokerAddresses, tt.clientBrokerEncryptionInTransit, tt.region, tt.opts...)
+			admin, err := NewKafkaAdmin(tt.brokerAddresses, tt.clientBrokerEncryptionInTransit, tt.region, "4.0.0", tt.opts...)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -574,7 +575,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 func TestNewKafkaAdmin_DefaultConfiguration(t *testing.T) {
 	t.Skip("skipping integration test that requires real Kafka brokers")
 	// Test that NewKafkaAdmin uses IAM auth by default
-	admin, err := NewKafkaAdmin([]string{"broker1:9098"}, kafkatypes.ClientBrokerTls, "us-west-2")
+	admin, err := NewKafkaAdmin([]string{"broker1:9098"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0")
 
 	// This will likely fail due to network/credentials, but we can verify the error message
 	if err != nil {
@@ -595,7 +596,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 		WithSASLSCRAMAuth("user", "pass"), // This should override the IAM auth
 	}
 
-	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", opts...)
+	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0", opts...)
 
 	// This will likely fail due to network/credentials, but we can verify the error message
 	if err != nil {
@@ -627,4 +628,61 @@ func TestClusterKafkaMetadata_Structure(t *testing.T) {
 	assert.Len(t, metadata.Brokers, 2)
 	assert.Equal(t, int32(1), metadata.ControllerID)
 	assert.Equal(t, "test-cluster", metadata.ClusterID)
+}
+
+func TestSaramaKafkaVersionParsing(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedOutput sarama.KafkaVersion
+	}{
+		{
+			name:           "4.0.x.kraft should convert to sarama.V4_0_0_0",
+			input:          "4.0.x.kraft",
+			expectedOutput: sarama.V4_0_0_0,
+		},
+		{
+			name:           "3.9.x should convert to sarama.V3_9_0_0",
+			input:          "3.9.x",
+			expectedOutput: sarama.V3_9_0_0,
+		},
+		{
+			name:           "3.9.x.kraft should convert to sarama.V3_9_0_0",
+			input:          "3.9.x.kraft",
+			expectedOutput: sarama.V3_9_0_0,
+		},
+		{
+			name:           "3.7.x.kraft should convert to sarama.V3_7_0_0",
+			input:          "3.7.x.kraft",
+			expectedOutput: sarama.V3_7_0_0,
+		},
+		{
+			name:           "3.6.0.1 should convert to sarama.V3_6_0_0",
+			input:          "3.6.0.1",
+			expectedOutput: sarama.V3_6_0_0,
+		},
+		{
+			name:           "3.6.0 should remain sarama.V3_6_0_0",
+			input:          "3.6.0",
+			expectedOutput: sarama.V3_6_0_0,
+		},
+		{
+			name:           "2.8.2.tiered should convert to sarama.V2_8_2_0",
+			input:          "2.8.2.tiered",
+			expectedOutput: sarama.V2_8_2_0,
+		},
+		{
+			name:           "2.6.0 should remain sarama.V2_6_0_0",
+			input:          "2.6.0",
+			expectedOutput: sarama.V2_6_0_0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := sarama.ParseKafkaVersion(utils.ConvertKafkaVersion(&tt.input))
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedOutput, result)
+		})
+	}
 }
