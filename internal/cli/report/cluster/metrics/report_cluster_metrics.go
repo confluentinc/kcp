@@ -174,7 +174,6 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 }
 
 func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
-
 	arnParts := strings.Split(clusterArn, ":")
 	if len(arnParts) < 4 {
 		return nil, fmt.Errorf("invalid cluster ARN format: %s", clusterArn)

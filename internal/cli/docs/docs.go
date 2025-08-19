@@ -12,13 +12,11 @@ import (
 
 func NewDocsCmd() *cobra.Command {
 	docsCmd := &cobra.Command{
-		Use:   "docs",
-		Short: "Generate a README.md and set of env vars to export",
-		Long:  `Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands`,
-		Example: `
-		`,
-		SilenceErrors: true,
+		Use:           "docs",
+		Short:         "Generate a README.md and set of env vars to export",
+		Long:          "Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands",
 		RunE:          runDocs,
+		SilenceErrors: true,
 	}
 
 	docsCmd.SetUsageFunc(func(c *cobra.Command) error {
@@ -48,35 +46,32 @@ func runDocs(cmd *cobra.Command, args []string) error {
 }
 
 func generateCommandDocs(cmd *cobra.Command, output *strings.Builder, depth int) {
-
 	// Create heading based on depth
 	heading := strings.Repeat("#", depth+2) // h2, h3, h4, etc.
 
-	// Build command path (e.g., "kcp scan cluster")
 	commandPath := getCommandPath(cmd)
 
-	// Write command heading
 	output.WriteString(heading + " `" + commandPath + "`\n\n")
 
-	// Write description
-	if cmd.Short != "" {
-		output.WriteString(cmd.Short + "\n\n")
-	}
-
-	// Write long description if available and different from short
-	if cmd.Long != "" && cmd.Long != cmd.Short {
-		output.WriteString(cmd.Long + "\n\n")
+	// Check if command has documentation content in annotations
+	if docContent, exists := cmd.Annotations["prerequisites"]; exists {
+		fmt.Println("found prerequisites", docContent, "hhh")
+		output.WriteString("Prerequisites\n\n")
+		output.WriteString(docContent)
+		output.WriteString("\n\n")
 	}
 
 	// Show help output for runnable commands
-	helpOutput := getCommandHelp(cmd)
-	if helpOutput != "" {
-		output.WriteString("```\n")
-		output.WriteString(helpOutput)
-		output.WriteString("\n```\n\n")
-	}
+	if cmd.Runnable() {
+		helpOutput := getCommandHelp(cmd)
+		if helpOutput != "" {
+			output.WriteString("```\n")
+			output.WriteString(helpOutput)
+			output.WriteString("\n```\n\n")
+		}
 
-	output.WriteString("---\n\n")
+		output.WriteString("---\n\n")
+	}
 
 	// Recurse for subcommands
 	for _, subCmd := range cmd.Commands() {
@@ -97,7 +92,6 @@ func getCommandPath(cmd *cobra.Command) string {
 	return strings.Join(parts, " ")
 }
 
-// Helper to capture the help output of a command
 func getCommandHelp(cmd *cobra.Command) string {
 	var buf bytes.Buffer
 
@@ -114,7 +108,6 @@ func getCommandHelp(cmd *cobra.Command) string {
 }
 
 func getOrderedCommands(root *cobra.Command) []*cobra.Command {
-	// Define the desired order for commands
 	commandOrder := []string{
 		"init",
 		"scan",
@@ -132,12 +125,6 @@ func getOrderedCommands(root *cobra.Command) []*cobra.Command {
 	var orderedCommands []*cobra.Command
 	for _, cmdName := range commandOrder {
 		if cmd, exists := cmdMap[cmdName]; exists {
-			orderedCommands = append(orderedCommands, cmd)
-		}
-	}
-
-	for cmdName, cmd := range cmdMap {
-		if !slices.Contains(commandOrder, cmdName) {
 			orderedCommands = append(orderedCommands, cmd)
 		}
 	}

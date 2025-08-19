@@ -1,6 +1,7 @@
 package init
 
 import (
+	_ "embed"
 	"fmt"
 
 	i "github.com/confluentinc/kcp/internal/generators/init"
@@ -11,9 +12,9 @@ func NewInitCmd() *cobra.Command {
 	initCmd := &cobra.Command{
 		Use:           "init",
 		Short:         "Generate a README.md and set of env vars to export",
-		Long:          `Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands.`,
-		SilenceErrors: true,
+		Long:          "Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands.",
 		RunE:          runInitConfig,
+		SilenceErrors: true,
 	}
 
 	initCmd.SetUsageFunc(func(c *cobra.Command) error {
