@@ -7,6 +7,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/generators/scan/cluster"
+	"github.com/confluentinc/kcp/internal/services/ec2"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -153,8 +154,13 @@ func runScanCluster(cmd *cobra.Command, args []string) error {
 
 	mskService := msk.NewMSKService(mskClient)
 
+	ec2Service, err := ec2.NewEC2Service(opts.Region)
+	if err != nil {
+		return fmt.Errorf("failed to create ec2 service: %v", err)
+	}
+
 	// Scan the cluster
-	clusterScanner := cluster.NewClusterScanner(mskService, kafkaAdminFactory, *opts)
+	clusterScanner := cluster.NewClusterScanner(mskService, ec2Service, kafkaAdminFactory, *opts)
 	if err := clusterScanner.Run(); err != nil {
 		return fmt.Errorf("failed to scan cluster: %v", err)
 	}
