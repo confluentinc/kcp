@@ -39,7 +39,7 @@ func NewMigrationCmd() *cobra.Command {
 	groups[requiredFlags] = "Required Flags"
 
 	migrationCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		fmt.Fprintf(c.OutOrStdout(), "%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags}
 		groupNames := []string{"Required Flags"}
@@ -47,11 +47,11 @@ func NewMigrationCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				fmt.Fprintf(c.OutOrStdout(), "%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Fprintf(c.OutOrStdout(), "All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

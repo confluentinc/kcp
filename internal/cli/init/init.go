@@ -8,25 +8,21 @@ import (
 )
 
 func NewInitCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Generate a README.md and set of env vars to export",
-		Long: `Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands.
-eg.
-export VPC_ID=vpc-1234567890
-export REGION=us-east-1
-
-export SASL_SCRAM_USERNAME=<msk-username>
-export SASL_SCRAM_PASSWORD=<msk-password>
-etc
-		`,
-		Example: `
-		`,
+	initCmd := &cobra.Command{
+		Use:           "init",
+		Short:         "Generate a README.md and set of env vars to export",
+		Long:          `Generates a README.md to guide usage of kcp and a script to export environment variables for various kcp commands.`,
 		SilenceErrors: true,
 		RunE:          runInitConfig,
 	}
 
-	return cmd
+	initCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Fprintf(c.OutOrStdout(), "%s\n\n", c.Short)
+		fmt.Fprintf(c.OutOrStdout(), "All flags can be provided via environment variables (uppercase, with underscores).")
+		return nil
+	})
+
+	return initCmd
 }
 
 func runInitConfig(cmd *cobra.Command, args []string) error {
