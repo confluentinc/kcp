@@ -35,6 +35,7 @@ type ClusterScannerOpts struct {
 
 type ClusterScanner struct {
 	mskService        MSKService
+	ec2Service        EC2Service
 	kafkaAdminFactory KafkaAdminFactory
 	region            string
 	clusterArn        string
@@ -54,10 +55,15 @@ type MSKService interface {
 	ListScramSecrets(ctx context.Context, clusterArn *string) ([]string, error)
 }
 
+type EC2Service interface {
+	DescribeSubnets(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error)
+}
+
 // NewClusterScanner creates a new ClusterScanner instance.
-func NewClusterScanner(mskService MSKService, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
+func NewClusterScanner(mskService MSKService, ec2Service EC2Service, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
 	return &ClusterScanner{
 		mskService:        mskService,
+		ec2Service:        ec2Service,
 		kafkaAdminFactory: kafkaAdminFactory,
 		region:            opts.Region,
 		clusterArn:        opts.ClusterArn,
@@ -262,17 +268,8 @@ func (cs *ClusterScanner) scanNetworkingInfo(ctx context.Context, cluster *kafka
 }
 
 func (cs *ClusterScanner) getVpcIdFromSubnets(ctx context.Context, subnetIds []string) (string, error) {
-	ec2Client, err := client.NewEC2Client(cs.region)
-	if err != nil {
-		return "", fmt.Errorf("failed to create EC2 client: %v", err)
-	}
-
 	// Only way to get the VPC ID is to query the subnets belonging to the cluster brokers.
-	input := &ec2.DescribeSubnetsInput{
-		SubnetIds: []string{subnetIds[0]},
-	}
-
-	result, err := ec2Client.DescribeSubnets(ctx, input)
+	result, err := cs.ec2Service.DescribeSubnets(ctx, []string{subnetIds[0]})
 	if err != nil {
 		return "", fmt.Errorf("failed to describe subnet %s: %v", subnetIds[0], err)
 	}
@@ -285,16 +282,7 @@ func (cs *ClusterScanner) getVpcIdFromSubnets(ctx context.Context, subnetIds []s
 }
 
 func (cs *ClusterScanner) getSubnetDetails(ctx context.Context, subnetIds []string) (map[string]types.SubnetInfo, error) {
-	ec2Client, err := client.NewEC2Client(cs.region)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create EC2 client: %v", err)
-	}
-
-	input := &ec2.DescribeSubnetsInput{
-		SubnetIds: subnetIds,
-	}
-
-	result, err := ec2Client.DescribeSubnets(ctx, input)
+	result, err := cs.ec2Service.DescribeSubnets(ctx, subnetIds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe subnets: %v", err)
 	}
