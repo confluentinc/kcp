@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/IBM/sarama"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -91,4 +92,13 @@ func (m *MockMSKService) ListNodes(ctx context.Context, clusterArn *string) ([]k
 
 func (m *MockMSKService) ListScramSecrets(ctx context.Context, clusterArn *string) ([]string, error) {
 	return m.ListScramSecretsFunc(ctx, clusterArn)
+}
+
+// MockEC2Service is a mock implementation of the EC2Service interface
+type MockEC2Service struct {
+	DescribeSubnetsFunc func(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error)
+}
+
+func (m *MockEC2Service) DescribeSubnets(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+	return m.DescribeSubnetsFunc(ctx, subnetIds)
 }

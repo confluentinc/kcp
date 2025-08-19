@@ -13,6 +13,8 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -26,9 +28,34 @@ const (
 	defaultRegion = "us-west-2"
 )
 
+// Helper function to create a default mock EC2Service for tests
+func newMockEC2Service() *mocks.MockEC2Service {
+	return &mocks.MockEC2Service{
+		DescribeSubnetsFunc: func(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+			// Return mock subnet data
+			return &ec2.DescribeSubnetsOutput{
+				Subnets: []ec2types.Subnet{
+					{
+						SubnetId:         aws.String("subnet-123"),
+						VpcId:            aws.String("vpc-123"),
+						AvailabilityZone: aws.String("us-west-2a"),
+						CidrBlock:        aws.String("10.0.1.0/24"),
+					},
+					{
+						SubnetId:         aws.String("subnet-456"),
+						VpcId:            aws.String("vpc-123"),
+						AvailabilityZone: aws.String("us-west-2b"),
+						CidrBlock:        aws.String("10.0.2.0/24"),
+					},
+				},
+			}, nil
+		},
+	}
+}
+
 // Helper function for tests to create ClusterScanner with the new parameter style
-func newTestClusterScanner(clusterArn, region string, mskService MSKService, adminFactory KafkaAdminFactory, skipKafka bool) *ClusterScanner {
-	return NewClusterScanner(mskService, adminFactory, ClusterScannerOpts{
+func newTestClusterScanner(clusterArn, region string, mskService MSKService, ec2Service EC2Service, adminFactory KafkaAdminFactory, skipKafka bool) *ClusterScanner {
+	return NewClusterScanner(mskService, ec2Service, adminFactory, ClusterScannerOpts{
 		Region:     region,
 		ClusterArn: clusterArn,
 		SkipKafka:  skipKafka,
@@ -119,6 +146,7 @@ func TestClusterScanner_ParseBrokerAddresses(t *testing.T) {
 				"test-cluster",
 				defaultRegion,
 				mockMSKService,
+				newMockEC2Service(),
 				nil,   // admin factory not needed for this test
 				false, // skipKafka
 			)
@@ -184,7 +212,7 @@ func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, nil, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, nil, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.scanClusterTopics(mockAdmin)
 
 			if tt.wantError != "" {
@@ -297,6 +325,11 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
+								BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+									ClientSubnets:  []string{"subnet-123", "subnet-456"},
+									SecurityGroups: []string{"sg-123", "sg-456"},
+								},
+								NumberOfBrokerNodes: aws.Int32(3),
 							},
 						},
 					}, nil
@@ -365,7 +398,7 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 
 			// Create a ClusterInformation struct to pass to scanAWSResources
 			clusterInfo := &types.ClusterInformation{
@@ -525,7 +558,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 
 			// Create a ClusterInformation struct to pass to scanKafkaResources
 			clusterInfo := &types.ClusterInformation{
@@ -602,6 +635,10 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
+						BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+							ClientSubnets:  []string{"subnet-123", "subnet-456"},
+							SecurityGroups: []string{"sg-123", "sg-456"},
+						},
 					},
 				},
 			},
@@ -634,6 +671,10 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
+						BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+							ClientSubnets:  []string{"subnet-123", "subnet-456"},
+							SecurityGroups: []string{"sg-123", "sg-456"},
+						},
 					},
 				},
 			},
@@ -664,6 +705,10 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						},
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
+						BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+							ClientSubnets:  []string{"subnet-123", "subnet-456"},
+							SecurityGroups: []string{"sg-123", "sg-456"},
 						},
 					},
 				},
@@ -705,6 +750,10 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 							KafkaVersion: aws.String("4.0.x.kraft"),
 						},
+						BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+							ClientSubnets:  []string{"subnet-123", "subnet-456"},
+							SecurityGroups: []string{"sg-123", "sg-456"},
+						},
 					},
 				},
 			},
@@ -736,6 +785,10 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						},
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
+						BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+							ClientSubnets:  []string{"subnet-123", "subnet-456"},
+							SecurityGroups: []string{"sg-123", "sg-456"},
 						},
 					},
 				},
@@ -771,6 +824,10 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						},
 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 							KafkaVersion: aws.String("4.0.x.kraft"),
+						},
+						BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+							ClientSubnets:  []string{"subnet-123", "subnet-456"},
+							SecurityGroups: []string{"sg-123", "sg-456"},
 						},
 					},
 				},
@@ -895,7 +952,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 			result, err := clusterScanner.scanCluster(context.Background())
 
 			if tt.wantError != "" {
@@ -1104,6 +1161,11 @@ func TestClusterScanner_Run(t *testing.T) {
 									CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 										KafkaVersion: aws.String("4.0.x.kraft"),
 									},
+									BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+										ClientSubnets:  []string{"subnet-123", "subnet-456"},
+										SecurityGroups: []string{"sg-123", "sg-456"},
+									},
+									NumberOfBrokerNodes: aws.Int32(3),
 								},
 							},
 						}, nil
@@ -1129,6 +1191,11 @@ func TestClusterScanner_Run(t *testing.T) {
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
+								BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+									ClientSubnets:  []string{"subnet-123", "subnet-456"},
+									SecurityGroups: []string{"sg-123", "sg-456"},
+								},
+								NumberOfBrokerNodes: aws.Int32(3),
 							},
 						},
 					}, nil
@@ -1167,7 +1234,7 @@ func TestClusterScanner_Run(t *testing.T) {
 					CloseFunc: func() error { return nil },
 				}, nil
 			}
-			clusterScanner := newTestClusterScanner(tt.clusterArn, defaultRegion, mockMSKService, adminFactory, false)
+			clusterScanner := newTestClusterScanner(tt.clusterArn, defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 			err := clusterScanner.Run()
 
 			if tt.wantError != "" {
@@ -1280,7 +1347,7 @@ func TestClusterScanner_ScanClusterVpcConnections(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.scanClusterVpcConnections(context.Background(), aws.String("test-cluster-arn"))
 
 			if tt.wantError != "" {
@@ -1372,7 +1439,7 @@ func TestClusterScanner_ScanClusterOperations(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.scanClusterOperations(context.Background(), aws.String("test-cluster-arn"))
 
 			if tt.wantError != "" {
@@ -1473,7 +1540,7 @@ func TestClusterScanner_ScanClusterNodes(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.scanClusterNodes(context.Background(), aws.String("test-cluster-arn"))
 
 			if tt.wantError != "" {
@@ -1565,7 +1632,7 @@ func TestClusterScanner_ScanClusterScramSecrets(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.scanClusterScramSecrets(context.Background(), aws.String("test-cluster-arn"))
 
 			if tt.wantError != "" {
@@ -1652,7 +1719,7 @@ func TestClusterScanner_DescribeKafkaCluster(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, nil, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, nil, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.describeKafkaCluster(mockAdmin)
 
 			if tt.wantError != "" {
@@ -1749,7 +1816,7 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 
 			// Create ClusterInformation with bootstrap brokers
 			clusterInfo := &types.ClusterInformation{
@@ -1865,7 +1932,7 @@ func TestClusterScanner_ParseBrokerAddresses_EdgeCases(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			brokers, err := clusterScanner.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeIAM)
 
 			if tt.wantError != "" {
@@ -1923,7 +1990,7 @@ func TestClusterScanner_GetClusterPolicy_ErrorHandling(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			result, err := clusterScanner.getClusterPolicy(context.Background(), aws.String("test-cluster-arn"))
 
 			if tt.wantError {
@@ -2005,7 +2072,7 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 			clusterInfo := &types.ClusterInformation{
 				Timestamp: time.Now(),
 				Region:    defaultRegion,
@@ -2080,6 +2147,11 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
+								BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+									ClientSubnets:  []string{"subnet-123", "subnet-456"},
+									SecurityGroups: []string{"sg-123", "sg-456"},
+								},
+								NumberOfBrokerNodes: aws.Int32(3),
 							},
 						},
 					}, nil
@@ -2110,7 +2182,7 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 				},
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, nil, false)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			clusterInfo := &types.ClusterInformation{
 				Timestamp: time.Now(),
 				Region:    defaultRegion,
@@ -2210,6 +2282,11 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 								CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
 									KafkaVersion: aws.String("4.0.x.kraft"),
 								},
+								BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+									ClientSubnets:  []string{"subnet-123", "subnet-456"},
+									SecurityGroups: []string{"sg-123", "sg-456"},
+								},
+								NumberOfBrokerNodes: aws.Int32(3),
 							},
 						},
 					}, nil
@@ -2274,7 +2351,7 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 				return mockAdmin, nil
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, tt.skipKafka)
+			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, tt.skipKafka)
 			result, err := clusterScanner.scanCluster(context.Background())
 
 			require.NoError(t, err)
@@ -2455,7 +2532,7 @@ func TestClusterScanner_ParseBrokerAddresses_Unauthenticated(t *testing.T) {
 				},
 			}
 
-			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, nil, false)
+			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeUnauthenticated)
 
 			if tt.wantError != "" {
@@ -2629,7 +2706,7 @@ func TestClusterScanner_ParseBrokerAddresses_SASLSCRAM(t *testing.T) {
 				},
 			}
 
-			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, nil, false)
+			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeSASLSCRAM)
 
 			if tt.wantError != "" {
@@ -2803,7 +2880,7 @@ func TestClusterScanner_ParseBrokerAddresses_TLS(t *testing.T) {
 				},
 			}
 
-			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, nil, false)
+			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
 			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeTLS)
 
 			if tt.wantError != "" {

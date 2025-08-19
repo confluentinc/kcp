@@ -35,6 +35,21 @@ type Acls struct {
 	PermissionType      string `json:"PermissionType"`
 }
 
+type ClusterNetworking struct {
+	VpcId          string       `json:"vpc_id"`
+	SubnetIds      []string     `json:"subnet_ids"`
+	SecurityGroups []string     `json:"security_groups"`
+	Subnets        []SubnetInfo `json:"subnets"`
+}
+
+type SubnetInfo struct {
+	SubnetMskBrokerId int    `json:"subnet_msk_broker_id"`
+	SubnetId          string `json:"subnet_id"`
+	AvailabilityZone  string `json:"availability_zone"`
+	PrivateIpAddress  string `json:"private_ip_address"`
+	CidrBlock         string `json:"cidr_block"`
+}
+
 type ClusterInformation struct {
 	ClusterID            string                                 `json:"cluster_id"`
 	Region               string                                 `json:"region"`
@@ -47,6 +62,7 @@ type ClusterInformation struct {
 	BootstrapBrokers     kafka.GetBootstrapBrokersOutput        `json:"bootstrapBrokers"`
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
+	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
 	Topics               []string                               `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
 }
