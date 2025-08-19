@@ -46,10 +46,10 @@ var RootCmd = &cobra.Command{
 func init() {
 	RootCmd.AddCommand(
 		i.NewInitCmd(),
-		create_asset.NewCreateAssetCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
-		NewVersionCmd(),
+		create_asset.NewCreateAssetCmd(),
 		docs.NewDocsCmd(),
+		NewVersionCmd(),
 	)
 }
