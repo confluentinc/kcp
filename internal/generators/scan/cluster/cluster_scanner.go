@@ -322,14 +322,7 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-
-	var kafkaVersion string
-	if clusterInfo.Cluster.Provisioned != nil {
-		kafkaVersion = utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
-	} else {
-		slog.Warn("⚠️ Serverless clusters return nil for Kafka version, defaulting to 4.0.0")
-		kafkaVersion = "4.0.0"
-	}
+	kafkaVersion := cs.getKafkaVersion(clusterInfo)
 
 	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
@@ -392,4 +385,17 @@ func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, 
 	}
 
 	return flattenedAcls, nil
+}
+
+func (cs *ClusterScanner) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
+	switch clusterInfo.Cluster.ClusterType {
+	case kafkatypes.ClusterTypeProvisioned:
+		return utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	case kafkatypes.ClusterTypeServerless:
+		slog.Warn("⚠️ Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
+		return "4.0.0"
+	default:
+		slog.Warn(fmt.Sprintf("⚠️ Unknown cluster type: %v, defaulting to 4.0.0", clusterInfo.Cluster.ClusterType))
+		return "4.0.0"
+	}
 }
