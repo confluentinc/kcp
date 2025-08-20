@@ -106,6 +106,7 @@ func (rm *ClusterMetricsCollector) processCluster(cluster kafkatypes.Cluster) (*
 	slog.Info("🔄 processing cluster", "cluster", *cluster.ClusterName)
 
 	var clusterMetric *types.ClusterMetrics
+	
 	var err error
 	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
 		clusterMetric, err = rm.processProvisionedCluster(cluster)
@@ -269,6 +270,9 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetricsSummary.ReplicationFactor = replicationFactor
 
 	clusterMetric := types.ClusterMetrics{
+		ClusterArn:            *cluster.ClusterArn,
+		StartDate:             rm.startDate,
+		EndDate:               rm.endDate,
 		ClusterName:           *cluster.ClusterName,
 		ClusterType:           string(cluster.ClusterType),
 		BrokerAZDistribution:  brokerAZDistribution,
@@ -403,6 +407,9 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
 	clusterMetric := types.ClusterMetrics{
+		ClusterArn:            *cluster.ClusterArn,
+		StartDate:             rm.startDate,
+		EndDate:               rm.endDate,
 		ClusterName:           *cluster.ClusterName,
 		ClusterType:           string(cluster.ClusterType),
 		Authentication:        authentication,
@@ -609,24 +616,19 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 
 func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics, region string) error {
 
-	data, err := json.MarshalIndent(metrics, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal cluster information: %v", err)
-	}
-
 	dirPath := filepath.Join("kcp-scan", region, metrics.ClusterName)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
 	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-metrics.json", metrics.ClusterName))
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := metrics.WriteAsJson(filePath); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
 
 	// Generate markdown report
 	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s-metrics.md", metrics.ClusterName))
-	if err := rm.generateMarkdownReport(metrics, mdFilePath); err != nil {
+	if err := metrics.WriteAsMarkdown(mdFilePath); err != nil {
 		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}
 

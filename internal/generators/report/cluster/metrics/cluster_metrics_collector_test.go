@@ -137,6 +137,7 @@ func createTestProvisionedCluster() kafkatypes.Cluster {
 	volumeSize := int32(100)
 
 	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1"),
 		ClusterName: &clusterName,
 		ClusterType: kafkatypes.ClusterTypeProvisioned,
 		Provisioned: &kafkatypes.Provisioned{
@@ -169,6 +170,7 @@ func createTestServerlessCluster() kafkatypes.Cluster {
 	clusterName := "test-serverless-cluster"
 
 	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-serverless-cluster/12345678-1234-1234-1234-123456789012-1"),
 		ClusterName: &clusterName,
 		ClusterType: kafkatypes.ClusterTypeServerless,
 		Serverless: &kafkatypes.Serverless{
