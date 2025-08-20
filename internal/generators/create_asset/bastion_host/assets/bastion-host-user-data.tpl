@@ -14,4 +14,5 @@ tar xzf confluent-8.0.0.tar.gz
 echo "export PATH=/home/ec2-user/confluent-8.0.0/bin:$PATH" >> /home/ec2-user/.bashrc
 
 curl -L -o kcp https://github.com/confluentinc/kcp/releases/latest/download/kcp_linux_amd64
+chmod +x kcp
 sudo mv kcp /usr/local/bin/
