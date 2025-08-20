@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -68,8 +69,7 @@ func (rc *RegionCoster) Run() error {
 	if err != nil {
 		return fmt.Errorf("❌ Failed to get AWS costs: %v", err)
 	}
-
-	outputFolder := fmt.Sprintf("cost_reports/%s", rc.region)
+	outputFolder := filepath.Join("kcp-scan", rc.region)
 	if err := os.MkdirAll(outputFolder, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create output folder: %v", err)
 	}
