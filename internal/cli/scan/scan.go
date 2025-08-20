@@ -2,7 +2,7 @@ package scan
 
 import (
 	"fmt"
-	
+
 	"github.com/confluentinc/kcp/internal/generators/scan"
 
 	"github.com/confluentinc/kcp/internal/cli/scan/cluster"
@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	regions   []string
-	skipKafka bool
+	regions    []string
+	skipKafka  bool
 	clusterCmd *cobra.Command
-	regionCmd *cobra.Command
+	regionCmd  *cobra.Command
 )
 
 func NewScanCmd() *cobra.Command {
@@ -61,7 +61,7 @@ func NewScanCmd() *cobra.Command {
 		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
-	})	
+	})
 
 	scanCmd.MarkFlagRequired("region")
 	scanCmd.MarkFlagRequired("skip-kafka")
@@ -87,7 +87,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 func parseScanOpts() (*scan.ScanOpts, error) {
 	opts := scan.ScanOpts{
-		Regions: regions,
+		Regions:   regions,
 		SkipKafka: skipKafka,
 	}
 

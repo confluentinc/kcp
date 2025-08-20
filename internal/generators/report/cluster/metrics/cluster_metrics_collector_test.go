@@ -137,6 +137,7 @@ func createTestProvisionedCluster() kafkatypes.Cluster {
 	volumeSize := int32(100)
 
 	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1"),
 		ClusterName: &clusterName,
 		ClusterType: kafkatypes.ClusterTypeProvisioned,
 		Provisioned: &kafkatypes.Provisioned{
@@ -169,6 +170,7 @@ func createTestServerlessCluster() kafkatypes.Cluster {
 	clusterName := "test-serverless-cluster"
 
 	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-serverless-cluster/12345678-1234-1234-1234-123456789012-1"),
 		ClusterName: &clusterName,
 		ClusterType: kafkatypes.ClusterTypeServerless,
 		Serverless: &kafkatypes.Serverless{
@@ -284,8 +286,7 @@ func TestClusterMetricsCollector_Run_Success(t *testing.T) {
 	mockAdmin.AssertExpectations(t)
 
 	// Clean up generated files
-	os.Remove("test-cluster-metrics.json")
-	os.Remove("test-cluster-metrics.md")
+	os.RemoveAll("kcp-scan")
 }
 
 func TestClusterMetricsCollector_Run_DescribeClusterError(t *testing.T) {
@@ -751,12 +752,12 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 		},
 	}
 
-	err := collector.writeOutput(metrics)
+	err := collector.writeOutput(metrics, "us-west-2")
 
 	assert.NoError(t, err)
 
 	// Verify JSON file was created
-	jsonData, err := os.ReadFile("test-cluster-metrics.json")
+	jsonData, err := os.ReadFile("kcp-scan/us-west-2/test-cluster/test-cluster-metrics.json")
 	assert.NoError(t, err)
 
 	var result types.ClusterMetrics
@@ -766,12 +767,11 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 	assert.Equal(t, "PROVISIONED", result.ClusterType)
 
 	// Verify Markdown file was created
-	_, err = os.Stat("test-cluster-metrics.md")
+	_, err = os.Stat("kcp-scan/us-west-2/test-cluster/test-cluster-metrics.md")
 	assert.NoError(t, err)
 
 	// Clean up
-	os.Remove("test-cluster-metrics.json")
-	os.Remove("test-cluster-metrics.md")
+	os.RemoveAll("kcp-scan")
 }
 
 func TestStructToMap(t *testing.T) {

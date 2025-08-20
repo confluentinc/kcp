@@ -2,11 +2,11 @@ package cluster
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -75,19 +75,19 @@ func (cs *ClusterScanner) Run() error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(clusterInfo, "", "  ")
-	if err != nil {
-		return fmt.Errorf("❌ Failed to marshal cluster information: %v", err)
+	dirPath := filepath.Join("kcp-scan", clusterInfo.Region, aws.ToString(clusterInfo.Cluster.ClusterName))
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := fmt.Sprintf("cluster_scan_%s.json", aws.ToString(clusterInfo.Cluster.ClusterName))
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("❌ Failed to write file: %v", err)
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.json", aws.ToString(clusterInfo.Cluster.ClusterName)))
+	if err := clusterInfo.WriteAsJson(filePath); err != nil {
+		return err
 	}
 
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("cluster_scan_%s.md", aws.ToString(clusterInfo.Cluster.ClusterName))
-	if err := cs.generateMarkdownReport(clusterInfo, mdFilePath); err != nil {
+	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s.md", aws.ToString(clusterInfo.Cluster.ClusterName)))
+	if err := clusterInfo.WriteAsMarkdown(mdFilePath); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 
