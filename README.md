@@ -1293,7 +1293,7 @@ The command creates a `migration_scripts` directory containing shell scripts:
 
 ---
 
-#### `kcp create-asset migration-scripts`
+#### `kcp create-asset reverse-proxy`
 
 Create reverse proxy infrastructure assets to allow observability into migrated data in Confluent Cloud.
 
