@@ -56,11 +56,6 @@ type RegionMetrics struct {
 	ClusterMetrics []ClusterMetrics `json:"cluster_metrics"`
 }
 
-type RegionCosts struct {
-	Region   string   `json:"region"`
-	CostData CostData `json:"cost_data"`
-}
-
 type ClusterMetricsSummary struct {
 	AvgIngressThroughputMegabytesPerSecond  *float64 `json:"avg_ingress_throughput_megabytes_per_second"`
 	PeakIngressThroughputMegabytesPerSecond *float64 `json:"peak_ingress_throughput_megabytes_per_second"`
@@ -116,19 +111,6 @@ type NodeMetrics struct {
 	LeaderCountMax               float64 `json:"leader_count_max"`
 	ReplicationBytesOutPerSecMax float64 `json:"replication_bytes_out_per_sec_max"`
 	ReplicationBytesInPerSecMax  float64 `json:"replication_bytes_in_per_sec_max"`
-}
-
-type CostData struct {
-	Costs []Cost  `json:"costs"`
-	Total float64 `json:"total"`
-}
-
-type Cost struct {
-	TimePeriodStart string  `json:"time_period_start"`
-	TimePeriodEnd   string  `json:"time_period_end"`
-	Service         string  `json:"service"`
-	Cost            float64 `json:"cost"`
-	UsageType       string  `json:"usage_type"`
 }
 
 type TerraformState struct {

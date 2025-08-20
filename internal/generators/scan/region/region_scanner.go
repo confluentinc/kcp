@@ -135,7 +135,7 @@ func (rs *RegionScanner) Run() error {
 		return err
 	}
 
-	filePath := fmt.Sprintf("region_scan_%s.json", rs.region)	
+	filePath := fmt.Sprintf("region_scan_%s.json", rs.region)
 	if err := scanResult.WriteAsJson(filePath); err != nil {
 		return err
 	}

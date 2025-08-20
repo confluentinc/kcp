@@ -35,7 +35,7 @@ func (rs *RegionScanResult) WriteAsJson(filePath string) error {
 	return nil
 }
 
-func (rs *RegionScanResult) AsJson() ([]byte, error ){
+func (rs *RegionScanResult) AsJson() ([]byte, error) {
 	data, err := json.MarshalIndent(rs, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to marshal scan results: %v", err)
@@ -43,13 +43,13 @@ func (rs *RegionScanResult) AsJson() ([]byte, error ){
 	return data, nil
 }
 
-func (rs *RegionScanResult) WriteAsMarkdown(filePath string) (error) {
+func (rs *RegionScanResult) WriteAsMarkdown(filePath string) error {
 	md := rs.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }
 
 // generateMarkdownReport creates a comprehensive markdown report of the scan results
-func (rs *RegionScanResult) AsMarkdown() (*markdown.Markdown) {
+func (rs *RegionScanResult) AsMarkdown() *markdown.Markdown {
 	md := markdown.New()
 
 	// Title and overview
