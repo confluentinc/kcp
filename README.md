@@ -395,7 +395,7 @@ This command scans a hour window folder in s3 to identify as many clients as pos
 ```shell
 kcp scan broker-logs \
 --region us-east-1 \
---s3-uri  s3://my-cluster-logs-bucket/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/kcp-pub-cluster-90a919bc-5967-4805-8a47-09dad9019d9b-5/2025-08-13-14/
+--s3-uri  s3://my-cluster-logs-bucket/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-1a2345b6-bf9f-4670-b13b-710985f5645d-5/2025-08-13-14/
 ```
 
 **Output:**
@@ -595,7 +595,7 @@ kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cl
 kcp report cluster metrics \
 --start 2025-07-01 \
 --end 2025-08-01 \
---cluster-arn arn:aws:kafka:eu-north-1:635910096382:cluster/msk-exp1-fff-cluster/f6842864-4a96-4f6c-bf24-2728d32cdef3-2 \
+--cluster-arn arn:aws:kafka:us-east-1:000123456789:cluster/msk-cluster/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
 --use-sasl-iam
 ```
 
