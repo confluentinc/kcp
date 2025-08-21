@@ -81,38 +81,40 @@ func NewClusterMetrics(mskService MSKService, metricService MetricService, kafka
 func (rm *ClusterMetricsCollector) Run() error {
 	slog.Info("🚀 starting cluster metrics report", "cluster", rm.clusterArn)
 
-	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to get clusters: %v", err)
-	}
-
-	clusterMetrics, err := rm.processCluster(*cluster)
+	clusterMetrics, err := rm.ProcessCluster()
 	if err != nil {
 		return fmt.Errorf("❌ Failed to process clusters: %v", err)
 	}
 
-	err = rm.writeOutput(*clusterMetrics, rm.region)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to write output: %v", err)
+	if err := clusterMetrics.WriteAsJson(); err != nil {
+		return fmt.Errorf("failed to write file: %v", err)
+	}
+
+	if err := clusterMetrics.WriteAsMarkdown(); err != nil {
+		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}
 
 	slog.Info("✅ cluster metrics report complete", "cluster", rm.clusterArn)
 	return nil
 }
 
-func (rm *ClusterMetricsCollector) processCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
-	slog.Info("🔄 processing cluster", "cluster", *cluster.ClusterName)
+func (rm *ClusterMetricsCollector) ProcessCluster() (*types.ClusterMetrics, error) {
+	slog.Info("🔄 processing cluster", "cluster", &rm.clusterArn)
+
+	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
+	}	
 
 	var clusterMetric *types.ClusterMetrics
 
-	var err error
 	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		clusterMetric, err = rm.processProvisionedCluster(cluster)
+		clusterMetric, err = rm.processProvisionedCluster(*cluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
-		clusterMetric, err = rm.processServerlessCluster(cluster)
+		clusterMetric, err = rm.processServerlessCluster(*cluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
 		}
@@ -612,19 +614,6 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 	}
 
 	return &nodeMetric, nil
-}
-
-func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics, region string) error {
-
-	if err := metrics.WriteAsJson(); err != nil {
-		return fmt.Errorf("failed to write file: %v", err)
-	}
-
-	if err := metrics.WriteAsMarkdown(); err != nil {
-		return fmt.Errorf("failed to generate markdown report: %v", err)
-	}
-
-	return nil
 }
 
 func structToMap(s any) (map[string]any, error) {

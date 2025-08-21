@@ -67,7 +67,7 @@ func (cs *ClusterScanner) Run() error {
 
 	ctx := context.TODO()
 
-	clusterInfo, err := cs.scanCluster(ctx)
+	clusterInfo, err := cs.ScanCluster(ctx)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func (cs *ClusterScanner) Run() error {
 	return nil
 }
 
-func (cs *ClusterScanner) scanCluster(ctx context.Context) (*types.ClusterInformation, error) {
+func (cs *ClusterScanner) ScanCluster(ctx context.Context) (*types.ClusterInformation, error) {
 	clusterInfo := &types.ClusterInformation{
 		Timestamp: time.Now(),
 		Region:    cs.region,

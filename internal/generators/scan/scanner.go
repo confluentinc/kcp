@@ -3,9 +3,18 @@ package scan
 import (
 	"context"
 	"log/slog"
+	"time"
 
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
 	"github.com/confluentinc/kcp/internal/client"
+	cs "github.com/confluentinc/kcp/internal/generators/scan/cluster"
 	"github.com/confluentinc/kcp/internal/generators/scan/region"
+	"github.com/confluentinc/kcp/internal/services/cost"
+	"github.com/confluentinc/kcp/internal/services/msk"
+	"github.com/confluentinc/kcp/internal/services/metrics"
+
 )
 
 type ScanOpts struct {
@@ -28,37 +37,127 @@ func NewScanner(opts ScanOpts) *Scanner {
 func (rs *Scanner) Run() error {
 
 	for _, r := range rs.regions {
-
-		// scan the region
-		opts := region.ScanRegionOpts{
-			Region: r,
-		}
-
+		
+		// create the msk client and service
 		mskClient, err := client.NewMSKClient(r)
 		if err != nil {
 			slog.Error("failed to create msk client", "region", r, "error", err)
 			continue
 		}
+		mskService := msk.NewMSKService(mskClient)		
 
-		regionScanner := region.NewRegionScanner(mskClient, opts)
-		scanResult, err := regionScanner.ScanRegion(context.Background())
+		// default the time period
+		now := time.Now()
+		startDate := now.AddDate(0, 0, -31).UTC().Truncate(24 * time.Hour)
+		endDate := now.UTC().Truncate(24 * time.Hour)		
+
+		// scan the region
+		regionScanOpts := region.ScanRegionOpts{
+			Region: r,
+		}
+
+		regionScanner := region.NewRegionScanner(mskClient, regionScanOpts)
+		regionScanResult, err := regionScanner.ScanRegion(context.Background())
 		if err != nil {
 			slog.Error("failed to scan region", "region", r, "error", err)
-			continue
-		}
+		} else {
+			if err := regionScanResult.WriteAsJson(); err != nil {
+				slog.Error("failed to write region scan result", "region", r, "error", err)
+			}
 
-		if err := scanResult.WriteAsJson(); err != nil {
-			slog.Error("failed to write region scan result", "region", r, "error", err)
-			continue
-		}
-
-		if err := scanResult.WriteAsMarkdown(); err != nil {
-			slog.Error("failed to write region scan result", "region", r, "error", err)
-			continue
+			if err := regionScanResult.WriteAsMarkdown(); err != nil {
+				slog.Error("failed to write region scan result", "region", r, "error", err)
+			}
 		}
 
 		// get region costs
-		
+		costExplorerClient, err := client.NewCostExplorerClient(r)
+		if err != nil {
+			slog.Error("failed to create cost explorer client", "region", r, "error", err)
+		}		
+	
+		costService := cost.NewCostService(costExplorerClient)
+
+		costs, err := costService.GetCostsForTimeRange(r, startDate, endDate, costexplorertypes.GranularityDaily, map[string][]string{})
+		if err != nil {
+			slog.Error("failed to get region costs", "region", r, "error", err)
+		} else {
+
+			if err := costs.WriteAsJson(); err != nil {
+				slog.Error("failed to write region costs", "region", r, "error", err)
+			}
+
+			if err := costs.WriteAsMarkdown(); err != nil {
+				slog.Error("failed to write region costs", "region", r, "error", err)
+			}
+		}
+
+		// scan clusters within the region
+		if regionScanResult != nil {
+			for _, cluster := range regionScanResult.Clusters {
+				// scan the cluster
+				clusterScannerOpts := cs.ClusterScannerOpts{
+					Region:            r,
+					ClusterArn:        cluster.ClusterARN,
+					SkipKafka:         true,		
+				}
+
+				kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+					return nil, nil
+				}				
+
+				clusterScanner := cs.NewClusterScanner(mskService, kafkaAdminFactory, clusterScannerOpts)
+				clusterScanResult, err := clusterScanner.ScanCluster(context.Background())
+				if err != nil {
+					slog.Error("failed to scan cluster", "cluster", cluster.ClusterARN, "error", err)
+				} else {
+					if err := clusterScanResult.WriteAsJson(); err != nil {
+						slog.Error("failed to write cluster scan result", "cluster", cluster.ClusterARN, "error", err)
+					}
+
+					if err := clusterScanResult.WriteAsMarkdown(); err != nil {
+						slog.Error("failed to write cluster scan result", "cluster", cluster.ClusterARN, "error", err)
+					}
+				}
+
+				// get the cluster metrics
+				metricsOpts := rrm.ClusterMetricsOpts{
+					Region:            r,
+					StartDate:         startDate,
+					EndDate:           endDate,
+					ClusterArn:        cluster.ClusterARN,
+					SkipKafka:         true,
+				}
+
+				cloudWatchClient, err := client.NewCloudWatchClient(metricsOpts.Region)
+				if err != nil {
+					slog.Error("failed to create cloudWatch client", "region", r, "error", err)
+					continue
+				}
+			
+				metricService := metrics.NewMetricService(cloudWatchClient, metricsOpts.StartDate, metricsOpts.EndDate)
+			
+				clusterMetrics := rrm.NewClusterMetrics(mskService, metricService, kafkaAdminFactory, metricsOpts)
+				clusterMetricsResult, err := clusterMetrics.ProcessCluster()
+
+				if err != nil {
+					slog.Error("failed to scan cluster metrics", "cluster", cluster.ClusterARN, "error", err)
+				} else {
+					if err := clusterMetricsResult.WriteAsJson(); err != nil {
+						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
+					}
+
+					if err := clusterMetricsResult.WriteAsMarkdown(); err != nil {
+						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
+					}
+				}
+				
+				
+			}
+
+	
+
+		}
 	}
 
 	return nil

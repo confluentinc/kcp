@@ -316,6 +316,7 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 	}
 
 	cluster := createTestProvisionedCluster()
+	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
 	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
 		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
@@ -363,7 +364,7 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 
 	metricService.On("GetAverageBytesInPerSec", "test-cluster", 3, "test-topic").Return([]float64{100.0, 100.0, 100.0}, nil)
 
-	result, err := collector.processCluster(cluster)
+	result, err := collector.ProcessCluster()
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -386,6 +387,7 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 	}
 
 	cluster := createTestServerlessCluster()
+	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
 
 	// Mock metric service calls for serverless
@@ -409,7 +411,7 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
-	result, err := collector.processCluster(cluster)
+	result, err := collector.ProcessCluster()
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -710,17 +712,9 @@ func TestClusterMetricsCollector_processServerlessNode(t *testing.T) {
 	metricService.AssertExpectations(t)
 }
 
-func TestClusterMetricsCollector_writeOutput(t *testing.T) {
+func TestClusterMetrics_WriteOutput(t *testing.T) {
 	// Create a temporary directory for test files
 	tempDir := t.TempDir()
-
-	mskService := &MockMSKService{}
-	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
-		return &MockKafkaAdmin{}, nil
-	}
-
-	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
 	avgIngress := 0.0003
 	peakIngress := 0.0006
@@ -765,7 +759,13 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
-	err = collector.writeOutput(metrics, "us-west-2")
+	// Test the output writing by calling the methods directly on the metrics object
+	err = metrics.WriteAsJson()
+	if err != nil {
+		t.Fatalf("Failed to write JSON: %v", err)
+	}
+
+	err = metrics.WriteAsMarkdown()
 
 	assert.NoError(t, err)
 

@@ -875,7 +875,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, false)
-			result, err := clusterScanner.scanCluster(context.Background())
+			result, err := clusterScanner.ScanCluster(context.Background())
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -2241,7 +2241,7 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, adminFactory, tt.skipKafka)
-			result, err := clusterScanner.scanCluster(context.Background())
+			result, err := clusterScanner.ScanCluster(context.Background())
 
 			require.NoError(t, err)
 			require.NotNil(t, result)

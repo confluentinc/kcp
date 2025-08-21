@@ -41,7 +41,6 @@ func NewScanCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringSliceVar(&regions, "region", []string{}, "AWS region to scan")
-	requiredFlags.BoolVar(&skipKafka, "skip-kafka", true, "Skip kafka level cluster scan, use when brokers are not reachable")
 	scanCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
