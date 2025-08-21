@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -270,6 +268,7 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetricsSummary.ReplicationFactor = replicationFactor
 
 	clusterMetric := types.ClusterMetrics{
+		Region:                rm.region,
 		ClusterArn:            *cluster.ClusterArn,
 		StartDate:             rm.startDate,
 		EndDate:               rm.endDate,
@@ -407,6 +406,7 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
 	clusterMetric := types.ClusterMetrics{
+		Region:                rm.region,
 		ClusterArn:            *cluster.ClusterArn,
 		StartDate:             rm.startDate,
 		EndDate:               rm.endDate,
@@ -616,19 +616,11 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 
 func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics, region string) error {
 
-	dirPath := filepath.Join("kcp-scan", region, metrics.ClusterName)
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
-	}
-
-	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-metrics.json", metrics.ClusterName))
-	if err := metrics.WriteAsJson(filePath); err != nil {
+	if err := metrics.WriteAsJson(); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
 
-	// Generate markdown report
-	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s-metrics.md", metrics.ClusterName))
-	if err := metrics.WriteAsMarkdown(mdFilePath); err != nil {
+	if err := metrics.WriteAsMarkdown(); err != nil {
 		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}
 

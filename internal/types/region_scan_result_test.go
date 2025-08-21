@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -141,10 +140,9 @@ func TestRegionScanResult_WriteAsJson(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		result   *RegionScanResult
-		filePath string
-		wantErr  bool
+		name    string
+		result  *RegionScanResult
+		wantErr bool
 	}{
 		{
 			name: "successfully write to file",
@@ -163,23 +161,29 @@ func TestRegionScanResult_WriteAsJson(t *testing.T) {
 					},
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_output.json"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty region should succeed",
 			result: &RegionScanResult{
 				Timestamp: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
-				Region:    "us-east-1",
+				Region:    "",
 			},
-			filePath: "/invalid/path/test.json",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.result.WriteAsJson(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.result.WriteAsJson()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -188,12 +192,13 @@ func TestRegionScanResult_WriteAsJson(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.result.GetJsonPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 
 			var unmarshaled RegionScanResult
@@ -292,10 +297,9 @@ func TestRegionScanResult_WriteAsMarkdown(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		result   *RegionScanResult
-		filePath string
-		wantErr  bool
+		name    string
+		result  *RegionScanResult
+		wantErr bool
 	}{
 		{
 			name: "successfully write markdown to file",
@@ -314,23 +318,29 @@ func TestRegionScanResult_WriteAsMarkdown(t *testing.T) {
 					},
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_output.md"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty region should succeed",
 			result: &RegionScanResult{
 				Timestamp: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
-				Region:    "us-east-1",
+				Region:    "",
 			},
-			filePath: "/invalid/path/test.md",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.result.WriteAsMarkdown(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.result.WriteAsMarkdown()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -339,12 +349,13 @@ func TestRegionScanResult_WriteAsMarkdown(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.result.GetMarkdownPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content contains markdown
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 			content := string(fileData)
 			assert.Contains(t, content, "# MSK Region Scan Report")
@@ -570,12 +581,20 @@ func TestRegionScanResult_Integration(t *testing.T) {
 
 	// Test JSON file writing
 	t.Run("JSON file writing", func(t *testing.T) {
-		jsonFilePath := filepath.Join(tempDir, "integration_test.json")
-		err := result.WriteAsJson(jsonFilePath)
+		// Change to temp directory for testing
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		err = os.Chdir(tempDir)
+		require.NoError(t, err)
+
+		err = result.WriteAsJson()
 		require.NoError(t, err)
 
 		// Verify file exists and has content
-		fileInfo, err := os.Stat(jsonFilePath)
+		expectedPath := result.GetJsonPath()
+		fileInfo, err := os.Stat(expectedPath)
 		require.NoError(t, err)
 		assert.True(t, fileInfo.Size() > 0)
 	})
@@ -588,17 +607,25 @@ func TestRegionScanResult_Integration(t *testing.T) {
 
 	// Test Markdown file writing
 	t.Run("Markdown file writing", func(t *testing.T) {
-		mdFilePath := filepath.Join(tempDir, "integration_test.md")
-		err := result.WriteAsMarkdown(mdFilePath)
+		// Change to temp directory for testing
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		err = os.Chdir(tempDir)
+		require.NoError(t, err)
+
+		err = result.WriteAsMarkdown()
 		require.NoError(t, err)
 
 		// Verify file exists and has content
-		fileInfo, err := os.Stat(mdFilePath)
+		expectedPath := result.GetMarkdownPath()
+		fileInfo, err := os.Stat(expectedPath)
 		require.NoError(t, err)
 		assert.True(t, fileInfo.Size() > 0)
 
 		// Verify content contains expected markdown
-		fileData, err := os.ReadFile(mdFilePath)
+		fileData, err := os.ReadFile(expectedPath)
 		require.NoError(t, err)
 		content := string(fileData)
 		assert.Contains(t, content, "# MSK Region Scan Report")

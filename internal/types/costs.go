@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,7 +34,31 @@ type RegionCosts struct {
 	Tags        map[string][]string `json:"tags"`
 }
 
-func (c *RegionCosts) WriteAsJson(filePath string) error {
+func (c *RegionCosts) GetJsonPath() string {
+	return filepath.Join(c.GetDirPath(), fmt.Sprintf("%s-cost-report.json", c.Region))
+}
+
+func (c *RegionCosts) GetMarkdownPath() string {
+	return filepath.Join(c.GetDirPath(), fmt.Sprintf("%s-cost-report.md", c.Region))
+}
+
+func (c *RegionCosts) GetCSVPath() string {
+	return filepath.Join(c.GetDirPath(), fmt.Sprintf("%s-cost-report.csv", c.Region))
+}
+
+func (c *RegionCosts) GetDirPath() string {
+	return filepath.Join("kcp-scan", c.Region)
+}
+
+func (c *RegionCosts) WriteAsJson() error {
+
+	dirPath := c.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := c.GetJsonPath()
+
 	data, err := c.AsJson()
 	if err != nil {
 		return err
@@ -54,13 +79,19 @@ func (c *RegionCosts) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (c *RegionCosts) WriteAsMarkdown(filePath string) error {
+func (c *RegionCosts) WriteAsMarkdown() error {
+	dirPath := c.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := c.GetMarkdownPath()	
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }
 
 func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
-
+	
 	md := markdown.New()
 	md.AddHeading(fmt.Sprintf("AWS MSK Cost Report - %s", c.Region), 1)
 	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s", c.StartDate.Format("2006-01-02"), c.EndDate.Format("2006-01-02")))
@@ -258,7 +289,15 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 	return records
 }
 
-func (c *RegionCosts) WriteAsCSV(filePath string) error {
+func (c *RegionCosts) WriteAsCSV() error {
+
+	dirPath := c.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := c.GetCSVPath()
+
 	file, err := os.Create(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create CSV file: %v", err)

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
-
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -22,7 +22,28 @@ type RegionScanResult struct {
 	Region         string                                      `json:"region"`
 }
 
-func (rs *RegionScanResult) WriteAsJson(filePath string) error {
+func (rs *RegionScanResult) GetJsonPath() string {
+	return filepath.Join(rs.GetDirPath(), fmt.Sprintf("%s-region-scan.json", rs.Region))
+}
+
+func (rs *RegionScanResult) GetMarkdownPath() string {
+	return filepath.Join(rs.GetDirPath(), fmt.Sprintf("%s-region-scan.md", rs.Region))
+}
+
+func (rs *RegionScanResult) GetDirPath() string {
+	return filepath.Join("kcp-scan", rs.Region)
+}
+
+func (rs *RegionScanResult) WriteAsJson() error {
+
+
+	dirPath := rs.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := rs.GetJsonPath()
+
 	data, err := rs.AsJson()
 	if err != nil {
 		return err
@@ -43,7 +64,13 @@ func (rs *RegionScanResult) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (rs *RegionScanResult) WriteAsMarkdown(filePath string) error {
+func (rs *RegionScanResult) WriteAsMarkdown() error {
+	dirPath := rs.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := rs.GetMarkdownPath()
 	md := rs.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }

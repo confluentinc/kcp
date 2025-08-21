@@ -16,6 +16,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // Mock implementations
@@ -710,6 +711,9 @@ func TestClusterMetricsCollector_processServerlessNode(t *testing.T) {
 }
 
 func TestClusterMetricsCollector_writeOutput(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir := t.TempDir()
+
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
 	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
@@ -730,6 +734,7 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 	instanceType := "kafka.m5.large"
 
 	metrics := types.ClusterMetrics{
+		Region:      "us-west-2",
 		ClusterName: "test-cluster",
 		ClusterType: "PROVISIONED",
 		NodesMetrics: []types.NodeMetrics{
@@ -752,7 +757,15 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 		},
 	}
 
-	err := collector.writeOutput(metrics, "us-west-2")
+	// Change to temp directory for testing
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tempDir)
+	require.NoError(t, err)
+
+	err = collector.writeOutput(metrics, "us-west-2")
 
 	assert.NoError(t, err)
 
@@ -769,9 +782,6 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 	// Verify Markdown file was created
 	_, err = os.Stat("kcp-scan/us-west-2/test-cluster/test-cluster-metrics.md")
 	assert.NoError(t, err)
-
-	// Clean up
-	os.RemoveAll("kcp-scan")
 }
 
 func TestStructToMap(t *testing.T) {

@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -152,10 +151,9 @@ func TestClusterInformation_WriteAsJson(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		result   *ClusterInformation
-		filePath string
-		wantErr  bool
+		name    string
+		result  *ClusterInformation
+		wantErr bool
 	}{
 		{
 			name: "successfully write to file",
@@ -170,24 +168,36 @@ func TestClusterInformation_WriteAsJson(t *testing.T) {
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_output.json"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty cluster name should succeed",
 			result: &ClusterInformation{
 				Timestamp: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 				Region:    "us-east-1",
 				ClusterID: "test-cluster-id",
+				Cluster: kafkatypes.Cluster{
+					ClusterName: aws.String(""),
+					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster//12345678-1234-1234-1234-123456789012"),
+					State:       kafkatypes.ClusterStateActive,
+					ClusterType: kafkatypes.ClusterTypeProvisioned,
+				},
 			},
-			filePath: "/invalid/path/test.json",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.result.WriteAsJson(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.result.WriteAsJson()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -196,12 +206,13 @@ func TestClusterInformation_WriteAsJson(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.result.GetJsonPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 
 			var unmarshaled ClusterInformation
@@ -270,10 +281,9 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		result   *ClusterInformation
-		filePath string
-		wantErr  bool
+		name    string
+		result  *ClusterInformation
+		wantErr bool
 	}{
 		{
 			name: "successfully write markdown to file",
@@ -288,24 +298,36 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_output.md"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty cluster name should succeed",
 			result: &ClusterInformation{
 				Timestamp: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 				Region:    "us-east-1",
 				ClusterID: "test-cluster-id",
+				Cluster: kafkatypes.Cluster{
+					ClusterName: aws.String(""),
+					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster//12345678-1234-1234-1234-123456789012"),
+					State:       kafkatypes.ClusterStateActive,
+					ClusterType: kafkatypes.ClusterTypeProvisioned,
+				},
 			},
-			filePath: "/invalid/path/test.md",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.result.WriteAsMarkdown(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.result.WriteAsMarkdown()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -314,12 +336,13 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.result.GetMarkdownPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content contains markdown
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 			content := string(fileData)
 			assert.Contains(t, content, "# MSK Cluster Scan Report")

@@ -5,12 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -75,19 +72,12 @@ func (cs *ClusterScanner) Run() error {
 		return err
 	}
 
-	dirPath := filepath.Join("kcp-scan", clusterInfo.Region, aws.ToString(clusterInfo.Cluster.ClusterName))
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
-	}
-
-	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.json", aws.ToString(clusterInfo.Cluster.ClusterName)))
-	if err := clusterInfo.WriteAsJson(filePath); err != nil {
-		return err
+	if err := clusterInfo.WriteAsJson(); err != nil {
+		return fmt.Errorf("❌ Failed to generate json report: %v", err)
 	}
 
 	// Generate markdown report
-	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s.md", aws.ToString(clusterInfo.Cluster.ClusterName)))
-	if err := clusterInfo.WriteAsMarkdown(mdFilePath); err != nil {
+	if err := clusterInfo.WriteAsMarkdown(); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 
@@ -95,8 +85,8 @@ func (cs *ClusterScanner) Run() error {
 		"cluster", cs.clusterArn,
 		"clusterName", clusterInfo.Cluster.ClusterName,
 		"topicCount", len(clusterInfo.Topics),
-		"filePath", filePath,
-		"markdownPath", mdFilePath,
+		"filePath", clusterInfo.GetJsonPath(),
+		"markdownPath", clusterInfo.GetMarkdownPath(),
 	)
 
 	return nil

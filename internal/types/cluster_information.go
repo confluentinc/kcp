@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -31,7 +32,27 @@ type ClusterInformation struct {
 	Acls                 []Acls                                 `json:"acls"`
 }
 
-func (c *ClusterInformation) WriteAsJson(filePath string) error {
+func (c *ClusterInformation) GetJsonPath() string {
+	return filepath.Join(c.GetDirPath(), fmt.Sprintf("%s.json", aws.ToString(c.Cluster.ClusterName)))
+}
+
+func (c *ClusterInformation) GetMarkdownPath() string {
+	return filepath.Join(c.GetDirPath(), fmt.Sprintf("%s.md", aws.ToString(c.Cluster.ClusterName)))
+}
+
+func (c *ClusterInformation) GetDirPath() string {
+	return filepath.Join("kcp-scan", c.Region, aws.ToString(c.Cluster.ClusterName))
+}
+
+func (c *ClusterInformation) WriteAsJson() error {
+
+	dirPath := c.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := c.GetJsonPath()
+
 	data, err := c.AsJson()
 	if err != nil {
 		return err
@@ -52,7 +73,14 @@ func (c *ClusterInformation) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (c *ClusterInformation) WriteAsMarkdown(filePath string) error {
+func (c *ClusterInformation) WriteAsMarkdown() error {
+	dirPath := c.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := c.GetMarkdownPath()
+
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }

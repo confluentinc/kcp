@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -132,37 +130,30 @@ func (rs *RegionScanner) Run() error {
 
 	ctx := context.TODO()
 
-	scanResult, err := rs.scanRegion(ctx)
+	scanResult, err := rs.ScanRegion(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("❌ Failed to scan region: %v", err)
 	}
 
-	dirPath := filepath.Join("kcp-scan", rs.region)
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
-	}
-
-	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.json", rs.region))
-	if err := scanResult.WriteAsJson(filePath); err != nil {
-		return err
+	if err := scanResult.WriteAsJson(); err != nil {
+		return fmt.Errorf("❌ Failed to generate json report: %v", err)
 	}
 	// Generate markdown report
-	mdFilePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.md", rs.region))
-	if err := scanResult.WriteAsMarkdown(mdFilePath); err != nil {
+	if err := scanResult.WriteAsMarkdown(); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 
-	slog.Info("✅ scan complete",
+	slog.Info("✅ region scan complete",
 		"region", rs.region,
 		"clusterCount", len(scanResult.Clusters),
-		"filePath", filePath,
-		"markdownPath", mdFilePath,
+		"filePath", scanResult.GetJsonPath(),
+		"markdownPath", scanResult.GetMarkdownPath(),
 	)
 
 	return nil
 }
 
-func (rs *RegionScanner) scanRegion(ctx context.Context) (*types.RegionScanResult, error) {
+func (rs *RegionScanner) ScanRegion(ctx context.Context) (*types.RegionScanResult, error) {
 	maxResults := int32(100)
 	result := &types.RegionScanResult{
 		Timestamp: time.Now(),

@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -146,14 +145,14 @@ func TestClusterMetrics_WriteAsJson(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		metrics  *ClusterMetrics
-		filePath string
-		wantErr  bool
+		name    string
+		metrics *ClusterMetrics
+		wantErr bool
 	}{
 		{
 			name: "successfully write to file",
 			metrics: &ClusterMetrics{
+				Region:       "us-east-1",
 				ClusterArn:   "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012",
 				ClusterName:  "test-cluster",
 				ClusterType:  "PROVISIONED",
@@ -161,27 +160,34 @@ func TestClusterMetrics_WriteAsJson(t *testing.T) {
 				EndDate:      time.Date(2023, 1, 2, 12, 0, 0, 0, time.UTC),
 				NodesMetrics: []NodeMetrics{},
 			},
-			filePath: filepath.Join(tempDir, "test_metrics.json"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty cluster name should succeed",
 			metrics: &ClusterMetrics{
-				ClusterArn:   "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012",
-				ClusterName:  "test-cluster",
+				Region:       "us-east-1",
+				ClusterArn:   "arn:aws:kafka:us-east-1:123456789012:cluster//12345678-1234-1234-1234-123456789012",
+				ClusterName:  "",
 				ClusterType:  "PROVISIONED",
 				StartDate:    time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 				EndDate:      time.Date(2023, 1, 2, 12, 0, 0, 0, time.UTC),
 				NodesMetrics: []NodeMetrics{},
 			},
-			filePath: "/invalid/path/test.json",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.metrics.WriteAsJson(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.metrics.WriteAsJson()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -190,12 +196,13 @@ func TestClusterMetrics_WriteAsJson(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.metrics.GetJsonPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 
 			var unmarshaled ClusterMetrics
@@ -304,14 +311,14 @@ func TestClusterMetrics_WriteAsMarkdown(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		metrics  *ClusterMetrics
-		filePath string
-		wantErr  bool
+		name    string
+		metrics *ClusterMetrics
+		wantErr bool
 	}{
 		{
 			name: "successfully write markdown to file",
 			metrics: &ClusterMetrics{
+				Region:       "us-east-1",
 				ClusterArn:   "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012",
 				ClusterName:  "test-cluster",
 				ClusterType:  "PROVISIONED",
@@ -319,27 +326,34 @@ func TestClusterMetrics_WriteAsMarkdown(t *testing.T) {
 				EndDate:      time.Date(2023, 1, 2, 12, 0, 0, 0, time.UTC),
 				NodesMetrics: []NodeMetrics{},
 			},
-			filePath: filepath.Join(tempDir, "test_metrics.md"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty cluster name should succeed",
 			metrics: &ClusterMetrics{
-				ClusterArn:   "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012",
-				ClusterName:  "test-cluster",
+				Region:       "us-east-1",
+				ClusterArn:   "arn:aws:kafka:us-east-1:123456789012:cluster//12345678-1234-1234-1234-123456789012",
+				ClusterName:  "",
 				ClusterType:  "PROVISIONED",
 				StartDate:    time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 				EndDate:      time.Date(2023, 1, 2, 12, 0, 0, 0, time.UTC),
 				NodesMetrics: []NodeMetrics{},
 			},
-			filePath: "/invalid/path/test.md",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.metrics.WriteAsMarkdown(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.metrics.WriteAsMarkdown()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -348,12 +362,13 @@ func TestClusterMetrics_WriteAsMarkdown(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.metrics.GetMarkdownPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content contains markdown
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 			content := string(fileData)
 			assert.Contains(t, content, "# MSK Cluster Metrics Report")

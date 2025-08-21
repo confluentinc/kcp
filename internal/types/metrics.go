@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
 type ClusterMetrics struct {
+	Region                string                `json:"region"`
 	ClusterArn            string                `json:"cluster_arn"`
 	ClusterName           string                `json:"cluster_name"`
 	ClusterType           string                `json:"cluster_type"`
@@ -60,7 +63,26 @@ type ClusterMetricsSummary struct {
 	InstanceType                            *string  `json:"instance_type"`
 }
 
-func (cm *ClusterMetrics) WriteAsJson(filePath string) error {
+func (cm *ClusterMetrics) GetJsonPath() string {
+	return filepath.Join(cm.GetDirPath(), fmt.Sprintf("%s-metrics.json", aws.ToString(&cm.ClusterName)))
+}
+
+func (cm *ClusterMetrics) GetMarkdownPath() string {
+	return filepath.Join(cm.GetDirPath(), fmt.Sprintf("%s-metrics.md", aws.ToString(&cm.ClusterName)))
+}
+
+func (cm *ClusterMetrics) GetDirPath() string {
+	return filepath.Join("kcp-scan", cm.Region, aws.ToString(&cm.ClusterName))
+}
+
+func (cm *ClusterMetrics) WriteAsJson() error {
+	dirPath := cm.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := cm.GetJsonPath()
+
 	data, err := cm.AsJson()
 	if err != nil {
 		return err
@@ -81,7 +103,13 @@ func (cm *ClusterMetrics) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (cm *ClusterMetrics) WriteAsMarkdown(filePath string) error {
+func (cm *ClusterMetrics) WriteAsMarkdown() error {
+	dirPath := cm.GetDirPath()
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
+	}
+
+	filePath := cm.GetMarkdownPath()
 	md := cm.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 }

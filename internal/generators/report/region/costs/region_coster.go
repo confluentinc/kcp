@@ -3,8 +3,6 @@ package costs
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,26 +67,24 @@ func (rc *RegionCoster) Run() error {
 	if err != nil {
 		return fmt.Errorf("❌ Failed to get AWS costs: %v", err)
 	}
-	outputFolder := filepath.Join("kcp-scan", rc.region)
-	if err := os.MkdirAll(outputFolder, 0755); err != nil {
-		return fmt.Errorf("❌ Failed to create output folder: %v", err)
-	}
 
-	jsonFilePath := fmt.Sprintf("%s/cost_report-%s.json", outputFolder, rc.region)
-	if err := regionCosts.WriteAsJson(jsonFilePath); err != nil {
+	if err := regionCosts.WriteAsJson(); err != nil {
 		return fmt.Errorf("❌ Failed to write JSON output: %v", err)
 	}
 
-	markdownFilePath := fmt.Sprintf("%s/cost_report-%s.md", outputFolder, rc.region)
-	if err := regionCosts.WriteAsMarkdown(markdownFilePath); err != nil {
+	if err := regionCosts.WriteAsMarkdown(); err != nil {
 		return fmt.Errorf("❌ Failed to write markdown output: %v", err)
 	}
 
-	csvFilePath := fmt.Sprintf("%s/cost_report-%s.csv", outputFolder, rc.region)
-	if err := regionCosts.WriteAsCSV(csvFilePath); err != nil {
+	if err := regionCosts.WriteAsCSV(); err != nil {
 		return fmt.Errorf("❌ Failed to write CSV output: %v", err)
 	}
 
-	slog.Info("✅ region costs report complete", "region", rc.region)
+	slog.Info("✅ region costs report complete", 
+		"region", rc.region,
+		"filePath", regionCosts.GetJsonPath(),
+		"markdownPath", regionCosts.GetMarkdownPath(),		
+		"csvPath", regionCosts.GetCSVPath(),
+	)
 	return nil
 }

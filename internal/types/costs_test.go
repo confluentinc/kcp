@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -143,10 +142,9 @@ func TestRegionCosts_WriteAsJson(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		costs    *RegionCosts
-		filePath string
-		wantErr  bool
+		name    string
+		costs   *RegionCosts
+		wantErr bool
 	}{
 		{
 			name: "successfully write to file",
@@ -169,25 +167,31 @@ func TestRegionCosts_WriteAsJson(t *testing.T) {
 					Total: 100.00,
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_costs.json"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty region should succeed",
 			costs: &RegionCosts{
-				Region:      "us-east-1",
+				Region:      "",
 				StartDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
 				EndDate:     time.Date(2023, 1, 31, 23, 59, 59, 0, time.UTC),
 				Granularity: "MONTHLY",
 			},
-			filePath: "/invalid/path/test.json",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.costs.WriteAsJson(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.costs.WriteAsJson()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -196,12 +200,13 @@ func TestRegionCosts_WriteAsJson(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.costs.GetJsonPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 
 			var unmarshaled RegionCosts
@@ -332,10 +337,9 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		costs    *RegionCosts
-		filePath string
-		wantErr  bool
+		name    string
+		costs   *RegionCosts
+		wantErr bool
 	}{
 		{
 			name: "successfully write markdown to file",
@@ -358,25 +362,31 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 					Total: 100.00,
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_costs.md"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty region should succeed",
 			costs: &RegionCosts{
-				Region:      "us-east-1",
+				Region:      "",
 				StartDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
 				EndDate:     time.Date(2023, 1, 31, 23, 59, 59, 0, time.UTC),
 				Granularity: "MONTHLY",
 			},
-			filePath: "/invalid/path/test.md",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.costs.WriteAsMarkdown(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.costs.WriteAsMarkdown()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -385,12 +395,13 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.costs.GetMarkdownPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify content contains markdown
-			fileData, err := os.ReadFile(tt.filePath)
+			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 			content := string(fileData)
 			assert.Contains(t, content, "# AWS MSK Cost Report")
@@ -535,10 +546,9 @@ func TestRegionCosts_WriteAsCSV(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
-		costs    *RegionCosts
-		filePath string
-		wantErr  bool
+		name    string
+		costs   *RegionCosts
+		wantErr bool
 	}{
 		{
 			name: "successfully write CSV to file",
@@ -561,25 +571,31 @@ func TestRegionCosts_WriteAsCSV(t *testing.T) {
 					Total: 100.00,
 				},
 			},
-			filePath: filepath.Join(tempDir, "test_costs.csv"),
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
-			name: "write to invalid directory should fail",
+			name: "write with empty region should succeed",
 			costs: &RegionCosts{
-				Region:      "us-east-1",
+				Region:      "",
 				StartDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
 				EndDate:     time.Date(2023, 1, 31, 23, 59, 59, 0, time.UTC),
 				Granularity: "MONTHLY",
 			},
-			filePath: "/invalid/path/test.csv",
-			wantErr:  true,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.costs.WriteAsCSV(tt.filePath)
+			// Change to temp directory for testing
+			originalWd, err := os.Getwd()
+			require.NoError(t, err)
+			defer os.Chdir(originalWd)
+
+			err = os.Chdir(tempDir)
+			require.NoError(t, err)
+
+			err = tt.costs.WriteAsCSV()
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -588,12 +604,13 @@ func TestRegionCosts_WriteAsCSV(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Verify file was created and contains expected content
-			fileInfo, err := os.Stat(tt.filePath)
+			expectedPath := tt.costs.GetCSVPath()
+			fileInfo, err := os.Stat(expectedPath)
 			require.NoError(t, err)
 			assert.True(t, fileInfo.Size() > 0)
 
 			// Read and verify CSV content
-			file, err := os.Open(tt.filePath)
+			file, err := os.Open(expectedPath)
 			require.NoError(t, err)
 			defer file.Close()
 
@@ -668,12 +685,20 @@ func TestRegionCosts_Integration(t *testing.T) {
 
 	// Test JSON file writing
 	t.Run("JSON file writing", func(t *testing.T) {
-		jsonFilePath := filepath.Join(tempDir, "integration_test_costs.json")
-		err := costs.WriteAsJson(jsonFilePath)
+		// Change to temp directory for testing
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		err = os.Chdir(tempDir)
+		require.NoError(t, err)
+
+		err = costs.WriteAsJson()
 		require.NoError(t, err)
 
 		// Verify file exists and has content
-		fileInfo, err := os.Stat(jsonFilePath)
+		expectedPath := costs.GetJsonPath()
+		fileInfo, err := os.Stat(expectedPath)
 		require.NoError(t, err)
 		assert.True(t, fileInfo.Size() > 0)
 	})
@@ -686,17 +711,25 @@ func TestRegionCosts_Integration(t *testing.T) {
 
 	// Test Markdown file writing
 	t.Run("Markdown file writing", func(t *testing.T) {
-		mdFilePath := filepath.Join(tempDir, "integration_test_costs.md")
-		err := costs.WriteAsMarkdown(mdFilePath)
+		// Change to temp directory for testing
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		err = os.Chdir(tempDir)
+		require.NoError(t, err)
+
+		err = costs.WriteAsMarkdown()
 		require.NoError(t, err)
 
 		// Verify file exists and has content
-		fileInfo, err := os.Stat(mdFilePath)
+		expectedPath := costs.GetMarkdownPath()
+		fileInfo, err := os.Stat(expectedPath)
 		require.NoError(t, err)
 		assert.True(t, fileInfo.Size() > 0)
 
 		// Verify content contains expected markdown
-		fileData, err := os.ReadFile(mdFilePath)
+		fileData, err := os.ReadFile(expectedPath)
 		require.NoError(t, err)
 		content := string(fileData)
 		assert.Contains(t, content, "# AWS MSK Cost Report")
@@ -713,17 +746,25 @@ func TestRegionCosts_Integration(t *testing.T) {
 
 	// Test CSV file writing
 	t.Run("CSV file writing", func(t *testing.T) {
-		csvFilePath := filepath.Join(tempDir, "integration_test_costs.csv")
-		err := costs.WriteAsCSV(csvFilePath)
+		// Change to temp directory for testing
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		err = os.Chdir(tempDir)
+		require.NoError(t, err)
+
+		err = costs.WriteAsCSV()
 		require.NoError(t, err)
 
 		// Verify file exists and has content
-		fileInfo, err := os.Stat(csvFilePath)
+		expectedPath := costs.GetCSVPath()
+		fileInfo, err := os.Stat(expectedPath)
 		require.NoError(t, err)
 		assert.True(t, fileInfo.Size() > 0)
 
 		// Verify CSV content
-		file, err := os.Open(csvFilePath)
+		file, err := os.Open(expectedPath)
 		require.NoError(t, err)
 		defer file.Close()
 
