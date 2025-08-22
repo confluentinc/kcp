@@ -139,7 +139,7 @@ func (rs *RegionScanner) Run() error {
 		return fmt.Errorf("❌ Failed to generate json report: %v", err)
 	}
 	// Generate markdown report
-	if err := scanResult.WriteAsMarkdown(); err != nil {
+	if err := scanResult.WriteAsMarkdown(false); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 

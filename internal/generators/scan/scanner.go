@@ -65,7 +65,7 @@ func (rs *Scanner) Run() error {
 				slog.Error("failed to write region scan result", "region", r, "error", err)
 			}
 
-			if err := regionScanResult.WriteAsMarkdown(); err != nil {
+			if err := regionScanResult.WriteAsMarkdown(true); err != nil {
 				slog.Error("failed to write region scan result", "region", r, "error", err)
 			}
 		}
@@ -87,7 +87,7 @@ func (rs *Scanner) Run() error {
 				slog.Error("failed to write region costs", "region", r, "error", err)
 			}
 
-			if err := costs.WriteAsMarkdown(); err != nil {
+			if err := costs.WriteAsMarkdown(true); err != nil {
 				slog.Error("failed to write region costs", "region", r, "error", err)
 			}
 		}
@@ -115,7 +115,7 @@ func (rs *Scanner) Run() error {
 						slog.Error("failed to write cluster scan result", "cluster", cluster.ClusterARN, "error", err)
 					}
 
-					if err := clusterScanResult.WriteAsMarkdown(); err != nil {
+					if err := clusterScanResult.WriteAsMarkdown(true); err != nil {
 						slog.Error("failed to write cluster scan result", "cluster", cluster.ClusterARN, "error", err)
 					}
 				}
@@ -147,16 +147,13 @@ func (rs *Scanner) Run() error {
 						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
 					}
 
-					if err := clusterMetricsResult.WriteAsMarkdown(); err != nil {
+					if err := clusterMetricsResult.WriteAsMarkdown(true); err != nil {
 						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
 					}
 				}
 				
 				
 			}
-
-	
-
 		}
 	}
 

@@ -79,7 +79,7 @@ func (c *RegionCosts) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (c *RegionCosts) WriteAsMarkdown() error {
+func (c *RegionCosts) WriteAsMarkdown(suppressToTerminal bool) error {
 	dirPath := c.GetDirPath()
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
@@ -87,7 +87,7 @@ func (c *RegionCosts) WriteAsMarkdown() error {
 
 	filePath := c.GetMarkdownPath()	
 	md := c.AsMarkdown()
-	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
+	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
 
 func (c *RegionCosts) AsMarkdown() *markdown.Markdown {

@@ -90,7 +90,7 @@ func (rm *ClusterMetricsCollector) Run() error {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
 
-	if err := clusterMetrics.WriteAsMarkdown(); err != nil {
+	if err := clusterMetrics.WriteAsMarkdown(false); err != nil {
 		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}
 

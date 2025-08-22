@@ -386,7 +386,7 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 			err = os.Chdir(tempDir)
 			require.NoError(t, err)
 
-			err = tt.costs.WriteAsMarkdown()
+			err = tt.costs.WriteAsMarkdown(true)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -719,7 +719,7 @@ func TestRegionCosts_Integration(t *testing.T) {
 		err = os.Chdir(tempDir)
 		require.NoError(t, err)
 
-		err = costs.WriteAsMarkdown()
+		err = costs.WriteAsMarkdown(true)
 		require.NoError(t, err)
 
 		// Verify file exists and has content

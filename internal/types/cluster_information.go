@@ -73,7 +73,7 @@ func (c *ClusterInformation) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (c *ClusterInformation) WriteAsMarkdown() error {
+func (c *ClusterInformation) WriteAsMarkdown(suppressToTerminal bool) error {
 	dirPath := c.GetDirPath()
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
@@ -82,7 +82,7 @@ func (c *ClusterInformation) WriteAsMarkdown() error {
 	filePath := c.GetMarkdownPath()
 
 	md := c.AsMarkdown()
-	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
+	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
 
 // generateMarkdownReport creates a comprehensive markdown report of the scan results

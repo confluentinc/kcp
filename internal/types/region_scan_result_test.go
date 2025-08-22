@@ -340,7 +340,7 @@ func TestRegionScanResult_WriteAsMarkdown(t *testing.T) {
 			err = os.Chdir(tempDir)
 			require.NoError(t, err)
 
-			err = tt.result.WriteAsMarkdown()
+			err = tt.result.WriteAsMarkdown(true)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -615,7 +615,7 @@ func TestRegionScanResult_Integration(t *testing.T) {
 		err = os.Chdir(tempDir)
 		require.NoError(t, err)
 
-		err = result.WriteAsMarkdown()
+		err = result.WriteAsMarkdown(true)
 		require.NoError(t, err)
 
 		// Verify file exists and has content

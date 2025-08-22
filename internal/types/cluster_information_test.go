@@ -327,7 +327,7 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 			err = os.Chdir(tempDir)
 			require.NoError(t, err)
 
-			err = tt.result.WriteAsMarkdown()
+			err = tt.result.WriteAsMarkdown(true)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return

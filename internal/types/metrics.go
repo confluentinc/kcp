@@ -103,7 +103,7 @@ func (cm *ClusterMetrics) AsJson() ([]byte, error) {
 	return data, nil
 }
 
-func (cm *ClusterMetrics) WriteAsMarkdown() error {
+func (cm *ClusterMetrics) WriteAsMarkdown(suppressToTerminal bool) error {
 	dirPath := cm.GetDirPath()
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
@@ -111,7 +111,7 @@ func (cm *ClusterMetrics) WriteAsMarkdown() error {
 
 	filePath := cm.GetMarkdownPath()
 	md := cm.AsMarkdown()
-	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
+	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
 
 // generateMarkdownReport creates a comprehensive markdown report of the scan results

@@ -77,7 +77,7 @@ func (cs *ClusterScanner) Run() error {
 	}
 
 	// Generate markdown report
-	if err := clusterInfo.WriteAsMarkdown(); err != nil {
+	if err := clusterInfo.WriteAsMarkdown(false); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 

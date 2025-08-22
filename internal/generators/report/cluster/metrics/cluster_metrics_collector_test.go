@@ -765,7 +765,7 @@ func TestClusterMetrics_WriteOutput(t *testing.T) {
 		t.Fatalf("Failed to write JSON: %v", err)
 	}
 
-	err = metrics.WriteAsMarkdown()
+	err = metrics.WriteAsMarkdown(true)
 
 	assert.NoError(t, err)
 

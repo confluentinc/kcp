@@ -72,7 +72,7 @@ func (rc *RegionCoster) Run() error {
 		return fmt.Errorf("❌ Failed to write JSON output: %v", err)
 	}
 
-	if err := regionCosts.WriteAsMarkdown(); err != nil {
+	if err := regionCosts.WriteAsMarkdown(false); err != nil {
 		return fmt.Errorf("❌ Failed to write markdown output: %v", err)
 	}
 
