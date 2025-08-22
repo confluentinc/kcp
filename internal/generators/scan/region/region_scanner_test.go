@@ -217,7 +217,7 @@ func TestScanner_Run(t *testing.T) {
 	readOnlyDir := filepath.Join(os.TempDir(), "readonly_test_dir")
 	err := os.MkdirAll(readOnlyDir, 0400)
 	require.NoError(t, err)
-	defer os.RemoveAll(readOnlyDir)
+	defer os.RemoveAll("kcp-scan")
 
 	tests := []struct {
 		name       string
@@ -326,7 +326,7 @@ func TestScanner_Run(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify the output file exists and contains valid JSON
-			jsonFilePath := fmt.Sprintf("region_scan_%s.json", tt.region)
+			jsonFilePath := filepath.Join("kcp-scan", tt.region, fmt.Sprintf("%s-region-scan.json", tt.region))
 			data, err := os.ReadFile(jsonFilePath)
 			require.NoError(t, err)
 
@@ -339,9 +339,7 @@ func TestScanner_Run(t *testing.T) {
 			assert.Equal(t, len(tt.mockOutput.ClusterInfoList), len(result.Clusters))
 
 			// Cleanup test file
-			markDownFilePath := fmt.Sprintf("region_scan_%s.md", tt.region)
-			os.Remove(jsonFilePath)
-			os.Remove(markDownFilePath)
+			os.RemoveAll("kcp-scan")
 		})
 	}
 }

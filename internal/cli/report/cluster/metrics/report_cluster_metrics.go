@@ -142,22 +142,8 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 
 	mskService := msk.NewMSKService(mskClient)
 
-	// Get cluster information to extract Kafka version
-	cluster, err := mskService.DescribeCluster(cmd.Context(), &opts.ClusterArn)
-	if err != nil {
-		return fmt.Errorf("failed to describe cluster: %v", err)
-	}
 
-	// Extract and convert Kafka version
-	var kafkaVersion string
-	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		kafkaVersion = utils.ConvertKafkaVersion(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
-	} else {
-		// TODO: For severless clusters, how should we handle this? Currently defaulting to 4.0.0
-		kafkaVersion = "4.0.0"
-	}
-
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		switch opts.AuthType {
 		case types.AuthTypeIAM:
 			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithIAMAuth())

@@ -24,7 +24,7 @@ func NewCostService(client *costexplorer.Client) *CostService {
 	}
 }
 
-func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.CostData, error) {
+func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
 	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
 
 	startStr := aws.String(startDate.Format("2006-01-02"))
@@ -39,18 +39,19 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 
 	output, err := cs.client.GetCostAndUsage(context.Background(), input)
 	if err != nil {
-		return types.CostData{}, fmt.Errorf("failed to get cost and usage: %v", err)
+		return types.RegionCosts{}, fmt.Errorf("failed to get cost and usage: %v", err)
 	}
 
-	return cs.processCostExplorerOutput(output), nil
-}
-
-func (cs *CostService) GetMonthlyCosts(region string, tags map[string][]string) (types.CostData, error) {
-	now := time.Now().UTC()
-	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
-	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-
-	return cs.GetCostsForTimeRange(region, start, end, costexplorertypes.GranularityMonthly, tags)
+	costData := cs.processCostExplorerOutput(output)
+	regionCosts := types.RegionCosts{
+		Region:      region,
+		CostData:    costData,
+		StartDate:   startDate,
+		EndDate:     endDate,
+		Granularity: string(granularity),
+		Tags:        tags,
+	}
+	return regionCosts, nil
 }
 
 func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, tags map[string][]string) *costexplorer.GetCostAndUsageInput {

@@ -2,10 +2,8 @@ package region
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -132,38 +130,30 @@ func (rs *RegionScanner) Run() error {
 
 	ctx := context.TODO()
 
-	scanResult, err := rs.scanRegion(ctx)
+	scanResult, err := rs.ScanRegion(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("❌ Failed to scan region: %v", err)
 	}
 
-	data, err := json.MarshalIndent(scanResult, "", "  ")
-	if err != nil {
-		return fmt.Errorf("❌ Failed to marshal scan results: %v", err)
+	if err := scanResult.WriteAsJson(); err != nil {
+		return fmt.Errorf("❌ Failed to generate json report: %v", err)
 	}
-
-	filePath := fmt.Sprintf("region_scan_%s.json", rs.region)
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("❌ Failed to write file: %v", err)
-	}
-
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("region_scan_%s.md", rs.region)
-	if err := rs.generateMarkdownReport(scanResult, mdFilePath); err != nil {
+	if err := scanResult.WriteAsMarkdown(false); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 
-	slog.Info("✅ scan complete",
+	slog.Info("✅ region scan complete",
 		"region", rs.region,
 		"clusterCount", len(scanResult.Clusters),
-		"filePath", filePath,
-		"markdownPath", mdFilePath,
+		"filePath", scanResult.GetJsonPath(),
+		"markdownPath", scanResult.GetMarkdownPath(),
 	)
 
 	return nil
 }
 
-func (rs *RegionScanner) scanRegion(ctx context.Context) (*types.RegionScanResult, error) {
+func (rs *RegionScanner) ScanRegion(ctx context.Context) (*types.RegionScanResult, error) {
 	maxResults := int32(100)
 	result := &types.RegionScanResult{
 		Timestamp: time.Now(),
