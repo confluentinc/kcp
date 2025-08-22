@@ -22,7 +22,7 @@ func NewScanCmd() *cobra.Command {
 	scanCmd := &cobra.Command{
 		Use:           "scan",
 		Short:         "Multi-region, multi cluster scan of AWS MSK",
-		Long:          "Performs a full Dsicovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
+		Long:          "Performs a full Discovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE:          runScan,

@@ -158,6 +158,83 @@ You can also set environment variables individually if you opt not to use the sc
 
 ### `kcp scan`
 
+The kcp scan command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
+
+*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names.*
+
+**Example Usage**
+
+`kcp scan --region us-east-1 --region eu-west-3`
+
+or 
+
+`kcp scan --region us-east-1,eu-west-3`
+
+The command will produce region msk, cost, metrics and cluster output files in a nested structure as follows:
+
+```
+.
+└── kcp-scan
+    ├── eu-west-3
+    │   ├── eu-west-3-cost-report.json
+    │   ├── eu-west-3-cost-report.md
+    │   ├── eu-west-3-region-scan.json
+    │   ├── eu-west-3-region-scan.md
+    │   └── cluster-1
+    │       ├── cluster-1-metrics.json
+    │       ├── cluster-1-metrics.md
+    │       ├── cluster-1.json
+    │       └── cluster-1.md
+    └── us-east-1
+        ├── cluster-2
+        │   ├── cluster-2-metrics.json
+        │   ├── cluster-2-metrics.md
+        │   ├── cluster-2.json
+        │   └── cluster-2.md
+        ├── us-east-1-cost-report.json
+        ├── us-east-1-cost-report.md
+        ├── us-east-1-region-scan.json
+        └── us-east-1-region-scan.md
+
+```
+This command requires the following permissions:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ScanAllPermissions",
+            "Effect": "Allow",
+            "Action": [
+                "kafka:ListClustersV2",
+                "kafka:ListReplicators",
+                "kafka:ListVpcConnections",
+                "kafka:GetCompatibleKafkaVersions",
+                "cloudwatch:GetMetricData",
+                "kafka:ListKafkaVersions",
+                "ce:GetCostAndUsage",
+                "kafka:GetBootstrapBrokers",
+                "kafka:ListConfigurations",
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:ListMetrics",
+                "kafka:DescribeClusterV2",
+                "kafka:ListNodes",
+                "kafka:ListClusterOperationsV2",
+                "kafka:ListScramSecrets",
+                "kafka:ListClientVpcConnections",
+                "kafka:GetClusterPolicy",
+                "kafka:DescribeConfigurationRevision",
+                "kafka:DescribeReplicator"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+```
+
+
 The `kcp scan` command includes the following sub-commands:
 
 - `cluster`
