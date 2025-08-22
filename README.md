@@ -227,27 +227,25 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "RegionLevelMSKAccess",
-            "Effect": "Allow",
-            "Action": [
-                "kafka:DescribeConfiguration",
-                "kafka:DescribeConfigurationRevision",
-                "kafka:GetBootstrapBrokers",
-                "kafka:GetCompatibleKafkaVersions",
-                "kafka:ListClustersV2",
-                "kafka:ListConfigurations",
-                "kafka:ListKafkaVersions",
-                "kafka:ListReplicators",
-                "kafka:ListVpcConnections"
-            ],
-            "Resource": [
-                "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
-            ]
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RegionLevelMSKAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kafka:DescribeConfiguration",
+        "kafka:DescribeConfigurationRevision",
+        "kafka:GetBootstrapBrokers",
+        "kafka:GetCompatibleKafkaVersions",
+        "kafka:ListClustersV2",
+        "kafka:ListConfigurations",
+        "kafka:ListKafkaVersions",
+        "kafka:ListReplicators",
+        "kafka:ListVpcConnections"
+      ],
+      "Resource": ["arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"]
+    }
+  ]
 }
 ```
 
@@ -255,20 +253,17 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
-                "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
-            ]
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+        "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
+      ]
+    }
+  ]
 }
 ```
 
@@ -387,6 +382,7 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
 
 **Prerequisites**
+
 - Enable trace logging for `kafka.server.KafkaApis=TRACE` for each broker
 - Enable s3 broker log delivery for the cluster
 
@@ -399,12 +395,13 @@ kcp scan broker-logs \
 ```
 
 **Output:**
-The command generates a csv file - `broker_logs_scan_results.csv` containing: 
+The command generates a csv file - `broker_logs_scan_results.csv` containing:
 
 - All the unique clients it could identify based on a combination of values:
   - i.e. clientID + topic + role + auth + principal
 
 example output
+
 ```csv
 Client ID,Role,Topic,Auth,Principal,Timestamp
 consumer1,Consumer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-18 10:15:16
@@ -613,6 +610,7 @@ The command generates two files - `<aws-cluster>-metrics.md` and `<aws-cluster>-
 The `kcp create-asset` command includes the following sub-commands:
 
 - `bastion-host`
+- `migrate-acls`
 - `migration-infra`
 - `migration-scripts`
 - `reverse-proxy`
@@ -747,6 +745,36 @@ The sub-commands require the following minimum AWS IAM permissions:
       "Effect": "Allow",
       "Action": ["ec2:RunInstances"],
       "Resource": "arn:aws:ec2:<AWS REGION>::image/*"
+    }
+  ]
+}
+```
+
+`migrate-acls`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ParseRolesForACLs",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": ["*"]
+    },
+    {
+      "Sid": "ParseUsersForACLs",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUserPolicy",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListUserPolicies"
+      ],
+      "Resource": ["*"]
     }
   ]
 }
