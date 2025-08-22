@@ -172,11 +172,15 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 	}
 	clusterInfo.CompatibleVersions = *versions
 
-	networking, err := cs.scanNetworkingInfo(ctx, cluster, nodes)
-	if err != nil {
-		return err
+	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		networking, err := cs.scanNetworkingInfo(ctx, cluster, nodes)
+		if err != nil {
+			return err
+		}
+		clusterInfo.ClusterNetworking = networking
+	} else {
+		slog.Warn("⚠️ Cluster networking not supported for MSK Serverless clusters, skipping networking scan")
 	}
-	clusterInfo.ClusterNetworking = networking
 
 	return nil
 }

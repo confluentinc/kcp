@@ -190,7 +190,12 @@ func (c *ClusterInformation) addSummarySection(md *markdown.Markdown) {
 		fmt.Sprintf("**Client VPC Connections:** %d", len(c.ClientVpcConnections)),
 		fmt.Sprintf("**VPC ID:** %s", aws.ToString(&c.ClusterNetworking.VpcId)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(c.ClusterOperations)),
-		fmt.Sprintf("**Brokers:** %d", *c.Cluster.Provisioned.NumberOfBrokerNodes),
+		func() string {
+			if c.Cluster.Provisioned != nil && c.Cluster.Provisioned.NumberOfBrokerNodes != nil {
+				return fmt.Sprintf("**Brokers:** %d", *c.Cluster.Provisioned.NumberOfBrokerNodes)
+			}
+			return "**Brokers:** N/A"
+		}(),
 		fmt.Sprintf("**SCRAM Secrets:** %d", len(c.ScramSecrets)),
 	}
 
