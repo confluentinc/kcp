@@ -2,11 +2,9 @@ package cluster
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -78,24 +76,17 @@ func (cs *ClusterScanner) Run() error {
 
 	ctx := context.TODO()
 
-	clusterInfo, err := cs.scanCluster(ctx)
+	clusterInfo, err := cs.ScanCluster(ctx)
 	if err != nil {
 		return err
 	}
 
-	data, err := json.MarshalIndent(clusterInfo, "", "  ")
-	if err != nil {
-		return fmt.Errorf("❌ Failed to marshal cluster information: %v", err)
-	}
-
-	filePath := fmt.Sprintf("cluster_scan_%s.json", aws.ToString(clusterInfo.Cluster.ClusterName))
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("❌ Failed to write file: %v", err)
+	if err := clusterInfo.WriteAsJson(); err != nil {
+		return fmt.Errorf("❌ Failed to generate json report: %v", err)
 	}
 
 	// Generate markdown report
-	mdFilePath := fmt.Sprintf("cluster_scan_%s.md", aws.ToString(clusterInfo.Cluster.ClusterName))
-	if err := cs.generateMarkdownReport(clusterInfo, mdFilePath); err != nil {
+	if err := clusterInfo.WriteAsMarkdown(false); err != nil {
 		return fmt.Errorf("❌ Failed to generate markdown report: %v", err)
 	}
 
@@ -103,14 +94,14 @@ func (cs *ClusterScanner) Run() error {
 		"cluster", cs.clusterArn,
 		"clusterName", clusterInfo.Cluster.ClusterName,
 		"topicCount", len(clusterInfo.Topics),
-		"filePath", filePath,
-		"markdownPath", mdFilePath,
+		"filePath", clusterInfo.GetJsonPath(),
+		"markdownPath", clusterInfo.GetMarkdownPath(),
 	)
 
 	return nil
 }
 
-func (cs *ClusterScanner) scanCluster(ctx context.Context) (*types.ClusterInformation, error) {
+func (cs *ClusterScanner) ScanCluster(ctx context.Context) (*types.ClusterInformation, error) {
 	clusterInfo := &types.ClusterInformation{
 		Timestamp: time.Now(),
 		Region:    cs.region,
