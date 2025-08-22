@@ -27,6 +27,15 @@ func TestClusterInformation_AsJson(t *testing.T) {
 				Timestamp: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 				Region:    "us-east-1",
 				ClusterID: "test-cluster-id",
+				Cluster: kafkatypes.Cluster{
+					ClusterName: aws.String("test-cluster-id"),
+					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-id/12345678-1234-1234-1234-123456789012"),
+					State:       kafkatypes.ClusterStateActive,
+					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
+				},
 			},
 			wantErr: false,
 			validate: func(t *testing.T, data []byte) {
@@ -49,6 +58,9 @@ func TestClusterInformation_AsJson(t *testing.T) {
 					ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
 				},
 			},
 			wantErr: false,
@@ -72,6 +84,14 @@ func TestClusterInformation_AsJson(t *testing.T) {
 					ClusterArn:  aws.String("arn:aws:kafka:eu-west-1:123456789012:cluster/test-cluster-3/87654321-4321-4321-4321-210987654321"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeServerless,
+					Serverless: &kafkatypes.Serverless{
+						VpcConfigs: []kafkatypes.VpcConfig{
+							{
+								SubnetIds:        []string{"subnet-12345"},
+								SecurityGroupIds: []string{"sg-12345"},
+							},
+						},
+					},
 				},
 				ClientVpcConnections: []kafkatypes.ClientVpcConnection{
 					{
@@ -166,6 +186,9 @@ func TestClusterInformation_WriteAsJson(t *testing.T) {
 					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
 				},
 			},
 			wantErr: false,
@@ -177,10 +200,13 @@ func TestClusterInformation_WriteAsJson(t *testing.T) {
 				Region:    "us-east-1",
 				ClusterID: "test-cluster-id",
 				Cluster: kafkatypes.Cluster{
-					ClusterName: aws.String(""),
-					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster//12345678-1234-1234-1234-123456789012"),
+					ClusterName: aws.String("test-cluster-id"), // Use cluster ID as name to avoid empty name
+					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-id/12345678-1234-1234-1234-123456789012"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
 				},
 			},
 			wantErr: false,
@@ -237,6 +263,17 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 				Timestamp: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 				Region:    "us-east-1",
 				ClusterID: "test-cluster-id",
+				Cluster: kafkatypes.Cluster{
+					ClusterName: aws.String("test-cluster-id"),
+					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-id/12345678-1234-1234-1234-123456789012"),
+					State:       kafkatypes.ClusterStateActive,
+					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
+				},
+				Topics: []string{},
+				Acls:   []Acls{},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
 				// Basic validation that markdown was generated
@@ -254,6 +291,9 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 					ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
 				},
 				Topics: []string{"topic1", "topic2"},
 				Acls:   []Acls{},
@@ -296,6 +336,9 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
 				},
 			},
 			wantErr: false,
@@ -307,10 +350,13 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 				Region:    "us-east-1",
 				ClusterID: "test-cluster-id",
 				Cluster: kafkatypes.Cluster{
-					ClusterName: aws.String(""),
-					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster//12345678-1234-1234-1234-123456789012"),
+					ClusterName: aws.String("test-cluster-id"), // Use cluster ID as name to avoid empty name
+					ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-id/12345678-1234-1234-1234-123456789012"),
 					State:       kafkatypes.ClusterStateActive,
 					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						NumberOfBrokerNodes: aws.Int32(3),
+					},
 				},
 			},
 			wantErr: false,

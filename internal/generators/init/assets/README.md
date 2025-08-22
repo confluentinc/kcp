@@ -68,6 +68,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `cluster`
 - `region`
+- `broker-logs`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -150,6 +151,27 @@ The sub-commands require the following minimum AWS IAM permissions:
             ],
             "Resource": [
                 "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
+            ]
+        }
+    ]
+}
+```
+
+`broker-logs`:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+                "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
             ]
         }
     ]
@@ -263,6 +285,46 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 - Topic metadata
 - Consumer group details
 - Cluster metrics
+
+---
+
+#### `kcp scan broker-logs`
+
+This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
+
+**Prerequisites**
+- Enable trace logging for `kafka.server.KafkaApis=TRACE` for each broker
+- Enable s3 broker log delivery for the cluster
+
+**Example Usage**
+
+```shell
+kcp scan broker-logs \
+--region us-east-1 \
+--s3-uri  s3://my-cluster-logs-bucket/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-1a2345b6-bf9f-4670-b13b-710985f5645d-5/2025-08-13-14/
+```
+
+**Output:**
+The command generates a csv file - `broker_logs_scan_results.csv` containing: 
+
+- All the unique clients it could identify based on a combination of values:
+  - i.e. clientID + topic + role + auth + principal
+
+example output
+```csv
+Client ID,Role,Topic,Auth,Principal,Timestamp
+consumer1,Consumer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-18 10:15:16
+default-producer-id,Producer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-18 10:15:18
+consumer2,Consumer,test-topic-1,UNAUTHENTICATED,User:ANONYMOUS,2025-08-18 10:18:22
+default-producer-id,Producer,test-topic-1,UNAUTHENTICATED,User:ANONYMOUS,2025-08-18 10:18:24
+```
+
+Alternatively, the following environment variables need to be set:
+
+```shell
+export REGION=<aws-region>
+export S3_URI=<folder-in-s3>
+```
 
 ---
 
@@ -439,7 +501,7 @@ kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cl
 kcp report cluster metrics \
 --start 2025-07-01 \
 --end 2025-08-01 \
---cluster-arn arn:aws:kafka:eu-north-1:635910096382:cluster/msk-exp1-fff-cluster/f6842864-4a96-4f6c-bf24-2728d32cdef3-2 \
+--cluster-arn arn:aws:kafka:us-east-1:000123456789:cluster/msk-cluster/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
 --use-sasl-iam
 ```
 
@@ -1130,7 +1192,7 @@ The command creates a `migration_scripts` directory containing shell scripts:
 
 ---
 
-#### `kcp create-asset migration-scripts`
+#### `kcp create-asset reverse-proxy`
 
 Create reverse proxy infrastructure assets to allow observability into migrated data in Confluent Cloud.
 

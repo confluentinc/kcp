@@ -14,6 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/services/metrics"
+	"github.com/confluentinc/kcp/internal/services/ec2"
 
 )
 
@@ -45,6 +46,7 @@ func (rs *Scanner) Run() error {
 			continue
 		}
 		mskService := msk.NewMSKService(mskClient)		
+	
 
 		// default the time period
 		now := time.Now()
@@ -94,6 +96,13 @@ func (rs *Scanner) Run() error {
 
 		// scan clusters within the region
 		if regionScanResult != nil {
+
+			ec2Service, err := ec2.NewEC2Service(r)
+			if err != nil {
+				slog.Error("failed to create ec2 service", "region", r, "error", err)
+				continue
+			}	
+
 			for _, cluster := range regionScanResult.Clusters {
 				// scan the cluster
 				clusterScannerOpts := cs.ClusterScannerOpts{
@@ -102,11 +111,11 @@ func (rs *Scanner) Run() error {
 					SkipKafka:         true,		
 				}
 
-				kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+				kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 					return nil, nil
 				}				
 
-				clusterScanner := cs.NewClusterScanner(mskService, kafkaAdminFactory, clusterScannerOpts)
+				clusterScanner := cs.NewClusterScanner(mskService, ec2Service, kafkaAdminFactory, clusterScannerOpts)
 				clusterScanResult, err := clusterScanner.ScanCluster(context.Background())
 				if err != nil {
 					slog.Error("failed to scan cluster", "cluster", cluster.ClusterARN, "error", err)

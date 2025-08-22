@@ -8,14 +8,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // KafkaAdminFactory is a function type that creates a KafkaAdmin client
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
+type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type ClusterScannerOpts struct {
 	Region            string
@@ -31,6 +34,7 @@ type ClusterScannerOpts struct {
 
 type ClusterScanner struct {
 	mskService        MSKService
+	ec2Service        EC2Service
 	kafkaAdminFactory KafkaAdminFactory
 	region            string
 	clusterArn        string
@@ -50,10 +54,15 @@ type MSKService interface {
 	ListScramSecrets(ctx context.Context, clusterArn *string) ([]string, error)
 }
 
+type EC2Service interface {
+	DescribeSubnets(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error)
+}
+
 // NewClusterScanner creates a new ClusterScanner instance.
-func NewClusterScanner(mskService MSKService, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
+func NewClusterScanner(mskService MSKService, ec2Service EC2Service, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
 	return &ClusterScanner{
 		mskService:        mskService,
+		ec2Service:        ec2Service,
 		kafkaAdminFactory: kafkaAdminFactory,
 		region:            opts.Region,
 		clusterArn:        opts.ClusterArn,
@@ -163,6 +172,12 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 	}
 	clusterInfo.CompatibleVersions = *versions
 
+	networking, err := cs.scanNetworkingInfo(ctx, cluster, nodes)
+	if err != nil {
+		return err
+	}
+	clusterInfo.ClusterNetworking = networking
+
 	return nil
 }
 
@@ -216,7 +231,92 @@ func (cs *ClusterScanner) describeCluster(ctx context.Context, clusterArn *strin
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
 	}
+
 	return cluster, nil
+}
+
+func (cs *ClusterScanner) scanNetworkingInfo(ctx context.Context, cluster *kafka.DescribeClusterV2Output, nodes []kafkatypes.NodeInfo) (types.ClusterNetworking, error) {
+	subnetIds := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets
+	securityGroups := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.SecurityGroups
+
+	vpcId, err := cs.getVpcIdFromSubnets(ctx, subnetIds)
+	if err != nil {
+		return types.ClusterNetworking{}, fmt.Errorf("failed to get VPC ID: %v", err)
+	}
+
+	subnetDetails, err := cs.getSubnetDetails(ctx, subnetIds)
+	if err != nil {
+		return types.ClusterNetworking{}, fmt.Errorf("failed to get subnet details: %v", err)
+	}
+
+	subnetInfo := cs.createCombinedSubnetBrokerInfo(nodes, subnetDetails)
+
+	return types.ClusterNetworking{
+		VpcId:          vpcId,
+		SubnetIds:      subnetIds,
+		SecurityGroups: securityGroups,
+		Subnets:        subnetInfo,
+	}, nil
+}
+
+func (cs *ClusterScanner) getVpcIdFromSubnets(ctx context.Context, subnetIds []string) (string, error) {
+	// Only way to get the VPC ID is to query the subnets belonging to the cluster brokers.
+	result, err := cs.ec2Service.DescribeSubnets(ctx, []string{subnetIds[0]})
+	if err != nil {
+		return "", fmt.Errorf("failed to describe subnet %s: %v", subnetIds[0], err)
+	}
+
+	if len(result.Subnets) > 0 && result.Subnets[0].VpcId != nil {
+		return aws.ToString(result.Subnets[0].VpcId), nil
+	}
+
+	return "", fmt.Errorf("no VPC ID found for subnet %s", subnetIds[0])
+}
+
+func (cs *ClusterScanner) getSubnetDetails(ctx context.Context, subnetIds []string) (map[string]types.SubnetInfo, error) {
+	result, err := cs.ec2Service.DescribeSubnets(ctx, subnetIds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe subnets: %v", err)
+	}
+
+	subnets := make(map[string]types.SubnetInfo)
+	for _, subnet := range result.Subnets {
+		subnetInfo := types.SubnetInfo{
+			SubnetId:         aws.ToString(subnet.SubnetId),
+			AvailabilityZone: aws.ToString(subnet.AvailabilityZone),
+			CidrBlock:        aws.ToString(subnet.CidrBlock),
+		}
+		subnets[subnetInfo.SubnetId] = subnetInfo
+	}
+
+	return subnets, nil
+}
+
+func (cs *ClusterScanner) createCombinedSubnetBrokerInfo(nodes []kafkatypes.NodeInfo, subnetDetails map[string]types.SubnetInfo) []types.SubnetInfo {
+	var subnetInfo []types.SubnetInfo
+
+	for _, node := range nodes {
+		// Grab subnets only from broker nodes.
+		if node.NodeType == kafkatypes.NodeTypeBroker && node.BrokerNodeInfo != nil {
+			subnetId := aws.ToString(node.BrokerNodeInfo.ClientSubnet)
+
+			if details, exists := subnetDetails[subnetId]; exists {
+				brokerId := 0
+
+				if node.BrokerNodeInfo.BrokerId != nil {
+					brokerId = int(*node.BrokerNodeInfo.BrokerId)
+				}
+
+				combinedSubnet := details
+				combinedSubnet.SubnetMskBrokerId = brokerId
+				combinedSubnet.PrivateIpAddress = aws.ToString(node.BrokerNodeInfo.ClientVpcIpAddress)
+
+				subnetInfo = append(subnetInfo, combinedSubnet)
+			}
+		}
+	}
+
+	return subnetInfo
 }
 
 func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
@@ -311,8 +411,9 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
+	kafkaVersion := cs.getKafkaVersion(clusterInfo)
 
-	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit)
+	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
@@ -333,11 +434,16 @@ func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformati
 	}
 	clusterInfo.Topics = topics
 
-	acls, err := cs.scanKafkaAcls(admin)
-	if err != nil {
-		return err
+	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
+	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		acls, err := cs.scanKafkaAcls(admin)
+		if err != nil {
+			return err
+		}
+		clusterInfo.Acls = acls
+	} else {
+		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
-	clusterInfo.Acls = acls
 
 	return nil
 }
@@ -368,4 +474,17 @@ func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, 
 	}
 
 	return flattenedAcls, nil
+}
+
+func (cs *ClusterScanner) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
+	switch clusterInfo.Cluster.ClusterType {
+	case kafkatypes.ClusterTypeProvisioned:
+		return utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	case kafkatypes.ClusterTypeServerless:
+		slog.Warn("⚠️ Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
+		return "4.0.0"
+	default:
+		slog.Warn(fmt.Sprintf("⚠️ Unknown cluster type: %v, defaulting to 4.0.0", clusterInfo.Cluster.ClusterType))
+		return "4.0.0"
+	}
 }

@@ -14,6 +14,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ClusterMetricsOpts struct {
@@ -54,7 +55,7 @@ type MSKService interface {
 	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 }
 
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
+type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type MetricService interface {
 	GetAverageMetric(clusterName string, metricName string, node *int) (float64, error)
@@ -307,7 +308,17 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(cluster)
 
-	admin, err := rm.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit)
+	// Extract and convert Kafka version
+	var kafkaVersion string
+	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		kafkaVersion = utils.ConvertKafkaVersion(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	} else {
+		// TODO: For severless clusters, how should we handle this? Currently defaulting to 4.0.0
+		kafkaVersion = "4.0.0"
+	}
+	
+
+	admin, err := rm.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}

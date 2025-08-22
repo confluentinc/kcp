@@ -15,7 +15,21 @@ import (
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
-// ClusterInformation contains comprehensive information about an MSK cluster
+type ClusterNetworking struct {
+	VpcId          string       `json:"vpc_id"`
+	SubnetIds      []string     `json:"subnet_ids"`
+	SecurityGroups []string     `json:"security_groups"`
+	Subnets        []SubnetInfo `json:"subnets"`
+}
+
+type SubnetInfo struct {
+	SubnetMskBrokerId int    `json:"subnet_msk_broker_id"`
+	SubnetId          string `json:"subnet_id"`
+	AvailabilityZone  string `json:"availability_zone"`
+	PrivateIpAddress  string `json:"private_ip_address"`
+	CidrBlock         string `json:"cidr_block"`
+}
+
 type ClusterInformation struct {
 	ClusterID            string                                 `json:"cluster_id"`
 	Region               string                                 `json:"region"`
@@ -28,6 +42,7 @@ type ClusterInformation struct {
 	BootstrapBrokers     kafka.GetBootstrapBrokersOutput        `json:"bootstrapBrokers"`
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
+	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
 	Topics               []string                               `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
 }
@@ -114,6 +129,12 @@ func (c *ClusterInformation) AsMarkdown() *markdown.Markdown {
 		c.addVpcConnectionsSection(md)
 	}
 
+	// Networking section
+	if len(c.ClusterNetworking.Subnets) > 0 {
+		md.AddHeading("Cluster Networking", 2)
+		c.addClusterNetworkingSection(md)
+	}
+
 	// Cluster Operations section
 	if len(c.ClusterOperations) > 0 {
 		md.AddHeading("Cluster Operations", 2)
@@ -167,8 +188,9 @@ func (c *ClusterInformation) addSummarySection(md *markdown.Markdown) {
 		fmt.Sprintf("**Topics:** %d", len(c.Topics)),
 		fmt.Sprintf("**ACLs:** %d", len(c.Acls)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(c.ClientVpcConnections)),
+		fmt.Sprintf("**VPC ID:** %s", aws.ToString(&c.ClusterNetworking.VpcId)),
 		fmt.Sprintf("**Cluster Operations:** %d", len(c.ClusterOperations)),
-		fmt.Sprintf("**Brokers:** %d", len(c.Nodes)),
+		fmt.Sprintf("**Brokers:** %d", *c.Cluster.Provisioned.NumberOfBrokerNodes),
 		fmt.Sprintf("**SCRAM Secrets:** %d", len(c.ScramSecrets)),
 	}
 
@@ -275,6 +297,31 @@ func (c *ClusterInformation) addVpcConnectionsSection(md *markdown.Markdown) {
 		}
 		tableData = append(tableData, row)
 	}
+
+	md.AddTable(headers, tableData)
+}
+
+// addClusterNetworkingSection adds cluster networking information
+func (c *ClusterInformation) addClusterNetworkingSection(md *markdown.Markdown) {
+	headers := []string{"Broker ID", "Subnet ID", "CIDR Block", "Availability Zone"}
+
+	var tableData [][]string
+	for _, subnet := range c.ClusterNetworking.Subnets {
+		row := []string{
+			fmt.Sprintf("%d", subnet.SubnetMskBrokerId),
+			aws.ToString(&subnet.SubnetId),
+			aws.ToString(&subnet.CidrBlock),
+			aws.ToString(&subnet.AvailabilityZone),
+		}
+		tableData = append(tableData, row)
+	}
+
+	sort.Slice(tableData, func(i, j int) bool {
+		return tableData[i][0] < tableData[j][0]
+	})
+
+	md.AddParagraph(fmt.Sprintf("**VPC ID:** %s", aws.ToString(&c.ClusterNetworking.VpcId)))
+	md.AddParagraph(fmt.Sprintf("**Security Groups:** %s", strings.Join(c.ClusterNetworking.SecurityGroups, ", ")))
 
 	md.AddTable(headers, tableData)
 }

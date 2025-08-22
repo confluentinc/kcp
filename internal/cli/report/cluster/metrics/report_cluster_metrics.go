@@ -140,22 +140,23 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create msk client: %v", err)
 	}
 
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	mskService := msk.NewMSKService(mskClient)
+
+
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		switch opts.AuthType {
 		case types.AuthTypeIAM:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithIAMAuth())
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithIAMAuth())
 		case types.AuthTypeSASLSCRAM:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithSASLSCRAMAuth(opts.SASLScramUsername, opts.SASLScramPassword))
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithSASLSCRAMAuth(opts.SASLScramUsername, opts.SASLScramPassword))
 		case types.AuthTypeUnauthenticated:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithUnauthenticatedAuth())
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithUnauthenticatedAuth())
 		case types.AuthTypeTLS:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, client.WithTLSAuth(opts.TLSCACert, opts.TLSClientCert, opts.TLSClientKey))
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithTLSAuth(opts.TLSCACert, opts.TLSClientCert, opts.TLSClientKey))
 		default:
 			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", opts.AuthType)
 		}
 	}
-
-	mskService := msk.NewMSKService(mskClient)
 
 	cloudWatchClient, err := client.NewCloudWatchClient(opts.Region)
 	if err != nil {
