@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls/iam_acls"
@@ -150,6 +151,10 @@ func evaluatePrincipal(discoveredPrincipals []string) ([]string, error) {
 		parts := strings.Split(arn, "/")
 		if len(parts) > 2 {
 			arn = strings.Join(parts[:2], "/")
+		}
+
+		if slices.Contains(principalArns, arn) {
+			continue
 		}
 
 		principalArns = append(principalArns, arn)
