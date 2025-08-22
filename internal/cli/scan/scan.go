@@ -41,7 +41,7 @@ func NewScanCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringSliceVar(&regions, "region", []string{}, "AWS region to scan")
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "AWS regions to scan (comma separated list or repeated flag)")
 	scanCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
