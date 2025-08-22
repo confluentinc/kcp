@@ -105,7 +105,7 @@ func (rm *ClusterMetricsCollector) ProcessCluster() (*types.ClusterMetrics, erro
 	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
-	}	
+	}
 
 	var clusterMetric *types.ClusterMetrics
 
@@ -316,7 +316,6 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 		// TODO: For severless clusters, how should we handle this? Currently defaulting to 4.0.0
 		kafkaVersion = "4.0.0"
 	}
-	
 
 	admin, err := rm.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {

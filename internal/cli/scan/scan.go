@@ -14,7 +14,6 @@ import (
 
 var (
 	regions    []string
-	skipKafka  bool
 	clusterCmd *cobra.Command
 	regionCmd  *cobra.Command
 )
@@ -22,8 +21,8 @@ var (
 func NewScanCmd() *cobra.Command {
 	scanCmd := &cobra.Command{
 		Use:           "scan",
-		Short:         "Scan AWS resources for migration planning",
-		Long:          "Scan AWS resources like MSK clusters and regions to gather information for migration planning.",
+		Short:         "Multi-region, multi cluster scan of AWS MSK",
+		Long:          "Performs a full Dsicovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE:          runScan,
@@ -65,7 +64,6 @@ func NewScanCmd() *cobra.Command {
 	})
 
 	scanCmd.MarkFlagRequired("region")
-	scanCmd.MarkFlagRequired("skip-kafka")
 
 	return scanCmd
 }
@@ -88,8 +86,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 func parseScanOpts() (*scan.ScanOpts, error) {
 	opts := scan.ScanOpts{
-		Regions:   regions,
-		SkipKafka: skipKafka,
+		Regions: regions,
 	}
 
 	return &opts, nil

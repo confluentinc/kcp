@@ -3,12 +3,12 @@ package types
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"time"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/services/markdown"
+	"os"
+	"path/filepath"
+	"time"
 )
 
 // RegionScanResult contains the results of scanning an AWS region for MSK resources
@@ -35,7 +35,6 @@ func (rs *RegionScanResult) GetDirPath() string {
 }
 
 func (rs *RegionScanResult) WriteAsJson() error {
-
 
 	dirPath := rs.GetDirPath()
 	if err := os.MkdirAll(dirPath, 0755); err != nil {

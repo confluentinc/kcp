@@ -142,7 +142,6 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 
 	mskService := msk.NewMSKService(mskClient)
 
-
 	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		switch opts.AuthType {
 		case types.AuthTypeIAM:

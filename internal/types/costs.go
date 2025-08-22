@@ -85,13 +85,13 @@ func (c *RegionCosts) WriteAsMarkdown(suppressToTerminal bool) error {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetMarkdownPath()	
+	filePath := c.GetMarkdownPath()
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
 
 func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
-	
+
 	md := markdown.New()
 	md.AddHeading(fmt.Sprintf("AWS MSK Cost Report - %s", c.Region), 1)
 	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s", c.StartDate.Format("2006-01-02"), c.EndDate.Format("2006-01-02")))

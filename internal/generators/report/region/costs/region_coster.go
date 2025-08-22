@@ -80,10 +80,10 @@ func (rc *RegionCoster) Run() error {
 		return fmt.Errorf("❌ Failed to write CSV output: %v", err)
 	}
 
-	slog.Info("✅ region costs report complete", 
+	slog.Info("✅ region costs report complete",
 		"region", rc.region,
 		"filePath", regionCosts.GetJsonPath(),
-		"markdownPath", regionCosts.GetMarkdownPath(),		
+		"markdownPath", regionCosts.GetMarkdownPath(),
 		"csvPath", regionCosts.GetCSVPath(),
 	)
 	return nil

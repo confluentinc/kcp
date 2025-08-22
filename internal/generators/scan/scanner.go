@@ -7,20 +7,18 @@ import (
 
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
 	"github.com/confluentinc/kcp/internal/client"
+	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
 	cs "github.com/confluentinc/kcp/internal/generators/scan/cluster"
 	"github.com/confluentinc/kcp/internal/generators/scan/region"
 	"github.com/confluentinc/kcp/internal/services/cost"
-	"github.com/confluentinc/kcp/internal/services/msk"
-	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/ec2"
-
+	"github.com/confluentinc/kcp/internal/services/metrics"
+	"github.com/confluentinc/kcp/internal/services/msk"
 )
 
 type ScanOpts struct {
-	Regions   []string
-	SkipKafka bool
+	Regions []string
 }
 
 type Scanner struct {
@@ -30,28 +28,26 @@ type Scanner struct {
 
 func NewScanner(opts ScanOpts) *Scanner {
 	return &Scanner{
-		regions:   opts.Regions,
-		skipKafka: opts.SkipKafka,
+		regions: opts.Regions,
 	}
 }
 
 func (rs *Scanner) Run() error {
 
 	for _, r := range rs.regions {
-		
+
 		// create the msk client and service
 		mskClient, err := client.NewMSKClient(r)
 		if err != nil {
 			slog.Error("failed to create msk client", "region", r, "error", err)
 			continue
 		}
-		mskService := msk.NewMSKService(mskClient)		
-	
+		mskService := msk.NewMSKService(mskClient)
 
 		// default the time period
 		now := time.Now()
 		startDate := now.AddDate(0, 0, -31).UTC().Truncate(24 * time.Hour)
-		endDate := now.UTC().Truncate(24 * time.Hour)		
+		endDate := now.UTC().Truncate(24 * time.Hour)
 
 		// scan the region
 		regionScanOpts := region.ScanRegionOpts{
@@ -76,8 +72,8 @@ func (rs *Scanner) Run() error {
 		costExplorerClient, err := client.NewCostExplorerClient(r)
 		if err != nil {
 			slog.Error("failed to create cost explorer client", "region", r, "error", err)
-		}		
-	
+		}
+
 		costService := cost.NewCostService(costExplorerClient)
 
 		costs, err := costService.GetCostsForTimeRange(r, startDate, endDate, costexplorertypes.GranularityDaily, map[string][]string{})
@@ -101,19 +97,19 @@ func (rs *Scanner) Run() error {
 			if err != nil {
 				slog.Error("failed to create ec2 service", "region", r, "error", err)
 				continue
-			}	
+			}
 
 			for _, cluster := range regionScanResult.Clusters {
 				// scan the cluster
 				clusterScannerOpts := cs.ClusterScannerOpts{
-					Region:            r,
-					ClusterArn:        cluster.ClusterARN,
-					SkipKafka:         true,		
+					Region:     r,
+					ClusterArn: cluster.ClusterARN,
+					SkipKafka:  true,
 				}
 
 				kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 					return nil, nil
-				}				
+				}
 
 				clusterScanner := cs.NewClusterScanner(mskService, ec2Service, kafkaAdminFactory, clusterScannerOpts)
 				clusterScanResult, err := clusterScanner.ScanCluster(context.Background())
@@ -131,11 +127,11 @@ func (rs *Scanner) Run() error {
 
 				// get the cluster metrics
 				metricsOpts := rrm.ClusterMetricsOpts{
-					Region:            r,
-					StartDate:         startDate,
-					EndDate:           endDate,
-					ClusterArn:        cluster.ClusterARN,
-					SkipKafka:         true,
+					Region:     r,
+					StartDate:  startDate,
+					EndDate:    endDate,
+					ClusterArn: cluster.ClusterARN,
+					SkipKafka:  true,
 				}
 
 				cloudWatchClient, err := client.NewCloudWatchClient(metricsOpts.Region)
@@ -143,9 +139,9 @@ func (rs *Scanner) Run() error {
 					slog.Error("failed to create cloudWatch client", "region", r, "error", err)
 					continue
 				}
-			
+
 				metricService := metrics.NewMetricService(cloudWatchClient, metricsOpts.StartDate, metricsOpts.EndDate)
-			
+
 				clusterMetrics := rrm.NewClusterMetrics(mskService, metricService, kafkaAdminFactory, metricsOpts)
 				clusterMetricsResult, err := clusterMetrics.ProcessCluster()
 
@@ -160,8 +156,7 @@ func (rs *Scanner) Run() error {
 						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
 					}
 				}
-				
-				
+
 			}
 		}
 	}
