@@ -2,10 +2,8 @@ package scan
 
 import (
 	"fmt"
-
 	"github.com/confluentinc/kcp/internal/generators/scan"
-
-	"github.com/confluentinc/kcp/internal/cli/scan/broker_logs"
+	"github.com/confluentinc/kcp/internal/cli/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/cli/scan/cluster"
 	"github.com/confluentinc/kcp/internal/cli/scan/region"
 	"github.com/spf13/cobra"
@@ -33,7 +31,7 @@ func NewScanCmd() *cobra.Command {
 	scanCmd.AddCommand(
 		cluster.NewScanClusterCmd(),
 		region.NewScanRegionCmd(),
-		broker_logs.NewScanBrokerLogsCmd(),
+		client_inventory.NewScanClientInventoryCmd(),
 	)
 
 	groups := map[*pflag.FlagSet]string{}

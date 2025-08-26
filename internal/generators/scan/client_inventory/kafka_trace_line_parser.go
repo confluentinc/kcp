@@ -1,4 +1,4 @@
-package broker_logs
+package client_inventory
 
 import (
 	"errors"
