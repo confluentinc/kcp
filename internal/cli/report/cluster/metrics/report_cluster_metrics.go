@@ -193,6 +193,10 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 		authType = types.AuthTypeUnauthenticated
 	case useTls:
 		authType = types.AuthTypeTLS
+	case skipKafka:
+		authType = types.AuthTypeUnauthenticated
+	default:
+		authType = types.AuthTypeUnauthenticated
 	}
 
 	const dateFormat = "2006-01-02"
