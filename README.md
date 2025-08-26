@@ -162,7 +162,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `cluster`
 - `region`
-- `broker-logs`
+- `client-inventory`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -251,7 +251,7 @@ The sub-commands require the following minimum AWS IAM permissions:
 }
 ```
 
-`broker-logs`:
+`client-inventory`:
 
 ```json
 {
@@ -382,7 +382,7 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 ---
 
-#### `kcp scan broker-logs`
+#### `kcp scan client-inventory`
 
 This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
 
@@ -393,7 +393,7 @@ This command scans a hour window folder in s3 to identify as many clients as pos
 **Example Usage**
 
 ```shell
-kcp scan broker-logs \
+kcp scan client-inventory \
 --region us-east-1 \
 --s3-uri  s3://my-cluster-logs-bucket/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-1a2345b6-bf9f-4670-b13b-710985f5645d-5/2025-08-13-14/
 ```
