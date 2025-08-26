@@ -16,6 +16,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // Mock implementations
@@ -137,6 +138,7 @@ func createTestProvisionedCluster() kafkatypes.Cluster {
 	volumeSize := int32(100)
 
 	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1"),
 		ClusterName: &clusterName,
 		ClusterType: kafkatypes.ClusterTypeProvisioned,
 		Provisioned: &kafkatypes.Provisioned{
@@ -169,6 +171,7 @@ func createTestServerlessCluster() kafkatypes.Cluster {
 	clusterName := "test-serverless-cluster"
 
 	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-serverless-cluster/12345678-1234-1234-1234-123456789012-1"),
 		ClusterName: &clusterName,
 		ClusterType: kafkatypes.ClusterTypeServerless,
 		Serverless: &kafkatypes.Serverless{
@@ -198,7 +201,7 @@ func createTestCollector(mskService MSKService, metricService MetricService, kaf
 func TestNewClusterMetrics(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -223,7 +226,7 @@ func TestNewClusterMetrics(t *testing.T) {
 func TestClusterMetricsCollector_Run_Success(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -269,7 +272,7 @@ func TestClusterMetricsCollector_Run_Success(t *testing.T) {
 	}, nil)
 	mockAdmin.On("Close").Return(nil)
 
-	kafkaAdminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return mockAdmin, nil
 	}
 	collector.kafkaAdminFactory = kafkaAdminFactory
@@ -284,14 +287,13 @@ func TestClusterMetricsCollector_Run_Success(t *testing.T) {
 	mockAdmin.AssertExpectations(t)
 
 	// Clean up generated files
-	os.Remove("test-cluster-metrics.json")
-	os.Remove("test-cluster-metrics.md")
+	os.RemoveAll("kcp-scan")
 }
 
 func TestClusterMetricsCollector_Run_DescribeClusterError(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -309,11 +311,12 @@ func TestClusterMetricsCollector_Run_DescribeClusterError(t *testing.T) {
 func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
 	cluster := createTestProvisionedCluster()
+	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
 	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
 		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
@@ -354,14 +357,14 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 	}, nil)
 	mockAdmin.On("Close").Return(nil)
 
-	kafkaAdminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return mockAdmin, nil
 	}
 	collector.kafkaAdminFactory = kafkaAdminFactory
 
 	metricService.On("GetAverageBytesInPerSec", "test-cluster", 3, "test-topic").Return([]float64{100.0, 100.0, 100.0}, nil)
 
-	result, err := collector.processCluster(cluster)
+	result, err := collector.ProcessCluster()
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -379,11 +382,12 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
 	cluster := createTestServerlessCluster()
+	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
 	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
 
 	// Mock metric service calls for serverless
@@ -407,7 +411,7 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
-	result, err := collector.processCluster(cluster)
+	result, err := collector.ProcessCluster()
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -499,7 +503,7 @@ func TestClusterMetricsCollector_calculateClusterMetricsSummary_EmptyNodes(t *te
 func TestClusterMetricsCollector_calculateReplicationFactor_SkipKafka(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -516,7 +520,7 @@ func TestClusterMetricsCollector_calculateReplicationFactor_SkipKafka(t *testing
 func TestClusterMetricsCollector_calculateReplicationFactor_GetBootstrapBrokersError(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -536,7 +540,7 @@ func TestClusterMetricsCollector_calculateReplicationFactor_GetBootstrapBrokersE
 func TestClusterMetricsCollector_calculateReplicationFactor_KafkaAdminFactoryError(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return nil, fmt.Errorf("failed to create admin client")
 	}
 
@@ -579,7 +583,7 @@ func TestClusterMetricsCollector_calculateReplicationFactor_Success(t *testing.T
 	}, nil)
 	mockAdmin.On("Close").Return(nil)
 
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return mockAdmin, nil
 	}
 	collector.kafkaAdminFactory = kafkaAdminFactory
@@ -602,7 +606,7 @@ func TestClusterMetricsCollector_calculateReplicationFactor_Success(t *testing.T
 func TestClusterMetricsCollector_processProvisionedNode(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -644,7 +648,7 @@ func TestClusterMetricsCollector_processProvisionedNode(t *testing.T) {
 func TestClusterMetricsCollector_processProvisionedNode_MetricError(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -670,7 +674,7 @@ func TestClusterMetricsCollector_processProvisionedNode_MetricError(t *testing.T
 func TestClusterMetricsCollector_processServerlessNode(t *testing.T) {
 	mskService := &MockMSKService{}
 	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
@@ -708,14 +712,9 @@ func TestClusterMetricsCollector_processServerlessNode(t *testing.T) {
 	metricService.AssertExpectations(t)
 }
 
-func TestClusterMetricsCollector_writeOutput(t *testing.T) {
-	mskService := &MockMSKService{}
-	metricService := &MockMetricService{}
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error) {
-		return &MockKafkaAdmin{}, nil
-	}
-
-	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
+func TestClusterMetrics_WriteOutput(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir := t.TempDir()
 
 	avgIngress := 0.0003
 	peakIngress := 0.0006
@@ -729,6 +728,7 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 	instanceType := "kafka.m5.large"
 
 	metrics := types.ClusterMetrics{
+		Region:      "us-west-2",
 		ClusterName: "test-cluster",
 		ClusterType: "PROVISIONED",
 		NodesMetrics: []types.NodeMetrics{
@@ -751,12 +751,26 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 		},
 	}
 
-	err := collector.writeOutput(metrics)
+	// Change to temp directory for testing
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tempDir)
+	require.NoError(t, err)
+
+	// Test the output writing by calling the methods directly on the metrics object
+	err = metrics.WriteAsJson()
+	if err != nil {
+		t.Fatalf("Failed to write JSON: %v", err)
+	}
+
+	err = metrics.WriteAsMarkdown(true)
 
 	assert.NoError(t, err)
 
 	// Verify JSON file was created
-	jsonData, err := os.ReadFile("test-cluster-metrics.json")
+	jsonData, err := os.ReadFile("kcp-scan/us-west-2/test-cluster/test-cluster-metrics.json")
 	assert.NoError(t, err)
 
 	var result types.ClusterMetrics
@@ -766,12 +780,8 @@ func TestClusterMetricsCollector_writeOutput(t *testing.T) {
 	assert.Equal(t, "PROVISIONED", result.ClusterType)
 
 	// Verify Markdown file was created
-	_, err = os.Stat("test-cluster-metrics.md")
+	_, err = os.Stat("kcp-scan/us-west-2/test-cluster/test-cluster-metrics.md")
 	assert.NoError(t, err)
-
-	// Clean up
-	os.Remove("test-cluster-metrics.json")
-	os.Remove("test-cluster-metrics.md")
 }
 
 func TestStructToMap(t *testing.T) {

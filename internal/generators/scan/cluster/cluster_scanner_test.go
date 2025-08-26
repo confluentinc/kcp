@@ -953,7 +953,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
-			result, err := clusterScanner.scanCluster(context.Background())
+			result, err := clusterScanner.ScanCluster(context.Background())
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -999,7 +999,7 @@ func TestClusterScanner_Run(t *testing.T) {
 	readOnlyDir := filepath.Join(os.TempDir(), "readonly_test_dir")
 	err := os.MkdirAll(readOnlyDir, 0400)
 	require.NoError(t, err)
-	defer os.RemoveAll(readOnlyDir)
+	defer os.RemoveAll("kcp-scan")
 
 	tests := []struct {
 		name            string
@@ -1246,7 +1246,7 @@ func TestClusterScanner_Run(t *testing.T) {
 			require.NoError(t, err)
 			// Verify file contents for successful case
 			if tt.wantError == "" {
-				jsonFilePath := fmt.Sprintf("cluster_scan_%s.json", aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName))
+				jsonFilePath := filepath.Join("kcp-scan", defaultRegion, aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName), fmt.Sprintf("%s.json", aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName)))
 				fileContent, err := os.ReadFile(jsonFilePath)
 				require.NoError(t, err)
 
@@ -1257,10 +1257,9 @@ func TestClusterScanner_Run(t *testing.T) {
 				assert.Equal(t, aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName), aws.ToString(clusterInfo.Cluster.ClusterName))
 				assert.ElementsMatch(t, []string{"topic1", "topic2"}, clusterInfo.Topics)
 				assert.Equal(t, defaultRegion, clusterInfo.Region)
-				// Cleanup test files
-				markDownFilePath := fmt.Sprintf("cluster_scan_%s.md", aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName))
-				os.Remove(jsonFilePath)
-				os.Remove(markDownFilePath)
+
+				// Cleanup test directories
+				os.RemoveAll("kcp-scan")
 			}
 		})
 	}
@@ -2352,7 +2351,7 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, tt.skipKafka)
-			result, err := clusterScanner.scanCluster(context.Background())
+			result, err := clusterScanner.ScanCluster(context.Background())
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
