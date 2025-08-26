@@ -221,12 +221,23 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
 
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName)
-	authentication, err := structToMap(cluster.Provisioned.ClientAuthentication)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert provisioned client authentication to map: %w", err)
-	}
-	if authentication == nil {
-		return nil, fmt.Errorf("provisioned client authentication is nil")
+
+	var authentication map[string]any
+	var err error
+
+	if cluster.Provisioned.ClientAuthentication != nil {
+		authentication, err = structToMap(cluster.Provisioned.ClientAuthentication)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert provisioned client authentication to map: %w", err)
+		}
+	} else {
+		// Handle case where ClientAuthentication is nil (unauthenticated cluster)
+		authentication = map[string]any{
+			"unauthenticated": map[string]any{
+				"enabled": true,
+			},
+		}
+		slog.Info("⚠️ cluster has no client authentication configured, treating as unauthenticated")
 	}
 
 	brokerAZDistribution := aws.String(string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution))
@@ -388,13 +399,23 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 
 func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
 	slog.Info("☁️ processing serverless cluster", "cluster", *cluster.ClusterName)
-	authentication, err := structToMap(cluster.Serverless.ClientAuthentication)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert serverless client authentication to map: %w", err)
-	}
 
-	if authentication == nil {
-		return nil, fmt.Errorf("serverless client authentication is nil")
+	var authentication map[string]any
+	var err error
+
+	if cluster.Serverless.ClientAuthentication != nil {
+		authentication, err = structToMap(cluster.Serverless.ClientAuthentication)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert serverless client authentication to map: %w", err)
+		}
+	} else {
+		// Handle case where ClientAuthentication is nil (unauthenticated cluster)
+		authentication = map[string]any{
+			"unauthenticated": map[string]any{
+				"enabled": true,
+			},
+		}
+		slog.Info("⚠️ serverless cluster has no client authentication configured, treating as unauthenticated")
 	}
 
 	nodesMetrics := []types.NodeMetrics{}

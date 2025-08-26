@@ -130,6 +130,31 @@ func (m *MockKafkaAdmin) Close() error {
 }
 
 // Helper functions
+func setupMetricServiceMocks(metricService *MockMetricService, clusterName string, numNodes int) {
+	for i := 1; i <= numNodes; i++ {
+		nodeID := i
+		// Average metrics
+		metricService.On("GetAverageMetric", clusterName, "BytesInPerSec", &nodeID).Return(100.0, nil)
+		metricService.On("GetAverageMetric", clusterName, "BytesOutPerSec", &nodeID).Return(50.0, nil)
+		metricService.On("GetAverageMetric", clusterName, "MessagesInPerSec", &nodeID).Return(1000.0, nil)
+		metricService.On("GetAverageMetric", clusterName, "KafkaDataLogsDiskUsed", &nodeID).Return(75.0, nil)
+		metricService.On("GetAverageMetric", clusterName, "RemoteLogSizeBytes", &nodeID).Return(0.0, nil)
+
+		// Peak metrics
+		metricService.On("GetPeakMetric", clusterName, "BytesInPerSec", &nodeID).Return(200.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "BytesOutPerSec", &nodeID).Return(100.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "MessagesInPerSec", &nodeID).Return(2000.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "KafkaDataLogsDiskUsed", &nodeID).Return(85.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "RemoteLogSizeBytes", &nodeID).Return(0.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "ClientConnectionCount", &nodeID).Return(50.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "PartitionCount", &nodeID).Return(100.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "GlobalTopicCount", &nodeID).Return(10.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "LeaderCount", &nodeID).Return(50.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "ReplicationBytesOutPerSec", &nodeID).Return(25.0, nil)
+		metricService.On("GetPeakMetric", clusterName, "ReplicationBytesInPerSec", &nodeID).Return(25.0, nil)
+	}
+}
+
 func createTestProvisionedCluster() kafkatypes.Cluster {
 	clusterName := "test-cluster"
 	kafkaVersion := "3.5.1"
@@ -167,6 +192,37 @@ func createTestProvisionedCluster() kafkatypes.Cluster {
 	}
 }
 
+func createTestProvisionedClusterWithoutAuth() kafkatypes.Cluster {
+	clusterName := "test-cluster-no-auth"
+	kafkaVersion := "3.5.1"
+	instanceType := "kafka.m5.large"
+	numberOfBrokerNodes := int32(3)
+	volumeSize := int32(100)
+
+	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster-no-auth/12345678-1234-1234-1234-123456789012-1"),
+		ClusterName: &clusterName,
+		ClusterType: kafkatypes.ClusterTypeProvisioned,
+		Provisioned: &kafkatypes.Provisioned{
+			CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+				KafkaVersion: &kafkaVersion,
+			},
+			BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+				InstanceType: &instanceType,
+				StorageInfo: &kafkatypes.StorageInfo{
+					EbsStorageInfo: &kafkatypes.EBSStorageInfo{
+						VolumeSize: &volumeSize,
+					},
+				},
+			},
+			NumberOfBrokerNodes: &numberOfBrokerNodes,
+			EnhancedMonitoring:  kafkatypes.EnhancedMonitoringDefault,
+			StorageMode:         kafkatypes.StorageModeLocal,
+			// ClientAuthentication is nil - simulating unauthenticated cluster
+		},
+	}
+}
+
 func createTestServerlessCluster() kafkatypes.Cluster {
 	clusterName := "test-serverless-cluster"
 
@@ -182,6 +238,19 @@ func createTestServerlessCluster() kafkatypes.Cluster {
 					},
 				},
 			},
+		},
+	}
+}
+
+func createTestServerlessClusterWithoutAuth() kafkatypes.Cluster {
+	clusterName := "test-serverless-cluster-no-auth"
+
+	return kafkatypes.Cluster{
+		ClusterArn:  aws.String("arn:aws:kafka:us-west-2:123456789012:cluster/test-serverless-cluster-no-auth/12345678-1234-1234-1234-123456789012-1"),
+		ClusterName: &clusterName,
+		ClusterType: kafkatypes.ClusterTypeServerless,
+		Serverless:  &kafkatypes.Serverless{
+			// ClientAuthentication is nil - simulating unauthenticated cluster
 		},
 	}
 }
@@ -239,26 +308,7 @@ func TestClusterMetricsCollector_Run_Success(t *testing.T) {
 	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	// Mock metric service calls for provisioned cluster
-	for i := 1; i <= 3; i++ {
-		nodeID := i
-		metricService.On("GetAverageMetric", "test-cluster", "BytesInPerSec", &nodeID).Return(100.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "BytesOutPerSec", &nodeID).Return(50.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "MessagesInPerSec", &nodeID).Return(1000.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "KafkaDataLogsDiskUsed", &nodeID).Return(75.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "RemoteLogSizeBytes", &nodeID).Return(0.0, nil)
-
-		metricService.On("GetPeakMetric", "test-cluster", "BytesInPerSec", &nodeID).Return(200.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "BytesOutPerSec", &nodeID).Return(100.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "MessagesInPerSec", &nodeID).Return(2000.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "KafkaDataLogsDiskUsed", &nodeID).Return(85.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "RemoteLogSizeBytes", &nodeID).Return(0.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "ClientConnectionCount", &nodeID).Return(50.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "PartitionCount", &nodeID).Return(100.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "GlobalTopicCount", &nodeID).Return(10.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "LeaderCount", &nodeID).Return(50.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "ReplicationBytesOutPerSec", &nodeID).Return(25.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "ReplicationBytesInPerSec", &nodeID).Return(25.0, nil)
-	}
+	setupMetricServiceMocks(metricService, "test-cluster", 3)
 
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
@@ -324,26 +374,7 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
 
 	// Mock metric service calls
-	for i := 1; i <= 3; i++ {
-		nodeID := i
-		metricService.On("GetAverageMetric", "test-cluster", "BytesInPerSec", &nodeID).Return(100.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "BytesOutPerSec", &nodeID).Return(50.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "MessagesInPerSec", &nodeID).Return(1000.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "KafkaDataLogsDiskUsed", &nodeID).Return(75.0, nil)
-		metricService.On("GetAverageMetric", "test-cluster", "RemoteLogSizeBytes", &nodeID).Return(0.0, nil)
-
-		metricService.On("GetPeakMetric", "test-cluster", "BytesInPerSec", &nodeID).Return(200.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "BytesOutPerSec", &nodeID).Return(100.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "MessagesInPerSec", &nodeID).Return(2000.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "KafkaDataLogsDiskUsed", &nodeID).Return(85.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "RemoteLogSizeBytes", &nodeID).Return(0.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "ClientConnectionCount", &nodeID).Return(50.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "PartitionCount", &nodeID).Return(100.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "GlobalTopicCount", &nodeID).Return(10.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "LeaderCount", &nodeID).Return(50.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "ReplicationBytesOutPerSec", &nodeID).Return(25.0, nil)
-		metricService.On("GetPeakMetric", "test-cluster", "ReplicationBytesInPerSec", &nodeID).Return(25.0, nil)
-	}
+	setupMetricServiceMocks(metricService, "test-cluster", 3)
 
 	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
 
@@ -369,6 +400,58 @@ func TestClusterMetricsCollector_processCluster_Provisioned(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "test-cluster", result.ClusterName)
+	assert.Equal(t, "PROVISIONED", result.ClusterType)
+	assert.Len(t, result.NodesMetrics, 3)
+	assert.NotNil(t, result.ClusterMetricsSummary.InstanceType)
+	assert.Equal(t, "kafka.m5.large", *result.ClusterMetricsSummary.InstanceType)
+
+	mskService.AssertExpectations(t)
+	metricService.AssertExpectations(t)
+	mockAdmin.AssertExpectations(t)
+}
+
+func TestClusterMetricsCollector_processCluster_Provisioned_WithoutAuth(t *testing.T) {
+	mskService := &MockMSKService{}
+	metricService := &MockMetricService{}
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
+		return &MockKafkaAdmin{}, nil
+	}
+
+	cluster := createTestProvisionedClusterWithoutAuth()
+	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
+	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
+	mskService.On("GetBootstrapBrokers", mock.Anything, mock.Anything).Return(&kafka.GetBootstrapBrokersOutput{
+		BootstrapBrokerStringSaslIam: aws.String("broker1:9092"),
+	}, nil)
+	mskService.On("ParseBrokerAddresses", mock.Anything, mock.Anything).Return([]string{"broker1:9092"}, nil)
+
+	// Mock metric service calls
+	setupMetricServiceMocks(metricService, "test-cluster-no-auth", 3)
+
+	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
+
+	// Mock Kafka admin for replication factor calculation
+	mockAdmin := &MockKafkaAdmin{}
+	mockAdmin.On("DescribeConfig").Return([]sarama.ConfigEntry{
+		{Name: "default.replication.factor", Value: "3"},
+	}, nil)
+	mockAdmin.On("ListTopics").Return(map[string]sarama.TopicDetail{
+		"test-topic": {ReplicationFactor: 3},
+	}, nil)
+	mockAdmin.On("Close").Return(nil)
+
+	kafkaAdminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
+		return mockAdmin, nil
+	}
+	collector.kafkaAdminFactory = kafkaAdminFactory
+
+	metricService.On("GetAverageBytesInPerSec", "test-cluster-no-auth", 3, "test-topic").Return([]float64{100.0, 100.0, 100.0}, nil)
+
+	result, err := collector.ProcessCluster()
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "test-cluster-no-auth", result.ClusterName)
 	assert.Equal(t, "PROVISIONED", result.ClusterType)
 	assert.Len(t, result.NodesMetrics, 3)
 	assert.NotNil(t, result.ClusterMetricsSummary.InstanceType)
@@ -416,6 +499,51 @@ func TestClusterMetricsCollector_processCluster_Serverless(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "test-serverless-cluster", result.ClusterName)
+	assert.Equal(t, "SERVERLESS", result.ClusterType)
+	assert.Len(t, result.NodesMetrics, 1)
+	assert.Nil(t, result.ClusterMetricsSummary.InstanceType)
+
+	mskService.AssertExpectations(t)
+	metricService.AssertExpectations(t)
+}
+
+func TestClusterMetricsCollector_processCluster_Serverless_WithoutAuth(t *testing.T) {
+	mskService := &MockMSKService{}
+	metricService := &MockMetricService{}
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
+		return &MockKafkaAdmin{}, nil
+	}
+
+	cluster := createTestServerlessClusterWithoutAuth()
+	mskService.On("DescribeCluster", mock.Anything, mock.Anything).Return(&cluster, nil)
+	mskService.On("IsFetchFromFollowerEnabled", mock.Anything, cluster).Return(aws.Bool(false), nil)
+
+	// Mock metric service calls for serverless
+	metricService.On("GetServerlessAverageMetric", "test-serverless-cluster-no-auth", "BytesInPerSec").Return(100.0, nil)
+	metricService.On("GetServerlessAverageMetric", "test-serverless-cluster-no-auth", "BytesOutPerSec").Return(50.0, nil)
+	metricService.On("GetServerlessAverageMetric", "test-serverless-cluster-no-auth", "MessagesInPerSec").Return(1000.0, nil)
+	metricService.On("GetServerlessAverageMetric", "test-serverless-cluster-no-auth", "KafkaDataLogsDiskUsed").Return(75.0, nil)
+	metricService.On("GetServerlessAverageMetric", "test-serverless-cluster-no-auth", "RemoteLogSizeBytes").Return(0.0, nil)
+
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "BytesInPerSec").Return(200.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "BytesOutPerSec").Return(100.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "MessagesInPerSec").Return(2000.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "KafkaDataLogsDiskUsed").Return(85.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "RemoteLogSizeBytes").Return(0.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "ClientConnectionCount").Return(50.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "PartitionCount").Return(100.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "GlobalTopicCount").Return(10.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "LeaderCount").Return(50.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "ReplicationBytesOutPerSec").Return(25.0, nil)
+	metricService.On("GetServerlessPeakMetric", "test-serverless-cluster-no-auth", "ReplicationBytesInPerSec").Return(25.0, nil)
+
+	collector := createTestCollector(mskService, metricService, kafkaAdminFactory)
+
+	result, err := collector.ProcessCluster()
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "test-serverless-cluster-no-auth", result.ClusterName)
 	assert.Equal(t, "SERVERLESS", result.ClusterType)
 	assert.Len(t, result.NodesMetrics, 1)
 	assert.Nil(t, result.ClusterMetricsSummary.InstanceType)
