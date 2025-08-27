@@ -3,6 +3,8 @@ package discover
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/generators/discover"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -18,9 +20,8 @@ func NewDiscoverCmd() *cobra.Command {
 		Long:          "For given regions, discover msk clusters and collect information about them",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Discovering Kafka clusters")
-		},
+		PreRunE:       preRunDiscover,
+		RunE:          runDiscover,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -28,7 +29,7 @@ func NewDiscoverCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 
-	requiredFlags.StringSliceVar(&regions, "regions", []string{}, "The AWS regions to discover")
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS regions to discover")
 
 	discoverCmd.Flags().AddFlagSet(requiredFlags)
 
@@ -52,5 +53,38 @@ func NewDiscoverCmd() *cobra.Command {
 		return nil
 	})
 
+	discoverCmd.MarkFlagRequired("region")
+
 	return discoverCmd
+}
+
+func preRunDiscover(cmd *cobra.Command, args []string) error {
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runDiscover(cmd *cobra.Command, args []string) error {
+	opts, err := parseDiscoverOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse discover opts: %v", err)
+	}
+
+	discoverer := discover.NewDiscoverer(*opts)
+
+	if err := discoverer.Run(); err != nil {
+		return fmt.Errorf("failed to discover: %v", err)
+	}
+
+	return nil
+}
+
+func parseDiscoverOpts() (*discover.DiscovererOpts, error) {
+	opts := discover.DiscovererOpts{
+		Regions: regions,
+	}
+
+	return &opts, nil
 }
