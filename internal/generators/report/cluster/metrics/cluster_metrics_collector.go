@@ -55,6 +55,7 @@ type MetricService interface {
 	GetServerlessAverageMetric(clusterName string, metricName string) (float64, error)
 	GetServerlessPeakMetric(clusterName string, metricName string) (float64, error)
 	GetAverageBytesInPerSec(clusterName string, numNodes int, topic string) ([]float64, error)
+	GetGlobalMetric(clusterName string, metricName string) (float64, error)
 }
 
 func NewClusterMetrics(mskService MSKService, metricService MetricService, opts ClusterMetricsOpts) *ClusterMetricsCollector {
@@ -187,10 +188,6 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 	}
 	peakEgressThroughputMegabytesPerSecond = peakEgressThroughputMegabytesPerSecond / 1024 / 1024
 
-	var partitions float64
-	for _, nodeMetric := range nodesMetrics {
-		partitions += float64(nodeMetric.LeaderCountMax)
-	}
 
 	retention_days, local_retention_hours := rm.calculateRetention(nodesMetrics)
 
@@ -199,7 +196,6 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 		PeakIngressThroughputMegabytesPerSecond: &peakIngressThroughputMegabytesPerSecond,
 		AvgEgressThroughputMegabytesPerSecond:   &avgEgressThroughputMegabytesPerSecond,
 		PeakEgressThroughputMegabytesPerSecond:  &peakEgressThroughputMegabytesPerSecond,
-		Partitions:                              &partitions,
 		RetentionDays:                           &retention_days,
 		LocalRetentionInPrimaryStorageHours:     &local_retention_hours,
 	}
@@ -223,6 +219,12 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	enhancedMonitoring := aws.String(string(cluster.Provisioned.EnhancedMonitoring))
 	numberOfBrokerNodes := int(*cluster.Provisioned.NumberOfBrokerNodes)
 	instanceType := aws.ToString(cluster.Provisioned.BrokerNodeGroupInfo.InstanceType)
+
+	// Get global metrics
+	globalMetrics, err := rm.getGlobalMetrics(*cluster.ClusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	}
 
 	nodesMetrics := []types.NodeMetrics{}
 
@@ -252,7 +254,8 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	}
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
-	clusterMetricsSummary.ReplicationFactor = rm.calculateReplicationFactor(nodesMetrics)
+	clusterMetricsSummary.ReplicationFactor = rm.calculateReplicationFactor(nodesMetrics, globalMetrics.GlobalPartitionCountMax)
+	clusterMetricsSummary.Partitions = aws.Float64(float64(globalMetrics.GlobalPartitionCountMax))
 
 	clusterMetric := types.ClusterMetrics{
 		Region:                rm.region,
@@ -267,22 +270,22 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 		Authentication:        authentication,
 		NodesMetrics:          nodesMetrics,
 		ClusterMetricsSummary: clusterMetricsSummary,
+		GlobalMetrics:         *globalMetrics,
 	}
 
 	return &clusterMetric, nil
 }
 
-func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []types.NodeMetrics) (*float64) {
+func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []types.NodeMetrics, globalPartitionCountMax float64) (*float64) {
 
-	partitions, leaders := 0, 0
+	totalPartitions := 0
 	for _, nodeMetric := range nodesMetrics {
-		partitions += int(nodeMetric.PartitionCountMax)
-		leaders += int(nodeMetric.LeaderCountMax)
+		totalPartitions += int(nodeMetric.PartitionCountMax)
 	}
-	if leaders == 0 {
+	if globalPartitionCountMax == 0 {
 		return aws.Float64(0)
 	}
-	replicationFactor := float64(partitions) / float64(leaders)
+	replicationFactor := float64(totalPartitions) / float64(globalPartitionCountMax)
 	return &replicationFactor
 
 }
@@ -297,6 +300,12 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	if authentication == nil {
 		return nil, fmt.Errorf("serverless client authentication is nil")
 	}
+
+	// Get global metrics
+	globalMetrics, err := rm.getGlobalMetrics(*cluster.ClusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	}	
 
 	nodesMetrics := []types.NodeMetrics{}
 	// serverless has 1 broker node
@@ -317,6 +326,8 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
 	}
 	clusterMetricsSummary.FollowerFetching = followerFetching
+	clusterMetricsSummary.Partitions = aws.Float64(float64(globalMetrics.GlobalPartitionCountMax))
+	clusterMetricsSummary.ReplicationFactor = rm.calculateReplicationFactor(nodesMetrics, globalMetrics.GlobalPartitionCountMax)
 
 	clusterMetric := types.ClusterMetrics{
 		Region:                rm.region,
@@ -328,10 +339,55 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 		Authentication:        authentication,
 		NodesMetrics:          nodesMetrics,
 		ClusterMetricsSummary: clusterMetricsSummary,
+		GlobalMetrics:         *globalMetrics,
 	}
 
 	return &clusterMetric, nil
 }
+
+func (rm *ClusterMetricsCollector) getGlobalMetrics(clusterName string) (*types.GlobalMetrics, error) {
+
+	globalMetrics := types.GlobalMetrics{}
+	
+	globalMetricAssignments := []struct {
+		metricName  string
+		targetField *float64
+	}{
+		{"GlobalPartitionCount", &globalMetrics.GlobalPartitionCountMax},
+		{"GlobalTopicCount", &globalMetrics.GlobalTopicCountMax},
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(globalMetricAssignments))
+
+	for _, assignment := range globalMetricAssignments {
+		wg.Add(1)
+		go func(assignment struct {
+			metricName  string
+			targetField *float64
+		}) {
+			defer wg.Done()
+			metricValue, err := rm.metricService.GetGlobalMetric(clusterName, assignment.metricName)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
+				return
+			}
+			*assignment.targetField = metricValue
+		}(assignment)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &globalMetrics, nil
+}
+
 
 func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, nodeID int, instanceType string) (*types.NodeMetrics, error) {
 	slog.Info("🏗️ processing provisioned node", "cluster", clusterName, "node", nodeID)
@@ -392,7 +448,7 @@ func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, no
 		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesMax},
 		{"ClientConnectionCount", &nodeMetric.ClientConnectionCountMax},
 		{"PartitionCount", &nodeMetric.PartitionCountMax},
-		{"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
+		// {"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
 		{"LeaderCount", &nodeMetric.LeaderCountMax},
 		{"ReplicationBytesOutPerSec", &nodeMetric.ReplicationBytesOutPerSecMax},
 		{"ReplicationBytesInPerSec", &nodeMetric.ReplicationBytesInPerSecMax},
@@ -489,7 +545,7 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesMax},
 		{"ClientConnectionCount", &nodeMetric.ClientConnectionCountMax},
 		{"PartitionCount", &nodeMetric.PartitionCountMax},
-		{"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
+		// {"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
 		{"LeaderCount", &nodeMetric.LeaderCountMax},
 		{"ReplicationBytesOutPerSec", &nodeMetric.ReplicationBytesOutPerSecMax},
 		{"ReplicationBytesInPerSec", &nodeMetric.ReplicationBytesInPerSecMax},
