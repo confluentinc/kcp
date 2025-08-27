@@ -2,10 +2,10 @@ package scan
 
 import (
 	"fmt"
-	"github.com/confluentinc/kcp/internal/generators/scan"
 	"github.com/confluentinc/kcp/internal/cli/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/cli/scan/cluster"
 	"github.com/confluentinc/kcp/internal/cli/scan/region"
+	"github.com/confluentinc/kcp/internal/generators/scan"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )

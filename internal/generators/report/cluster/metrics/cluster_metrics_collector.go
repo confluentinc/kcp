@@ -5,16 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ClusterMetricsOpts struct {
@@ -37,15 +34,12 @@ type Topic struct {
 }
 
 type ClusterMetricsCollector struct {
-	region            string
-	mskService        MSKService
-	metricService     MetricService
-	kafkaAdminFactory KafkaAdminFactory
-	startDate         time.Time
-	endDate           time.Time
-	clusterArn        string
-	authType          types.AuthType
-	skipKafka         bool
+	region        string
+	mskService    MSKService
+	metricService MetricService
+	startDate     time.Time
+	endDate       time.Time
+	clusterArn    string
 }
 
 type MSKService interface {
@@ -55,8 +49,6 @@ type MSKService interface {
 	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 }
 
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
-
 type MetricService interface {
 	GetAverageMetric(clusterName string, metricName string, node *int) (float64, error)
 	GetPeakMetric(clusterName string, metricName string, node *int) (float64, error)
@@ -65,17 +57,14 @@ type MetricService interface {
 	GetAverageBytesInPerSec(clusterName string, numNodes int, topic string) ([]float64, error)
 }
 
-func NewClusterMetrics(mskService MSKService, metricService MetricService, kafkaAdminFactory KafkaAdminFactory, opts ClusterMetricsOpts) *ClusterMetricsCollector {
+func NewClusterMetrics(mskService MSKService, metricService MetricService, opts ClusterMetricsOpts) *ClusterMetricsCollector {
 	return &ClusterMetricsCollector{
-		region:            opts.Region,
-		mskService:        mskService,
-		metricService:     metricService,
-		kafkaAdminFactory: kafkaAdminFactory,
-		startDate:         opts.StartDate,
-		endDate:           opts.EndDate,
-		clusterArn:        opts.ClusterArn,
-		authType:          opts.AuthType,
-		skipKafka:         opts.SkipKafka,
+		region:        opts.Region,
+		mskService:    mskService,
+		metricService: metricService,
+		startDate:     opts.StartDate,
+		endDate:       opts.EndDate,
+		clusterArn:    opts.ClusterArn,
 	}
 }
 
@@ -200,7 +189,7 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 
 	var partitions float64
 	for _, nodeMetric := range nodesMetrics {
-		partitions += float64(nodeMetric.PartitionCountMax)
+		partitions += float64(nodeMetric.LeaderCountMax)
 	}
 
 	retention_days, local_retention_hours := rm.calculateRetention(nodesMetrics)
@@ -263,12 +252,7 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	}
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
-	// // Replication Factor (Optional, Default = 3)
-	replicationFactor, err := rm.calculateReplicationFactor(cluster)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate replication factor: %v", err)
-	}
-	clusterMetricsSummary.ReplicationFactor = replicationFactor
+	clusterMetricsSummary.ReplicationFactor = rm.calculateReplicationFactor(nodesMetrics)
 
 	clusterMetric := types.ClusterMetrics{
 		Region:                rm.region,
@@ -288,102 +272,19 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	return &clusterMetric, nil
 }
 
-func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes.Cluster) (*float64, error) {
+func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []types.NodeMetrics) (*float64) {
 
-	if rm.skipKafka {
-		slog.Info("🔍 skipping replication calculation due to --skipKafka flag preventing broker connection")
-		return nil, nil
+	partitions, leaders := 0, 0
+	for _, nodeMetric := range nodesMetrics {
+		partitions += int(nodeMetric.PartitionCountMax)
+		leaders += int(nodeMetric.LeaderCountMax)
 	}
-
-	// initialize the kafka admin client
-	brokers, err := rm.mskService.GetBootstrapBrokers(context.Background(), &rm.clusterArn)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to get bootstrap brokers: %v", err)
+	if leaders == 0 {
+		return aws.Float64(0)
 	}
+	replicationFactor := float64(partitions) / float64(leaders)
+	return &replicationFactor
 
-	brokerAddresses, err := rm.mskService.ParseBrokerAddresses(*brokers, rm.authType)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to parse broker addresses: %v", err)
-	}
-
-	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(cluster)
-
-	// Extract and convert Kafka version
-	var kafkaVersion string
-	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		kafkaVersion = utils.ConvertKafkaVersion(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
-	} else {
-		// TODO: For severless clusters, how should we handle this? Currently defaulting to 4.0.0
-		kafkaVersion = "4.0.0"
-	}
-
-	admin, err := rm.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to setup admin client: %v", err)
-	}
-
-	defer admin.Close()
-
-	defaultReplicationFactor := 3
-	config, err := admin.DescribeConfig()
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe config: %v", err)
-	}
-
-	for _, c := range config {
-		if c.Name == "default.replication.factor" {
-			if val, err := strconv.Atoi(c.Value); err == nil {
-				defaultReplicationFactor = val
-			} else {
-				slog.Warn("Failed to parse default.replication.factor, using default value", "value", c.Value, "error", err)
-			}
-			break
-		}
-	}
-
-	topics, err := admin.ListTopics()
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
-	}
-
-	topicsData := make([]Topic, 0, len(topics))
-	for topic := range topics {
-		replicationFactor := int(topics[topic].ReplicationFactor)
-		if replicationFactor == -1 {
-			replicationFactor = defaultReplicationFactor
-		}
-		topicsData = append(topicsData, Topic{
-			Name:              topic,
-			ReplicationFactor: replicationFactor,
-		})
-	}
-
-	totalBytesInPerSec := 0.0
-	totalReplicationDataBytes := 0.0
-
-	for _, topic := range topicsData {
-
-		numNodes := 1
-		if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-			numNodes = int(*cluster.Provisioned.NumberOfBrokerNodes)
-		}
-
-		bytesInPerSec, err := rm.metricService.GetAverageBytesInPerSec(*cluster.ClusterName, numNodes, topic.Name)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get average bytes in per sec: %v", err)
-		}
-		for _, bytesInPerSec := range bytesInPerSec {
-			totalBytesInPerSec += bytesInPerSec
-			totalReplicationDataBytes += bytesInPerSec * float64(topic.ReplicationFactor)
-		}
-	}
-
-	if totalBytesInPerSec == 0 {
-		return nil, nil
-	}
-
-	replicationFactor := totalReplicationDataBytes / totalBytesInPerSec
-	return &replicationFactor, nil
 }
 
 func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
