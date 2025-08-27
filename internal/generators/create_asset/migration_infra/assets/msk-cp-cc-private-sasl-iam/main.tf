@@ -21,13 +21,12 @@ module "confluent_cloud_api_key" {
     confluent = confluent
   }
 
-  confluent_cloud_environment_id     = module.confluent_cloud.confluent_cloud_environment_id
+  confluent_cloud_environment_id = module.confluent_cloud.confluent_cloud_environment_id
   confluent_cloud_cluster_id         = module.confluent_cloud.confluent_cloud_cluster_id
-  confluent_cloud_service_account_id = module.confluent_cloud.confluent_cloud_service_account_id
 
   depends_on = [
     module.confluent_cloud,
-    module.confluent_cloud_api_key
+    module.private_link_connection
   ]
 }
 

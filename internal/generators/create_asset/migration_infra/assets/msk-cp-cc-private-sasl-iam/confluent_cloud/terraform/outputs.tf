@@ -13,7 +13,3 @@ output "confluent_cloud_cluster_bootstrap_endpoint" {
 output "confluent_cloud_cluster_rest_endpoint" {
   value = confluent_kafka_cluster.cluster.rest_endpoint
 }
-
-output "confluent_cloud_service_account_id" {
-  value = confluent_service_account.app-manager.id
-}

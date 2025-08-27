@@ -45,32 +45,3 @@ resource "confluent_kafka_cluster" "cluster" {
     id = confluent_environment.environment.id
   }
 }
-
-data "confluent_schema_registry_cluster" "schema_registry" {
-  environment {
-    id = confluent_environment.environment.id
-  }
-}
-
-resource "confluent_service_account" "app-manager" {
-  display_name = "app-manager-${random_string.suffix.result}"
-  description  = "Service account to manage the ${var.confluent_cloud_environment_name} environment."
-}
-
-resource "confluent_role_binding" "subject-resource-owner" {
-  principal   = "User:${confluent_service_account.app-manager.id}"
-  role_name   = "ResourceOwner"
-  crn_pattern = "${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"
-}
-
-resource "confluent_role_binding" "app-manager-kafka-cluster-admin" {
-  principal   = "User:${confluent_service_account.app-manager.id}"
-  role_name   = "CloudClusterAdmin"
-  crn_pattern = confluent_kafka_cluster.cluster.rbac_crn
-}
-
-resource "confluent_role_binding" "app-manager-kafka-data-steward" {
-  principal   = "User:${confluent_service_account.app-manager.id}"
-  role_name   = "DataSteward"
-  crn_pattern = confluent_environment.environment.resource_name
-}
