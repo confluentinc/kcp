@@ -1,4 +1,4 @@
-# Netwokring
+# Networking
 
 This module creates all the networking components required for deploying a jump cluster to migrate data from AWS MSK to Confluent Cloud using cluster linking in a private network.
 

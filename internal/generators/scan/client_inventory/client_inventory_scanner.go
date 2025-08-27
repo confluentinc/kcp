@@ -1,4 +1,4 @@
-package broker_logs
+package client_inventory
 
 import (
 	"bufio"
@@ -18,12 +18,12 @@ var (
 	KafkaApiTracePattern = regexp.MustCompile(`^\[.*\] TRACE \[KafkaApi-\d+\].*\(kafka\.server\.KafkaApis\)$`)
 )
 
-type BrokerLogsScannerOpts struct {
+type ClientInventoryScannerOpts struct {
 	S3Uri  string
 	Region string
 }
 
-type BrokerLogsScanner struct {
+type ClientInventoryScanner struct {
 	s3Service            S3Service
 	kafkaTraceLineParser *KafkaApiTraceLineParser
 	s3Uri                string
@@ -47,8 +47,8 @@ type RequestMetadata struct {
 	Timestamp    time.Time
 }
 
-func NewBrokerLogsScanner(s3Service S3Service, opts BrokerLogsScannerOpts) (*BrokerLogsScanner, error) {
-	return &BrokerLogsScanner{
+func NewClientInventoryScanner(s3Service S3Service, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
+	return &ClientInventoryScanner{
 		s3Service:            s3Service,
 		kafkaTraceLineParser: &KafkaApiTraceLineParser{},
 		s3Uri:                opts.S3Uri,
@@ -56,17 +56,17 @@ func NewBrokerLogsScanner(s3Service S3Service, opts BrokerLogsScannerOpts) (*Bro
 	}, nil
 }
 
-func (bs *BrokerLogsScanner) Run() error {
-	slog.Info("🚀 starting broker logs scan", "s3_uri", bs.s3Uri)
+func (cis *ClientInventoryScanner) Run() error {
+	slog.Info("🚀 starting client inventory scan", "s3_uri", cis.s3Uri)
 
 	ctx := context.Background()
 
-	bucket, prefix, err := bs.s3Service.ParseS3URI(bs.s3Uri)
+	bucket, prefix, err := cis.s3Service.ParseS3URI(cis.s3Uri)
 	if err != nil {
 		return fmt.Errorf("failed to parse S3 URI: %w", err)
 	}
 
-	logFiles, err := bs.s3Service.ListLogFiles(ctx, bucket, prefix)
+	logFiles, err := cis.s3Service.ListLogFiles(ctx, bucket, prefix)
 	if err != nil {
 		return fmt.Errorf("failed to list log files: %w", err)
 	}
@@ -76,26 +76,26 @@ func (bs *BrokerLogsScanner) Run() error {
 		return nil
 	}
 
-	requestMetadataByCompositeKey := bs.handleLogFiles(ctx, bucket, logFiles)
+	requestMetadataByCompositeKey := cis.handleLogFiles(ctx, bucket, logFiles)
 
-	if err := bs.generateCSV(requestMetadataByCompositeKey); err != nil {
+	if err := cis.generateCSV(requestMetadataByCompositeKey); err != nil {
 		slog.Error("failed to write CSV file", "error", err)
 	}
 
 	return nil
 }
 
-func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) map[string]*RequestMetadata {
+func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) map[string]*RequestMetadata {
 	requestMetadataByCompositeKey := make(map[string]*RequestMetadata)
 
 	for _, file := range logFiles {
-		requestsMetadata, err := bs.handleLogFile(ctx, bucket, file)
+		requestsMetadata, err := cis.handleLogFile(ctx, bucket, file)
 		if err != nil {
 			slog.Error("failed to extract API requests", "file", file, "error", err)
 			continue
 		}
 
-		slog.Info("found matching log lines", "file", file, "count", len(requestsMetadata))
+		slog.Info(fmt.Sprintf("parsed log file %s: found %d matching log lines", file, len(requestsMetadata)))
 
 		for _, metadata := range requestsMetadata {
 			// we cannot guarantee that the client id is unique as it may not be set on clients
@@ -118,8 +118,8 @@ func (bs *BrokerLogsScanner) handleLogFiles(ctx context.Context, bucket string, 
 	return requestMetadataByCompositeKey
 }
 
-func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
-	content, err := bs.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
+func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
+	content, err := cis.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
 	}
@@ -133,7 +133,7 @@ func (bs *BrokerLogsScanner) handleLogFile(ctx context.Context, bucket, key stri
 
 		switch {
 		case KafkaApiTracePattern.MatchString(line):
-			metadata, err := bs.kafkaTraceLineParser.Parse(line, lineNumber, key)
+			metadata, err := cis.kafkaTraceLineParser.Parse(line, lineNumber, key)
 			if err != nil {
 				slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
 				continue
@@ -159,8 +159,8 @@ type csvColumn struct {
 	extractorFunc func(*RequestMetadata) string
 }
 
-func (bs *BrokerLogsScanner) generateCSV(requestMetadataByCompositeKey map[string]*RequestMetadata) error {
-	fileName := "broker_logs_scan_results.csv"
+func (cis *ClientInventoryScanner) generateCSV(requestMetadataByCompositeKey map[string]*RequestMetadata) error {
+	fileName := "client_inventory_scan_results.csv"
 
 	file, err := os.Create(fileName)
 	if err != nil {

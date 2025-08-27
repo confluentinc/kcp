@@ -1,0 +1,87 @@
+name: Bug Report
+description: File a bug report to help us improve KCP CLI
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible to help us understand and reproduce the issue.
+
+  - type: input
+    id: kcp-version
+    attributes:
+      label: KCP CLI Version
+      description: What version of KCP CLI are you running? (Run `kcp version` to find out)
+      placeholder: e.g., v1.2.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: command
+    attributes:
+      label: KCP Command
+      description: Which KCP command are you having issues with?
+      options:
+        - kcp scan
+        - kcp report
+        - kcp create-asset
+        - Other (please specify in description)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of what the bug is.
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Run command '...'
+        2. With configuration '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Information
+      description: Please provide information about your environment
+      placeholder: |
+        - OS: [e.g., MacOS, Linux]
+        - MSK Cluster Configuration: [e.g., provisioned/serverless, private/public]
+        - MSK Cluster Authentication: [e.g., IAM, SCRAM, TLS, Unauthenticated]
+        - KCP installation method: [e.g., GitHub Releases, Build from source]
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here.

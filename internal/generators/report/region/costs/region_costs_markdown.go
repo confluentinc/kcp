@@ -2,6 +2,7 @@ package costs
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -112,7 +113,7 @@ func (rc *RegionCoster) writeCostReportMarkdown(metrics types.RegionCosts, outpu
 	md.AddTable(headers, data, 0, 1, 2)
 
 	// Print to terminal and save to file
-	filePath := fmt.Sprintf("%s/cost_report-%s.md", outputFolder, rc.region)
+	filePath := filepath.Join(outputFolder, fmt.Sprintf("%s-cost-report.md", rc.region))
 	err := md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
 	if err != nil {
 		return fmt.Errorf("❌ Failed to write markdown output: %v", err)

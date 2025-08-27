@@ -79,13 +79,6 @@ If you wish to run the downloaded kcp binary from anywhere on your system, you m
 sudo mv ./kcp_<ARCH> /usr/local/bin/kcp
 ```
 
-> [!WARNING]
-> If you're downloading pre-built binaries directly from GitHub releases on macOS, as a temporary workaround until we sign and notorize the binary. You will need to remove the quarantine attribute after extracting the tar.gz file:
-
-```shell
-xattr -d com.apple.quarantine ./kcp_darwin_*
-```
-
 ## Authentication
 
 Ensure that your terminal session is authenticated with AWS. The kcp CLI uses the standard AWS credential chain and supports multiple authentication methods:
@@ -165,11 +158,88 @@ You can also set environment variables individually if you opt not to use the sc
 
 ### `kcp scan`
 
+The kcp scan command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
+
+*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names.*
+
+**Example Usage**
+
+`kcp scan --region us-east-1 --region eu-west-3`
+
+or 
+
+`kcp scan --region us-east-1,eu-west-3`
+
+The command will produce region msk, cost, metrics and cluster output files in a nested structure as follows:
+
+```
+.
+└── kcp-scan
+    ├── eu-west-3
+    │   ├── eu-west-3-cost-report.json
+    │   ├── eu-west-3-cost-report.md
+    │   ├── eu-west-3-region-scan.json
+    │   ├── eu-west-3-region-scan.md
+    │   └── cluster-1
+    │       ├── cluster-1-metrics.json
+    │       ├── cluster-1-metrics.md
+    │       ├── cluster-1.json
+    │       └── cluster-1.md
+    └── us-east-1
+        ├── cluster-2
+        │   ├── cluster-2-metrics.json
+        │   ├── cluster-2-metrics.md
+        │   ├── cluster-2.json
+        │   └── cluster-2.md
+        ├── us-east-1-cost-report.json
+        ├── us-east-1-cost-report.md
+        ├── us-east-1-region-scan.json
+        └── us-east-1-region-scan.md
+
+```
+This command requires the following permissions:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ScanAllPermissions",
+            "Effect": "Allow",
+            "Action": [
+                "kafka:ListClustersV2",
+                "kafka:ListReplicators",
+                "kafka:ListVpcConnections",
+                "kafka:GetCompatibleKafkaVersions",
+                "cloudwatch:GetMetricData",
+                "kafka:ListKafkaVersions",
+                "ce:GetCostAndUsage",
+                "kafka:GetBootstrapBrokers",
+                "kafka:ListConfigurations",
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:ListMetrics",
+                "kafka:DescribeClusterV2",
+                "kafka:ListNodes",
+                "kafka:ListClusterOperationsV2",
+                "kafka:ListScramSecrets",
+                "kafka:ListClientVpcConnections",
+                "kafka:GetClusterPolicy",
+                "kafka:DescribeConfigurationRevision",
+                "kafka:DescribeReplicator"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+```
+
+
 The `kcp scan` command includes the following sub-commands:
 
 - `cluster`
 - `region`
-- `broker-logs`
+- `client-inventory`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -258,7 +328,7 @@ The sub-commands require the following minimum AWS IAM permissions:
 }
 ```
 
-`broker-logs`:
+`client-inventory`:
 
 ```json
 {
@@ -389,7 +459,7 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 
 ---
 
-#### `kcp scan broker-logs`
+#### `kcp scan client-inventory`
 
 This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
 
@@ -400,9 +470,9 @@ This command scans a hour window folder in s3 to identify as many clients as pos
 **Example Usage**
 
 ```shell
-kcp scan broker-logs \
+kcp scan client-inventory \
 --region us-east-1 \
---s3-uri  s3://my-cluster-logs-bucket/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/kcp-pub-cluster-90a919bc-5967-4805-8a47-09dad9019d9b-5/2025-08-13-14/
+--s3-uri  s3://my-cluster-logs-bucket/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-1a2345b6-bf9f-4670-b13b-710985f5645d-5/2025-08-13-14/
 ```
 
 **Output:**
@@ -602,7 +672,7 @@ kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cl
 kcp report cluster metrics \
 --start 2025-07-01 \
 --end 2025-08-01 \
---cluster-arn arn:aws:kafka:eu-north-1:635910096382:cluster/msk-exp1-fff-cluster/f6842864-4a96-4f6c-bf24-2728d32cdef3-2 \
+--cluster-arn arn:aws:kafka:us-east-1:000123456789:cluster/msk-cluster/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
 --use-sasl-iam
 ```
 
@@ -1293,7 +1363,7 @@ The command creates a `migration_scripts` directory containing shell scripts:
 
 ---
 
-#### `kcp create-asset migration-scripts`
+#### `kcp create-asset reverse-proxy`
 
 Create reverse proxy infrastructure assets to allow observability into migrated data in Confluent Cloud.
 

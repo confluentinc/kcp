@@ -7,12 +7,13 @@ output "confluent_cloud_cluster_id" {
 }
 
 output "confluent_cloud_cluster_api_key" {
-  value = module.confluent_cloud.confluent_cloud_cluster_key
+  sensitive = true
+  value     = module.confluent_cloud_access_setup.confluent_cloud_cluster_key
 }
 
 output "confluent_cloud_cluster_api_key_secret" {
   sensitive = true
-  value     = module.confluent_cloud.confluent_cloud_cluster_secret
+  value     = module.confluent_cloud_access_setup.confluent_cloud_cluster_secret
 }
 
 output "confluent_platform_controller_bootstrap_server" {

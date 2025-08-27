@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ClusterMetricsOpts struct {
@@ -55,7 +55,7 @@ type MSKService interface {
 	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 }
 
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) (client.KafkaAdmin, error)
+type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type MetricService interface {
 	GetAverageMetric(clusterName string, metricName string, node *int) (float64, error)
@@ -82,37 +82,40 @@ func NewClusterMetrics(mskService MSKService, metricService MetricService, kafka
 func (rm *ClusterMetricsCollector) Run() error {
 	slog.Info("🚀 starting cluster metrics report", "cluster", rm.clusterArn)
 
-	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to get clusters: %v", err)
-	}
-
-	clusterMetrics, err := rm.processCluster(*cluster)
+	clusterMetrics, err := rm.ProcessCluster()
 	if err != nil {
 		return fmt.Errorf("❌ Failed to process clusters: %v", err)
 	}
 
-	err = rm.writeOutput(*clusterMetrics)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to write output: %v", err)
+	if err := clusterMetrics.WriteAsJson(); err != nil {
+		return fmt.Errorf("failed to write file: %v", err)
+	}
+
+	if err := clusterMetrics.WriteAsMarkdown(false); err != nil {
+		return fmt.Errorf("failed to generate markdown report: %v", err)
 	}
 
 	slog.Info("✅ cluster metrics report complete", "cluster", rm.clusterArn)
 	return nil
 }
 
-func (rm *ClusterMetricsCollector) processCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
-	slog.Info("🔄 processing cluster", "cluster", *cluster.ClusterName)
+func (rm *ClusterMetricsCollector) ProcessCluster() (*types.ClusterMetrics, error) {
+	slog.Info("🔄 processing cluster", "cluster", &rm.clusterArn)
+
+	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
+	}
 
 	var clusterMetric *types.ClusterMetrics
-	var err error
+
 	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		clusterMetric, err = rm.processProvisionedCluster(cluster)
+		clusterMetric, err = rm.processProvisionedCluster(*cluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
-		clusterMetric, err = rm.processServerlessCluster(cluster)
+		clusterMetric, err = rm.processServerlessCluster(*cluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
 		}
@@ -268,6 +271,10 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetricsSummary.ReplicationFactor = replicationFactor
 
 	clusterMetric := types.ClusterMetrics{
+		Region:                rm.region,
+		ClusterArn:            *cluster.ClusterArn,
+		StartDate:             rm.startDate,
+		EndDate:               rm.endDate,
 		ClusterName:           *cluster.ClusterName,
 		ClusterType:           string(cluster.ClusterType),
 		BrokerAZDistribution:  brokerAZDistribution,
@@ -301,7 +308,16 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(cluster kafkatypes
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(cluster)
 
-	admin, err := rm.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit)
+	// Extract and convert Kafka version
+	var kafkaVersion string
+	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		kafkaVersion = utils.ConvertKafkaVersion(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	} else {
+		// TODO: For severless clusters, how should we handle this? Currently defaulting to 4.0.0
+		kafkaVersion = "4.0.0"
+	}
+
+	admin, err := rm.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
@@ -402,6 +418,10 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	clusterMetricsSummary.FollowerFetching = followerFetching
 
 	clusterMetric := types.ClusterMetrics{
+		Region:                rm.region,
+		ClusterArn:            *cluster.ClusterArn,
+		StartDate:             rm.startDate,
+		EndDate:               rm.endDate,
 		ClusterName:           *cluster.ClusterName,
 		ClusterType:           string(cluster.ClusterType),
 		Authentication:        authentication,
@@ -604,27 +624,6 @@ func (rm *ClusterMetricsCollector) processServerlessNode(clusterName string) (*t
 	}
 
 	return &nodeMetric, nil
-}
-
-func (rm *ClusterMetricsCollector) writeOutput(metrics types.ClusterMetrics) error {
-
-	data, err := json.MarshalIndent(metrics, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal cluster information: %v", err)
-	}
-
-	filePath := fmt.Sprintf("%s-metrics.json", metrics.ClusterName)
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write file: %v", err)
-	}
-
-	// Generate markdown report
-	mdFilePath := fmt.Sprintf("%s-metrics.md", metrics.ClusterName)
-	if err := rm.generateMarkdownReport(metrics, mdFilePath); err != nil {
-		return fmt.Errorf("failed to generate markdown report: %v", err)
-	}
-
-	return nil
 }
 
 func structToMap(s any) (map[string]any, error) {

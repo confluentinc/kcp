@@ -1,0 +1,101 @@
+name: Question / Support
+description: Ask a question or get support for using KCP CLI
+title: "[Question]: "
+labels: ["question", "support"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about using KCP CLI? Need help with migration planning or setup? Please provide details below.
+
+        **Note**: For bugs, please use the Bug Report template. For new features, use the Feature Request template.
+
+  - type: dropdown
+    id: question-category
+    attributes:
+      label: Question Category
+      description: What area is your question about?
+      options:
+        - Getting Started & Setup
+        - Authentication & Credentials
+        - Scanning & Discovery (kcp scan)
+        - Reporting & Cost Analysis (kcp report)
+        - Asset Generation (kcp create-asset)
+        - Infrastructure & Networking
+        - Troubleshooting & Debugging
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      placeholder: Please describe your question in detail...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context & Background
+      description: Provide context about your situation or current setup
+      placeholder: |
+        - What are you trying to achieve?
+        - Any specific constraints or requirements?
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted-solutions
+    attributes:
+      label: What Have You Tried?
+      description: What steps have you already taken or resources have you consulted?
+      placeholder: |
+        - What commands have you already tried?
+        - What errors did you get?
+        - Have you ensured proper permissions, connectivity and authentication?
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment-info
+    attributes:
+      label: Environment Information (if relevant)
+      description: Provide environment details if they're relevant to your question
+      placeholder: |
+        - KCP CLI Version: 
+        - MSK Cluster Type: [provisioned/serverless]
+        - MSK Cluster Networking: [public/private]
+        - Authentication Methods: [IAM, SCRAM, TLS, Unauthenticated]
+    validations:
+      required: false
+
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: Priority
+      description: How urgent is getting an answer to this question?
+      options:
+        - Low - General inquiry, no rush
+        - Medium - Planning a migration, would like guidance
+        - High - Working on migration, need help soon
+        - Urgent - Blocked on current migration work
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional Information
+      description: Any other details that might be helpful for answering your question
+
+  - type: checkboxes
+    id: documentation-check
+    attributes:
+      label: Documentation Check
+      description: Have you checked the available documentation?
+      options:
+        - label: I have checked the README and available documentation
+          required: false
