@@ -14,8 +14,8 @@ module "confluent_cloud" {
   confluent_cloud_cluster_type     = var.confluent_cloud_cluster_type
 }
 
-module "confluent_cloud_api_key" {
-  source = "./confluent_cloud_api_key/terraform"
+module "confluent_cloud_access_setup" {
+  source = "./confluent_cloud_access_setup/terraform"
 
   providers = {
     confluent = confluent
@@ -46,8 +46,8 @@ module "confluent_platform_broker_instances" {
   confluent_platform_broker_subnet_ids       = module.networking.confluent_platform_broker_subnet_ids
   confluent_cloud_cluster_rest_endpoint      = module.confluent_cloud.confluent_cloud_cluster_rest_endpoint
   confluent_cloud_cluster_id                 = module.confluent_cloud.confluent_cloud_cluster_id
-  confluent_cloud_cluster_key                = module.confluent_cloud_api_key.confluent_cloud_cluster_key
-  confluent_cloud_cluster_secret             = module.confluent_cloud_api_key.confluent_cloud_cluster_secret
+  confluent_cloud_cluster_key                = module.confluent_cloud_access_setup.confluent_cloud_cluster_key
+  confluent_cloud_cluster_secret             = module.confluent_cloud_access_setup.confluent_cloud_cluster_secret
   confluent_cloud_cluster_bootstrap_endpoint = module.confluent_cloud.confluent_cloud_cluster_bootstrap_endpoint
   msk_cluster_id                             = var.msk_cluster_id
   msk_cluster_bootstrap_brokers              = var.msk_cluster_bootstrap_brokers
@@ -70,8 +70,8 @@ module "ansible_control_node_instance" {
   confluent_platform_broker_subnet_ids            = module.networking.confluent_platform_broker_subnet_ids
   confluent_cloud_cluster_rest_endpoint           = module.confluent_cloud.confluent_cloud_cluster_rest_endpoint
   confluent_cloud_cluster_id                      = module.confluent_cloud.confluent_cloud_cluster_id
-  confluent_cloud_cluster_key                     = module.confluent_cloud_api_key.confluent_cloud_cluster_key
-  confluent_cloud_cluster_secret                  = module.confluent_cloud_api_key.confluent_cloud_cluster_secret
+  confluent_cloud_cluster_key                     = module.confluent_cloud_access_setup.confluent_cloud_cluster_key
+  confluent_cloud_cluster_secret                  = module.confluent_cloud_access_setup.confluent_cloud_cluster_secret
   confluent_cloud_cluster_bootstrap_endpoint      = module.confluent_cloud.confluent_cloud_cluster_bootstrap_endpoint
   confluent_platform_broker_instances_private_dns = module.confluent_platform_broker_instances.confluent_platform_broker_instances_private_dns
 
