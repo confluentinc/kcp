@@ -13,6 +13,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/msk"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 type DiscovererOpts struct {
@@ -22,32 +23,6 @@ type DiscovererOpts struct {
 type Discoverer struct {
 	regions []string
 }
-
-// YAML structures for cluster configuration
-type SASLScramConfig struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-}
-
-type TLSConfig struct {
-	CACert     string `yaml:"ca_cert"`
-	ClientCert string `yaml:"client_cert"`
-	ClientKey  string `yaml:"client_key"`
-}
-
-type ClusterAuthEntry struct {
-	UseSASLIAM         *bool            `yaml:"use_sasl_iam,omitempty"`
-	UseSASLScram       *bool            `yaml:"use_sasl_scram,omitempty"`
-	UseTLS             *bool            `yaml:"use_tls,omitempty"`
-	UseUnauthenticated *bool            `yaml:"use_unauthenticated,omitempty"`
-	SkipKafka          *bool            `yaml:"skip_kafka,omitempty"`
-	SASLScram          *SASLScramConfig `yaml:"sasl_scram,omitempty"`
-	TLS                *TLSConfig       `yaml:"tls,omitempty"`
-}
-
-type RegionClusters map[string]ClusterAuthEntry
-
-type DiscoveryConfig map[string]RegionClusters
 
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
@@ -71,19 +46,19 @@ func (d *Discoverer) Run() error {
 }
 
 func (d *Discoverer) generateCredsFile(outputDir string) error {
-	discoveryConfig := make(DiscoveryConfig)
+	credsYaml := make(types.CredsYaml)
 
-	for _, r := range d.regions {
-		clusterAuthEntries, err := d.getClusterAuthEntries(r)
+	for _, region := range d.regions {
+		clusterEntries, err := d.getClusterEntries(region)
 		if err != nil {
-			slog.Error("failed to discover region", "region", r, "error", err)
+			slog.Error("failed to discover region", "region", region, "error", err)
 		}
-		discoveryConfig[r] = *clusterAuthEntries
+		credsYaml[region] = *clusterEntries
 	}
 
 	yamlFile := filepath.Join(outputDir, "creds.yaml")
 
-	yamlData, err := yaml.Marshal(discoveryConfig)
+	yamlData, err := yaml.Marshal(credsYaml)
 	if err != nil {
 		return fmt.Errorf("failed to marshal YAML: %w", err)
 	}
@@ -92,13 +67,13 @@ func (d *Discoverer) generateCredsFile(outputDir string) error {
 		return fmt.Errorf("failed to write YAML file: %w", err)
 	}
 
-	slog.Info("Discovery completed", "yaml_file", yamlFile)
+	slog.Info("generated creds.yaml", "file", yamlFile)
 
 	return nil
 
 }
 
-func (d *Discoverer) getClusterAuthEntries(region string) (*RegionClusters, error) {
+func (d *Discoverer) getClusterEntries(region string) (*types.RegionEntries, error) {
 	slog.Info("discovering region", "region", region)
 	mskClient, err := client.NewMSKClient(region)
 	if err != nil {
@@ -111,7 +86,7 @@ func (d *Discoverer) getClusterAuthEntries(region string) (*RegionClusters, erro
 		return nil, fmt.Errorf("failed to list clusters: %v", err)
 	}
 
-	regionClusters := make(RegionClusters)
+	regionEntries := make(types.RegionEntries)
 
 	for _, cluster := range clusters {
 		var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
@@ -143,35 +118,36 @@ func (d *Discoverer) getClusterAuthEntries(region string) (*RegionClusters, erro
 			isSaslIamEnabled = true
 		}
 
-		clusterAuthEntry := ClusterAuthEntry{}
+		clusterEntry := types.ClusterEntry{}
 
+		// we can always skip kafka
+		clusterEntry.SkipKafka = aws.Bool(false)
+
+		// only include auth entries for enabled auth types
 		if isSaslIamEnabled {
-			clusterAuthEntry.UseSASLIAM = aws.Bool(false)
+			clusterEntry.UseSASLIAM = aws.Bool(false)
 		}
 		if isSaslScramEnabled {
-			clusterAuthEntry.UseSASLScram = aws.Bool(false)
-			clusterAuthEntry.SASLScram = &SASLScramConfig{
+			clusterEntry.UseSASLScram = aws.Bool(false)
+			clusterEntry.SASLScram = &types.SASLScramConfig{
 				Username: "",
 				Password: "",
 			}
 		}
 		if isTlsEnabled {
-			clusterAuthEntry.UseTLS = aws.Bool(false)
-			clusterAuthEntry.TLS = &TLSConfig{
+			clusterEntry.UseTLS = aws.Bool(false)
+			clusterEntry.TLS = &types.TLSConfig{
 				CACert:     "",
 				ClientCert: "",
 				ClientKey:  "",
 			}
 		}
 		if isUnauthenticatedEnabled {
-			clusterAuthEntry.UseUnauthenticated = aws.Bool(false)
+			clusterEntry.UseUnauthenticated = aws.Bool(false)
 		}
 
-		// we can always skip kafka
-		clusterAuthEntry.SkipKafka = aws.Bool(false)
-
-		regionClusters[*cluster.ClusterArn] = clusterAuthEntry
+		regionEntries[*cluster.ClusterArn] = clusterEntry
 	}
 
-	return &regionClusters, nil
+	return &regionEntries, nil
 }

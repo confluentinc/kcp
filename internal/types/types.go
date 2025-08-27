@@ -232,3 +232,29 @@ var AclMap = map[string]ACLMapping{
 		RequiresPattern: true,
 	},
 }
+
+// YAML structures for creds.yaml
+type CredsYaml map[string]RegionEntries
+
+type RegionEntries map[string]ClusterEntry
+
+type ClusterEntry struct {
+	UseSASLIAM         *bool            `yaml:"use_sasl_iam,omitempty"`
+	UseSASLScram       *bool            `yaml:"use_sasl_scram,omitempty"`
+	UseTLS             *bool            `yaml:"use_tls,omitempty"`
+	UseUnauthenticated *bool            `yaml:"use_unauthenticated,omitempty"`
+	SkipKafka          *bool            `yaml:"skip_kafka,omitempty"`
+	SASLScram          *SASLScramConfig `yaml:"sasl_scram,omitempty"`
+	TLS                *TLSConfig       `yaml:"tls,omitempty"`
+}
+
+type SASLScramConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type TLSConfig struct {
+	CACert     string `yaml:"ca_cert"`
+	ClientCert string `yaml:"client_cert"`
+	ClientKey  string `yaml:"client_key"`
+}
