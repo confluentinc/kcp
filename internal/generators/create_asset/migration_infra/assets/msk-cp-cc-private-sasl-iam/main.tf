@@ -14,6 +14,21 @@ module "confluent_cloud" {
   confluent_cloud_cluster_type     = var.confluent_cloud_cluster_type
 }
 
+module "private_link_connection" {
+  source = "./private_link_connection/terraform"
+
+  providers = {
+    aws       = aws
+    confluent = confluent
+  }
+
+  aws_region                           = var.aws_region
+  confluent_cloud_environment_id       = module.confluent_cloud.confluent_cloud_environment_id
+  vpc_id                               = var.customer_vpc_id
+  confluent_platform_broker_subnet_ids = module.networking.confluent_platform_broker_subnet_ids
+  security_group_id                    = module.networking.private_link_security_group_id
+}
+
 module "confluent_cloud_access_setup" {
   source = "./confluent_cloud_access_setup/terraform"
 
@@ -76,21 +91,6 @@ module "ansible_control_node_instance" {
   confluent_platform_broker_instances_private_dns = module.confluent_platform_broker_instances.confluent_platform_broker_instances_private_dns
 
   depends_on = [module.confluent_platform_broker_instances]
-}
-
-module "private_link_connection" {
-  source = "./private_link_connection/terraform"
-
-  providers = {
-    aws       = aws
-    confluent = confluent
-  }
-
-  aws_region                           = var.aws_region
-  confluent_cloud_environment_id       = module.confluent_cloud.confluent_cloud_environment_id
-  vpc_id                               = var.customer_vpc_id
-  confluent_platform_broker_subnet_ids = module.networking.confluent_platform_broker_subnet_ids
-  security_group_id                    = module.networking.private_link_security_group_id
 }
 
 module "networking" {
