@@ -6,12 +6,12 @@ require (
 	github.com/IBM/sarama v1.46.0
 	github.com/aws/aws-msk-iam-sasl-signer-go v1.0.4
 	github.com/aws/aws-sdk-go-v2 v1.38.1
-	github.com/aws/aws-sdk-go-v2/config v1.31.2
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.48.2
+	github.com/aws/aws-sdk-go-v2/config v1.31.3
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.49.0
 	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.55.1
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.246.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.247.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.47.1
-	github.com/aws/aws-sdk-go-v2/service/kafka v1.42.2
+	github.com/aws/aws-sdk-go-v2/service/kafka v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.1
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/spf13/cobra v1.9.1
@@ -24,7 +24,7 @@ require (
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.0 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.18.6 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.7 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.4 // indirect
@@ -35,7 +35,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.28.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.33.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.34.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.0 // indirect
 	github.com/aws/smithy-go v1.22.5 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
