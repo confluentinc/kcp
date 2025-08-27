@@ -24,7 +24,13 @@ type ClusterMetrics struct {
 	StartDate             time.Time             `json:"start_date"`
 	EndDate               time.Time             `json:"end_date"`
 	NodesMetrics          []NodeMetrics         `json:"nodes"`
+	GlobalMetrics         GlobalMetrics         `json:"global_metrics"`
 	ClusterMetricsSummary ClusterMetricsSummary `json:"cluster_metrics_summary"`
+}
+
+type GlobalMetrics struct {
+	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
+	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }
 
 type NodeMetrics struct {
@@ -43,7 +49,6 @@ type NodeMetrics struct {
 	RemoteLogSizeBytesMax        float64 `json:"remote_log_size_bytes_max"`
 	ClientConnectionCountMax     float64 `json:"client_connection_count_max"`
 	PartitionCountMax            float64 `json:"partition_count_max"`
-	GlobalTopicCountMax          float64 `json:"global_topic_count_max"`
 	LeaderCountMax               float64 `json:"leader_count_max"`
 	ReplicationBytesOutPerSecMax float64 `json:"replication_bytes_out_per_sec_max"`
 	ReplicationBytesInPerSecMax  float64 `json:"replication_bytes_in_per_sec_max"`
@@ -137,6 +142,9 @@ func (cm *ClusterMetrics) addIndividualClusterSections(md *markdown.Markdown) {
 
 	// Add cluster overview
 	cm.addClusterOverview(md)
+
+	// Add global metrics
+	cm.addGlobalMetricsRows(md)
 
 	// Add node details if available
 	if len(cm.NodesMetrics) > 0 {
@@ -298,9 +306,41 @@ func (cm *ClusterMetrics) addClusterMetricsSummary(md *markdown.Markdown) {
 
 }
 
+
+func (cm *ClusterMetrics) addGlobalMetricsRows(md *markdown.Markdown) {
+
+	md.AddHeading("Cluster Metrics", 4)
+
+	// Create headers with Node IDs as columns
+	headers := []string{"Metric", ""}
+
+	// Define the metrics and their formatters
+	metrics := []struct {
+		name      string
+		formatter func(gm GlobalMetrics) string
+	}{
+		{"Global Partition Count", func(gm GlobalMetrics) string {
+			return fmt.Sprintf("%.2f", gm.GlobalPartitionCountMax)
+		}},
+		{"Global Topic Count", func(gm GlobalMetrics) string {
+			return fmt.Sprintf("%.2f", gm.GlobalTopicCountMax)
+		}},
+	}
+
+	// Build table data with metrics as rows
+	var tableData [][]string
+	for _, metric := range metrics {
+		row := []string{metric.name, metric.formatter(cm.GlobalMetrics)}
+		tableData = append(tableData, row)
+	}
+
+	md.AddTable(headers, tableData)	
+
+}
+
 // addNodeDetails adds detailed node metrics
 func (cm *ClusterMetrics) addNodeDetails(md *markdown.Markdown) {
-	md.AddHeading("Broker Details", 4)
+	md.AddHeading("Broker Metrics", 4)
 
 	// Create headers with Node IDs as columns
 	headers := []string{"Metric"}
@@ -360,9 +400,6 @@ func (cm *ClusterMetrics) addNodeDetails(md *markdown.Markdown) {
 		}},
 		{"Peak Partition Count", func(node NodeMetrics) string {
 			return fmt.Sprintf("%.2f", node.PartitionCountMax)
-		}},
-		{"Peak Global Topic Count", func(node NodeMetrics) string {
-			return fmt.Sprintf("%.2f", node.GlobalTopicCountMax)
 		}},
 		{"Peak Leader Count", func(node NodeMetrics) string {
 			return fmt.Sprintf("%.2f", node.LeaderCountMax)

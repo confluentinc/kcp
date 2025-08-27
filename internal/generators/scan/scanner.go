@@ -131,7 +131,6 @@ func (rs *Scanner) Run() error {
 					StartDate:  startDate,
 					EndDate:    endDate,
 					ClusterArn: cluster.ClusterARN,
-					SkipKafka:  true,
 				}
 
 				cloudWatchClient, err := client.NewCloudWatchClient(metricsOpts.Region)
@@ -142,7 +141,7 @@ func (rs *Scanner) Run() error {
 
 				metricService := metrics.NewMetricService(cloudWatchClient, metricsOpts.StartDate, metricsOpts.EndDate)
 
-				clusterMetrics := rrm.NewClusterMetrics(mskService, metricService, kafkaAdminFactory, metricsOpts)
+				clusterMetrics := rrm.NewClusterMetrics(mskService, metricService, metricsOpts)
 				clusterMetricsResult, err := clusterMetrics.ProcessCluster()
 
 				if err != nil {
