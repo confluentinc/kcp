@@ -13,6 +13,10 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+locals {
+  sg_list = var.aws_security_group_ids == "" ? [] : split(",", var.aws_security_group_ids)
+}
+
 resource "random_string" "suffix" {
   length  = 4
   special = false
@@ -21,6 +25,7 @@ resource "random_string" "suffix" {
 }
 
 resource "aws_security_group" "confluent_platform_broker_instances_security_group" {
+  count  = length(local.sg_list) == 0 ? 1 : 0
   vpc_id = var.vpc_id
 
   ingress {
@@ -133,6 +138,7 @@ resource "aws_route_table_association" "private_rt_association" {
 }
 
 resource "aws_security_group" "private_link_security_group" {
+  count  = length(local.sg_list) == 0 ? 1 : 0
   vpc_id = var.vpc_id
 
   ingress {

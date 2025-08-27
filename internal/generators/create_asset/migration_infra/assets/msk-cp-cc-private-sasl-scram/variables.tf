@@ -77,3 +77,8 @@ variable "ansible_control_node_subnet_cidr" {
   description = "The CIDR block of the ansible instance subnet"
   type        = string
 }
+
+variable "aws_security_group_ids" {
+  description = "Comma separated AWS Security Group Ids"
+  type        = string
+}
