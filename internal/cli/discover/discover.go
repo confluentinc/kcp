@@ -29,7 +29,7 @@ func NewDiscoverCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 
-	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to discover")
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
 
 	discoverCmd.Flags().AddFlagSet(requiredFlags)
 
