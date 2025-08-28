@@ -263,7 +263,7 @@ type IAMConfig struct {
 
 type TLSConfig struct {
 	Enabled    bool   `yaml:"enabled"`
-	CACert     string `yaml:"ca-cert"`
+	CACert     string `yaml:"ca_cert"`
 	ClientCert string `yaml:"client_cert"`
 	ClientKey  string `yaml:"client_key"`
 }

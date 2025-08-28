@@ -136,31 +136,37 @@ func (d *Discoverer) getClusterEntries(region string) (*types.RegionEntries, err
 
 		clusterEntry := types.ClusterEntry{}
 
-		// only include auth entries for enabled auth types
+		// we want a SINGLE auth mech to enabled by default
+		// priotity preference is unauthenticated > iam > sasl_scram > tls
+		authEnabled := false
+		if isUnauthenticatedEnabled {
+			clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
+				Enabled: !authEnabled,
+			}
+			authEnabled = true
+		}
 		if isSaslIamEnabled {
 			clusterEntry.AuthMethod.IAM = &types.IAMConfig{
-				Enabled: false,
+				Enabled: !authEnabled,
 			}
+			authEnabled = true
 		}
 		if isSaslScramEnabled {
 			clusterEntry.AuthMethod.SASLScram = &types.SASLScramConfig{
-				Enabled:  false,
+				Enabled:  !authEnabled,
 				Username: "",
 				Password: "",
 			}
+			authEnabled = true
 		}
 		if isTlsEnabled {
 			clusterEntry.AuthMethod.TLS = &types.TLSConfig{
-				Enabled:    false,
+				Enabled:    !authEnabled,
 				CACert:     "",
 				ClientCert: "",
 				ClientKey:  "",
 			}
-		}
-		if isUnauthenticatedEnabled {
-			clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
-				Enabled: false,
-			}
+			authEnabled = true
 		}
 
 		regionEntries.Clusters[*cluster.ClusterArn] = clusterEntry
