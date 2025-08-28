@@ -16,8 +16,8 @@ var (
 func NewDiscoverCmd() *cobra.Command {
 	discoverCmd := &cobra.Command{
 		Use:           "discover",
-		Short:         "Discover msk clusters and information",
-		Long:          "For given regions, discover msk clusters and collect information about them",
+		Short:         "Multi-region, multi cluster discovery scan of AWS MSK",
+		Long:          "Performs a full Discovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunDiscover,
