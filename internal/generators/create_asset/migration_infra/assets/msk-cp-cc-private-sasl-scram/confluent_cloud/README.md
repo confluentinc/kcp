@@ -44,7 +44,7 @@ No modules.
 | [random_string.suffix](https://registry.terraform.io/providers/hashicorp/random/3.7.2/docs/resources/string) | resource |
 | [confluent_flink_region.example](https://registry.terraform.io/providers/confluentinc/confluent/2.23.0/docs/data-sources/flink_region) | data source |
 | [confluent_organization.main](https://registry.terraform.io/providers/confluentinc/confluent/2.23.0/docs/data-sources/organization) | data source |
-| [confluent_schema_registry_cluster.terrasnap_schema_registry](https://registry.terraform.io/providers/confluentinc/confluent/2.23.0/docs/data-sources/schema_registry_cluster) | data source |
+| [confluent_schema_registry_cluster.schema_registry](https://registry.terraform.io/providers/confluentinc/confluent/2.23.0/docs/data-sources/schema_registry_cluster) | data source |
 
 ## Inputs
 
