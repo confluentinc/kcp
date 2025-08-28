@@ -18,3 +18,8 @@ variable "create_igw" {
   type        = bool
   default     = false
 }
+
+variable "aws_security_group_ids" {
+  description = "Comma separated AWS Security Group Ids"
+  type        = string
+}
