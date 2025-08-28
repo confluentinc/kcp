@@ -234,27 +234,42 @@ var AclMap = map[string]ACLMapping{
 }
 
 // YAML structures for creds.yaml
-type CredsYaml map[string]RegionEntries
-
-type RegionEntries map[string]ClusterEntry
-
-type ClusterEntry struct {
-	UseSASLIAM         *bool            `yaml:"use_sasl_iam,omitempty"`
-	UseSASLScram       *bool            `yaml:"use_sasl_scram,omitempty"`
-	UseTLS             *bool            `yaml:"use_tls,omitempty"`
-	UseUnauthenticated *bool            `yaml:"use_unauthenticated,omitempty"`
-	SkipKafka          *bool            `yaml:"skip_kafka,omitempty"`
-	SASLScram          *SASLScramConfig `yaml:"sasl_scram,omitempty"`
-	TLS                *TLSConfig       `yaml:"tls,omitempty"`
+type CredsYaml struct {
+	Regions map[string]RegionEntries `yaml:"regions"`
 }
 
-type SASLScramConfig struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+type RegionEntries struct {
+	Clusters map[string]ClusterEntry `yaml:"clusters"`
+}
+
+type ClusterEntry struct {
+	AuthMethod AuthMethodConfig `yaml:"auth_method"`
+}
+
+type AuthMethodConfig struct {
+	Unauthenticated *UnauthenticatedConfig `yaml:"unauthenticated,omitempty"`
+	IAM             *IAMConfig             `yaml:"iam,omitempty"`
+	TLS             *TLSConfig             `yaml:"tls,omitempty"`
+	SASLScram       *SASLScramConfig       `yaml:"sasl_scram,omitempty"`
+}
+
+type UnauthenticatedConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+type IAMConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type TLSConfig struct {
-	CACert     string `yaml:"ca_cert"`
+	Enabled    bool   `yaml:"enabled"`
+	CACert     string `yaml:"ca-cert"`
 	ClientCert string `yaml:"client_cert"`
 	ClientKey  string `yaml:"client_key"`
+}
+
+type SASLScramConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }

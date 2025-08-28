@@ -38,31 +38,39 @@ func (d *Discoverer) Run() error {
 		return fmt.Errorf("failed to create kcp discover output folder: %w", err)
 	}
 
-	// create the creds yaml file for all clusters in each provided region
-	if err := d.generateCredsFile(outputDir); err != nil {
+	if err := d.processRegionsForCredsYaml(outputDir); err != nil {
 		slog.Error("failed to discover region", "error", err)
 	}
 
 	return nil
 }
 
-func (d *Discoverer) generateCredsFile(outputDir string) error {
-	credsYaml := make(types.CredsYaml)
+func (d *Discoverer) processRegionsForCredsYaml(outputDir string) error {
+	credsYaml := types.CredsYaml{
+		Regions: make(map[string]types.RegionEntries),
+	}
 
+	regionsWithoutClusters := []string{}
 	for _, region := range d.regions {
 		clusterEntries, err := d.getClusterEntries(region)
 		if err != nil {
 			slog.Error("failed to discover region", "region", region, "error", err)
+			continue
 		}
-		credsYaml[region] = *clusterEntries
-	}
 
-	yamlFile := filepath.Join(outputDir, "creds.yaml")
+		if len(clusterEntries.Clusters) == 0 {
+			regionsWithoutClusters = append(regionsWithoutClusters, region)
+		} else {
+			credsYaml.Regions[region] = *clusterEntries
+		}
+	}
 
 	yamlData, err := yaml.Marshal(credsYaml)
 	if err != nil {
 		return fmt.Errorf("failed to marshal YAML: %w", err)
 	}
+
+	yamlFile := filepath.Join(outputDir, "creds.yaml")
 
 	if err := os.WriteFile(yamlFile, yamlData, 0644); err != nil {
 		return fmt.Errorf("failed to write YAML file: %w", err)
@@ -70,8 +78,13 @@ func (d *Discoverer) generateCredsFile(outputDir string) error {
 
 	slog.Info("generated creds.yaml", "file", yamlFile)
 
-	return nil
+	if len(regionsWithoutClusters) > 0 {
+		for _, region := range regionsWithoutClusters {
+			slog.Info("no clusters found in region", "region", region)
+		}
+	}
 
+	return nil
 }
 
 func (d *Discoverer) getClusterEntries(region string) (*types.RegionEntries, error) {
@@ -87,7 +100,9 @@ func (d *Discoverer) getClusterEntries(region string) (*types.RegionEntries, err
 		return nil, fmt.Errorf("failed to list clusters: %v", err)
 	}
 
-	regionEntries := make(types.RegionEntries)
+	regionEntries := types.RegionEntries{
+		Clusters: make(map[string]types.ClusterEntry),
+	}
 
 	for _, cluster := range clusters {
 		var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
@@ -121,33 +136,34 @@ func (d *Discoverer) getClusterEntries(region string) (*types.RegionEntries, err
 
 		clusterEntry := types.ClusterEntry{}
 
-		// we can always skip kafka
-		clusterEntry.SkipKafka = aws.Bool(false)
-
 		// only include auth entries for enabled auth types
 		if isSaslIamEnabled {
-			clusterEntry.UseSASLIAM = aws.Bool(false)
+			clusterEntry.AuthMethod.IAM = &types.IAMConfig{
+				Enabled: false,
+			}
 		}
 		if isSaslScramEnabled {
-			clusterEntry.UseSASLScram = aws.Bool(false)
-			clusterEntry.SASLScram = &types.SASLScramConfig{
+			clusterEntry.AuthMethod.SASLScram = &types.SASLScramConfig{
+				Enabled:  false,
 				Username: "",
 				Password: "",
 			}
 		}
 		if isTlsEnabled {
-			clusterEntry.UseTLS = aws.Bool(false)
-			clusterEntry.TLS = &types.TLSConfig{
+			clusterEntry.AuthMethod.TLS = &types.TLSConfig{
+				Enabled:    false,
 				CACert:     "",
 				ClientCert: "",
 				ClientKey:  "",
 			}
 		}
 		if isUnauthenticatedEnabled {
-			clusterEntry.UseUnauthenticated = aws.Bool(false)
+			clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
+				Enabled: false,
+			}
 		}
 
-		regionEntries[*cluster.ClusterArn] = clusterEntry
+		regionEntries.Clusters[*cluster.ClusterArn] = clusterEntry
 	}
 
 	return &regionEntries, nil
