@@ -1,0 +1,90 @@
+package discover
+
+import (
+	"fmt"
+
+	"github.com/confluentinc/kcp/internal/generators/discover"
+	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+var (
+	regions []string
+)
+
+func NewDiscoverCmd() *cobra.Command {
+	discoverCmd := &cobra.Command{
+		Use:           "discover",
+		Short:         "Discover msk clusters and information",
+		Long:          "For given regions, discover msk clusters and collect information about them",
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		PreRunE:       preRunDiscover,
+		RunE:          runDiscover,
+	}
+
+	groups := map[*pflag.FlagSet]string{}
+
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
+
+	discoverCmd.Flags().AddFlagSet(requiredFlags)
+
+	groups[requiredFlags] = "Required Flags"
+
+	discoverCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
+
+	discoverCmd.MarkFlagRequired("region")
+
+	return discoverCmd
+}
+
+func preRunDiscover(cmd *cobra.Command, args []string) error {
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runDiscover(cmd *cobra.Command, args []string) error {
+	opts, err := parseDiscoverOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse discover opts: %v", err)
+	}
+
+	discoverer := discover.NewDiscoverer(*opts)
+
+	if err := discoverer.Run(); err != nil {
+		return fmt.Errorf("failed to discover: %v", err)
+	}
+
+	return nil
+}
+
+func parseDiscoverOpts() (*discover.DiscovererOpts, error) {
+	opts := discover.DiscovererOpts{
+		Regions: regions,
+	}
+
+	return &opts, nil
+}

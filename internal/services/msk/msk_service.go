@@ -289,3 +289,59 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn *string) 
 
 	return secrets, nil
 }
+
+func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
+	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
+
+	// var clusters []types.ClusterSummary
+	var nextToken *string
+
+	var clusterInfoList []kafkatypes.Cluster
+
+	for {
+		listClustersOutput, err := ms.client.ListClustersV2(ctx, &kafka.ListClustersV2Input{
+			MaxResults: &maxResults,
+			NextToken:  nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("❌ Failed to list clusters: %v", err)
+		}
+
+		clusterInfoList = append(clusterInfoList, listClustersOutput.ClusterInfoList...)
+		// do we still want to process?
+		// for _, cluster := range listClustersOutput.ClusterInfoList {
+		// 	// auth := rs.authSummarizer.SummariseAuthentication(cluster)
+
+		// 	publicAccess := false
+		// 	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned &&
+		// 		cluster.Provisioned != nil &&
+		// 		cluster.Provisioned.BrokerNodeGroupInfo != nil &&
+		// 		cluster.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo != nil &&
+		// 		cluster.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess != nil &&
+		// 		cluster.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess.Type != nil {
+		// 		publicAccess = aws.ToString(cluster.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess.Type) != "DISABLED"
+		// 	}
+
+		// 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(cluster)
+		// 	clusterSummary := types.ClusterSummary{
+		// 		ClusterName: aws.ToString(cluster.ClusterName),
+		// 		ClusterARN:  aws.ToString(cluster.ClusterArn),
+		// 		Status:      aws.ToString((*string)(&cluster.State)),
+		// 		Type:        aws.ToString((*string)(&cluster.ClusterType)),
+		// 		// Authentication:                  auth,
+		// 		PublicAccess:                    publicAccess,
+		// 		ClientBrokerEncryptionInTransit: clientBrokerEncryptionInTransit,
+		// 	}
+		// 	clusters = append(clusters, clusterSummary)
+		// }
+
+		if listClustersOutput.NextToken == nil {
+			break
+		}
+		nextToken = listClustersOutput.NextToken
+	}
+
+	slog.Info("✨ found clusters", "count", len(clusterInfoList))
+
+	return clusterInfoList, nil
+}

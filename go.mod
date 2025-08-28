@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.1
 	github.com/charmbracelet/glamour v0.10.0
+	github.com/goccy/go-yaml v1.18.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.7
 	github.com/spf13/viper v1.20.1
