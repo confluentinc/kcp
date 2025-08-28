@@ -7,6 +7,7 @@ output "confluent_cloud_cluster_id" {
 }
 
 output "confluent_cloud_cluster_api_key" {
+  sensitive = true
   value = module.confluent_cloud_access_setup.confluent_cloud_cluster_key
 }
 
