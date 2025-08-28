@@ -38,6 +38,7 @@ func (d *Discoverer) Run() error {
 		return fmt.Errorf("failed to create kcp discover output folder: %w", err)
 	}
 
+	// create the creds yaml file for all clusters in each provided region
 	if err := d.generateCredsFile(outputDir); err != nil {
 		slog.Error("failed to discover region", "error", err)
 	}
