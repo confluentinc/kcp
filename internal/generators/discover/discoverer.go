@@ -67,18 +67,6 @@ func (d *Discoverer) processRegions(outputDir string) error {
 		}
 		mskService := msk.NewMSKService(mskClient)
 
-		// capture cluster auth entries
-		clusterEntries, err := d.getClusterEntries(mskService)
-		if err != nil {
-			slog.Error("failed to discover region", "region", region, "error", err)
-		}
-
-		if len(clusterEntries.Clusters) == 0 {
-			regionsWithoutClusters = append(regionsWithoutClusters, region)
-		} else {
-			credsYaml.Regions[region] = *clusterEntries
-		}
-
 		// region scanning
 		regionScanOpts := sr.ScanRegionOpts{
 			Region: region,
@@ -191,6 +179,19 @@ func (d *Discoverer) processRegions(outputDir string) error {
 					}
 				}
 			}
+		}
+
+		// capture cluster auth entries
+		clusterEntries, err := d.getClusterEntries(mskService)
+		if err != nil {
+			slog.Error("failed to get cluster entries", "region", region, "error", err)
+			continue
+		}
+
+		if len(clusterEntries.Clusters) == 0 {
+			regionsWithoutClusters = append(regionsWithoutClusters, region)
+		} else {
+			credsYaml.Regions[region] = *clusterEntries
 		}
 	}
 
