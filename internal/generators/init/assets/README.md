@@ -66,7 +66,7 @@ You can also set environment variables individually if you opt not to use the sc
 
 The kcp scan command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
 
-*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names.*
+*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names, ACL's or Cluster ID.*
 
 **Example Usage**
 
@@ -462,16 +462,6 @@ The sub-command requires the following minimum AWS IAM permissions:
       "Resource": [
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:configuration/<MSK CLUSTER CONFIG NAME>/<MSK CLUSTER CONFIG ID>"
       ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "kafka-cluster:Connect",
-        "kafka-cluster:DescribeClusterDynamicConfiguration"
-      ],
-      "Resource": [
-        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
-      ]
     }
   ]
 }
@@ -528,49 +518,6 @@ This command collates important MSK Kafka metrics for a cluster and generates a 
 - `--end`: The exclusive end date for cost report (YYYY-MM-DD)
 - `--cluster-arn`: Cluster arn
 
-- **Authentication options:**
-  Choose the authentication method that matches your cluster configuration:
-
-  - **SASL SCRAM authentication:**
-
-    ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-scram
-    ```
-
-    Requires additional command flags:
-
-    - `--sasl-scram-username <sasl-scram-username>`
-    - `--sasl-scram-password <sasl-scram-password>`
-
-  - **SASL IAM authentication:**
-
-    ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-iam
-    ```
-
-  - **TLS authentication:**
-
-    ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-tls
-    ```
-
-    Requires additional command flags:
-
-    - `--tls-ca-cert <path/to/ca.pem>`
-    - `--tls-client-cert <path/to/client.pem>`
-    - `--tls-client-key <path/to/client-key.pem>`
-
-  - **Unauthenticated access:**
-
-    ```shell
-        kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-unauthenticated
-    ```
-
-  - **Skip Kafka-level scanning:**
-    `shell
-kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --skip-kafka
-` > [!NOTE] > Use this option when brokers are not reachable or you only need infrastructure-level information.
-
 **Example Usage**
 
 ```shell
@@ -578,7 +525,6 @@ kcp report cluster metrics \
 --start 2025-07-01 \
 --end 2025-08-01 \
 --cluster-arn arn:aws:kafka:us-east-1:000123456789:cluster/msk-cluster/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
---use-sasl-iam
 ```
 
 **Output:**
