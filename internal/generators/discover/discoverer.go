@@ -31,8 +31,7 @@ func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 }
 
 func (d *Discoverer) Run() error {
-	// todo: name for output folder
-	outputDir := "kcp_discovery"
+	outputDir := "kcp_scan"
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create kcp discover output folder: %w", err)

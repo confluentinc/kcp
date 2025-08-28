@@ -33,9 +33,7 @@ func NewScanner(opts ScanOpts) *Scanner {
 }
 
 func (rs *Scanner) Run() error {
-
 	for _, r := range rs.regions {
-
 		// create the msk client and service
 		mskClient, err := client.NewMSKClient(r)
 		if err != nil {
