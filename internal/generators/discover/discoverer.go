@@ -254,8 +254,8 @@ func (d *Discoverer) getClusterEntries(mskService *msk.MSKService) (*types.Regio
 		}
 
 		clusterEntry := types.ClusterEntry{}
-		// we want a SINGLE auth mech to enabled by default
-		// priority preference is unauthenticated > iam > sasl_scram > tls
+		// we want a SINGLE auth mech to be enabled by default
+		// priority is unauthenticated > iam > sasl_scram > tls
 		defaultAuthSelected := false
 		if isUnauthenticatedEnabled {
 			clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
