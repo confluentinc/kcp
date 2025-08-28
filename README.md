@@ -26,7 +26,7 @@ Please see the CHANGELOG.md for details of recent updates.
 - [Getting Started](#getting-started)
   - [kcp Commands](#kcp-commands)
     - [`kcp init`](#kcp-init)
-    - [`kcp scan`](#kcp-scan)
+    - [`kcp discover`](#kcp-discover)
     - [`kcp report`](#kcp-report)
     - [`kcp create-asset`](#kcp-create-asset)
 - [Development](#development)
@@ -156,25 +156,25 @@ You can also set environment variables individually if you opt not to use the sc
 
 ---
 
-### `kcp scan`
+### `kcp discover`
 
-The kcp scan command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
+The kcp discover command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
 
-*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names, ACL's or Cluster ID.*
 
 **Example Usage**
 
-`kcp scan --region us-east-1 --region eu-west-3`
+`kcp discover --region us-east-1 --region eu-west-3`
 
 or 
 
-`kcp scan --region us-east-1,eu-west-3`
+`kcp discover --region us-east-1,eu-west-3`
 
-The command will produce region msk, cost, metrics and cluster output files in a nested structure as follows:
+The command will produce a creds.yaml, region msk, cost, metrics and cluster output files in a nested structure as follows:
 
 ```
 .
 └── kcp-scan
+    ├── creds.yaml
     ├── eu-west-3
     │   ├── eu-west-3-cost-report.json
     │   ├── eu-west-3-cost-report.md

@@ -235,10 +235,10 @@ var AclMap = map[string]ACLMapping{
 
 // YAML structures for creds.yaml
 type CredsYaml struct {
-	Regions map[string]RegionEntries `yaml:"regions"`
+	Regions map[string]RegionEntry `yaml:"regions"`
 }
 
-type RegionEntries struct {
+type RegionEntry struct {
 	Clusters map[string]ClusterEntry `yaml:"clusters"`
 }
 
