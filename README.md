@@ -166,7 +166,7 @@ The kcp scan command performs a full discovery of all MSK clusters in an AWS acc
 
 `kcp scan --region us-east-1 --region eu-west-3`
 
-or 
+or
 
 `kcp scan --region us-east-1,eu-west-3`
 
@@ -476,7 +476,7 @@ kcp scan client-inventory \
 ```
 
 **Output:**
-The command generates a csv file - `broker_logs_scan_results.csv` containing: 
+The command generates a csv file - `broker_logs_scan_results.csv` containing:
 
 - All the unique clients it could identify based on a combination of values:
   - i.e. clientID + topic + role + auth + principal
@@ -1169,6 +1169,7 @@ This command generates Terraform configurations to provision a new bastion host 
 **Optional Arguments**:
 
 - `--create-igw`: When set, Terraform will create a new internet gateway in the VPC. If an Internet Gateway is not required, do not set this flag.
+- `--security-group-ids`: When set, Terraform will use this security group for the bastion host.
 
 **Example Usage**
 
@@ -1176,7 +1177,8 @@ This command generates Terraform configurations to provision a new bastion host 
 kcp create-asset bastion-host \
   --region us-east-1 \
   --bastion-host-cidr 10.0.XXX.0/24 \
-  --vpc-id vpc-xxxxxxxxx
+  --vpc-id vpc-xxxxxxxxx \
+  --security-group-ids sg-xxxxxxxxxx
 ```
 
 **Output:**
@@ -1187,7 +1189,7 @@ The command creates a `bastion_host` directory containing Terraform configuratio
   - SSH access on port 22
   - Pre-configured with migration tools
 - **Public subnet** in the specified VPC
-- **Security group** allowing SSH access
+- **Security group** allowing SSH access. Created when `--security-group-ids` parameter is not provided.
 - **SSH key pair** for secure access
 - **Route table** for internet connectivity
 
@@ -1283,6 +1285,10 @@ This command generates the required Terraform to provision your migration enviro
 - `--cc-cluster-name`: The Confluent Cloud cluster name where data will be migrated to
 - `--cc-cluster-type`: The Confluent Cloud cluster type - Dedicated or Enterprise
 
+**Optional Arguments**:
+
+- `--security-group-ids`: When set, Terraform will use this security group for the ansible host and CP jump cluster.
+
 **Type Options** (choose one):
 
 - 1: MSK private cluster w/ SASL_IAM authentication to Confluent Cloud private cluster.
@@ -1317,7 +1323,8 @@ kcp create-asset migration-infra \
   --cc-cluster-name my-new-cluster \
   --cc-cluster-type enterprise \
   --ansible-control-node-subnet-cidr 10.0.XXX.0/24 \
-  --jump-cluster-broker-subnet-config us-east-1a:10.0.XXX.0/24,us-east-1b:10.0.XXX.0/24,us-east-1c:10.0.XXX.0/24
+  --jump-cluster-broker-subnet-config us-east-1a:10.0.XXX.0/24,us-east-1b:10.0.XXX.0/24,us-east-1c:10.0.XXX.0/24 \
+  --security-group-ids sg-xxxxxxxxxx
 ```
 
 **Output:**
@@ -1325,7 +1332,7 @@ The command creates a `migration-infra` directory containing Terraform configura
 
 - **EC2 Instance** - Ansible Control Node that will provision the Confluent Platform jump cluster.
 - **3x EC2 Instances** - Confluent Platform jump clusters made up of 3 brokers.
-- **Networking** - NAT gateway, Elastic IPs, subnets, security groups, route tables & associations.
+- **Networking** - NAT gateway, Elastic IPs, subnets, security groups, route tables & associations. Security Groups are created when `--security-group-ids` parameter is not provided.
 - **Confluent Cloud** - Environment, Cluster, Schema Registry, Service Accounts, API keys.
 - **Private Link** - Establish VPC connectivity between the MSK VPC and Confluent Cloud cluster.
 
@@ -1374,6 +1381,10 @@ Create reverse proxy infrastructure assets to allow observability into migrated 
 - `--migration-infra-folder`: Path to migration infrastructure folder that was previously generated
 - `--reverse-proxy-cidr`: The CIDR of the subnet associated with the reverse proxy
 
+**Optional Arguments**:
+
+- `--security-group-ids`: When set, Terraform will use this security group for the bastion host.
+
 **Example Usage**
 
 ```shell
@@ -1381,14 +1392,15 @@ kcp create-asset reverse-proxy \
   --region us-east-1 \
   --vpc-id vpc-xxxxxxxxx \
   --migration-infra-folder migration-infra \
-  --reverse-proxy-cidr 10.0.XXX.0/24
+  --reverse-proxy-cidr 10.0.XXX.0/24 \
+  --security-group-ids sg-xxxxxxxxxx
 ```
 
 **Output**
 The command creates a `reverse-proxy` directory containing Terraform configurations that provision:
 
 - **EC2 Instance** - The reverse-proxy bridge between the local machine and the VPC that MSK and Confluent Cloud are connected to.
-- **Networking** - Security groups, subnet, route tables & associations.
+- **Networking** - Security groups, subnet, route tables & associations. Security Groups are created when `--security-group-ids` parameter is not provided.
 - **Confluent Cloud** - Environment, Cluster, Schema Registry, Service Accounts, API keys.
 - **`generate_dns_entries.sh`** - Script that creates DNS entries mapping the reverse proxy's IP to Confluent Cloud broker hostnames for local /etc/hosts configuration.
 
