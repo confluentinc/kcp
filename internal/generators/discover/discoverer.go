@@ -260,19 +260,19 @@ func (d *Discoverer) getClusterEntries(mskService *msk.MSKService) (*types.Regio
 		defaultAuthSelected := false
 		if isUnauthenticatedEnabled {
 			clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
-				Enabled: !defaultAuthSelected,
+				Use: !defaultAuthSelected,
 			}
 			defaultAuthSelected = true
 		}
 		if isSaslIamEnabled {
 			clusterEntry.AuthMethod.IAM = &types.IAMConfig{
-				Enabled: !defaultAuthSelected,
+				Use: !defaultAuthSelected,
 			}
 			defaultAuthSelected = true
 		}
 		if isSaslScramEnabled {
 			clusterEntry.AuthMethod.SASLScram = &types.SASLScramConfig{
-				Enabled:  !defaultAuthSelected,
+				Use:      !defaultAuthSelected,
 				Username: "",
 				Password: "",
 			}
@@ -280,7 +280,7 @@ func (d *Discoverer) getClusterEntries(mskService *msk.MSKService) (*types.Regio
 		}
 		if isTlsEnabled {
 			clusterEntry.AuthMethod.TLS = &types.TLSConfig{
-				Enabled:    !defaultAuthSelected,
+				Use:        !defaultAuthSelected,
 				CACert:     "",
 				ClientCert: "",
 				ClientKey:  "",

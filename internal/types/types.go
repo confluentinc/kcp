@@ -254,22 +254,22 @@ type AuthMethodConfig struct {
 }
 
 type UnauthenticatedConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Use bool `yaml:"use"`
 }
 
 type IAMConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Use bool `yaml:"use"`
 }
 
 type TLSConfig struct {
-	Enabled    bool   `yaml:"enabled"`
+	Use        bool   `yaml:"use"`
 	CACert     string `yaml:"ca_cert"`
 	ClientCert string `yaml:"client_cert"`
 	ClientKey  string `yaml:"client_key"`
 }
 
 type SASLScramConfig struct {
-	Enabled  bool   `yaml:"enabled"`
+	Use      bool   `yaml:"use"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 }
