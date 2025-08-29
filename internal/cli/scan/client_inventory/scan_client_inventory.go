@@ -1,10 +1,10 @@
-package broker_logs
+package client_inventory
 
 import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
-	"github.com/confluentinc/kcp/internal/generators/scan/broker_logs"
+	"github.com/confluentinc/kcp/internal/generators/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/services/s3"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -16,15 +16,15 @@ var (
 	region string
 )
 
-func NewScanBrokerLogsCmd() *cobra.Command {
-	brokerLogsCmd := &cobra.Command{
-		Use:           "broker-logs",
+func NewScanClientInventoryCmd() *cobra.Command {
+	clientInventoryCmd := &cobra.Command{
+		Use:           "client-inventory",
 		Short:         "Scan the broker logs for client activity",
-		Long:          "Scan the broker logs to help identify clients that are using the cluster based on activity in the logs",
+		Long:          "Scan the broker logs in s3 to help identify clients that are using the cluster based on activity",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunScanBrokerLogs,
-		RunE:          runScanBrokerLogs,
+		PreRunE:       preRunScanClientInventory,
+		RunE:          runScanClientInventory,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -34,11 +34,11 @@ func NewScanBrokerLogsCmd() *cobra.Command {
 	requiredFlags.StringVar(&region, "region", "", "The AWS region")
 	requiredFlags.StringVar(&s3Uri, "s3-uri", "", "The S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
 
-	brokerLogsCmd.Flags().AddFlagSet(requiredFlags)
+	clientInventoryCmd.Flags().AddFlagSet(requiredFlags)
 
 	groups[requiredFlags] = "Required Flags"
 
-	brokerLogsCmd.SetUsageFunc(func(c *cobra.Command) error {
+	clientInventoryCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags}
@@ -56,10 +56,13 @@ func NewScanBrokerLogsCmd() *cobra.Command {
 		return nil
 	})
 
-	return brokerLogsCmd
+	clientInventoryCmd.MarkFlagRequired("region")
+	clientInventoryCmd.MarkFlagRequired("s3-uri")
+
+	return clientInventoryCmd
 }
 
-func preRunScanBrokerLogs(cmd *cobra.Command, args []string) error {
+func preRunScanClientInventory(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -67,10 +70,10 @@ func preRunScanBrokerLogs(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runScanBrokerLogs(cmd *cobra.Command, args []string) error {
-	opts, err := parseScanBrokerLogsOpts()
+func runScanClientInventory(cmd *cobra.Command, args []string) error {
+	opts, err := parseScanClientInventoryOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse scan broker logs opts: %v", err)
+		return fmt.Errorf("failed to parse scan client inventory opts: %v", err)
 	}
 
 	s3Client, err := client.NewS3Client(opts.Region)
@@ -80,20 +83,20 @@ func runScanBrokerLogs(cmd *cobra.Command, args []string) error {
 
 	s3Service := s3.NewS3Service(s3Client)
 
-	brokerLogsScanner, err := broker_logs.NewBrokerLogsScanner(s3Service, *opts)
+	clientInventoryScanner, err := client_inventory.NewClientInventoryScanner(s3Service, *opts)
 	if err != nil {
-		return fmt.Errorf("failed to create broker logs scanner: %v", err)
+		return fmt.Errorf("failed to create client inventory scanner: %v", err)
 	}
 
-	if err := brokerLogsScanner.Run(); err != nil {
+	if err := clientInventoryScanner.Run(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func parseScanBrokerLogsOpts() (*broker_logs.BrokerLogsScannerOpts, error) {
-	opts := broker_logs.BrokerLogsScannerOpts{
+func parseScanClientInventoryOpts() (*client_inventory.ClientInventoryScannerOpts, error) {
+	opts := client_inventory.ClientInventoryScannerOpts{
 		S3Uri:  s3Uri,
 		Region: region,
 	}
