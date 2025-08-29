@@ -1,4 +1,4 @@
-package buildinfo
+package build_info
 
 // Build information variables - set via ldflags during build
 var (

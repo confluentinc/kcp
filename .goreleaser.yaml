@@ -19,9 +19,9 @@ builds:
     binary: kcp
     ldflags:
       - -s -w 
-      - -X github.com/confluentinc/kcp/internal/buildinfo.Version={{.Version}}
-      - -X github.com/confluentinc/kcp/internal/buildinfo.Commit={{.Commit}}
-      - -X github.com/confluentinc/kcp/internal/buildinfo.Date={{.Date}}
+      - -X github.com/confluentinc/kcp/internal/build_info.Version={{.Version}}
+      - -X github.com/confluentinc/kcp/internal/build_info.Commit={{.Commit}}
+      - -X github.com/confluentinc/kcp/internal/build_info.Date={{.Date}}
 
 archives:
   - formats: [tar.gz]

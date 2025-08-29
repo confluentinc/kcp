@@ -5,9 +5,9 @@ MAIN_PATH := ./cmd/cli
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 VERSION := dev
-LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/buildinfo.Version=$(VERSION) \
-			-X github.com/confluentinc/kcp/internal/buildinfo.Commit=$(COMMIT) \
-			-X github.com/confluentinc/kcp/internal/buildinfo.Date=$(DATE)
+LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION) \
+			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
+			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
 .PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-all
 
