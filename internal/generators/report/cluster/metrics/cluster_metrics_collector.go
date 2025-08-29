@@ -90,7 +90,7 @@ func (rm *ClusterMetricsCollector) Run() error {
 }
 
 func (rm *ClusterMetricsCollector) ProcessCluster() (*types.ClusterMetrics, error) {
-	slog.Info("🔄 processing cluster", "cluster", &rm.clusterArn)
+	slog.Info("🔄 processing cluster", "cluster", rm.clusterArn)
 
 	cluster, err := rm.mskService.DescribeCluster(context.Background(), &rm.clusterArn)
 	if err != nil {
@@ -188,7 +188,6 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 	}
 	peakEgressThroughputMegabytesPerSecond = peakEgressThroughputMegabytesPerSecond / 1024 / 1024
 
-
 	retention_days, local_retention_hours := rm.calculateRetention(nodesMetrics)
 
 	clusterMetricsSummary := types.ClusterMetricsSummary{
@@ -276,7 +275,7 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	return &clusterMetric, nil
 }
 
-func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []types.NodeMetrics, globalPartitionCountMax float64) (*float64) {
+func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []types.NodeMetrics, globalPartitionCountMax float64) *float64 {
 
 	totalPartitions := 0
 	for _, nodeMetric := range nodesMetrics {
@@ -305,7 +304,7 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	globalMetrics, err := rm.getGlobalMetrics(*cluster.ClusterName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get global metrics: %v", err)
-	}	
+	}
 
 	nodesMetrics := []types.NodeMetrics{}
 	// serverless has 1 broker node
@@ -348,7 +347,7 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 func (rm *ClusterMetricsCollector) getGlobalMetrics(clusterName string) (*types.GlobalMetrics, error) {
 
 	globalMetrics := types.GlobalMetrics{}
-	
+
 	globalMetricAssignments := []struct {
 		metricName  string
 		targetField *float64
@@ -387,7 +386,6 @@ func (rm *ClusterMetricsCollector) getGlobalMetrics(clusterName string) (*types.
 
 	return &globalMetrics, nil
 }
-
 
 func (rm *ClusterMetricsCollector) processProvisionedNode(clusterName string, nodeID int, instanceType string) (*types.NodeMetrics, error) {
 	slog.Info("🏗️ processing provisioned node", "cluster", clusterName, "node", nodeID)
