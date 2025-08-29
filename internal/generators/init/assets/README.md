@@ -70,17 +70,18 @@ The kcp scan command performs a full discovery of all MSK clusters in an AWS acc
 
 **Example Usage**
 
-`kcp scan --region us-east-1 --region eu-west-3`
+`kcp discover --region us-east-1 --region eu-west-3`
 
 or 
 
-`kcp scan --region us-east-1,eu-west-3`
+`kcp discover --region us-east-1,eu-west-3`
 
 The command will produce region msk, cost, metrics and cluster output files in a nested structure as follows:
 
 ```
 .
 └── kcp-scan
+    ├── creds.yaml
     ├── eu-west-3
     │   ├── eu-west-3-cost-report.json
     │   ├── eu-west-3-cost-report.md

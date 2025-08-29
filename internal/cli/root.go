@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/cli/create_asset"
+	"github.com/confluentinc/kcp/internal/cli/discover"
 	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
 	"github.com/confluentinc/kcp/internal/cli/scan"
@@ -49,5 +50,6 @@ func init() {
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
 		NewVersionCmd(),
+		discover.NewDiscoverCmd(),
 	)
 }
