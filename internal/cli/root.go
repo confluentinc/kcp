@@ -7,6 +7,7 @@ import (
 	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
 	"github.com/confluentinc/kcp/internal/cli/scan"
+	"github.com/confluentinc/kcp/internal/cli/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -48,6 +49,7 @@ func init() {
 		create_asset.NewCreateAssetCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
+		ui.NewUICmd(),
 		NewVersionCmd(),
 	)
 }

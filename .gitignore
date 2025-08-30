@@ -52,3 +52,5 @@ kcp-scan/
 dist/
 
 local/
+
+tmp
