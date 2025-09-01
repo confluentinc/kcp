@@ -23,6 +23,9 @@ import (
 var (
 	discoverDir     string
 	credentialsYaml string
+
+	clusterInfo types.ClusterInformation
+	skippedClusters = []string{}
 )
 
 func NewScanBrokersCmd() *cobra.Command {
@@ -84,6 +87,10 @@ func runScanBrokers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to unmarshal YAML: %w", err)
 	}
 
+	if err := validateYaml(credsFile); err != nil {
+		return err
+	}
+
 	for region, clusters := range credsFile.Regions {
 		for arn, cluster := range clusters.Clusters {
 
@@ -108,12 +115,37 @@ func runScanBrokers(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			brokerScanner := brokers.NewBrokerScanner(kafkaAdminFactory, opts)
+			brokerScanner := brokers.NewBrokerScanner(kafkaAdminFactory, clusterInfo, opts)
 			if err := brokerScanner.Run(); err != nil {
 				slog.Error(fmt.Sprintf("❌ failed to scan cluster %s error: %v", opts.ClusterName, err))
 				continue
 			}
 		}
+	}
+
+	return nil
+}
+
+func validateYaml(credsFile types.CredsYaml) error {
+	var clustersWithMultipleAuth []string
+
+	for region, clusters := range credsFile.Regions {
+		for arn, cluster := range clusters.Clusters {
+			clusterName, err := getClusterName(arn)
+			if err != nil {
+				return fmt.Errorf("❌ failed to get cluster name: %v", err)
+			}
+
+			enabledMethods := getAuthMethods(cluster)
+			if len(enabledMethods) > 1 {
+				clustersWithMultipleAuth = append(clustersWithMultipleAuth, fmt.Sprintf("%s (region: %s)", clusterName, region))
+			}
+		}
+	}
+
+	if len(clustersWithMultipleAuth) > 0 {
+		return fmt.Errorf("❌ The following cluster(s) have more than one authentication method enabled, please configure only one auth method per cluster: %s",
+			strings.Join(clustersWithMultipleAuth, ", "))
 	}
 
 	return nil
@@ -135,14 +167,15 @@ func parseScanBrokersOpts(region, arn string, clusterEntry types.ClusterEntry) (
 			return nil, fmt.Errorf("❌ failed to read cluster file: %v", err)
 		}
 
-		var clusterInfo types.ClusterInformation
 		if err := json.Unmarshal(file, &clusterInfo); err != nil {
 			return nil, fmt.Errorf("❌ failed to unmarshal cluster info: %v", err)
 		}
 
 		enabledMethods := getAuthMethods(clusterEntry)
-		if len(enabledMethods) > 1 {
-			slog.Warn(fmt.Sprintf("⚠️ multiple authentication methods enabled for cluster %s in %s, skipping the cluster", clusterName, region))
+		if len(enabledMethods) == 0 {
+			slog.Warn(fmt.Sprintf("⚠️ No authentication method enabled for cluster %s in %s, skipping the cluster", clusterName, region))
+			skippedClusters = append(skippedClusters, clusterName)
+			return nil, fmt.Errorf("no authentication method enabled for cluster %s", clusterName)
 		} else {
 			switch enabledMethods[0] {
 			case "unauthenticated":
