@@ -1321,7 +1321,7 @@ This command generates migration scripts that mirror topics from MSK to Confluen
 ```shell
 kcp create-asset migration-scripts \
   --cluster-file cluster_scan_kcp-msk-cluster.json \
-  --migration-infra-folder migration-infra
+  --migration-infra-folder migration_infra
 ```
 
 > [!NOTE]
@@ -1356,7 +1356,7 @@ Create reverse proxy infrastructure assets to allow observability into migrated 
 kcp create-asset reverse-proxy \
   --region us-east-1 \
   --vpc-id vpc-xxxxxxxxx \
-  --migration-infra-folder migration-infra \
+  --migration-infra-folder migration_infra \
   --reverse-proxy-cidr 10.0.XXX.0/24
 ```
 
