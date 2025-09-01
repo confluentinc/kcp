@@ -108,11 +108,9 @@ func runScanBrokers(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			fmt.Println("opts", opts)
-
-			brokerScanner := brokers.NewBrokerScanner(kafkaAdminFactory, *opts)
+			brokerScanner := brokers.NewBrokerScanner(kafkaAdminFactory, opts)
 			if err := brokerScanner.Run(); err != nil {
-				slog.Error("failed to scan cluster", "cluster", arn, "error", err)
+				slog.Error(fmt.Sprintf("❌ failed to scan cluster %s error: %v", opts.ClusterName, err))
 				continue
 			}
 		}
@@ -126,52 +124,60 @@ func parseScanBrokersOpts(region, arn string, clusterEntry types.ClusterEntry) (
 
 	clusterName, err := getClusterName(arn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster name: %v", err)
+		return nil, fmt.Errorf("❌ failed to get cluster name: %v", err)
 	}
+	opts.ClusterName = clusterName
 
 	if discoverDir != "" {
 		clusterFile := filepath.Join(discoverDir, region, clusterName, fmt.Sprintf("%s.json", clusterName))
 		file, err := os.ReadFile(clusterFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read cluster file: %v", err)
+			return nil, fmt.Errorf("❌ failed to read cluster file: %v", err)
 		}
 
 		var clusterInfo types.ClusterInformation
 		if err := json.Unmarshal(file, &clusterInfo); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
+			return nil, fmt.Errorf("❌ failed to unmarshal cluster info: %v", err)
 		}
 
-		if clusterEntry.AuthMethod.Unauthenticated != nil && clusterEntry.AuthMethod.Unauthenticated.Use {
-			opts.AuthType = types.AuthTypeUnauthenticated
-			opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerString
-		} else if clusterEntry.AuthMethod.IAM != nil && clusterEntry.AuthMethod.IAM.Use {
-			opts.AuthType = types.AuthTypeIAM
-			if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam != nil {
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam
-			} else {
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslIam
-			}
-		} else if clusterEntry.AuthMethod.SASLScram != nil && clusterEntry.AuthMethod.SASLScram.Use {
-			opts.AuthType = types.AuthTypeSASLSCRAM
-			opts.SASLScramUsername = clusterEntry.AuthMethod.SASLScram.Username
-			opts.SASLScramPassword = clusterEntry.AuthMethod.SASLScram.Password
-			if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram != nil {
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram
-			} else {
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslScram
-			}
-		} else if clusterEntry.AuthMethod.TLS != nil && clusterEntry.AuthMethod.TLS.Use {
-			opts.AuthType = types.AuthTypeTLS
-			opts.TLSCACert = clusterEntry.AuthMethod.TLS.CACert
-			opts.TLSClientCert = clusterEntry.AuthMethod.TLS.ClientCert
-			opts.TLSClientKey = clusterEntry.AuthMethod.TLS.ClientKey
-			if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls != nil {
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls
-			} else {
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringTls
-			}
+		enabledMethods := getAuthMethods(clusterEntry)
+		if len(enabledMethods) > 1 {
+			slog.Warn(fmt.Sprintf("⚠️ multiple authentication methods enabled for cluster %s in %s, skipping the cluster", clusterName, region))
 		} else {
-			return nil, fmt.Errorf("no authentication method enabled for cluster %s", arn)
+			switch enabledMethods[0] {
+			case "unauthenticated":
+				opts.AuthType = types.AuthTypeUnauthenticated
+				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerString
+			case "iam":
+				opts.AuthType = types.AuthTypeIAM
+
+				if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam != nil {
+					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam
+				} else {
+					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslIam
+				}
+			case "sasl_scram":
+				opts.AuthType = types.AuthTypeSASLSCRAM
+				opts.SASLScramUsername = clusterEntry.AuthMethod.SASLScram.Username
+				opts.SASLScramPassword = clusterEntry.AuthMethod.SASLScram.Password
+
+				if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram != nil {
+					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram
+				} else {
+					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslScram
+				}
+			case "tls":
+				opts.AuthType = types.AuthTypeTLS
+				opts.TLSCACert = clusterEntry.AuthMethod.TLS.CACert
+				opts.TLSClientCert = clusterEntry.AuthMethod.TLS.ClientCert
+				opts.TLSClientKey = clusterEntry.AuthMethod.TLS.ClientKey
+
+				if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls != nil {
+					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls
+				} else {
+					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringTls
+				}
+			}
 		}
 	}
 
@@ -190,4 +196,23 @@ func getClusterName(arn string) (string, error) {
 	}
 
 	return clusterName, nil
+}
+
+func getAuthMethods(clusterEntry types.ClusterEntry) []string {
+	enabledMethods := []string{}
+
+	if clusterEntry.AuthMethod.Unauthenticated != nil && clusterEntry.AuthMethod.Unauthenticated.Use {
+		enabledMethods = append(enabledMethods, "unauthenticated")
+	}
+	if clusterEntry.AuthMethod.IAM != nil && clusterEntry.AuthMethod.IAM.Use {
+		enabledMethods = append(enabledMethods, "iam")
+	}
+	if clusterEntry.AuthMethod.SASLScram != nil && clusterEntry.AuthMethod.SASLScram.Use {
+		enabledMethods = append(enabledMethods, "sasl_scram")
+	}
+	if clusterEntry.AuthMethod.TLS != nil && clusterEntry.AuthMethod.TLS.Use {
+		enabledMethods = append(enabledMethods, "tls")
+	}
+
+	return enabledMethods
 }

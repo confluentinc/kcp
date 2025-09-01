@@ -3,6 +3,7 @@ package brokers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
@@ -13,8 +14,9 @@ import (
 type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type BrokerScannerOpts struct {
-	BootstrapServer   string
 	AuthType          types.AuthType
+	ClusterName       string
+	BootstrapServer   string
 	SASLScramUsername string
 	SASLScramPassword string
 	TLSCACert         string
@@ -24,24 +26,32 @@ type BrokerScannerOpts struct {
 
 type BrokerScanner struct {
 	kafkaAdminFactory KafkaAdminFactory
-	region            string
+	opts              *BrokerScannerOpts
 }
 
-func NewBrokerScanner(kafkaAdminFactory KafkaAdminFactory, opts BrokerScannerOpts) *BrokerScanner {
+func NewBrokerScanner(kafkaAdminFactory KafkaAdminFactory, opts *BrokerScannerOpts) *BrokerScanner {
 	return &BrokerScanner{
 		kafkaAdminFactory: kafkaAdminFactory,
+		opts:              opts,
 	}
 }
 
 func (bs *BrokerScanner) Run() error {
-	ctx := context.TODO()
+	// ctx := context.TODO()
 
-	brokerInfo, err := bs.ScanBrokers(ctx)
-	if err != nil {
-		return err
+	// brokerInfo, err := bs.ScanBrokers(ctx)
+	// if err != nil {
+		// return err
+	// }
+
+	// fmt.Println("brokerInfo", brokerInfo)
+	// fmt.Println("bs.opts", bs.opts)
+
+	if bs.opts.BootstrapServer == "" {
+		return fmt.Errorf("no bootstrap server found, skipping the broker scan")
 	}
 
-	fmt.Println("brokerInfo", brokerInfo)
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", bs.opts.ClusterName, bs.opts.AuthType))
 
 	return nil
 }
