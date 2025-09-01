@@ -243,7 +243,8 @@ type RegionEntry struct {
 }
 
 type ClusterEntry struct {
-	AuthMethod AuthMethodConfig `yaml:"auth_method"`
+	ClusterName string           `yaml:"cluster_name"`
+	AuthMethod  AuthMethodConfig `yaml:"auth_method"`
 }
 
 type AuthMethodConfig struct {
