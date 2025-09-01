@@ -16,7 +16,7 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/goccy/go-yaml v1.18.0
 	github.com/spf13/cobra v1.9.1
-	github.com/spf13/pflag v1.0.8
+	github.com/spf13/pflag v1.0.9
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/xdg-go/scram v1.1.2
