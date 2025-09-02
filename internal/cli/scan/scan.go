@@ -3,8 +3,8 @@ package scan
 import (
 	"github.com/confluentinc/kcp/internal/cli/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/cli/scan/cluster"
-	"github.com/confluentinc/kcp/internal/cli/scan/clusters"
-	"github.com/confluentinc/kcp/internal/cli/scan/other"
+	"github.com/confluentinc/kcp/internal/cli/scan/option1"
+	"github.com/confluentinc/kcp/internal/cli/scan/option2"
 	"github.com/confluentinc/kcp/internal/cli/scan/region"
 	"github.com/spf13/cobra"
 )
@@ -29,8 +29,8 @@ func NewScanCmd() *cobra.Command {
 		cluster.NewScanClusterCmd(),
 		region.NewScanRegionCmd(),
 		client_inventory.NewScanClientInventoryCmd(),
-		clusters.NewScanClustersCmd(),
-		other.NewScanOtherCmd(),
+		option1.NewScanOption1Cmd(),
+		option2.NewScanOption2Cmd(),
 	)
 
 	return scanCmd

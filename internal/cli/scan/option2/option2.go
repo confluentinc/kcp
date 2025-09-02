@@ -1,4 +1,4 @@
-package other
+package option2
 
 import (
 	"fmt"
@@ -19,15 +19,15 @@ var (
 	credentialsYaml string
 )
 
-func NewScanOtherCmd() *cobra.Command {
+func NewScanOption2Cmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
-		Use:           "other",
-		Short:         "Scan other",
-		Long:          "Scan other for information that will help with migration",
+		Use:           "option2",
+		Short:         "Option 2 for scanning - clusters",
+		Long:          "Option 2 for scanning - clusters for information that will help with migration",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunScanOther,
-		RunE:          runScanOther,
+		PreRunE:       preRunScanOption2,
+		RunE:          runScanOption2,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -64,7 +64,7 @@ func NewScanOtherCmd() *cobra.Command {
 }
 
 // sets flag values from corresponding environment variables if flags weren't explicitly provided
-func preRunScanOther(cmd *cobra.Command, args []string) error {
+func preRunScanOption2(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -72,8 +72,8 @@ func preRunScanOther(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runScanOther(cmd *cobra.Command, args []string) error {
-	opts, err := parseScanClusterOpts()
+func runScanOption2(cmd *cobra.Command, args []string) error {
+	opts, err := parseScanOption2Opts()
 	if err != nil {
 		return fmt.Errorf("failed to parse scan cluster opts: %v", err)
 	}
@@ -83,7 +83,7 @@ func runScanOther(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseScanClusterOpts() (*cluster.ClusterScannerOpts, error) {
+func parseScanOption2Opts() (*cluster.ClusterScannerOpts, error) {
 	data, err := os.ReadFile(credentialsYaml)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read creds.yaml file: %w", err)
