@@ -41,6 +41,12 @@ func NewBrokerScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.Clu
 }
 
 func (bs *BrokerScanner) Run() error {
+	if bs.opts.BootstrapServer == "" {
+		return fmt.Errorf("no bootstrap server found, skipping the broker scan")
+	}
+
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", bs.opts.ClusterName, bs.opts.AuthType))	
+
 	ctx := context.TODO()
 
 	brokerInfo, err := bs.ScanBroker(ctx)
@@ -48,13 +54,15 @@ func (bs *BrokerScanner) Run() error {
 		return err
 	}
 
-	fmt.Println("brokerInfo", brokerInfo)
-
-	if bs.opts.BootstrapServer == "" {
-		return fmt.Errorf("no bootstrap server found, skipping the broker scan")
+	if err := brokerInfo.WriteAsJson(); err != nil {
+		return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", bs.opts.ClusterName, bs.opts.AuthType))
+	if err := brokerInfo.WriteAsMarkdown(true); err != nil {
+		return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
+	}
+
+	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", bs.opts.ClusterName))
 
 	return nil
 }
