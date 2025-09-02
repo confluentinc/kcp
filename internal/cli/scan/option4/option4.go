@@ -96,27 +96,9 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
 	}
 
-	//do some validation on the credsFile
-	for regionName, region := range credsYaml.Regions {
-		for clusterArn, cluster := range region.Clusters {
-			enabled := 0
-			if cluster.AuthMethod.Unauthenticated != nil && cluster.AuthMethod.Unauthenticated.Use {
-				enabled++
-			}
-			if cluster.AuthMethod.IAM != nil && cluster.AuthMethod.IAM.Use {
-				enabled++
-			}
-			if cluster.AuthMethod.TLS != nil && cluster.AuthMethod.TLS.Use {
-				enabled++
-			}
-			if cluster.AuthMethod.SASLScram != nil && cluster.AuthMethod.SASLScram.Use {
-				enabled++
-			}
-
-			if enabled != 1 {
-				return nil, fmt.Errorf("exactly one auth method must be enabled for cluster %s in region %s, found %d", clusterArn, regionName, enabled)
-			}
-		}
+	// Validate credentials file
+	if err := validateCredentials(credsYaml); err != nil {
+		return nil, err
 	}
 
 	var allSelectedClusters []string
@@ -131,12 +113,11 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 	clusterMap := make(map[string]clusterInfo)
 
 	// Track selections per region to maintain state across region switches
-	regionSelections := make(map[string]*[]string)
+	regionSelections := make(map[string][]string)
 
 	// Initialize empty selections for each region
 	for regionName := range credsYaml.Regions {
-		emptySlice := make([]string, 0)
-		regionSelections[regionName] = &emptySlice
+		regionSelections[regionName] = []string{}
 	}
 
 	// Build cluster options for each region
@@ -194,16 +175,14 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 							return []huh.Option[string]{}
 						}
 						// Restore previous selections for this region
-						if regionSelections[selectedRegion] != nil {
-							currentRegionClusters = *regionSelections[selectedRegion]
-						}
+						currentRegionClusters = regionSelections[selectedRegion]
 						return regionClusterOptions[selectedRegion]
 					}, &selectedRegion).
 					Value(&currentRegionClusters),
 			).WithHideFunc(func() bool {
 				// Save state and control visibility
-				if selectedRegion != "" && regionSelections[selectedRegion] != nil {
-					*regionSelections[selectedRegion] = currentRegionClusters
+				if selectedRegion != "" {
+					regionSelections[selectedRegion] = currentRegionClusters
 				}
 				// Only show if user selected "select_clusters" and has a region
 				return mainAction != "select_clusters" || selectedRegion == ""
@@ -237,8 +216,8 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 
 		case "select_clusters":
 			// Save final selections and continue loop to show menu again
-			if selectedRegion != "" && regionSelections[selectedRegion] != nil {
-				*regionSelections[selectedRegion] = currentRegionClusters
+			if selectedRegion != "" {
+				regionSelections[selectedRegion] = currentRegionClusters
 				slog.Info("Updated selections", "region", selectedRegion, "clusters", len(currentRegionClusters))
 			}
 			// Continue the loop to show menu again
@@ -246,18 +225,44 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 	}
 }
 
+// validateCredentials ensures exactly one auth method is enabled per cluster
+func validateCredentials(credsYaml types.CredsYaml) error {
+	for regionName, region := range credsYaml.Regions {
+		for clusterArn, cluster := range region.Clusters {
+			enabled := 0
+			if cluster.AuthMethod.Unauthenticated != nil && cluster.AuthMethod.Unauthenticated.Use {
+				enabled++
+			}
+			if cluster.AuthMethod.IAM != nil && cluster.AuthMethod.IAM.Use {
+				enabled++
+			}
+			if cluster.AuthMethod.TLS != nil && cluster.AuthMethod.TLS.Use {
+				enabled++
+			}
+			if cluster.AuthMethod.SASLScram != nil && cluster.AuthMethod.SASLScram.Use {
+				enabled++
+			}
+
+			if enabled != 1 {
+				return fmt.Errorf("exactly one auth method must be enabled for cluster %s in region %s, found %d", clusterArn, regionName, enabled)
+			}
+		}
+	}
+	return nil
+}
+
 // collectAllSelectedClusters gathers all selected cluster keys from all regions
-func collectAllSelectedClusters(regionSelections map[string]*[]string) []string {
+func collectAllSelectedClusters(regionSelections map[string][]string) []string {
 	var allSelectedClusters []string
 	for _, clusters := range regionSelections {
-		allSelectedClusters = append(allSelectedClusters, *clusters...)
+		allSelectedClusters = append(allSelectedClusters, clusters...)
 	}
 	return allSelectedClusters
 }
 
 // showReviewForm displays a dedicated form showing all selected clusters by region
 // and asks for user confirmation to proceed
-func showReviewForm(regionSelections map[string]*[]string, clusterMap map[string]clusterInfo) (bool, error) {
+func showReviewForm(regionSelections map[string][]string, clusterMap map[string]clusterInfo) (bool, error) {
 	// Check if any clusters are selected
 	allSelectedClusters := collectAllSelectedClusters(regionSelections)
 	if len(allSelectedClusters) == 0 {
@@ -292,9 +297,9 @@ func showReviewForm(regionSelections map[string]*[]string, clusterMap map[string
 	var summaryText string = "📋 Clusters selected for scanning\n\n"
 
 	for regionName, clusters := range regionSelections {
-		if len(*clusters) > 0 {
+		if len(clusters) > 0 {
 			summaryText += fmt.Sprintf("🌍 Region: %s\n", regionName)
-			for _, clusterKey := range *clusters {
+			for _, clusterKey := range clusters {
 				cluster := clusterMap[clusterKey]
 				summaryText += fmt.Sprintf("  ✓ %s\n", cluster.clusterArn)
 			}
