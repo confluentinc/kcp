@@ -18,6 +18,7 @@ import (
 var (
 	credentialsYaml string
 	globalTheme     = huh.ThemeCatppuccin()
+	currentState    = "main_menu" // Global state: "main_menu", "select_clusters", "review", "exit"
 )
 
 func NewScanOption5Cmd() *cobra.Command {
@@ -108,25 +109,41 @@ func parseScanOption5Opts() (*cluster.ClusterScannerOpts, error) {
 	}
 
 	for {
-		if err := showClustersForm(regionSelections, clusterMap, credsYaml); err != nil {
-			return nil, fmt.Errorf("show clusters form error: %w", err)
-		}
-
-		allSelectedClusters := collectAllSelectedClusters(regionSelections)
-		reviewApproved, err := showReviewForm(regionSelections, clusterMap, allSelectedClusters)
-		if err != nil {
-			return nil, fmt.Errorf("review form error: %w", err)
-		}
-
-		if reviewApproved {
-			slog.Info("Selected clusters approved for scanning", "count", len(allSelectedClusters))
-			for _, key := range allSelectedClusters {
-				cluster := clusterMap[key]
-				slog.Info("Will scan cluster", "cluster", cluster.clusterArn, "region", cluster.region)
+		switch currentState {
+		case "main_menu":
+			if err := showMainMenu(); err != nil {
+				return nil, fmt.Errorf("main menu error: %w", err)
 			}
-			return nil, nil
-		}
 
+		case "select_clusters":
+			if err := showClusterSelection(regionSelections, clusterMap, credsYaml); err != nil {
+				return nil, fmt.Errorf("cluster selection error: %w", err)
+			}
+
+		case "review":
+			allSelectedClusters := collectAllSelectedClusters(regionSelections)
+			approved, err := showReviewForm(regionSelections, clusterMap, allSelectedClusters)
+			if err != nil {
+				return nil, fmt.Errorf("review form error: %w", err)
+			}
+			if approved {
+				slog.Info("Selected clusters approved for scanning", "count", len(allSelectedClusters))
+				for _, key := range allSelectedClusters {
+					cluster := clusterMap[key]
+					slog.Info("Will scan cluster", "cluster", cluster.clusterArn, "region", cluster.region)
+				}
+				return nil, nil
+			}
+			// If not approved, go back to main menu
+			currentState = "main_menu"
+
+		case "exit":
+			slog.Info("User chose to exit")
+			return nil, fmt.Errorf("user cancelled operation")
+
+		default:
+			currentState = "main_menu"
+		}
 	}
 }
 
@@ -165,15 +182,42 @@ func collectAllSelectedClusters(regionSelections map[string][]string) []string {
 	return allSelectedClusters
 }
 
-func showClustersForm(regionSelections map[string][]string, clusterMap map[string]clusterInfo, credsYaml types.CredsYaml) error {
-	var regionOptions []huh.Option[string]
+// showMainMenu displays the main menu and updates currentState
+func showMainMenu() error {
+	var selectedAction string
 
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("🏠 Main Menu").
+				Description("Choose what you'd like to do").
+				Options(
+					huh.NewOption("🌍 Select Clusters", "select_clusters"),
+					huh.NewOption("📋 Review Selections", "review"),
+					huh.NewOption("🚪 Exit", "exit"),
+				).
+				Value(&selectedAction),
+		),
+	).WithTheme(globalTheme)
+
+	if err := form.Run(); err != nil {
+		return err
+	}
+
+	currentState = selectedAction
+	return nil
+}
+
+// showClusterSelection handles the cluster selection flow with backward navigation
+func showClusterSelection(regionSelections map[string][]string, clusterMap map[string]clusterInfo, credsYaml types.CredsYaml) error {
+	var regionOptions []huh.Option[string]
+	regionOptions = append(regionOptions, huh.NewOption("🏠 Back to Main Menu", "back_to_menu"))
 	for regionName := range credsYaml.Regions {
 		regionOptions = append(regionOptions, huh.NewOption(regionName, regionName))
 	}
+
 	var selectedRegion string
 	var currentRegionClusters []string
-	var currentAction string
 
 	regionClusterOptions := make(map[string][]huh.Option[string])
 	for regionName, region := range credsYaml.Regions {
@@ -187,29 +231,15 @@ func showClustersForm(regionSelections map[string][]string, clusterMap map[strin
 	}
 
 	form := huh.NewForm(
-		// Level 1: Main Menu
+		// Level 1: Region Selection
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Main Menu").
-				Options(
-					huh.NewOption("🌍 Select Clusters", "select_clusters"),
-					huh.NewOption("📋 Review Selections", "review"),
-				).
-				Value(&currentAction),
-		),
-
-		// Level 2: Region Selection
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Select a region (Shift+Tab back to menu)").
+				Title("Select a region").
 				Options(regionOptions...).
 				Value(&selectedRegion),
-		).WithHideFunc(func() bool {
-			// Only show if user selected "select_clusters"
-			return currentAction != "select_clusters"
-		}),
+		),
 
-		// Level 3: Cluster Selection
+		// Level 2: Cluster Selection
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Select clusters (Shift+Tab back to regions)").
@@ -222,9 +252,10 @@ func showClustersForm(regionSelections map[string][]string, clusterMap map[strin
 				Value(&currentRegionClusters),
 		).WithHideFunc(func() bool {
 			// Save state and control visibility
-			regionSelections[selectedRegion] = currentRegionClusters
-			// Only show if user selected "select_clusters"
-			return currentAction != "select_clusters"
+			if selectedRegion != "" && selectedRegion != "back_to_menu" {
+				regionSelections[selectedRegion] = currentRegionClusters
+			}
+			return selectedRegion == "" || selectedRegion == "back_to_menu"
 		}),
 	).WithTheme(globalTheme)
 
@@ -232,6 +263,19 @@ func showClustersForm(regionSelections map[string][]string, clusterMap map[strin
 		return err
 	}
 
+	// Check if user wants to go back to main menu
+	if selectedRegion == "back_to_menu" {
+		currentState = "main_menu"
+		return nil
+	}
+
+	// Save final state
+	if selectedRegion != "" {
+		regionSelections[selectedRegion] = currentRegionClusters
+	}
+
+	// Go back to main menu when done
+	currentState = "main_menu"
 	return nil
 }
 
