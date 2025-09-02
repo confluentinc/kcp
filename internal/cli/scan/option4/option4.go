@@ -103,7 +103,6 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 
 	var allSelectedClusters []string
 
-	// Build region options
 	var regionOptions []huh.Option[string]
 	for regionName := range credsYaml.Regions {
 		regionOptions = append(regionOptions, huh.NewOption(regionName, regionName))
@@ -112,15 +111,12 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 	var selectedRegion string
 	clusterMap := make(map[string]clusterInfo)
 
-	// Track selections per region to maintain state across region switches
 	regionSelections := make(map[string][]string)
 
-	// Initialize empty selections for each region
 	for regionName := range credsYaml.Regions {
 		regionSelections[regionName] = []string{}
 	}
 
-	// Build cluster options for each region
 	regionClusterOptions := make(map[string][]huh.Option[string])
 	for regionName, region := range credsYaml.Regions {
 		var clusterOptions []huh.Option[string]
@@ -132,13 +128,8 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 		regionClusterOptions[regionName] = clusterOptions
 	}
 
-	// Current region's cluster selections (dynamically updated)
-	// This slice is what the multi-select form field binds to
 	var currentRegionClusters []string
 
-	// ========================================
-	// THREE-LEVEL NAVIGATION LOOP
-	// ========================================
 	for {
 		var mainAction string
 
@@ -146,7 +137,7 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			// Level 1: Main Menu (Shift+Tab from regions comes here)
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Main Menu (Tab to Regions)").
+					Title("Main Menu").
 					Options(
 						huh.NewOption("🌍 Select Clusters", "select_clusters"),
 						huh.NewOption("📋 Review Selections", "review"),
@@ -157,7 +148,7 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			// Level 2: Region Selection (Shift+Tab to main menu, Tab to clusters)
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Select a region (Shift+Tab to Main Menu, Tab to Clusters)").
+					Title("Select a region (Shift+Tab back to menu)").
 					Options(regionOptions...).
 					Value(&selectedRegion),
 			).WithHideFunc(func() bool {
@@ -168,7 +159,7 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			// Level 3: Cluster Selection (Shift+Tab to regions)
 			huh.NewGroup(
 				huh.NewMultiSelect[string]().
-					Title("Select clusters (Shift+Tab back to Regions)").
+					Title("Select clusters (Shift+Tab back to regions)").
 					Description("Select clusters to scan from the chosen region").
 					OptionsFunc(func() []huh.Option[string] {
 						if selectedRegion == "" || mainAction != "select_clusters" {
