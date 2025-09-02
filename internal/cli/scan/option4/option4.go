@@ -96,12 +96,9 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
 	}
 
-	// Validate credentials file
 	if err := validateCredentials(credsYaml); err != nil {
 		return nil, err
 	}
-
-	var allSelectedClusters []string
 
 	var regionOptions []huh.Option[string]
 	for regionName := range credsYaml.Regions {
@@ -179,21 +176,13 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			return nil, fmt.Errorf("form error: %w", err)
 		}
 
-		slog.Info("HOWE AREW WE HEREW FORM RUN - currentAction", "currentAction", currentAction)
-
-		slog.Info("FORM OVER - currentAction", "currentAction", currentAction)
-		// Handle the final action
-		// switch currentAction {
-		// case "review":
-		// Create review form
-		reviewApproved, err := showReviewForm(regionSelections, clusterMap)
+		allSelectedClusters := collectAllSelectedClusters(regionSelections)
+		reviewApproved, err := showReviewForm(regionSelections, clusterMap, allSelectedClusters)
 		if err != nil {
 			return nil, fmt.Errorf("review form error: %w", err)
 		}
 
 		if reviewApproved {
-			// Collect all selected clusters and proceed
-			allSelectedClusters = collectAllSelectedClusters(regionSelections)
 			slog.Info("Selected clusters approved for scanning", "count", len(allSelectedClusters))
 			for _, key := range allSelectedClusters {
 				cluster := clusterMap[key]
@@ -201,14 +190,7 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			}
 			return nil, nil
 		}
-		// If not approved, continue the loop to show main menu again
 
-		// case "select_clusters":
-		// 	// Save final selections and continue loop to show menu again
-		// 	regionSelections[selectedRegion] = currentRegionClusters
-		// 	slog.Info("Updated selections", "region", selectedRegion, "clusters", len(currentRegionClusters))
-		// 	// Continue the loop to show menu again
-		// }
 	}
 }
 
@@ -249,9 +231,8 @@ func collectAllSelectedClusters(regionSelections map[string][]string) []string {
 
 // showReviewForm displays a dedicated form showing all selected clusters by region
 // and asks for user confirmation to proceed
-func showReviewForm(regionSelections map[string][]string, clusterMap map[string]clusterInfo) (bool, error) {
+func showReviewForm(regionSelections map[string][]string, clusterMap map[string]clusterInfo, allSelectedClusters []string) (bool, error) {
 	// Check if any clusters are selected
-	allSelectedClusters := collectAllSelectedClusters(regionSelections)
 	if len(allSelectedClusters) == 0 {
 		// Show a form that just informs the user and returns them to main menu
 		var shouldQuit bool
