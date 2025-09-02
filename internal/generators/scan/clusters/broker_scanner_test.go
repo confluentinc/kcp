@@ -1,4 +1,4 @@
-package brokers
+package clusters
 
 import (
 	"errors"
@@ -13,13 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestBrokerScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.ClusterInformation, authType types.AuthType) *BrokerScanner {
-	return NewBrokerScanner(kafkaAdminFactory, clusterInfo, &BrokerScannerOpts{
+func newTestClustersScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.ClusterInformation, authType types.AuthType) *ClustersScanner {
+	return NewClustersScanner(kafkaAdminFactory, clusterInfo, &ClustersScannerOpts{
 		AuthType: authType,
 	})
 }
 
-func TestBrokerScanner_DescribeKafkaCluster(t *testing.T) {
+func TestClustersScanner_DescribeKafkaCluster(t *testing.T) {
 	tests := []struct {
 		name                 string
 		mockClusterMetadata  *client.ClusterKafkaMetadata
@@ -87,8 +87,8 @@ func TestBrokerScanner_DescribeKafkaCluster(t *testing.T) {
 				},
 			}
 
-			brokerScanner := newTestBrokerScanner(nil, types.ClusterInformation{}, types.AuthTypeIAM)
-			result, err := brokerScanner.describeKafkaCluster(mockAdmin)
+			clusterScanner := newTestClustersScanner(nil, types.ClusterInformation{}, types.AuthTypeIAM)
+			result, err := clusterScanner.describeKafkaCluster(mockAdmin)
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -108,7 +108,7 @@ func TestBrokerScanner_DescribeKafkaCluster(t *testing.T) {
 	}
 }
 
-func TestBrokerScanner_DescribeKafkaCluster_Integration(t *testing.T) {
+func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 	tests := []struct {
 		name                string
 		mockClusterMetadata *client.ClusterKafkaMetadata
@@ -149,8 +149,8 @@ func TestBrokerScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				return mockAdmin, nil
 			}
 
-			brokerScanner := newTestBrokerScanner(kafkaAdminFactory, types.ClusterInformation{}, types.AuthTypeIAM)
-			result, err := brokerScanner.describeKafkaCluster(mockAdmin)
+			clusterScanner := newTestClustersScanner(kafkaAdminFactory, types.ClusterInformation{}, types.AuthTypeIAM)
+			result, err := clusterScanner.describeKafkaCluster(mockAdmin)
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -160,7 +160,7 @@ func TestBrokerScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 	}
 }
 
-func TestBrokerScanner_ScanClusterTopics(t *testing.T) {
+func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 	tests := []struct {
 		name       string
 		topics     map[string]sarama.TopicDetail
@@ -197,8 +197,8 @@ func TestBrokerScanner_ScanClusterTopics(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			brokerScanner := newTestBrokerScanner(nil, types.ClusterInformation{}, types.AuthTypeIAM)
-			result, err := brokerScanner.scanClusterTopics(mockAdmin)
+			clusterScanner := newTestClustersScanner(nil, types.ClusterInformation{}, types.AuthTypeIAM)
+			result, err := clusterScanner.scanClusterTopics(mockAdmin)
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -212,7 +212,7 @@ func TestBrokerScanner_ScanClusterTopics(t *testing.T) {
 	}
 }
 
-func TestBrokerScanner_ListAcls(t *testing.T) {
+func TestClusterScanner_ListAcls(t *testing.T) {
 	tests := []struct {
 		name      string
 		acls      []sarama.ResourceAcls
@@ -317,8 +317,8 @@ func TestBrokerScanner_ListAcls(t *testing.T) {
 				},
 			}
 
-			brokerScanner := newTestBrokerScanner(nil, types.ClusterInformation{}, types.AuthTypeIAM)
-			result, err := brokerScanner.scanKafkaAcls(mockAdmin)
+			clusterScanner := newTestClustersScanner(nil, types.ClusterInformation{}, types.AuthTypeIAM)
+			result, err := clusterScanner.scanKafkaAcls(mockAdmin)
 
 			if tt.wantError != "" {
 				require.Error(t, err)

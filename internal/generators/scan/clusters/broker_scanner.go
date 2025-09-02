@@ -1,4 +1,4 @@
-package brokers
+package clusters
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
-type BrokerScannerOpts struct {
+type ClustersScannerOpts struct {
 	AuthType          types.AuthType
 	ClusterName       string
 	BootstrapServer   string
@@ -26,30 +26,30 @@ type BrokerScannerOpts struct {
 	TLSClientKey      string
 }
 
-type BrokerScanner struct {
+type ClustersScanner struct {
 	kafkaAdminFactory KafkaAdminFactory
 	clusterInfo       types.ClusterInformation
-	opts              *BrokerScannerOpts
+	opts              *ClustersScannerOpts
 }
 
-func NewBrokerScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.ClusterInformation, opts *BrokerScannerOpts) *BrokerScanner {
-	return &BrokerScanner{
+func NewClustersScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.ClusterInformation, opts *ClustersScannerOpts) *ClustersScanner {
+	return &ClustersScanner{
 		kafkaAdminFactory: kafkaAdminFactory,
 		clusterInfo:       clusterInfo,
 		opts:              opts,
 	}
 }
 
-func (bs *BrokerScanner) Run() error {
-	if bs.opts.BootstrapServer == "" {
+func (cs *ClustersScanner) Run() error {
+	if cs.opts.BootstrapServer == "" {
 		return fmt.Errorf("no bootstrap server found, skipping the broker scan")
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", bs.opts.ClusterName, bs.opts.AuthType))	
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", cs.opts.ClusterName, cs.opts.AuthType))	
 
 	ctx := context.TODO()
 
-	brokerInfo, err := bs.ScanBroker(ctx)
+	brokerInfo, err := cs.ScanClusters(ctx)
 	if err != nil {
 		return err
 	}
@@ -62,25 +62,25 @@ func (bs *BrokerScanner) Run() error {
 		return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", bs.opts.ClusterName))
+	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", cs.opts.ClusterName))
 
 	return nil
 }
 
-func (bs *BrokerScanner) ScanBroker(ctx context.Context) (*types.ClusterInformation, error) {
-	if err := bs.scanKafkaResources(&bs.clusterInfo); err != nil {
+func (cs *ClustersScanner) ScanClusters(ctx context.Context) (*types.ClusterInformation, error) {
+	if err := cs.scanKafkaResources(&cs.clusterInfo); err != nil {
 		return nil, err
 	}
 
-	return &bs.clusterInfo, nil
+	return &cs.clusterInfo, nil
 }
 
-func (bs *BrokerScanner) scanKafkaResources(clusterInfo *types.ClusterInformation) error {
+func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformation) error {
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-	kafkaVersion := bs.getKafkaVersion(clusterInfo)
+	kafkaVersion := cs.getKafkaVersion(clusterInfo)
 
-	bootstrapServers := strings.Split(bs.opts.BootstrapServer, ",")
-	admin, err := bs.kafkaAdminFactory(bootstrapServers, clientBrokerEncryptionInTransit, kafkaVersion)
+	bootstrapServers := strings.Split(cs.opts.BootstrapServer, ",")
+	admin, err := cs.kafkaAdminFactory(bootstrapServers, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
@@ -88,14 +88,14 @@ func (bs *BrokerScanner) scanKafkaResources(clusterInfo *types.ClusterInformatio
 	defer admin.Close()
 
 	// Get cluster metadata including broker information and ClusterID
-	clusterMetadata, err := bs.describeKafkaCluster(admin)
+	clusterMetadata, err := cs.describeKafkaCluster(admin)
 	if err != nil {
 		return err
 	}
 
 	clusterInfo.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := bs.scanClusterTopics(admin)
+	topics, err := cs.scanClusterTopics(admin)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func (bs *BrokerScanner) scanKafkaResources(clusterInfo *types.ClusterInformatio
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := bs.scanKafkaAcls(admin)
+		acls, err := cs.scanKafkaAcls(admin)
 		if err != nil {
 			return err
 		}
@@ -116,8 +116,8 @@ func (bs *BrokerScanner) scanKafkaResources(clusterInfo *types.ClusterInformatio
 }
 
 // retrieveClusterId gets cluster metadata and returns the cluster ID along with logging information
-func (bs *BrokerScanner) describeKafkaCluster(admin client.KafkaAdmin) (*client.ClusterKafkaMetadata, error) {
-	slog.Info(fmt.Sprintf("🔍 retrieving cluster ID for cluster %s", bs.opts.ClusterName))
+func (cs *ClustersScanner) describeKafkaCluster(admin client.KafkaAdmin) (*client.ClusterKafkaMetadata, error) {
+	slog.Info(fmt.Sprintf("🔍 retrieving cluster ID for cluster %s", cs.opts.ClusterName))
 
 	clusterMetadata, err := admin.GetClusterKafkaMetadata()
 	if err != nil {
@@ -126,8 +126,8 @@ func (bs *BrokerScanner) describeKafkaCluster(admin client.KafkaAdmin) (*client.
 	return clusterMetadata, nil
 }
 
-func (bs *BrokerScanner) scanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
-	slog.Info(fmt.Sprintf("🔍 scanning for topics in cluster %s", bs.opts.ClusterName))
+func (cs *ClustersScanner) scanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
+	slog.Info(fmt.Sprintf("🔍 scanning for topics in cluster %s", cs.opts.ClusterName))
 
 	topics, err := admin.ListTopics()
 	if err != nil {
@@ -142,8 +142,8 @@ func (bs *BrokerScanner) scanClusterTopics(admin client.KafkaAdmin) ([]string, e
 	return topicList, nil
 }
 
-func (bs *BrokerScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, error) {
-	slog.Info(fmt.Sprintf("🔍 scanning for ACLs in cluster %s", bs.opts.ClusterName))
+func (cs *ClustersScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, error) {
+	slog.Info(fmt.Sprintf("🔍 scanning for ACLs in cluster %s", cs.opts.ClusterName))
 
 	acls, err := admin.ListAcls()
 	if err != nil {
@@ -170,7 +170,7 @@ func (bs *BrokerScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, e
 	return flattenedAcls, nil
 }
 
-func (bs *BrokerScanner) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
+func (cs *ClustersScanner) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
 	switch clusterInfo.Cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
 		return utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)

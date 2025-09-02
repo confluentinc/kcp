@@ -1,4 +1,4 @@
-package brokers
+package clusters
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 	"github.com/goccy/go-yaml"
 
 	"github.com/confluentinc/kcp/internal/client"
-	"github.com/confluentinc/kcp/internal/generators/scan/brokers"
+	"github.com/confluentinc/kcp/internal/generators/scan/clusters"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
@@ -28,14 +28,14 @@ var (
 	skippedClusters = []string{}
 )
 
-func NewScanBrokersCmd() *cobra.Command {
-	brokersCmd := &cobra.Command{
-		Use:           "brokers",
-		Short:         "Scan brokers using the Kafka Admin API",
-		Long:          "Scan brokers for information using the Kafka Admin API such as topics, ACLs and cluster ID",
+func NewScanClustersCmd() *cobra.Command {
+	clustersCmd := &cobra.Command{
+		Use:           "clusters",
+		Short:         "Scan multiple clusters using the generated `kcp discover` output",
+		Long:          "Scan multiple clusters for information using the Kafka Admin API such as topics, ACLs and cluster ID",
 		SilenceErrors: true,
-		PreRunE:       preRunScanBrokers,
-		RunE:          runScanBrokers,
+		PreRunE:       preRunScanClusters,
+		RunE:          runScanClusters,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -44,10 +44,10 @@ func NewScanBrokersCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&discoverDir, "discover-dir", "", "The path to the directory where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&credentialsYaml, "credentials-yaml", "", "The credentials YAML file used for authenticating to the MSK cluster(s).")
-	brokersCmd.Flags().AddFlagSet(requiredFlags)
+	clustersCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	brokersCmd.SetUsageFunc(func(c *cobra.Command) error {
+	clustersCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags}
@@ -65,10 +65,10 @@ func NewScanBrokersCmd() *cobra.Command {
 		return nil
 	})
 
-	return brokersCmd
+	return clustersCmd
 }
 
-func preRunScanBrokers(cmd *cobra.Command, args []string) error {
+func preRunScanClusters(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func preRunScanBrokers(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runScanBrokers(cmd *cobra.Command, args []string) error {
+func runScanClusters(cmd *cobra.Command, args []string) error {
 	data, err := os.ReadFile(credentialsYaml)
 	if err != nil {
 		return fmt.Errorf("failed to read creds.yaml file: %w", err)
@@ -91,10 +91,10 @@ func runScanBrokers(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	for region, clusters := range credsFile.Regions {
-		for arn, cluster := range clusters.Clusters {
+	for region, clusterEntries := range credsFile.Regions {
+		for arn, cluster := range clusterEntries.Clusters {
 
-			opts, err := parseScanBrokersOpts(region, arn, cluster)
+			opts, err := parseScanClustersOpts(region, arn, cluster)
 			if err != nil {
 				slog.Error("failed to parse opts for cluster", "cluster", arn, "error", err)
 				continue
@@ -115,8 +115,8 @@ func runScanBrokers(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			brokerScanner := brokers.NewBrokerScanner(kafkaAdminFactory, clusterInfo, opts)
-			if err := brokerScanner.Run(); err != nil {
+			clustersScanner := clusters.NewClustersScanner(kafkaAdminFactory, clusterInfo, opts)
+			if err := clustersScanner.Run(); err != nil {
 				slog.Error(fmt.Sprintf("❌ failed to scan cluster %s error: %v", opts.ClusterName, err))
 				continue
 			}
@@ -151,8 +151,8 @@ func validateYaml(credsFile types.CredsYaml) error {
 	return nil
 }
 
-func parseScanBrokersOpts(region, arn string, clusterEntry types.ClusterEntry) (*brokers.BrokerScannerOpts, error) {
-	opts := brokers.BrokerScannerOpts{}
+func parseScanClustersOpts(region, arn string, clusterEntry types.ClusterEntry) (*clusters.ClustersScannerOpts, error) {
+	opts := clusters.ClustersScannerOpts{}
 
 	clusterName, err := getClusterName(arn)
 	if err != nil {
