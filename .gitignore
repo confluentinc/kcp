@@ -47,6 +47,7 @@ migration-plan/
 
 # Ignore kcp generated files
 kcp-scan/
+kcp-scan*
 
 # Added by goreleaser init:
 dist/
