@@ -6,7 +6,8 @@ import (
 	"github.com/confluentinc/kcp/internal/cli/scan/option1"
 	"github.com/confluentinc/kcp/internal/cli/scan/option2"
 	"github.com/confluentinc/kcp/internal/cli/scan/option3"
-	"github.com/confluentinc/kcp/internal/cli/scan/option4"	
+	"github.com/confluentinc/kcp/internal/cli/scan/option4"
+	"github.com/confluentinc/kcp/internal/cli/scan/option5"
 	"github.com/confluentinc/kcp/internal/cli/scan/region"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +36,7 @@ func NewScanCmd() *cobra.Command {
 		option2.NewScanOption2Cmd(),
 		option3.NewScanOption3Cmd(),
 		option4.NewScanOption4Cmd(),
+		option5.NewScanOption5Cmd(),
 	)
 
 	return scanCmd
