@@ -84,7 +84,7 @@ func runScanOption4(cmd *cobra.Command, args []string) error {
 }
 
 func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
-	slog.Info("🔍 parsing scan option 4 opts", "credentialsYaml", credentialsYaml)
+	slog.Info("🔍 parsing scan option 4 opts NEW APPROACH", "credentialsYaml", credentialsYaml)
 	data, err := os.ReadFile(credentialsYaml)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read creds.yaml file: %w", err)
@@ -153,116 +153,127 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 	var currentRegionClusters []string
 
 	// ========================================
-	// HUH FORM CREATION - THE MAIN MAGIC
+	// THREE-LEVEL NAVIGATION LOOP
 	// ========================================
-	form := huh.NewForm(
-		// Create a single group containing both our fields
-		// Groups allow related fields to be navigated together with Tab/Shift+Tab
-		huh.NewGroup(
+	for {
+		var mainAction string
 
-			// ========================================
-			// REGION SELECTOR (Single Select Dropdown)
-			// ========================================
-			huh.NewSelect[string](). // Create single-select dropdown for string values
-							Title("Select a region").    // Display title above the dropdown
-							Options(regionOptions...).   // Static list of region options (eu-west-1, us-east-1, etc.)
-							Value(&selectedRegion).      // Bind to selectedRegion variable - when user picks, this updates
-							WithTheme(huh.ThemeCharm()), // Apply Charm's default styling
+		form := huh.NewForm(
+			// Level 1: Main Menu (Shift+Tab from regions comes here)
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Main Menu (Tab to regions)").
+					Options(
+						huh.NewOption("🌍 Select Clusters", "select_clusters"),
+						huh.NewOption("📋 Review Selections", "review"),
+						huh.NewOption("✅ Submit & Continue", "submit"),
+						huh.NewOption("❌ Cancel", "cancel"),
+					).
+					Value(&mainAction),
+			),
 
-			// ========================================
-			// CLUSTER SELECTOR (Multi Select with Dynamic Options)
-			// ========================================
-			huh.NewMultiSelect[string](). // Create multi-select checkbox list for string values
-							Title("Select clusters").                                      // Display title above the checkboxes
-							Description("Select clusters to scan from the chosen region"). // Helper text
+			// Level 2: Region Selection (Shift+Tab to main menu, Tab to clusters)
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Select a region (Shift+Tab to menu, Tab to clusters)").
+					Options(regionOptions...).
+					Value(&selectedRegion),
+			).WithHideFunc(func() bool {
+				// Only show if user selected "select_clusters"
+				return mainAction != "select_clusters"
+			}),
 
-				// *** THE DYNAMIC MAGIC - OptionsFunc ***
-				// This function runs every time selectedRegion changes
-				OptionsFunc(func() []huh.Option[string] {
-					// If no region selected yet, show no clusters
-					if selectedRegion == "" {
-						return []huh.Option[string]{}
+			// Level 3: Cluster Selection (Shift+Tab to regions)
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Select clusters (Shift+Tab back to regions)").
+					Description("Select clusters to scan from the chosen region").
+					OptionsFunc(func() []huh.Option[string] {
+						if selectedRegion == "" || mainAction != "select_clusters" {
+							return []huh.Option[string]{}
+						}
+						// Restore previous selections for this region
+						if regionSelections[selectedRegion] != nil {
+							currentRegionClusters = *regionSelections[selectedRegion]
+						}
+						return regionClusterOptions[selectedRegion]
+					}, &selectedRegion).
+					Value(&currentRegionClusters),
+			).WithHideFunc(func() bool {
+				// Save state and control visibility
+				if selectedRegion != "" && regionSelections[selectedRegion] != nil {
+					*regionSelections[selectedRegion] = currentRegionClusters
+				}
+				// Only show if user selected "select_clusters" and has a region
+				return mainAction != "select_clusters" || selectedRegion == ""
+			}),
+		)
+
+		if err := form.Run(); err != nil {
+			return nil, fmt.Errorf("form error: %w", err)
+		}
+
+		// Handle the final action
+		switch mainAction {
+		case "review":
+			// Show current selections
+			var summaryText string = "📋 CURRENT SELECTIONS\n\n"
+			hasSelections := false
+
+			for regionName, clusters := range regionSelections {
+				if len(*clusters) > 0 {
+					hasSelections = true
+					summaryText += fmt.Sprintf("🌍 Region: %s\n", regionName)
+					for _, clusterKey := range *clusters {
+						cluster := clusterMap[clusterKey]
+						summaryText += fmt.Sprintf("  ✓ %s\n", cluster.clusterArn)
 					}
-
-					// *** STATE RESTORATION ***
-					// When user switches regions, restore their previous selections for this region
-					// Example: User had selected cluster1,cluster2 in us-east-1, then switched to eu-west-1
-					// When they switch back to us-east-1, this restores cluster1,cluster2 selections
-					if regionSelections[selectedRegion] != nil {
-						currentRegionClusters = *regionSelections[selectedRegion]
-					}
-
-					// Return the cluster options for the currently selected region
-					// Example: If selectedRegion = "us-east-1", return clusters for us-east-1
-					return regionClusterOptions[selectedRegion]
-				}, &selectedRegion). // Watch selectedRegion - rerun function when it changes
-
-				Value(&currentRegionClusters). // Bind to currentRegionClusters - user selections go here
-				WithTheme(huh.ThemeCharm()),   // Apply Charm's default styling
-
-		// ========================================
-		// STATE PERSISTENCE HACK - WithHideFunc
-		// ========================================
-		).WithHideFunc(func() bool {
-			// This function is called on every form update/render
-			// We don't actually want to hide the group, but we use this as a hook to save state
-
-			// *** STATE SAVING ***
-			// Save current cluster selections back to the region's permanent storage
-			// Example: User selected cluster3,cluster4 in eu-west-1, save these to regionSelections["eu-west-1"]
-			if selectedRegion != "" && regionSelections[selectedRegion] != nil {
-				*regionSelections[selectedRegion] = currentRegionClusters
+					summaryText += "\n"
+				}
 			}
 
-			return false // Never actually hide the group - we just want the state saving side effect
-		}),
-	).WithKeyMap(huh.NewDefaultKeyMap())
+			if !hasSelections {
+				summaryText += "No clusters selected yet.\n"
+			}
 
-	// ========================================
-	// RUN THE FORM - USER INTERACTION HAPPENS HERE
-	// ========================================
-	if err := form.Run(); err != nil {
-		return nil, fmt.Errorf("form error: %w", err)
-	}
-	// At this point, user has finished interacting with the form
+			fmt.Println(summaryText)
+			// Continue the loop to show menu again
 
-	// ========================================
-	// FINAL STATE CLEANUP
-	// ========================================
-	// Save final selections for the last selected region
-	// The WithHideFunc saves state during navigation, but we need one final save
-	// for whatever region the user was on when they pressed Enter to finish
-	if selectedRegion != "" && regionSelections[selectedRegion] != nil {
-		*regionSelections[selectedRegion] = currentRegionClusters
-	}
+		case "submit":
+			// Collect all selections and proceed
+			var allSelectedClusters []string
+			for _, clusters := range regionSelections {
+				allSelectedClusters = append(allSelectedClusters, *clusters...)
+			}
 
-	// ========================================
-	// COLLECT ALL SELECTIONS FROM ALL REGIONS
-	// ========================================
-	// Now we have:
-	// regionSelections["us-east-1"] = &["us-east-1|cluster1", "us-east-1|cluster2"]
-	// regionSelections["eu-west-1"] = &["eu-west-1|cluster3", "eu-west-1|cluster4", "eu-west-1|cluster5"]
-	//
-	// Combine them all into one final list
-	var allSelectedClusters []string
-	for regionName, clusters := range regionSelections {
-		// Dereference the pointer and append all clusters from this region
-		// Example: append ["us-east-1|cluster1", "us-east-1|cluster2"] to allSelectedClusters
-		allSelectedClusters = append(allSelectedClusters, *clusters...)
+			if len(allSelectedClusters) == 0 {
+				slog.Warn("No clusters selected - please select some clusters first")
+				continue // Continue the loop
+			}
 
-		// Debug info: could log here to see what we got from each region
-		fmt.Printf("Region %s contributed %d clusters\n", regionName, len(*clusters))
-	}
+			slog.Info("Selected clusters for scanning", "count", len(allSelectedClusters))
+			for _, key := range allSelectedClusters {
+				cluster := clusterMap[key]
+				slog.Info("Will scan cluster", "cluster", cluster.clusterArn, "region", cluster.region)
+			}
 
-	if len(allSelectedClusters) == 0 {
-		return nil, fmt.Errorf("no clusters selected")
+			// Exit the loop and continue with scanning
+			goto scanApproved
+
+		case "cancel":
+			return nil, fmt.Errorf("scan cancelled by user")
+
+		case "select_clusters":
+			// Save final selections and continue loop to show menu again
+			if selectedRegion != "" && regionSelections[selectedRegion] != nil {
+				*regionSelections[selectedRegion] = currentRegionClusters
+				slog.Info("Updated selections", "region", selectedRegion, "clusters", len(currentRegionClusters))
+			}
+			// Continue the loop to show menu again
+		}
 	}
 
-	slog.Info("Selected clusters for scanning", "count", len(allSelectedClusters))
-	for _, key := range allSelectedClusters {
-		cluster := clusterMap[key]
-		slog.Info("Will scan cluster", "cluster", cluster.clusterArn, "region", cluster.region)
-	}
+scanApproved:
 
 	// opts := cluster.ClusterScannerOpts{}
 	// return &opts, nil
