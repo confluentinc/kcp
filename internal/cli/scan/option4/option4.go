@@ -118,6 +118,8 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 		}
 	}
 
+	var allSelectedClusters []string
+
 	// Build region options
 	var regionOptions []huh.Option[string]
 	for regionName := range credsYaml.Regions {
@@ -162,12 +164,10 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			// Level 1: Main Menu (Shift+Tab from regions comes here)
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Main Menu (Tab to regions)").
+					Title("Main Menu (Tab to Regions)").
 					Options(
 						huh.NewOption("🌍 Select Clusters", "select_clusters"),
 						huh.NewOption("📋 Review Selections", "review"),
-						huh.NewOption("✅ Submit & Continue", "submit"),
-						huh.NewOption("❌ Cancel", "cancel"),
 					).
 					Value(&mainAction),
 			),
@@ -175,7 +175,7 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			// Level 2: Region Selection (Shift+Tab to main menu, Tab to clusters)
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Select a region (Shift+Tab to menu, Tab to clusters)").
+					Title("Select a region (Shift+Tab to Main Menu, Tab to Clusters)").
 					Options(regionOptions...).
 					Value(&selectedRegion),
 			).WithHideFunc(func() bool {
@@ -186,7 +186,7 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 			// Level 3: Cluster Selection (Shift+Tab to regions)
 			huh.NewGroup(
 				huh.NewMultiSelect[string]().
-					Title("Select clusters (Shift+Tab back to regions)").
+					Title("Select clusters (Shift+Tab back to Regions)").
 					Description("Select clusters to scan from the chosen region").
 					OptionsFunc(func() []huh.Option[string] {
 						if selectedRegion == "" || mainAction != "select_clusters" {
@@ -216,52 +216,27 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 		// Handle the final action
 		switch mainAction {
 		case "review":
-			// Show current selections
-			var summaryText string = "📋 CURRENT SELECTIONS\n\n"
-			hasSelections := false
-
-			for regionName, clusters := range regionSelections {
-				if len(*clusters) > 0 {
-					hasSelections = true
-					summaryText += fmt.Sprintf("🌍 Region: %s\n", regionName)
-					for _, clusterKey := range *clusters {
-						cluster := clusterMap[clusterKey]
-						summaryText += fmt.Sprintf("  ✓ %s\n", cluster.clusterArn)
-					}
-					summaryText += "\n"
-				}
-			}
-
-			if !hasSelections {
-				summaryText += "No clusters selected yet.\n"
-			}
-
-			fmt.Println(summaryText)
-			// Continue the loop to show menu again
-
-		case "submit":
-			// Collect all selections and proceed
-			var allSelectedClusters []string
+			// Check if any clusters are selected
+			// var allSelectedClusters []string
 			for _, clusters := range regionSelections {
 				allSelectedClusters = append(allSelectedClusters, *clusters...)
 			}
 
-			if len(allSelectedClusters) == 0 {
-				slog.Warn("No clusters selected - please select some clusters first")
-				continue // Continue the loop
+			// if len(allSelectedClusters) == 0 {
+			// 	slog.Warn("No clusters selected yet - please select some clusters first")
+			// 	continue // Continue the loop to show main menu again
+			// }
+
+			// Create review form
+			reviewApproved, err := showReviewForm(regionSelections, clusterMap)
+			if err != nil {
+				return nil, fmt.Errorf("review form error: %w", err)
 			}
 
-			slog.Info("Selected clusters for scanning", "count", len(allSelectedClusters))
-			for _, key := range allSelectedClusters {
-				cluster := clusterMap[key]
-				slog.Info("Will scan cluster", "cluster", cluster.clusterArn, "region", cluster.region)
+			if reviewApproved {
+				goto scanApproved
 			}
-
-			// Exit the loop and continue with scanning
-			goto scanApproved
-
-		case "cancel":
-			return nil, fmt.Errorf("scan cancelled by user")
+			// If not approved, continue the loop to show main menu again
 
 		case "select_clusters":
 			// Save final selections and continue loop to show menu again
@@ -274,10 +249,57 @@ func parseScanOption4Opts() (*cluster.ClusterScannerOpts, error) {
 	}
 
 scanApproved:
-
-	// opts := cluster.ClusterScannerOpts{}
-	// return &opts, nil
+	slog.Info("Selected clusters approved for scanning", "count", len(allSelectedClusters))
+	for _, key := range allSelectedClusters {
+		cluster := clusterMap[key]
+		slog.Info("Will scan cluster", "cluster", cluster.clusterArn, "region", cluster.region)
+	}
 	return nil, nil
+}
+
+// showReviewForm displays a dedicated form showing all selected clusters by region
+// and asks for user confirmation to proceed
+func showReviewForm(regionSelections map[string]*[]string, clusterMap map[string]clusterInfo) (bool, error) {
+	// Build the review summary
+	var summaryText string = "📋 Clusters selected for scanning\n\n"
+	hasSelections := false
+
+	for regionName, clusters := range regionSelections {
+		if len(*clusters) > 0 {
+			hasSelections = true
+			summaryText += fmt.Sprintf("🌍 Region: %s\n", regionName)
+			for _, clusterKey := range *clusters {
+				cluster := clusterMap[clusterKey]
+				summaryText += fmt.Sprintf("  ✓ %s\n", cluster.clusterArn)
+			}
+			summaryText += "\n"
+		}
+	}
+
+	if !hasSelections {
+		summaryText += "No clusters selected.\n"
+	}
+
+	var approved bool
+	reviewForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewNote().
+				Title("Review Your Selections").
+				Description(summaryText),
+			huh.NewConfirm().
+				Title("Are you happy with these selections?").
+				Description("Select 'Yes' to proceed with scanning, or 'No' to return to the main menu").
+				Affirmative("Yes, proceed with scanning").
+				Negative("No, go back to main menu").
+				Value(&approved),
+		),
+	)
+
+	if err := reviewForm.Run(); err != nil {
+		return false, fmt.Errorf("review form error: %w", err)
+	}
+
+	return approved, nil
 }
 
 type clusterInfo struct {
