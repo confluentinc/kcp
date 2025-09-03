@@ -1,102 +1,137 @@
 package clusters
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/kafka"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/goccy/go-yaml"
 
+	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
-// MockMSKService is a mock implementation for direct broker connections
-type MockMSKService struct{}
-
-func (m *MockMSKService) ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-	// This is not used for direct broker connections
-	return nil, nil
-}
-
 type ClustersScannerOpts struct {
-	AuthType          types.AuthType
-	ClusterName       string
-	BootstrapServer   string
-	SASLScramUsername string
-	SASLScramPassword string
-	TLSCACert         string
-	TLSClientCert     string
-	TLSClientKey      string
+	DiscoverDir     string
+	CredentialsFile string
 }
 
 type ClustersScanner struct {
-	kafkaService *kafkaservice.KafkaService
-	clusterInfo  types.ClusterInformation
-	opts         *ClustersScannerOpts
+	opts *ClustersScannerOpts
 }
 
-func NewClustersScanner(kafkaAdminFactory kafkaservice.KafkaAdminFactory, clusterInfo types.ClusterInformation, opts *ClustersScannerOpts) *ClustersScanner {
-	mockMSKService := &MockMSKService{}
-
-	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
-		MSKService:        mockMSKService,
-		KafkaAdminFactory: kafkaAdminFactory,
-		AuthType:          opts.AuthType,
-		ClusterArn:        "", // Not applicable for direct broker connections
-	})
-
+func NewClustersScanner(opts *ClustersScannerOpts) *ClustersScanner {
 	return &ClustersScanner{
-		kafkaService: kafkaService,
-		clusterInfo:  clusterInfo,
-		opts:         opts,
+		opts: opts,
 	}
 }
 
 func (cs *ClustersScanner) Run() error {
-	if cs.opts.BootstrapServer == "" {
-		return fmt.Errorf("no bootstrap server found, skipping the broker scan")
-	}
-
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", cs.opts.ClusterName, cs.opts.AuthType))
-
-	ctx := context.TODO()
-
-	brokerInfo, err := cs.ScanClusters(ctx)
+	data, err := os.ReadFile(cs.opts.CredentialsFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read credentials file: %w", err)
 	}
 
-	if err := brokerInfo.WriteAsJson(); err != nil {
-		return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
+	var credsFile types.CredsYaml
+	if err := yaml.Unmarshal(data, &credsFile); err != nil {
+		return fmt.Errorf("failed to unmarshal credentials YAML: %w", err)
 	}
 
-	if err := brokerInfo.WriteAsMarkdown(true); err != nil {
-		return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
+	for region, clusterEntries := range credsFile.Regions {
+		for arn, clusterEntry := range clusterEntries.Clusters {
+			if err := cs.scanCluster(region, arn, clusterEntry); err != nil {
+				slog.Error("failed to scan cluster", "cluster", arn, "error", err)
+				continue
+			}
+		}
 	}
-
-	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", cs.opts.ClusterName))
 
 	return nil
 }
 
-func (cs *ClustersScanner) ScanClusters(ctx context.Context) (*types.ClusterInformation, error) {
-	if err := cs.scanKafkaResourcesDirectly(&cs.clusterInfo); err != nil {
-		return nil, err
+func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.ClusterEntry) error {
+	clusterName, err := cs.getClusterName(arn)
+	if err != nil {
+		return fmt.Errorf("❌ failed to get cluster name: %v", err)
 	}
 
-	return &cs.clusterInfo, nil
+	var clusterInfo types.ClusterInformation
+	if cs.opts.DiscoverDir != "" {
+		clusterFile := filepath.Join(cs.opts.DiscoverDir, region, clusterName, fmt.Sprintf("%s.json", clusterName))
+		file, err := os.ReadFile(clusterFile)
+		if err != nil {
+			return fmt.Errorf("❌ failed to read cluster file: %v", err)
+		}
+
+		if err := json.Unmarshal(file, &clusterInfo); err != nil {
+			return fmt.Errorf("❌ failed to unmarshal cluster info: %v", err)
+		}
+	}
+
+	authType, err := cs.getSelectedAuthType(clusterEntry)
+	if err != nil {
+		return fmt.Errorf("❌ failed to determine auth type for cluster: %s in region: %s: %v", clusterName, region, err)
+	}
+	
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
+
+	bootstrapServer, err := cs.getBootstrapServer(clusterInfo, authType)
+	if err != nil {
+		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterName, region, err)
+	}
+
+	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
+		switch authType {
+		case types.AuthTypeIAM:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
+		case types.AuthTypeSASLSCRAM:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterEntry.AuthMethod.SASLScram.Username, clusterEntry.AuthMethod.SASLScram.Password))
+		case types.AuthTypeUnauthenticated:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedAuth())
+		case types.AuthTypeTLS:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterEntry.AuthMethod.TLS.CACert, clusterEntry.AuthMethod.TLS.ClientCert, clusterEntry.AuthMethod.TLS.ClientKey))
+		default:
+			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+		}
+	}
+
+	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
+		MSKService:        nil,
+		KafkaAdminFactory: kafkaAdminFactory,
+		AuthType:          authType,
+		ClusterArn:        arn,
+	})
+
+	if err := cs.scanKafkaResourcesDirectly(&clusterInfo, kafkaService, bootstrapServer); err != nil {
+		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
+	}
+
+	if err := clusterInfo.WriteAsJson(); err != nil {
+		return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
+	}
+
+	if err := clusterInfo.WriteAsMarkdown(true); err != nil {
+		return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
+	}
+
+	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterName))
+
+	return nil
 }
 
-// scanKafkaResourcesDirectly handles direct broker connections without using MSK service
-func (cs *ClustersScanner) scanKafkaResourcesDirectly(clusterInfo *types.ClusterInformation) error {
+func (cs *ClustersScanner) scanKafkaResourcesDirectly(clusterInfo *types.ClusterInformation, kafkaService *kafkaservice.KafkaService, bootstrapServer string) error {
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-	kafkaVersion := cs.kafkaService.GetKafkaVersion(clusterInfo)
+	kafkaVersion := kafkaService.GetKafkaVersion(clusterInfo)
 
-	bootstrapServers := strings.Split(cs.opts.BootstrapServer, ",")
-	admin, err := cs.kafkaService.CreateKafkaAdmin(bootstrapServers, clientBrokerEncryptionInTransit, kafkaVersion)
+	bootstrapServers := strings.Split(bootstrapServer, ",")
+	admin, err := kafkaService.CreateKafkaAdmin(bootstrapServers, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
@@ -149,4 +184,66 @@ func (cs *ClustersScanner) scanKafkaResourcesDirectly(clusterInfo *types.Cluster
 	}
 
 	return nil
+}
+
+func (cs *ClustersScanner) getClusterName(arn string) (string, error) {
+	arnParts := strings.Split(arn, "/")
+	if len(arnParts) < 2 {
+		return "", fmt.Errorf("invalid cluster ARN format: %s", arn)
+	}
+
+	clusterName := arnParts[1]
+	if clusterName == "" {
+		return "", fmt.Errorf("cluster name not found in cluster ARN: %s", arn)
+	}
+
+	return clusterName, nil
+}
+
+func (cs *ClustersScanner) getSelectedAuthType(clusterEntry types.ClusterEntry) (types.AuthType, error) {
+	enabledMethods := utils.GetAuthMethods(clusterEntry)
+	if len(enabledMethods) == 0 {
+		return "", fmt.Errorf("no authentication method enabled for cluster")
+	}
+
+	authMethod := enabledMethods[0]
+	switch authMethod {
+	case "unauthenticated":
+		return types.AuthTypeUnauthenticated, nil
+	case "iam":
+		return types.AuthTypeIAM, nil
+	case "sasl_scram":
+		return types.AuthTypeSASLSCRAM, nil
+	case "tls":
+		return types.AuthTypeTLS, nil
+	default:
+		return "", fmt.Errorf("unsupported authentication method: %s", authMethod)
+	}
+}
+
+func (cs *ClustersScanner) getBootstrapServer(clusterInfo types.ClusterInformation, authType types.AuthType) (string, error) {
+	switch authType {
+	case types.AuthTypeUnauthenticated:
+		return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerString), nil
+	case types.AuthTypeIAM:
+		if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam != nil {
+			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam), nil
+		} else {
+			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslIam), nil
+		}
+	case types.AuthTypeSASLSCRAM:
+		if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram != nil {
+			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram), nil
+		} else {
+			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslScram), nil
+		}
+	case types.AuthTypeTLS:
+		if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls != nil {
+			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls), nil
+		} else {
+			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringTls), nil
+		}
+	default:
+		return "", fmt.Errorf("unsupported authentication method: %s", authType)
+	}
 }

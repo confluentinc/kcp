@@ -1,17 +1,12 @@
 package clusters
 
 import (
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/goccy/go-yaml"
 
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/generators/scan/clusters"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -23,9 +18,6 @@ import (
 var (
 	discoverDir     string
 	credentialsYaml string
-
-	clusterInfo types.ClusterInformation
-	skippedClusters = []string{}
 )
 
 func NewScanClustersCmd() *cobra.Command {
@@ -91,36 +83,14 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	for region, clusterEntries := range credsFile.Regions {
-		for arn, cluster := range clusterEntries.Clusters {
+	opts := &clusters.ClustersScannerOpts{
+		DiscoverDir:     discoverDir,
+		CredentialsFile: credentialsYaml,
+	}
 
-			opts, err := parseScanClustersOpts(region, arn, cluster)
-			if err != nil {
-				slog.Error("failed to parse opts for cluster", "cluster", arn, "error", err)
-				continue
-			}
-
-			kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-				switch opts.AuthType {
-				case types.AuthTypeIAM:
-					return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
-				case types.AuthTypeSASLSCRAM:
-					return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(opts.SASLScramUsername, opts.SASLScramPassword))
-				case types.AuthTypeUnauthenticated:
-					return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedAuth())
-				case types.AuthTypeTLS:
-					return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(opts.TLSCACert, opts.TLSClientCert, opts.TLSClientKey))
-				default:
-					return nil, fmt.Errorf("❌ Auth type: %v not yet supported", opts.AuthType)
-				}
-			}
-
-			clustersScanner := clusters.NewClustersScanner(kafkaAdminFactory, clusterInfo, opts)
-			if err := clustersScanner.Run(); err != nil {
-				slog.Error(fmt.Sprintf("❌ failed to scan cluster %s error: %v", opts.ClusterName, err))
-				continue
-			}
-		}
+	clustersScanner := clusters.NewClustersScanner(opts)
+	if err := clustersScanner.Run(); err != nil {
+		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}
 
 	return nil
@@ -131,12 +101,12 @@ func validateYaml(credsFile types.CredsYaml) error {
 
 	for region, clusters := range credsFile.Regions {
 		for arn, cluster := range clusters.Clusters {
-			clusterName, err := getClusterName(arn)
+			clusterName, err := getClusterNameFromArn(arn)
 			if err != nil {
 				return fmt.Errorf("❌ failed to get cluster name: %v", err)
 			}
 
-			enabledMethods := getAuthMethods(cluster)
+			enabledMethods := utils.GetAuthMethods(cluster)
 			if len(enabledMethods) > 1 {
 				clustersWithMultipleAuth = append(clustersWithMultipleAuth, fmt.Sprintf("%s (region: %s)", clusterName, region))
 			}
@@ -151,73 +121,7 @@ func validateYaml(credsFile types.CredsYaml) error {
 	return nil
 }
 
-func parseScanClustersOpts(region, arn string, clusterEntry types.ClusterEntry) (*clusters.ClustersScannerOpts, error) {
-	opts := clusters.ClustersScannerOpts{}
-
-	clusterName, err := getClusterName(arn)
-	if err != nil {
-		return nil, fmt.Errorf("❌ failed to get cluster name: %v", err)
-	}
-	opts.ClusterName = clusterName
-
-	if discoverDir != "" {
-		clusterFile := filepath.Join(discoverDir, region, clusterName, fmt.Sprintf("%s.json", clusterName))
-		file, err := os.ReadFile(clusterFile)
-		if err != nil {
-			return nil, fmt.Errorf("❌ failed to read cluster file: %v", err)
-		}
-
-		if err := json.Unmarshal(file, &clusterInfo); err != nil {
-			return nil, fmt.Errorf("❌ failed to unmarshal cluster info: %v", err)
-		}
-
-		enabledMethods := getAuthMethods(clusterEntry)
-		if len(enabledMethods) == 0 {
-			slog.Warn(fmt.Sprintf("⚠️ No authentication method enabled for cluster %s in %s, skipping the cluster", clusterName, region))
-			skippedClusters = append(skippedClusters, clusterName)
-			return nil, fmt.Errorf("no authentication method enabled for cluster %s", clusterName)
-		} else {
-			switch enabledMethods[0] {
-			case "unauthenticated":
-				opts.AuthType = types.AuthTypeUnauthenticated
-				opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerString
-			case "iam":
-				opts.AuthType = types.AuthTypeIAM
-
-				if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam != nil {
-					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam
-				} else {
-					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslIam
-				}
-			case "sasl_scram":
-				opts.AuthType = types.AuthTypeSASLSCRAM
-				opts.SASLScramUsername = clusterEntry.AuthMethod.SASLScram.Username
-				opts.SASLScramPassword = clusterEntry.AuthMethod.SASLScram.Password
-
-				if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram != nil {
-					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram
-				} else {
-					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslScram
-				}
-			case "tls":
-				opts.AuthType = types.AuthTypeTLS
-				opts.TLSCACert = clusterEntry.AuthMethod.TLS.CACert
-				opts.TLSClientCert = clusterEntry.AuthMethod.TLS.ClientCert
-				opts.TLSClientKey = clusterEntry.AuthMethod.TLS.ClientKey
-
-				if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls != nil {
-					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls
-				} else {
-					opts.BootstrapServer = *clusterInfo.BootstrapBrokers.BootstrapBrokerStringTls
-				}
-			}
-		}
-	}
-
-	return &opts, nil
-}
-
-func getClusterName(arn string) (string, error) {
+func getClusterNameFromArn(arn string) (string, error) {
 	arnParts := strings.Split(arn, "/")
 	if len(arnParts) < 2 {
 		return "", fmt.Errorf("invalid cluster ARN format: %s", arn)
@@ -229,23 +133,4 @@ func getClusterName(arn string) (string, error) {
 	}
 
 	return clusterName, nil
-}
-
-func getAuthMethods(clusterEntry types.ClusterEntry) []string {
-	enabledMethods := []string{}
-
-	if clusterEntry.AuthMethod.Unauthenticated != nil && clusterEntry.AuthMethod.Unauthenticated.Use {
-		enabledMethods = append(enabledMethods, "unauthenticated")
-	}
-	if clusterEntry.AuthMethod.IAM != nil && clusterEntry.AuthMethod.IAM.Use {
-		enabledMethods = append(enabledMethods, "iam")
-	}
-	if clusterEntry.AuthMethod.SASLScram != nil && clusterEntry.AuthMethod.SASLScram.Use {
-		enabledMethods = append(enabledMethods, "sasl_scram")
-	}
-	if clusterEntry.AuthMethod.TLS != nil && clusterEntry.AuthMethod.TLS.Use {
-		enabledMethods = append(enabledMethods, "tls")
-	}
-
-	return enabledMethods
 }
