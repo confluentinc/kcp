@@ -142,22 +142,12 @@ func showClusterTableSelection(credsYaml types.CredsYaml) ([]clusterTableItem, e
 		// Create static title and dynamic description
 		var titleText string
 		if len(allClusters) == 0 {
-			titleText = "🌍 MSK Cluster Selection"
+			titleText = "🌍 MSK Clusters"
 		} else {
 			totalCount := len(allClusters)
 			regionCount := len(credsYaml.Regions)
-			titleText = fmt.Sprintf("🌍 MSK Cluster Selection • (%d clusters across %d regions)", totalCount, regionCount)
+			titleText = fmt.Sprintf("🌍 MSK Clusters • (%d clusters across %d regions)", totalCount, regionCount)
 		}
-
-		// Create initial description that will be updated dynamically
-		// descriptionFunc := func() string {
-		// 	if len(allClusters) == 0 {
-		// 		return "⚠️  No clusters found in the credentials file."
-		// 	}
-		// 	selectedCount := len(selectedKeys)
-		// 	totalCount := len(allClusters)
-		// 	return fmt.Sprintf("Selected: [%d/%d]", selectedCount, totalCount)
-		// }
 
 		initialDescription := fmt.Sprintf("Selected: [0/%d]", len(allClusters))
 		form := huh.NewForm(
