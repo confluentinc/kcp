@@ -45,6 +45,10 @@ var (
 	// Possible values: "main_menu", "select_clusters", "review", "exit"
 	// This single variable orchestrates the entire application flow
 	uiState = "main_menu"
+
+	// lastSelectedRegion preserves the user's region choice across navigation
+	// This ensures that when returning to cluster selection, we restore their context
+	lastSelectedRegion = ""
 )
 
 func NewScanOption5Cmd() *cobra.Command {
@@ -323,8 +327,14 @@ func showClusterSelection(regionSelections map[string][]string, clusterMap map[s
 	}
 
 	// Local form state variables
-	var selectedRegion string
+	// Initialize selectedRegion with the last region the user was working with
+	var selectedRegion string = lastSelectedRegion
 	var currentRegionClusters []string
+
+	// If we're restoring a previous region, also restore its cluster selections
+	if lastSelectedRegion != "" {
+		currentRegionClusters = regionSelections[lastSelectedRegion]
+	}
 
 	// Pre-build cluster options for each region and populate clusterMap
 	// This happens once at form initialization for performance
@@ -382,6 +392,7 @@ func showClusterSelection(regionSelections map[string][]string, clusterMap map[s
 
 	// Handle explicit back navigation
 	if selectedRegion == "back_to_menu" {
+		// Don't update lastSelectedRegion when explicitly going back
 		uiState = "main_menu"
 		return nil
 	}
@@ -389,6 +400,8 @@ func showClusterSelection(regionSelections map[string][]string, clusterMap map[s
 	// Final state save before transitioning
 	if selectedRegion != "" {
 		regionSelections[selectedRegion] = currentRegionClusters
+		// Remember this region for next time user returns to cluster selection
+		lastSelectedRegion = selectedRegion
 	}
 
 	// Always return to main menu after cluster selection completes
