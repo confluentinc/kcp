@@ -14,9 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestClustersScanner(kafkaAdminFactory kafkaservice.KafkaAdminFactory, clusterInfo types.ClusterInformation, authType types.AuthType) *ClustersScanner {
-	return NewClustersScanner(kafkaAdminFactory, clusterInfo, &ClustersScannerOpts{
-		AuthType: authType,
+func newTestClustersScanner() *ClustersScanner {
+	return NewClustersScanner(&ClustersScannerOpts{
+		DiscoverDir:     "testdata/discover",
+		CredentialsFile: "testdata/credentials.yaml",
 	})
 }
 
@@ -98,16 +99,20 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 					ClusterType: kafkaTypes.ClusterTypeProvisioned,
 					Provisioned: &kafkaTypes.Provisioned{
 						CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
-							KafkaVersion: stringPtr("2.8.1"),
+							KafkaVersion: stringPtr("4.0.x.kraft"),
 						},
 					},
 				},
 			}
 
-			clusterScanner := newTestClustersScanner(adminFactory, clusterInfo, types.AuthTypeIAM)
-			clusterScanner.opts.BootstrapServer = "broker1:9092,broker2:9092"
+			clusterScanner := newTestClustersScanner()
+			kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
+				KafkaAdminFactory: adminFactory,
+				AuthType:          types.AuthTypeIAM,
+				ClusterArn:        "arn:aws:kafka:eu-west-1:123456789012:cluster/test-cluster",
+			})
 
-			err := clusterScanner.scanKafkaResourcesDirectly(&clusterScanner.clusterInfo)
+			err := clusterScanner.scanKafkaResources(&clusterInfo, kafkaService, "broker1:9092,broker2:9092")
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -116,9 +121,9 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedClusterID, clusterScanner.clusterInfo.ClusterID)
-			assert.Len(t, clusterScanner.clusterInfo.Topics, tt.expectedTopicCount)
-			assert.Len(t, clusterScanner.clusterInfo.Acls, tt.expectedAclCount)
+			assert.Equal(t, tt.expectedClusterID, clusterInfo.ClusterID)
+			assert.Len(t, clusterInfo.Topics, tt.expectedTopicCount)
+			assert.Len(t, clusterInfo.Acls, tt.expectedAclCount)
 		})
 	}
 }
@@ -165,8 +170,8 @@ func TestClustersScanner_GetKafkaVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scanner := &ClustersScanner{}
-			result := scanner.kafkaService.GetKafkaVersion(&tt.clusterInfo)
+			kafkaService := &kafkaservice.KafkaService{}
+			result := kafkaService.GetKafkaVersion(&tt.clusterInfo)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

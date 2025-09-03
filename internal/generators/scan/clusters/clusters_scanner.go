@@ -109,7 +109,7 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 		ClusterArn:        arn,
 	})
 
-	if err := cs.scanKafkaResourcesDirectly(&clusterInfo, kafkaService, bootstrapServer); err != nil {
+	if err := cs.scanKafkaResources(&clusterInfo, kafkaService, bootstrapServer); err != nil {
 		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
 
@@ -126,7 +126,7 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 	return nil
 }
 
-func (cs *ClustersScanner) scanKafkaResourcesDirectly(clusterInfo *types.ClusterInformation, kafkaService *kafkaservice.KafkaService, bootstrapServer string) error {
+func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformation, kafkaService *kafkaservice.KafkaService, bootstrapServer string) error {
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
 	kafkaVersion := kafkaService.GetKafkaVersion(clusterInfo)
 
