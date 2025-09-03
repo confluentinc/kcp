@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/goccy/go-yaml"
 
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
+	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -79,10 +79,11 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 	if err != nil {
 		return fmt.Errorf("❌ failed to determine auth type for cluster: %s in region: %s: %v", clusterName, region, err)
 	}
-	
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
 
-	bootstrapServer, err := cs.getBootstrapServer(clusterInfo, authType)
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
+	
+	mskService := msk.NewMSKService(nil)
+	brokerAddresses, err := mskService.ParseBrokerAddresses(clusterInfo.BootstrapBrokers, authType)
 	if err != nil {
 		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterName, region, err)
 	}
@@ -109,7 +110,7 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 		ClusterArn:        arn,
 	})
 
-	if err := cs.scanKafkaResources(&clusterInfo, kafkaService, bootstrapServer); err != nil {
+	if err := cs.scanKafkaResources(&clusterInfo, kafkaService, brokerAddresses); err != nil {
 		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
 
@@ -126,59 +127,40 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 	return nil
 }
 
-func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformation, kafkaService *kafkaservice.KafkaService, bootstrapServer string) error {
+func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformation, kafkaService *kafkaservice.KafkaService, brokerAddresses []string) error {
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
 	kafkaVersion := kafkaService.GetKafkaVersion(clusterInfo)
 
-	bootstrapServers := strings.Split(bootstrapServer, ",")
-	admin, err := kafkaService.CreateKafkaAdmin(bootstrapServers, clientBrokerEncryptionInTransit, kafkaVersion)
+	kafkaAdmin, err := kafkaService.CreateKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}
 
-	defer admin.Close()
+	defer kafkaAdmin.Close()
 
-	clusterMetadata, err := admin.GetClusterKafkaMetadata()
+	clusterMetadata, err := kafkaService.DescribeKafkaCluster(kafkaAdmin)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
 	}
 
 	clusterInfo.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := admin.ListTopics()
+	topics, err := kafkaService.ScanClusterTopics(kafkaAdmin)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to list topics: %v", err)
 	}
 
-	topicList := make([]string, 0, len(topics))
-	for topic := range topics {
-		topicList = append(topicList, topic)
+	for _, topic := range topics {
+		clusterInfo.Topics = append(clusterInfo.Topics, topic)
 	}
-	clusterInfo.Topics = topicList
 
+	// Use KafkaService's ACL scanning logic instead of duplicating it
 	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := admin.ListAcls()
+		acls, err := kafkaService.ScanKafkaAcls(kafkaAdmin)
 		if err != nil {
-			return fmt.Errorf("❌ Failed to list acls: %v", err)
+			return err
 		}
-
-		// Flatten the ACLs for easier processing
-		var flattenedAcls []types.Acls
-		for _, resourceAcl := range acls {
-			for _, acl := range resourceAcl.Acls {
-				flattenedAcl := types.Acls{
-					ResourceType:        resourceAcl.Resource.ResourceType.String(),
-					ResourceName:        resourceAcl.Resource.ResourceName,
-					ResourcePatternType: resourceAcl.Resource.ResourcePatternType.String(),
-					Principal:           acl.Principal,
-					Host:                acl.Host,
-					Operation:           acl.Operation.String(),
-					PermissionType:      acl.PermissionType.String(),
-				}
-				flattenedAcls = append(flattenedAcls, flattenedAcl)
-			}
-		}
-		clusterInfo.Acls = flattenedAcls
+		clusterInfo.Acls = acls
 	} else {
 		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
@@ -218,32 +200,5 @@ func (cs *ClustersScanner) getSelectedAuthType(clusterEntry types.ClusterEntry) 
 		return types.AuthTypeTLS, nil
 	default:
 		return "", fmt.Errorf("unsupported authentication method: %s", authMethod)
-	}
-}
-
-func (cs *ClustersScanner) getBootstrapServer(clusterInfo types.ClusterInformation, authType types.AuthType) (string, error) {
-	switch authType {
-	case types.AuthTypeUnauthenticated:
-		return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerString), nil
-	case types.AuthTypeIAM:
-		if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam != nil {
-			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam), nil
-		} else {
-			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslIam), nil
-		}
-	case types.AuthTypeSASLSCRAM:
-		if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram != nil {
-			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram), nil
-		} else {
-			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslScram), nil
-		}
-	case types.AuthTypeTLS:
-		if clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls != nil {
-			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicTls), nil
-		} else {
-			return aws.ToString(clusterInfo.BootstrapBrokers.BootstrapBrokerStringTls), nil
-		}
-	default:
-		return "", fmt.Errorf("unsupported authentication method: %s", authType)
 	}
 }

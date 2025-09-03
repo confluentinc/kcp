@@ -63,14 +63,14 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 	defer admin.Close()
 
 	// Get cluster metadata including broker information and ClusterID
-	clusterMetadata, err := ks.describeKafkaCluster(admin)
+	clusterMetadata, err := ks.DescribeKafkaCluster(admin)
 	if err != nil {
 		return err
 	}
 
 	clusterInfo.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := ks.scanClusterTopics(admin)
+	topics, err := ks.ScanClusterTopics(admin)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := ks.scanKafkaAcls(admin)
+		acls, err := ks.ScanKafkaAcls(admin)
 		if err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 }
 
 // scanClusterTopics scans for topics in the Kafka cluster
-func (ks *KafkaService) scanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
+func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
 	topics, err := admin.ListTopics()
@@ -108,7 +108,7 @@ func (ks *KafkaService) scanClusterTopics(admin client.KafkaAdmin) ([]string, er
 }
 
 // describeKafkaCluster gets cluster metadata and returns the cluster ID along with logging information
-func (ks *KafkaService) describeKafkaCluster(admin client.KafkaAdmin) (*client.ClusterKafkaMetadata, error) {
+func (ks *KafkaService) DescribeKafkaCluster(admin client.KafkaAdmin) (*client.ClusterKafkaMetadata, error) {
 	slog.Info("🔍 describing kafka cluster", "clusterArn", ks.clusterArn)
 
 	clusterMetadata, err := admin.GetClusterKafkaMetadata()
@@ -118,8 +118,8 @@ func (ks *KafkaService) describeKafkaCluster(admin client.KafkaAdmin) (*client.C
 	return clusterMetadata, nil
 }
 
-// scanKafkaAcls scans for Kafka ACLs in the cluster
-func (ks *KafkaService) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, error) {
+// ScanKafkaAcls scans for Kafka ACLs in the cluster
+func (ks *KafkaService) ScanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, error) {
 	slog.Info("🔍 scanning for kafka acls", "clusterArn", ks.clusterArn)
 
 	acls, err := admin.ListAcls()

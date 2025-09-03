@@ -112,7 +112,7 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 				ClusterArn:        "arn:aws:kafka:eu-west-1:123456789012:cluster/test-cluster",
 			})
 
-			err := clusterScanner.scanKafkaResources(&clusterInfo, kafkaService, "broker1:9092,broker2:9092")
+			err := clusterScanner.scanKafkaResources(&clusterInfo, kafkaService, []string{"broker1:9092", "broker2:9092"})
 
 			if tt.wantError != "" {
 				require.Error(t, err)
