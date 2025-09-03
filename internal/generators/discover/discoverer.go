@@ -242,8 +242,8 @@ func (d *Discoverer) getRegionEntry(mskService *msk.MSKService, region string) (
 
 func (d *Discoverer) getClusterEntry(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
 	clusterEntry := types.ClusterEntry{
-		Name: *cluster.ClusterName,
-		Arn:  *cluster.ClusterArn,
+		Name: aws.ToString(cluster.ClusterName),
+		Arn:  aws.ToString(cluster.ClusterArn),
 	}
 
 	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
