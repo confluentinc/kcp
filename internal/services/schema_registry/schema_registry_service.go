@@ -15,7 +15,7 @@ func NewSchemaRegistryService(client schemaregistry.Client) *SchemaRegistryServi
 
 // Get all subject names
 // Returns a list of all subjects in the schema registry
-func (sr *SchemaRegistryService) ListSubjects() ([]string, error) {
+func (sr *SchemaRegistryService) GetAllSubjects() ([]string, error) {
 	return sr.client.GetAllSubjects()
 }
 

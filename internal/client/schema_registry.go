@@ -1,6 +1,8 @@
 package client
 
 import (
+	"fmt"
+
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 )
 
@@ -11,5 +13,10 @@ type SchemaRegistryConfig struct {
 }
 
 func NewSchemaRegistryClient(config SchemaRegistryConfig) (schemaregistry.Client, error) {
-	return schemaregistry.NewClient(schemaregistry.NewConfig(config.URL))
+	schemaRegistryClient, err := schemaregistry.NewClient(schemaregistry.NewConfig(config.URL))
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to create schema registry client: %v", err)
+	}
+
+	return schemaRegistryClient, nil
 }
