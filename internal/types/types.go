@@ -235,14 +235,17 @@ var AclMap = map[string]ACLMapping{
 
 // YAML structures for creds.yaml
 type CredsYaml struct {
-	Regions map[string]RegionEntry `yaml:"regions"`
+	Regions []RegionEntry `yaml:"regions"`
 }
 
 type RegionEntry struct {
-	Clusters map[string]ClusterEntry `yaml:"clusters"`
+	Name     string         `yaml:"name"`
+	Clusters []ClusterEntry `yaml:"clusters"`
 }
 
 type ClusterEntry struct {
+	Name       string           `yaml:"name"`
+	Arn        string           `yaml:"arn"`
 	AuthMethod AuthMethodConfig `yaml:"auth_method"`
 }
 
