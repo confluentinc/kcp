@@ -53,7 +53,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 	}
 
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-	kafkaVersion := ks.getKafkaVersion(clusterInfo)
+	kafkaVersion := ks.GetKafkaVersion(clusterInfo)
 
 	admin, err := ks.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
@@ -153,7 +153,7 @@ func (ks *KafkaService) CreateKafkaAdmin(brokerAddresses []string, clientBrokerE
 }
 
 // getKafkaVersion determines the Kafka version based on cluster type
-func (ks *KafkaService) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
+func (ks *KafkaService) GetKafkaVersion(clusterInfo *types.ClusterInformation) string {
 	switch clusterInfo.Cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
 		return utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)

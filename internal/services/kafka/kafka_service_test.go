@@ -274,7 +274,7 @@ func TestKafkaService_getKafkaVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := service.getKafkaVersion(tt.clusterInfo)
+			result := service.GetKafkaVersion(tt.clusterInfo)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
