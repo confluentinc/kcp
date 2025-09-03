@@ -9,11 +9,10 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
 	"github.com/confluentinc/kcp/internal/client"
+	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
-
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type ClustersScannerOpts struct {
 	AuthType          types.AuthType
@@ -27,12 +26,12 @@ type ClustersScannerOpts struct {
 }
 
 type ClustersScanner struct {
-	kafkaAdminFactory KafkaAdminFactory
+	kafkaAdminFactory kafkaservice.KafkaAdminFactory
 	clusterInfo       types.ClusterInformation
 	opts              *ClustersScannerOpts
 }
 
-func NewClustersScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.ClusterInformation, opts *ClustersScannerOpts) *ClustersScanner {
+func NewClustersScanner(kafkaAdminFactory kafkaservice.KafkaAdminFactory, clusterInfo types.ClusterInformation, opts *ClustersScannerOpts) *ClustersScanner {
 	return &ClustersScanner{
 		kafkaAdminFactory: kafkaAdminFactory,
 		clusterInfo:       clusterInfo,
@@ -45,7 +44,7 @@ func (cs *ClustersScanner) Run() error {
 		return fmt.Errorf("no bootstrap server found, skipping the broker scan")
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", cs.opts.ClusterName, cs.opts.AuthType))	
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", cs.opts.ClusterName, cs.opts.AuthType))
 
 	ctx := context.TODO()
 
@@ -155,9 +154,9 @@ func (cs *ClustersScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls,
 	for _, resourceAcl := range acls {
 		for _, acl := range resourceAcl.Acls {
 			flattenedAcl := types.Acls{
-				ResourceType:        resourceAcl.ResourceType.String(),
-				ResourceName:        resourceAcl.ResourceName,
-				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
+				ResourceType:        resourceAcl.Resource.ResourceType.String(),
+				ResourceName:        resourceAcl.Resource.ResourceName,
+				ResourcePatternType: resourceAcl.Resource.ResourcePatternType.String(),
 				Principal:           acl.Principal,
 				Host:                acl.Host,
 				Operation:           acl.Operation.String(),

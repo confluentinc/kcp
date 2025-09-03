@@ -8,12 +8,13 @@ import (
 	kafkaTypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/mocks"
+	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestClustersScanner(kafkaAdminFactory KafkaAdminFactory, clusterInfo types.ClusterInformation, authType types.AuthType) *ClustersScanner {
+func newTestClustersScanner(kafkaAdminFactory kafkaservice.KafkaAdminFactory, clusterInfo types.ClusterInformation, authType types.AuthType) *ClustersScanner {
 	return NewClustersScanner(kafkaAdminFactory, clusterInfo, &ClustersScannerOpts{
 		AuthType: authType,
 	})
@@ -256,21 +257,21 @@ func TestClusterScanner_ListAcls(t *testing.T) {
 			acls: []sarama.ResourceAcls{
 				{
 					Resource: sarama.Resource{
-						ResourceType: sarama.AclResourceAny,
-						ResourceName: "test-resource",
+						ResourceType:        sarama.AclResourceAny,
+						ResourceName:        "test-resource",
 						ResourcePatternType: sarama.AclPatternAny,
 					},
 					Acls: []*sarama.Acl{
 						{
-							Principal: "test-principal",
-							Host: "*",
-							Operation: sarama.AclOperationAny,
+							Principal:      "test-principal",
+							Host:           "*",
+							Operation:      sarama.AclOperationAny,
 							PermissionType: sarama.AclPermissionAny,
 						},
 						{
-							Principal: "test-principal",
-							Host: "*",
-							Operation: sarama.AclOperationAny,
+							Principal:      "test-principal",
+							Host:           "*",
+							Operation:      sarama.AclOperationAny,
 							PermissionType: sarama.AclPermissionAny,
 						},
 					},
@@ -278,22 +279,22 @@ func TestClusterScanner_ListAcls(t *testing.T) {
 			},
 			wantAcls: []types.Acls{
 				{
-					ResourceType: "Any",
-					ResourceName: "test-resource",
+					ResourceType:        "Any",
+					ResourceName:        "test-resource",
 					ResourcePatternType: "Any",
-					Principal: "test-principal",
-					Host: "*",
-					Operation: "Any",
-					PermissionType: "Any",
+					Principal:           "test-principal",
+					Host:                "*",
+					Operation:           "Any",
+					PermissionType:      "Any",
 				},
 				{
-					ResourceType: "Any",
-					ResourceName: "test-resource",
+					ResourceType:        "Any",
+					ResourceName:        "test-resource",
 					ResourcePatternType: "Any",
-					Principal: "test-principal",
-					Host: "*",
-					Operation: "Any",
-					PermissionType: "Any",
+					Principal:           "test-principal",
+					Host:                "*",
+					Operation:           "Any",
+					PermissionType:      "Any",
 				},
 			},
 		},
