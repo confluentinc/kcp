@@ -12,13 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/client"
+	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
-
-// KafkaAdminFactory is a function type that creates a KafkaAdmin client
-type KafkaAdminFactory func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error)
 
 type ClusterScannerOpts struct {
 	Region            string
@@ -33,13 +29,13 @@ type ClusterScannerOpts struct {
 }
 
 type ClusterScanner struct {
-	mskService        MSKService
-	ec2Service        EC2Service
-	kafkaAdminFactory KafkaAdminFactory
-	region            string
-	clusterArn        string
-	skipKafka         bool
-	authType          types.AuthType
+	mskService   MSKService
+	ec2Service   EC2Service
+	kafkaService *kafkaservice.KafkaService
+	region       string
+	clusterArn   string
+	skipKafka    bool
+	authType     types.AuthType
 }
 
 type MSKService interface {
@@ -59,15 +55,23 @@ type EC2Service interface {
 }
 
 // NewClusterScanner creates a new ClusterScanner instance.
-func NewClusterScanner(mskService MSKService, ec2Service EC2Service, kafkaAdminFactory KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
+func NewClusterScanner(mskService MSKService, ec2Service EC2Service, kafkaAdminFactory kafkaservice.KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
+	// Create Kafka service
+	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
+		MSKService:        mskService,
+		KafkaAdminFactory: kafkaAdminFactory,
+		AuthType:          opts.AuthType,
+		ClusterArn:        opts.ClusterArn,
+	})
+
 	return &ClusterScanner{
-		mskService:        mskService,
-		ec2Service:        ec2Service,
-		kafkaAdminFactory: kafkaAdminFactory,
-		region:            opts.Region,
-		clusterArn:        opts.ClusterArn,
-		skipKafka:         opts.SkipKafka,
-		authType:          opts.AuthType,
+		mskService:   mskService,
+		ec2Service:   ec2Service,
+		kafkaService: kafkaService,
+		region:       opts.Region,
+		clusterArn:   opts.ClusterArn,
+		skipKafka:    opts.SkipKafka,
+		authType:     opts.AuthType,
 	}
 }
 
@@ -112,7 +116,7 @@ func (cs *ClusterScanner) ScanCluster(ctx context.Context) (*types.ClusterInform
 	}
 
 	if !cs.skipKafka {
-		if err := cs.scanKafkaResources(clusterInfo); err != nil {
+		if err := cs.kafkaService.ScanKafkaResources(clusterInfo); err != nil {
 			return nil, err
 		}
 	} else {
@@ -378,117 +382,4 @@ func (cs *ClusterScanner) scanClusterScramSecrets(ctx context.Context, clusterAr
 	}
 
 	return secrets, nil
-}
-
-func (cs *ClusterScanner) scanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
-	slog.Info("🔍 scanning for cluster topics", "clusterArn", cs.clusterArn)
-
-	topics, err := admin.ListTopics()
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
-	}
-
-	topicList := make([]string, 0, len(topics))
-	for topic := range topics {
-		topicList = append(topicList, topic)
-	}
-
-	return topicList, nil
-}
-
-// retrieveClusterId gets cluster metadata and returns the cluster ID along with logging information
-func (cs *ClusterScanner) describeKafkaCluster(admin client.KafkaAdmin) (*client.ClusterKafkaMetadata, error) {
-	slog.Info("🔍 describing kafka cluster", "clusterArn", cs.clusterArn)
-
-	clusterMetadata, err := admin.GetClusterKafkaMetadata()
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
-	}
-	return clusterMetadata, nil
-}
-
-func (cs *ClusterScanner) scanKafkaResources(clusterInfo *types.ClusterInformation) error {
-
-	brokerAddresses, err := cs.mskService.ParseBrokerAddresses(clusterInfo.BootstrapBrokers, cs.authType)
-	if err != nil {
-		return err
-	}
-
-	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-	kafkaVersion := cs.getKafkaVersion(clusterInfo)
-
-	admin, err := cs.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
-	}
-
-	defer admin.Close()
-
-	// Get cluster metadata including broker information and ClusterID
-	clusterMetadata, err := cs.describeKafkaCluster(admin)
-	if err != nil {
-		return err
-	}
-
-	clusterInfo.ClusterID = clusterMetadata.ClusterID
-
-	topics, err := cs.scanClusterTopics(admin)
-	if err != nil {
-		return err
-	}
-	clusterInfo.Topics = topics
-
-	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
-	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := cs.scanKafkaAcls(admin)
-		if err != nil {
-			return err
-		}
-		clusterInfo.Acls = acls
-	} else {
-		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
-	}
-
-	return nil
-}
-
-func (cs *ClusterScanner) scanKafkaAcls(admin client.KafkaAdmin) ([]types.Acls, error) {
-	slog.Info("🔍 scanning for kafka acls", "clusterArn", cs.clusterArn)
-
-	acls, err := admin.ListAcls()
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
-	}
-
-	// Flatten the ACLs for easier processing
-	var flattenedAcls []types.Acls
-	for _, resourceAcl := range acls {
-		for _, acl := range resourceAcl.Acls {
-			flattenedAcl := types.Acls{
-				ResourceType:        resourceAcl.ResourceType.String(),
-				ResourceName:        resourceAcl.ResourceName,
-				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
-				Principal:           acl.Principal,
-				Host:                acl.Host,
-				Operation:           acl.Operation.String(),
-				PermissionType:      acl.PermissionType.String(),
-			}
-			flattenedAcls = append(flattenedAcls, flattenedAcl)
-		}
-	}
-
-	return flattenedAcls, nil
-}
-
-func (cs *ClusterScanner) getKafkaVersion(clusterInfo *types.ClusterInformation) string {
-	switch clusterInfo.Cluster.ClusterType {
-	case kafkatypes.ClusterTypeProvisioned:
-		return utils.ConvertKafkaVersion(clusterInfo.Cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
-	case kafkatypes.ClusterTypeServerless:
-		slog.Warn("⚠️ Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
-		return "4.0.0"
-	default:
-		slog.Warn(fmt.Sprintf("⚠️ Unknown cluster type: %v, defaulting to 4.0.0", clusterInfo.Cluster.ClusterType))
-		return "4.0.0"
-	}
 }

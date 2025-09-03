@@ -36,8 +36,8 @@ var (
 func NewScanClusterCmd() *cobra.Command {
 	clusterCmd := &cobra.Command{
 		Use:           "cluster",
-		Short:         "Scan a given cluster",
-		Long:          "Scan a given cluster for information that will help with migration",
+		Short:         "Scan a single MSK cluster",
+		Long:          "Scan a single MSK cluster for information that will help with migration at both the AWS and Kafka level",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanCluster,
