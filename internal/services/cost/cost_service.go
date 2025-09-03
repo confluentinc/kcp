@@ -107,7 +107,6 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 
 func (cs *CostService) processCostExplorerOutput(output *costexplorer.GetCostAndUsageOutput) types.CostData {
 	var costs []types.Cost
-	var totalCost float64
 
 	for _, result := range output.ResultsByTime {
 		for _, group := range result.Groups {
@@ -140,12 +139,10 @@ func (cs *CostService) processCostExplorerOutput(output *costexplorer.GetCostAnd
 				UsageType:       usageType,
 				Cost:            cost,
 			})
-			totalCost += cost
 		}
 	}
 
 	return types.CostData{
 		Costs: costs,
-		Total: totalCost,
 	}
 }

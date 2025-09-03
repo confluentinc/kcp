@@ -22,7 +22,6 @@ type Cost struct {
 
 type CostData struct {
 	Costs []Cost  `json:"costs"`
-	Total float64 `json:"total"`
 }
 
 type RegionCosts struct {
@@ -103,12 +102,9 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 		md.AddParagraph(fmt.Sprintf("%s=%s", k, strings.Join(v, ",")))
 	}
 
-	md.AddParagraph(fmt.Sprintf("**Total Cost:** $%.2f USD", c.CostData.Total))
-
 	// Usage Type Summary
 	usageTypeSummary := make(map[string]map[string]float64) // service -> usageType -> cost
 	serviceTotals := make(map[string]float64)               // service -> total cost
-	var grandTotal float64
 
 	for _, cost := range c.CostData.Costs {
 		if usageTypeSummary[cost.Service] == nil {
@@ -116,7 +112,6 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 		}
 		usageTypeSummary[cost.Service][cost.UsageType] += cost.Cost
 		serviceTotals[cost.Service] += cost.Cost
-		grandTotal += cost.Cost
 	}
 
 	md.AddHeading("Usage Type Summary", 2)
@@ -161,8 +156,6 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 		usageData = append(usageData, []string{"", "", ""})
 	}
 
-	// Add grand total at the bottom
-	usageData = append(usageData, []string{"**GRAND TOTAL**", "", fmt.Sprintf("$%.2f", grandTotal)})
 
 	md.AddTable(usageHeaders, usageData, 0, 1)
 
@@ -213,7 +206,6 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 	// Calculate summary data
 	usageTypeSummary := make(map[string]map[string]float64) // service -> usageType -> cost
 	serviceTotals := make(map[string]float64)               // service -> total cost
-	var grandTotal float64
 
 	for _, cost := range c.CostData.Costs {
 		if usageTypeSummary[cost.Service] == nil {
@@ -221,7 +213,6 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 		}
 		usageTypeSummary[cost.Service][cost.UsageType] += cost.Cost
 		serviceTotals[cost.Service] += cost.Cost
-		grandTotal += cost.Cost
 	}
 
 	// Sort services for consistent output
@@ -261,9 +252,6 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 		// Add empty row for spacing
 		records = append(records, []string{"", "", "", "", ""})
 	}
-
-	// Add grand total at the bottom
-	records = append(records, []string{"GRAND TOTAL", "", fmt.Sprintf("%.2f", grandTotal), "", ""})
 
 	// Add empty row between summary and detailed breakdown
 	records = append(records, []string{"", "", "", "", ""})
