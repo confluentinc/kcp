@@ -2,10 +2,6 @@ package clusters
 
 import (
 	"fmt"
-	"os"
-	"strings"
-
-	"github.com/goccy/go-yaml"
 
 	"github.com/confluentinc/kcp/internal/generators/scan/clusters"
 	"github.com/confluentinc/kcp/internal/types"
@@ -69,68 +65,20 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 }
 
 func runScanClusters(cmd *cobra.Command, args []string) error {
-	data, err := os.ReadFile(credentialsYaml)
-	if err != nil {
-		return fmt.Errorf("failed to read creds.yaml file: %w", err)
+
+	credsFile, errs := types.NewCredentials(credentialsYaml)
+	if len(errs) > 0 {
+		errMsg := "Failed to parse credentials file:"
+		for _, e := range errs {
+			errMsg += "\n\t❌ " + e.Error()
+		}
+		return fmt.Errorf("%s", errMsg)
 	}
 
-	var credsFile types.CredsYaml
-	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return fmt.Errorf("failed to unmarshal YAML: %w", err)
-	}
-
-	if err := validateYaml(credsFile); err != nil {
-		return err
-	}
-
-	opts := &clusters.ClustersScannerOpts{
-		DiscoverDir:     discoverDir,
-		CredentialsFile: credentialsYaml,
-	}
-
-	clustersScanner := clusters.NewClustersScanner(opts)
+	clustersScanner := clusters.NewClustersScanner(discoverDir, *credsFile)
 	if err := clustersScanner.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}
 
 	return nil
-}
-
-func validateYaml(credsFile types.CredsYaml) error {
-	var clustersWithMultipleAuth []string
-
-	for region, clusters := range credsFile.Regions {
-		for arn, cluster := range clusters.Clusters {
-			clusterName, err := getClusterNameFromArn(arn)
-			if err != nil {
-				return fmt.Errorf("❌ failed to get cluster name: %v", err)
-			}
-
-			enabledMethods := utils.GetAuthMethods(cluster)
-			if len(enabledMethods) > 1 {
-				clustersWithMultipleAuth = append(clustersWithMultipleAuth, fmt.Sprintf("%s (region: %s)", clusterName, region))
-			}
-		}
-	}
-
-	if len(clustersWithMultipleAuth) > 0 {
-		return fmt.Errorf("❌ The following cluster(s) have more than one authentication method enabled, please configure only one auth method per cluster: %s",
-			strings.Join(clustersWithMultipleAuth, ", "))
-	}
-
-	return nil
-}
-
-func getClusterNameFromArn(arn string) (string, error) {
-	arnParts := strings.Split(arn, "/")
-	if len(arnParts) < 2 {
-		return "", fmt.Errorf("invalid cluster ARN format: %s", arn)
-	}
-
-	clusterName := arnParts[1]
-	if clusterName == "" {
-		return "", fmt.Errorf("cluster name not found in cluster ARN: %s", arn)
-	}
-
-	return clusterName, nil
 }

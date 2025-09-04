@@ -5,10 +5,10 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"log/slog"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls"
