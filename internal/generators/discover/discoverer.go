@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/goccy/go-yaml"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -54,7 +52,7 @@ func (d *Discoverer) Run() error {
 }
 
 func (d *Discoverer) processRegions(outputDir string) error {
-	credsYaml := types.CredsYaml{
+	credsYaml := types.Credentials{
 		Regions: make(map[string]types.RegionEntry),
 	}
 	regionsWithoutClusters := []string{}
@@ -195,14 +193,9 @@ func (d *Discoverer) processRegions(outputDir string) error {
 		}
 	}
 
-	// now all regions have been processed - write the creds.yaml file
-	yamlData, err := yaml.Marshal(credsYaml)
-	if err != nil {
-		return fmt.Errorf("failed to marshal YAML: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(outputDir, "creds.yaml"), yamlData, 0644); err != nil {
-		return fmt.Errorf("failed to write YAML file: %w", err)
+	credsFilePath := filepath.Join(outputDir, "creds.yaml")
+	if err := credsYaml.WriteToFile(credsFilePath); err != nil {
+		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
 	if len(regionsWithoutClusters) > 0 {

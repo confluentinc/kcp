@@ -9,42 +9,29 @@ import (
 	"strings"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/goccy/go-yaml"
 
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
-type ClustersScannerOpts struct {
-	DiscoverDir     string
-	CredentialsFile string
-}
 
 type ClustersScanner struct {
-	opts *ClustersScannerOpts
+	DiscoverDir string
+	Credentials types.Credentials
 }
 
-func NewClustersScanner(opts *ClustersScannerOpts) *ClustersScanner {
+func NewClustersScanner(discoverDir string, credentials types.Credentials) *ClustersScanner {
 	return &ClustersScanner{
-		opts: opts,
+		DiscoverDir: discoverDir,
+		Credentials: credentials,
 	}
 }
 
 func (cs *ClustersScanner) Run() error {
-	data, err := os.ReadFile(cs.opts.CredentialsFile)
-	if err != nil {
-		return fmt.Errorf("failed to read credentials file: %w", err)
-	}
 
-	var credsFile types.CredsYaml
-	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return fmt.Errorf("failed to unmarshal credentials YAML: %w", err)
-	}
-
-	for region, clusterEntries := range credsFile.Regions {
+	for region, clusterEntries := range cs.Credentials.Regions {
 		for arn, clusterEntry := range clusterEntries.Clusters {
 			if err := cs.scanCluster(region, arn, clusterEntry); err != nil {
 				slog.Error("failed to scan cluster", "cluster", arn, "error", err)
@@ -63,8 +50,8 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 	}
 
 	var clusterInfo types.ClusterInformation
-	if cs.opts.DiscoverDir != "" {
-		clusterFile := filepath.Join(cs.opts.DiscoverDir, region, clusterName, fmt.Sprintf("%s.json", clusterName))
+	if cs.DiscoverDir != "" {
+		clusterFile := filepath.Join(cs.DiscoverDir, region, clusterName, fmt.Sprintf("%s.json", clusterName))
 		file, err := os.ReadFile(clusterFile)
 		if err != nil {
 			return fmt.Errorf("❌ failed to read cluster file: %v", err)
@@ -75,13 +62,13 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 		}
 	}
 
-	authType, err := cs.getSelectedAuthType(clusterEntry)
+	authType, err := clusterEntry.GetSelectedAuthType()
 	if err != nil {
 		return fmt.Errorf("❌ failed to determine auth type for cluster: %s in region: %s: %v", clusterName, region, err)
 	}
 
 	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
-	
+
 	mskService := msk.NewMSKService(nil)
 	brokerAddresses, err := mskService.ParseBrokerAddresses(clusterInfo.BootstrapBrokers, authType)
 	if err != nil {
@@ -180,25 +167,4 @@ func (cs *ClustersScanner) getClusterName(arn string) (string, error) {
 	}
 
 	return clusterName, nil
-}
-
-func (cs *ClustersScanner) getSelectedAuthType(clusterEntry types.ClusterEntry) (types.AuthType, error) {
-	enabledMethods := utils.GetAuthMethods(clusterEntry)
-	if len(enabledMethods) == 0 {
-		return "", fmt.Errorf("no authentication method enabled for cluster")
-	}
-
-	authMethod := enabledMethods[0]
-	switch authMethod {
-	case "unauthenticated":
-		return types.AuthTypeUnauthenticated, nil
-	case "iam":
-		return types.AuthTypeIAM, nil
-	case "sasl_scram":
-		return types.AuthTypeSASLSCRAM, nil
-	case "tls":
-		return types.AuthTypeTLS, nil
-	default:
-		return "", fmt.Errorf("unsupported authentication method: %s", authMethod)
-	}
 }

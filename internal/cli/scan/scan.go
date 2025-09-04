@@ -1,9 +1,9 @@
 package scan
 
 import (
-	"github.com/confluentinc/kcp/internal/cli/scan/clusters"
 	"github.com/confluentinc/kcp/internal/cli/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/cli/scan/cluster"
+	"github.com/confluentinc/kcp/internal/cli/scan/clusters"
 	"github.com/confluentinc/kcp/internal/cli/scan/region"
 	"github.com/spf13/cobra"
 )
