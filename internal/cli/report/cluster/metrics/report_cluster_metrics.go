@@ -5,12 +5,10 @@ import (
 	"strings"
 	"time"
 
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
@@ -18,22 +16,12 @@ import (
 )
 
 var (
-	clusterArn         string
-	start              string
-	end                string
-	lastDay            bool
-	lastWeek           bool
-	lastThirtyDays     bool
-	saslScramUsername  string
-	saslScramPassword  string
-	tlsCaCert          string
-	tlsClientCert      string
-	tlsClientKey       string
-	skipKafka          bool
-	useSaslIam         bool
-	useSaslScram       bool
-	useUnauthenticated bool
-	useTls             bool
+	clusterArn     string
+	start          string
+	end            string
+	lastDay        bool
+	lastWeek       bool
+	lastThirtyDays bool
 )
 
 func NewReportClusterMetricsCmd() *cobra.Command {
@@ -68,38 +56,10 @@ func NewReportClusterMetricsCmd() *cobra.Command {
 	clusterCmd.Flags().AddFlagSet(timeRangeFlags)
 	groups[timeRangeFlags] = "Time Range Flags"
 
-	// Authentication flags.
-	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
-	authFlags.SortFlags = false
-	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication")
-	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication")
-	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication")
-	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use unauthenticated authentication")
-	authFlags.BoolVar(&skipKafka, "skip-kafka", false, "Skip kafka level cluster scan, use when brokers are not reachable")
-	clusterCmd.Flags().AddFlagSet(authFlags)
-	groups[authFlags] = "Authentication Flags"
-
-	// SASL/SCRAM flags.
-	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
-	saslScramFlags.SortFlags = false
-	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "The SASL SCRAM username")
-	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "The SASL SCRAM password")
-	clusterCmd.Flags().AddFlagSet(saslScramFlags)
-	groups[saslScramFlags] = "SASL/SCRAM Flags"
-
-	// TLS flags.
-	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
-	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "The TLS CA certificate")
-	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "The TLS client certificate")
-	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "The TLS client key")
-	clusterCmd.Flags().AddFlagSet(tlsFlags)
-	groups[tlsFlags] = "TLS Flags"
-
 	clusterCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
-		flagOrder := []*pflag.FlagSet{requiredFlags, timeRangeFlags, authFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Time Range Flags", "Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, timeRangeFlags}
+		groupNames := []string{"Required Flags", "Time Range Flags"}
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
@@ -115,8 +75,6 @@ func NewReportClusterMetricsCmd() *cobra.Command {
 	clusterCmd.MarkFlagsOneRequired("start", "last-day", "last-week", "last-thirty-days")
 	clusterCmd.MarkFlagsRequiredTogether("start", "end")
 
-	clusterCmd.MarkFlagsMutuallyExclusive("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
-	clusterCmd.MarkFlagsOneRequired("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
 	return clusterCmd
 }
 
@@ -142,21 +100,6 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 
 	mskService := msk.NewMSKService(mskClient)
 
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-		switch opts.AuthType {
-		case types.AuthTypeIAM:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithIAMAuth())
-		case types.AuthTypeSASLSCRAM:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithSASLSCRAMAuth(opts.SASLScramUsername, opts.SASLScramPassword))
-		case types.AuthTypeUnauthenticated:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithUnauthenticatedAuth())
-		case types.AuthTypeTLS:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithTLSAuth(opts.TLSCACert, opts.TLSClientCert, opts.TLSClientKey))
-		default:
-			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", opts.AuthType)
-		}
-	}
-
 	cloudWatchClient, err := client.NewCloudWatchClient(opts.Region)
 	if err != nil {
 		return fmt.Errorf("failed to create cloudwatch client: %v", err)
@@ -164,7 +107,7 @@ func runReportClusterMetrics(cmd *cobra.Command, args []string) error {
 
 	metricService := metrics.NewMetricService(cloudWatchClient, opts.StartDate, opts.EndDate)
 
-	regionMetrics := rrm.NewClusterMetrics(mskService, metricService, kafkaAdminFactory, *opts)
+	regionMetrics := rrm.NewClusterMetrics(mskService, metricService, *opts)
 	if err := regionMetrics.Run(); err != nil {
 		return fmt.Errorf("failed to report region metrics: %v", err)
 	}
@@ -181,18 +124,6 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 	region := arnParts[3]
 	if region == "" {
 		return nil, fmt.Errorf("region not found in cluster ARN: %s", clusterArn)
-	}
-
-	var authType types.AuthType
-	switch {
-	case useSaslIam:
-		authType = types.AuthTypeIAM
-	case useSaslScram:
-		authType = types.AuthTypeSASLSCRAM
-	case useUnauthenticated:
-		authType = types.AuthTypeUnauthenticated
-	case useTls:
-		authType = types.AuthTypeTLS
 	}
 
 	const dateFormat = "2006-01-02"
@@ -232,17 +163,10 @@ func parseReportRegionMetricsOpts() (*rrm.ClusterMetricsOpts, error) {
 	}
 
 	opts := rrm.ClusterMetricsOpts{
-		Region:            region,
-		StartDate:         startDate,
-		EndDate:           endDate,
-		ClusterArn:        clusterArn,
-		SkipKafka:         skipKafka,
-		AuthType:          authType,
-		SASLScramUsername: saslScramUsername,
-		SASLScramPassword: saslScramPassword,
-		TLSCACert:         tlsCaCert,
-		TLSClientKey:      tlsClientKey,
-		TLSClientCert:     tlsClientCert,
+		Region:     region,
+		StartDate:  startDate,
+		EndDate:    endDate,
+		ClusterArn: clusterArn,
 	}
 
 	return &opts, nil

@@ -66,21 +66,22 @@ You can also set environment variables individually if you opt not to use the sc
 
 The kcp scan command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
 
-*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names.*
+*NB at this time the command will not discover any data that requires a kafka broker connection, such as Topic names, ACL's or Cluster ID.*
 
 **Example Usage**
 
-`kcp scan --region us-east-1 --region eu-west-3`
+`kcp discover --region us-east-1 --region eu-west-3`
 
 or 
 
-`kcp scan --region us-east-1,eu-west-3`
+`kcp discover --region us-east-1,eu-west-3`
 
 The command will produce region msk, cost, metrics and cluster output files in a nested structure as follows:
 
 ```
 .
 └── kcp-scan
+    ├── creds.yaml
     ├── eu-west-3
     │   ├── eu-west-3-cost-report.json
     │   ├── eu-west-3-cost-report.md
@@ -209,27 +210,25 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "RegionLevelMSKAccess",
-            "Effect": "Allow",
-            "Action": [
-                "kafka:DescribeConfiguration",
-                "kafka:DescribeConfigurationRevision",
-                "kafka:GetBootstrapBrokers",
-                "kafka:GetCompatibleKafkaVersions",
-                "kafka:ListClustersV2",
-                "kafka:ListConfigurations",
-                "kafka:ListKafkaVersions",
-                "kafka:ListReplicators",
-                "kafka:ListVpcConnections"
-            ],
-            "Resource": [
-                "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"
-            ]
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RegionLevelMSKAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kafka:DescribeConfiguration",
+        "kafka:DescribeConfigurationRevision",
+        "kafka:GetBootstrapBrokers",
+        "kafka:GetCompatibleKafkaVersions",
+        "kafka:ListClustersV2",
+        "kafka:ListConfigurations",
+        "kafka:ListKafkaVersions",
+        "kafka:ListReplicators",
+        "kafka:ListVpcConnections"
+      ],
+      "Resource": ["arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:*"]
+    }
+  ]
 }
 ```
 
@@ -237,20 +236,17 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
-                "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
-            ]
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+        "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
+      ]
+    }
+  ]
 }
 ```
 
@@ -369,6 +365,7 @@ The command generates two files - `cluster_scan_<cluster-name>.md` and `cluster_
 This command scans a hour window folder in s3 to identify as many clients as possible in the cluster.
 
 **Prerequisites**
+
 - Enable trace logging for `kafka.server.KafkaApis=TRACE` for each broker
 - Enable s3 broker log delivery for the cluster
 
@@ -381,12 +378,13 @@ kcp scan client-inventory \
 ```
 
 **Output:**
-The command generates a csv file - `broker_logs_scan_results.csv` containing: 
+The command generates a csv file - `broker_logs_scan_results.csv` containing:
 
 - All the unique clients it could identify based on a combination of values:
   - i.e. clientID + topic + role + auth + principal
 
 example output
+
 ```csv
 Client ID,Role,Topic,Auth,Principal,Timestamp
 consumer1,Consumer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-18 10:15:16
@@ -462,16 +460,6 @@ The sub-command requires the following minimum AWS IAM permissions:
       "Resource": [
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:configuration/<MSK CLUSTER CONFIG NAME>/<MSK CLUSTER CONFIG ID>"
       ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "kafka-cluster:Connect",
-        "kafka-cluster:DescribeClusterDynamicConfiguration"
-      ],
-      "Resource": [
-        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
-      ]
     }
   ]
 }
@@ -528,49 +516,6 @@ This command collates important MSK Kafka metrics for a cluster and generates a 
 - `--end`: The exclusive end date for cost report (YYYY-MM-DD)
 - `--cluster-arn`: Cluster arn
 
-- **Authentication options:**
-  Choose the authentication method that matches your cluster configuration:
-
-  - **SASL SCRAM authentication:**
-
-    ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-scram
-    ```
-
-    Requires additional command flags:
-
-    - `--sasl-scram-username <sasl-scram-username>`
-    - `--sasl-scram-password <sasl-scram-password>`
-
-  - **SASL IAM authentication:**
-
-    ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-sasl-iam
-    ```
-
-  - **TLS authentication:**
-
-    ```shell
-    kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-tls
-    ```
-
-    Requires additional command flags:
-
-    - `--tls-ca-cert <path/to/ca.pem>`
-    - `--tls-client-cert <path/to/client.pem>`
-    - `--tls-client-key <path/to/client-key.pem>`
-
-  - **Unauthenticated access:**
-
-    ```shell
-        kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --use-unauthenticated
-    ```
-
-  - **Skip Kafka-level scanning:**
-    `shell
-kcp report cluster metrics --start 2025-07-01 --end 2025-08-01 --cluster-arn <cluster-arn> --skip-kafka
-` > [!NOTE] > Use this option when brokers are not reachable or you only need infrastructure-level information.
-
 **Example Usage**
 
 ```shell
@@ -578,7 +523,6 @@ kcp report cluster metrics \
 --start 2025-07-01 \
 --end 2025-08-01 \
 --cluster-arn arn:aws:kafka:us-east-1:000123456789:cluster/msk-cluster/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
---use-sasl-iam
 ```
 
 **Output:**
@@ -595,6 +539,7 @@ The command generates two files - `<aws-cluster>-metrics.md` and `<aws-cluster>-
 The `kcp create-asset` command includes the following sub-commands:
 
 - `bastion-host`
+- `migrate-acls`
 - `migration-infra`
 - `migration-scripts`
 - `reverse-proxy`
@@ -729,6 +674,36 @@ The sub-commands require the following minimum AWS IAM permissions:
       "Effect": "Allow",
       "Action": ["ec2:RunInstances"],
       "Resource": "arn:aws:ec2:<AWS REGION>::image/*"
+    }
+  ]
+}
+```
+
+`migrate-acls`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ParseRolesForACLs",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": ["*"]
+    },
+    {
+      "Sid": "ParseUsersForACLs",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUserPolicy",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListUserPolicies"
+      ],
+      "Resource": ["*"]
     }
   ]
 }
