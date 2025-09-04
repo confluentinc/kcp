@@ -8,9 +8,12 @@ import (
 	"time"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
+	"github.com/confluentinc/kcp/internal/client"
+	mskConnect "github.com/confluentinc/kcp/internal/services/msk_connect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -190,6 +193,12 @@ func (rs *RegionScanner) ScanRegion(ctx context.Context) (*types.RegionScanResul
 	}
 	result.Replicators = replicators
 
+	connectors, err := rs.scanConnectors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result.Connectors = connectors
+
 	return result, nil
 }
 
@@ -363,4 +372,22 @@ func (rs *RegionScanner) scanReplicators(ctx context.Context, maxResults int32) 
 
 	slog.Info("✨ found replicators", "count", len(replicators))
 	return replicators, nil
+}
+
+func (rs *RegionScanner) scanConnectors(ctx context.Context) ([]kafkaconnecttypes.ConnectorSummary, error) {
+	slog.Info("🔍 scanning for connectors", "region", rs.region)
+
+	mskConnectClient, err := client.NewMSKConnectClient(rs.region)
+	if err != nil {
+		slog.Error("❌ Failed to create msk connect client", "region", rs.region, "error", err)
+		return nil, fmt.Errorf("❌ Failed to create msk connect client: %w", err)
+	}
+
+	mskConnectService := mskConnect.NewMSKConnectService(mskConnectClient)
+	mskConnectResult, err := mskConnectService.ListConnectors(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to list connectors: %w", err)
+	}
+
+	return mskConnectResult.Connectors, nil
 }
