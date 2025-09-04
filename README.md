@@ -1370,8 +1370,6 @@ kcp create-asset reverse-proxy \
   --migration-infra-folder migration-infra \
   --reverse-proxy-cidr 10.0.XXX.0/24 \
   --security-group-ids sg-xxxxxxxxxx
-  --migration-infra-folder migration_infra \
-  --reverse-proxy-cidr 10.0.XXX.0/24
 ```
 
 **Output**
