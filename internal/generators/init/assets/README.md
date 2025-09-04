@@ -482,7 +482,7 @@ The command generates a `cost_report` directory, splitting reports by region whi
 
 #### `kcp report cluster metrics`
 
-This command collates important MSK Kafka metrics for a cluster and generates a comprehensive report. Some of the metrics are obtained from the kafka broker to kafka auth is required.
+This command collates important MSK Kafka metrics for a cluster and generates a comprehensive report using AWS CloudWatch.
 
 **Example Usage**
 
