@@ -1,0 +1,142 @@
+package types
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/goccy/go-yaml"
+)
+
+type Credentials struct {
+	Regions map[string]RegionEntry `yaml:"regions"`
+}
+
+func NewCredentials(credentialsYamlPath string) (*Credentials, error) {
+	data, err := os.ReadFile(credentialsYamlPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read creds.yaml file: %w", err)
+	}
+
+	var credsFile Credentials
+	if err := yaml.Unmarshal(data, &credsFile); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
+	}
+
+	if valid, errs := credsFile.Validate(); !valid {
+		return nil, fmt.Errorf("❌ invalid creds.yaml file: %v", errs)
+	}
+
+	return &credsFile, nil
+}
+
+func (c *Credentials) WriteToFile(filePath string) error {
+	yamlData, err := c.ToYaml()
+	if err != nil {
+		return fmt.Errorf("failed to marshal YAML: %w", err)
+	}
+	if err := os.WriteFile(filePath, yamlData, 0644); err != nil {
+		return fmt.Errorf("failed to write YAML file: %w", err)
+	}
+	return nil
+}
+
+func (c *Credentials) ToYaml() ([]byte, error) {
+	yamlData, err := yaml.Marshal(c)
+	if err != nil {
+		return []byte{}, fmt.Errorf("failed to marshal YAML: %w", err)
+	}
+	return yamlData, nil
+}
+
+func (c Credentials) Validate() (bool, []error) {
+	errs := []error{}
+
+	for region, clusters := range c.Regions {
+		for arn, cluster := range clusters.Clusters {
+			enabledMethods := cluster.GetAuthMethods()
+			if len(enabledMethods) > 1 {
+				errs = append(errs, fmt.Errorf("More than one authentication method enabled for cluster %s in region %s", arn, region))
+				continue
+			}
+		}
+	}
+	return len(errs) == 0, errs
+}
+
+type RegionEntry struct {
+	Clusters map[string]ClusterEntry `yaml:"clusters"`
+}
+
+type ClusterEntry struct {
+	AuthMethod AuthMethodConfig `yaml:"auth_method"`
+}
+
+func (ce ClusterEntry) GetSelectedAuthType() (AuthType, error) {
+	enabledMethods := ce.GetAuthMethods()
+	if len(enabledMethods) == 0 {
+		return "", fmt.Errorf("no authentication method enabled for cluster")
+	}
+
+	authMethod := enabledMethods[0]
+	switch authMethod {
+	case "unauthenticated":
+		return AuthTypeUnauthenticated, nil
+	case "iam":
+		return AuthTypeIAM, nil
+	case "sasl_scram":
+		return AuthTypeSASLSCRAM, nil
+	case "tls":
+		return AuthTypeTLS, nil
+	default:
+		return "", fmt.Errorf("unsupported authentication method: %s", authMethod)
+	}
+}
+
+// Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
+func (ce ClusterEntry) GetAuthMethods() []string {
+	enabledMethods := []string{}
+
+	if ce.AuthMethod.Unauthenticated != nil && ce.AuthMethod.Unauthenticated.Use {
+		enabledMethods = append(enabledMethods, "unauthenticated")
+	}
+	if ce.AuthMethod.IAM != nil && ce.AuthMethod.IAM.Use {
+		enabledMethods = append(enabledMethods, "iam")
+	}
+	if ce.AuthMethod.SASLScram != nil && ce.AuthMethod.SASLScram.Use {
+		enabledMethods = append(enabledMethods, "sasl_scram")
+	}
+	if ce.AuthMethod.TLS != nil && ce.AuthMethod.TLS.Use {
+		enabledMethods = append(enabledMethods, "tls")
+	}
+
+	return enabledMethods
+}
+
+
+type AuthMethodConfig struct {
+	Unauthenticated *UnauthenticatedConfig `yaml:"unauthenticated,omitempty"`
+	IAM             *IAMConfig             `yaml:"iam,omitempty"`
+	TLS             *TLSConfig             `yaml:"tls,omitempty"`
+	SASLScram       *SASLScramConfig       `yaml:"sasl_scram,omitempty"`
+}
+
+type UnauthenticatedConfig struct {
+	Use bool `yaml:"use"`
+}
+
+type IAMConfig struct {
+	Use bool `yaml:"use"`
+}
+
+type TLSConfig struct {
+	Use        bool   `yaml:"use"`
+	CACert     string `yaml:"ca_cert"`
+	ClientCert string `yaml:"client_cert"`
+	ClientKey  string `yaml:"client_key"`
+}
+
+type SASLScramConfig struct {
+	Use      bool   `yaml:"use"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
