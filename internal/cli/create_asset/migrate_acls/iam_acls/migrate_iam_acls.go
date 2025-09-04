@@ -97,7 +97,7 @@ func runMigrateIamAcls(cmd *cobra.Command, args []string) error {
 		if outputDir == "" {
 			outputDir = "client-discovery-acls"
 		}
-		
+
 		principalArn = principals
 	}
 

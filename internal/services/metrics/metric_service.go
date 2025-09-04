@@ -63,7 +63,7 @@ func (ms *MetricService) buildCloudWatchInput(clusterName, metricName string, no
 		{
 			Name:  aws.String("Broker ID"),
 			Value: aws.String(strconv.Itoa(*node)),
-		},		
+		},
 	}
 
 	return &cloudwatch.GetMetricStatisticsInput{
