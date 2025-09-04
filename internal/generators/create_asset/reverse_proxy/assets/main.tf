@@ -1,7 +1,6 @@
 locals {
   # Extract the hostname from the bootstrap endpoint
   cluster_hostname = regex("(.*):", var.confluent_cloud_cluster_bootstrap_endpoint)[0]
-  sg_list          = var.aws_security_group_ids == "" ? [] : split(",", var.aws_security_group_ids)
 }
 
 resource "random_string" "suffix" {
@@ -71,7 +70,7 @@ resource "aws_route_table_association" "public_rt_association" {
 }
 
 resource "aws_security_group" "public" {
-  count  = length(local.sg_list) == 0 ? 1 : 0
+  count  = length(var.aws_security_group_ids) == 0 ? 1 : 0
   vpc_id = var.vpc_id
 
   ingress {
@@ -111,7 +110,7 @@ resource "aws_instance" "proxy" {
   ami                         = data.aws_ami.ubuntu_ami.id
   instance_type               = "t2.micro"
   subnet_id                   = aws_subnet.public_subnet.id
-  vpc_security_group_ids      = length(local.sg_list) == 0 ? [aws_security_group.public[0].id] : local.sg_list
+  vpc_security_group_ids      = length(var.aws_security_group_ids) == 0 ? [aws_security_group.public[0].id] : var.aws_security_group_ids
   key_name                    = aws_key_pair.deployer.key_name
   associate_public_ip_address = true
 

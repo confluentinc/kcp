@@ -21,7 +21,7 @@ type ReverseProxyOpts struct {
 	PublicSubnetCidr string
 	VPCId            string
 	TerraformOutput  types.TerraformOutput
-	SecurityGroupIds string
+	SecurityGroupIds []string
 }
 
 type ReverseProxyAssetGenerator struct {
@@ -29,7 +29,7 @@ type ReverseProxyAssetGenerator struct {
 	publicSubnetCidr string
 	vpcId            string
 	terraformOutput  types.TerraformOutput
-	securityGroupIds string
+	securityGroupIds []string
 }
 
 func NewReverseProxyAssetGenerator(opts ReverseProxyOpts) *ReverseProxyAssetGenerator {
@@ -133,7 +133,7 @@ func (rp *ReverseProxyAssetGenerator) generateInputsTfvars(terraformDir string) 
 		PublicSubnetCIDR                       string
 		VPCID                                  string
 		ConfluentCloudClusterBootstrapEndpoint string
-		SecurityGroupIds                       string
+		SecurityGroupIds                       []string
 	}{
 		AWSRegion:                              rp.region,
 		PublicSubnetCIDR:                       rp.publicSubnetCidr,

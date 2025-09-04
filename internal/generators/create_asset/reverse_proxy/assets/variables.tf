@@ -21,6 +21,6 @@ variable "aws_region" {
 }
 
 variable "aws_security_group_ids" {
-  description = "Comma separated AWS Security Group Ids"
-  type        = string
+  description = "List of string of AWS Security Group Ids"
+  type        = list(string)
 }

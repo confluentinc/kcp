@@ -2,4 +2,4 @@ aws_region                       = "{{.AWSRegion}}"
 public_subnet_cidr               = "{{.PublicSubnetCIDR}}"
 vpc_id                           = "{{.VPCID}}"
 create_igw                       = "{{.CreateIGW}}"
-aws_security_group_ids           = "{{.SecurityGroupIds}}"
+aws_security_group_ids           = [{{range $i, $sg := .SecurityGroupIds}}{{if $i}}, {{end}}"{{$sg}}"{{end}}]

@@ -20,7 +20,7 @@ var (
 	vpcId            string
 	bastionHostCidr  net.IPNet
 	createIGW        bool
-	securityGroupIds string
+	securityGroupIds []string
 )
 
 func NewBastionHostCmd() *cobra.Command {
@@ -54,7 +54,7 @@ func NewBastionHostCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&createIGW, "create-igw", false, "When set, Terraform will create a new internet gateway in the VPC.")
-	optionalFlags.StringVar(&securityGroupIds, "security-group-ids", "", "Existing list of comma separated AWS security group ids")
+	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
 	bastionHostCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 

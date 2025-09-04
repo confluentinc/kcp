@@ -22,7 +22,7 @@ var (
 	ccClusterName      string
 	clusterFile        string
 	migrationInfraType string
-	securityGroupIds   string
+	securityGroupIds   []string
 
 	ccClusterType                 string
 	jumpClusterBrokerSubnetConfig string
@@ -58,7 +58,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	optionalFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
 	optionalFlags.StringVar(&ccEnvName, "cc-env-name", "", "Confluent Cloud environment name")
 	optionalFlags.StringVar(&ccClusterName, "cc-cluster-name", "", "Confluent Cloud cluster name")
-	optionalFlags.StringVar(&securityGroupIds, "security-group-ids", "", "Existing list of comma separated AWS security group ids")
+	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
 	migrationInfraCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 

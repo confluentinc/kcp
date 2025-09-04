@@ -20,7 +20,7 @@ var (
 	vpcId                string
 	reverseProxyCidr     net.IPNet
 	migrationInfraFolder string
-	securityGroupIds     string
+	securityGroupIds     []string
 )
 
 func NewReverseProxyCmd() *cobra.Command {
@@ -54,7 +54,7 @@ func NewReverseProxyCmd() *cobra.Command {
 	// Optional flags.
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&securityGroupIds, "security-group-ids", "", "Existing list of comma separated AWS security group ids")
+	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
 	reverseProxyCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 

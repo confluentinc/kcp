@@ -17,4 +17,4 @@ aws_zones = [
 {{- end}}
 ]
 aws_region = "{{.AWSRegion}}"
-aws_security_group_ids = "{{.SecurityGroupIds}}"
+aws_security_group_ids = [{{range $i, $sg := .SecurityGroupIds}}{{if $i}}, {{end}}"{{$sg}}"{{end}}]
