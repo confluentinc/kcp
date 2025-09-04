@@ -2,7 +2,6 @@ package clusters
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/confluentinc/kcp/internal/generators/scan/clusters"
 	"github.com/confluentinc/kcp/internal/types"
