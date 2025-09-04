@@ -112,7 +112,6 @@ func (ce ClusterEntry) GetAuthMethods() []string {
 	return enabledMethods
 }
 
-
 type AuthMethodConfig struct {
 	Unauthenticated *UnauthenticatedConfig `yaml:"unauthenticated,omitempty"`
 	IAM             *IAMConfig             `yaml:"iam,omitempty"`

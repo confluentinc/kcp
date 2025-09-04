@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -31,7 +30,7 @@ type ClusterScannerOpts struct {
 type ClusterScanner struct {
 	mskService   MSKService
 	ec2Service   EC2Service
-	kafkaService *kafkaservice.KafkaService
+	kafkaService KafkaService
 	region       string
 	clusterArn   string
 	skipKafka    bool
@@ -40,7 +39,6 @@ type ClusterScanner struct {
 
 type MSKService interface {
 	GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error)
-	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 	GetCompatibleKafkaVersions(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
 	GetClusterPolicy(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error)
 	DescribeClusterV2(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error)
@@ -54,15 +52,13 @@ type EC2Service interface {
 	DescribeSubnets(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error)
 }
 
+type KafkaService interface {
+	ScanKafkaResources(clusterInfo *types.ClusterInformation) error
+}
+
 // NewClusterScanner creates a new ClusterScanner instance.
-func NewClusterScanner(mskService MSKService, ec2Service EC2Service, kafkaAdminFactory kafkaservice.KafkaAdminFactory, opts ClusterScannerOpts) *ClusterScanner {
+func NewClusterScanner(mskService MSKService, ec2Service EC2Service, kafkaService KafkaService, opts ClusterScannerOpts) *ClusterScanner {
 	// Create Kafka service
-	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
-		MSKService:        mskService,
-		KafkaAdminFactory: kafkaAdminFactory,
-		AuthType:          opts.AuthType,
-		ClusterArn:        opts.ClusterArn,
-	})
 
 	return &ClusterScanner{
 		mskService:   mskService,

@@ -232,4 +232,3 @@ var AclMap = map[string]ACLMapping{
 		RequiresPattern: true,
 	},
 }
-

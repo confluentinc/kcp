@@ -18,6 +18,7 @@ import (
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
+	"github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
@@ -128,11 +129,9 @@ func (d *Discoverer) processRegions(outputDir string) error {
 					SkipKafka: true,
 				}
 
-				kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-					return nil, nil
-				}
+				kafkaService := kafka.NewKafkaService(kafka.KafkaServiceOpts{})
 
-				clusterScanner := cs.NewClusterScanner(mskService, ec2Service, kafkaAdminFactory, clusterScannerOpts)
+				clusterScanner := cs.NewClusterScanner(mskService, ec2Service, kafkaService, clusterScannerOpts)
 				clusterScanResult, err := clusterScanner.ScanCluster(context.Background())
 				if err != nil {
 					slog.Error("failed to scan cluster", "cluster", cluster.ClusterARN, "error", err)

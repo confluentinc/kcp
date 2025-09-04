@@ -13,7 +13,6 @@ import (
 
 // KafkaService handles all Kafka-related operations for cluster scanning
 type KafkaService struct {
-	mskService        MSKService
 	kafkaAdminFactory KafkaAdminFactory
 	authType          types.AuthType
 	clusterArn        string
@@ -29,7 +28,6 @@ type MSKService interface {
 
 // KafkaServiceOpts contains options for creating a new KafkaService
 type KafkaServiceOpts struct {
-	MSKService        MSKService
 	KafkaAdminFactory KafkaAdminFactory
 	AuthType          types.AuthType
 	ClusterArn        string
@@ -38,7 +36,6 @@ type KafkaServiceOpts struct {
 // NewKafkaService creates a new KafkaService instance
 func NewKafkaService(opts KafkaServiceOpts) *KafkaService {
 	return &KafkaService{
-		mskService:        opts.MSKService,
 		kafkaAdminFactory: opts.KafkaAdminFactory,
 		authType:          opts.AuthType,
 		clusterArn:        opts.ClusterArn,
@@ -47,7 +44,8 @@ func NewKafkaService(opts KafkaServiceOpts) *KafkaService {
 
 // ScanKafkaResources scans all Kafka-related resources and populates the cluster information
 func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation) error {
-	brokerAddresses, err := ks.mskService.ParseBrokerAddresses(clusterInfo.BootstrapBrokers, ks.authType)
+
+	bootstrapBrokers, err := clusterInfo.GetBootstrapBrokersForAuthType(ks.authType)
 	if err != nil {
 		return err
 	}
@@ -55,7 +53,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
 	kafkaVersion := ks.GetKafkaVersion(clusterInfo)
 
-	admin, err := ks.kafkaAdminFactory(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
+	admin, err := ks.kafkaAdminFactory(bootstrapBrokers, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
 	}

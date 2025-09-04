@@ -12,10 +12,8 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
-	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 )
-
 
 type ClustersScanner struct {
 	DiscoverDir string
@@ -69,8 +67,7 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 
 	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
 
-	mskService := msk.NewMSKService(nil)
-	brokerAddresses, err := mskService.ParseBrokerAddresses(clusterInfo.BootstrapBrokers, authType)
+	brokerAddresses, err := clusterInfo.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
 		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterName, region, err)
 	}
@@ -91,7 +88,6 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 	}
 
 	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
-		MSKService:        nil,
 		KafkaAdminFactory: kafkaAdminFactory,
 		AuthType:          authType,
 		ClusterArn:        arn,
