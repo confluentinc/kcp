@@ -1367,14 +1367,11 @@ Create reverse proxy infrastructure assets to allow observability into migrated 
 kcp create-asset reverse-proxy \
   --region us-east-1 \
   --vpc-id vpc-xxxxxxxxx \
-<<<<<<< HEAD
   --migration-infra-folder migration-infra \
   --reverse-proxy-cidr 10.0.XXX.0/24 \
   --security-group-ids sg-xxxxxxxxxx
-=======
   --migration-infra-folder migration_infra \
   --reverse-proxy-cidr 10.0.XXX.0/24
->>>>>>> origin/main
 ```
 
 **Output**
