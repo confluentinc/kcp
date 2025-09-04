@@ -11,19 +11,19 @@ type Credentials struct {
 	Regions map[string]RegionEntry `yaml:"regions"`
 }
 
-func NewCredentials(credentialsYamlPath string) (*Credentials, error) {
+func NewCredentials(credentialsYamlPath string) (*Credentials, []error) {
 	data, err := os.ReadFile(credentialsYamlPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read creds.yaml file: %w", err)
+		return nil, []error{fmt.Errorf("failed to read creds.yaml file: %w", err)}
 	}
 
 	var credsFile Credentials
 	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
+		return nil, []error{fmt.Errorf("failed to unmarshal YAML: %w", err)}
 	}
 
 	if valid, errs := credsFile.Validate(); !valid {
-		return nil, fmt.Errorf("❌ invalid creds.yaml file: %v", errs)
+		return nil, errs
 	}
 
 	return &credsFile, nil
@@ -51,11 +51,11 @@ func (c *Credentials) ToYaml() ([]byte, error) {
 func (c Credentials) Validate() (bool, []error) {
 	errs := []error{}
 
-	for region, clusters := range c.Regions {
+	for _, clusters := range c.Regions {
 		for arn, cluster := range clusters.Clusters {
 			enabledMethods := cluster.GetAuthMethods()
 			if len(enabledMethods) > 1 {
-				errs = append(errs, fmt.Errorf("More than one authentication method enabled for cluster %s in region %s", arn, region))
+				errs = append(errs, fmt.Errorf("More than one authentication method enabled for %s", arn))
 				continue
 			}
 		}

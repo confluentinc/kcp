@@ -66,9 +66,13 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 
 func runScanClusters(cmd *cobra.Command, args []string) error {
 
-	credsFile, err := types.NewCredentials(credentialsYaml)
-	if err != nil {
-		return fmt.Errorf("failed to create credentials file: %v", err)
+	credsFile, errs := types.NewCredentials(credentialsYaml)
+	if len(errs) > 0 {
+		errMsg := "Failed to parse credentials file:"
+		for _, e := range errs {
+			errMsg += "\n\t❌ " + e.Error()
+		}
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	clustersScanner := clusters.NewClustersScanner(discoverDir, *credsFile)

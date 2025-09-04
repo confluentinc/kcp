@@ -15,10 +15,22 @@ import (
 )
 
 func newTestClustersScanner() *ClustersScanner {
-	return NewClustersScanner(&ClustersScannerOpts{
-		DiscoverDir:     "testdata/discover",
-		CredentialsFile: "testdata/credentials.yaml",
-	})
+	// Create test credentials
+	testCredentials := types.Credentials{
+		Regions: map[string]types.RegionEntry{
+			"us-west-2": {
+				Clusters: map[string]types.ClusterEntry{
+					"arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster": {
+						AuthMethod: types.AuthMethodConfig{
+							IAM: &types.IAMConfig{Use: true},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	return NewClustersScanner("testdata/discover", testCredentials)
 }
 
 func TestClustersScanner_ScanKafkaResources(t *testing.T) {
