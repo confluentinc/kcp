@@ -396,3 +396,189 @@ func TestClusterInformation_WriteAsMarkdown(t *testing.T) {
 		})
 	}
 }
+
+func TestClusterInformation_GetBootstrapBrokersForAuthType(t *testing.T) {
+	tests := []struct {
+		name            string
+		clusterInfo     *ClusterInformation
+		authType        AuthType
+		expectedBrokers []string
+		expectedError   string
+	}{
+		{
+			name: "AuthTypeIAM with public brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringPublicSaslIam: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9098,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9098"),
+				},
+			},
+			authType:        AuthTypeIAM,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9098", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9098"},
+		},
+		{
+			name: "AuthTypeIAM with private brokers only",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringSaslIam: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096"),
+				},
+			},
+			authType:        AuthTypeIAM,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096"},
+		},
+		{
+			name: "AuthTypeIAM with no brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+			},
+			authType:      AuthTypeIAM,
+			expectedError: "❌ No SASL/IAM brokers found in the cluster",
+		},
+		{
+			name: "AuthTypeSASLSCRAM with public brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringPublicSaslScram: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096"),
+				},
+			},
+			authType:        AuthTypeSASLSCRAM,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096"},
+		},
+		{
+			name: "AuthTypeSASLSCRAM with private brokers only",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringSaslScram: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096"),
+				},
+			},
+			authType:        AuthTypeSASLSCRAM,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9096"},
+		},
+		{
+			name: "AuthTypeSASLSCRAM with no brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+			},
+			authType:      AuthTypeSASLSCRAM,
+			expectedError: "❌ No SASL/SCRAM brokers found in the cluster",
+		},
+		{
+			name: "AuthTypeTLS with public brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringPublicTls: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"),
+				},
+			},
+			authType:        AuthTypeTLS,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"},
+		},
+		{
+			name: "AuthTypeTLS with private brokers only",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringTls: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"),
+				},
+			},
+			authType:        AuthTypeTLS,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"},
+		},
+		{
+			name: "AuthTypeTLS with no brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+			},
+			authType:      AuthTypeTLS,
+			expectedError: "❌ No TLS brokers found in the cluster",
+		},
+		{
+			name: "AuthTypeUnauthenticated with TLS brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringTls: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"),
+				},
+			},
+			authType:        AuthTypeUnauthenticated,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"},
+		},
+		{
+			name: "AuthTypeUnauthenticated with plaintext brokers only",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerString: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092"),
+				},
+			},
+			authType:        AuthTypeUnauthenticated,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092"},
+		},
+		{
+			name: "AuthTypeUnauthenticated with no brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+			},
+			authType:      AuthTypeUnauthenticated,
+			expectedError: "❌ No Unauthenticated brokers found in the cluster",
+		},
+		{
+			name: "Invalid auth type",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+			},
+			authType:      AuthType("INVALID"),
+			expectedError: "❌ Auth type: INVALID not yet supported",
+		},
+		{
+			name: "Broker list with extra whitespace and empty strings",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringTls: aws.String(" b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094 , , b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094 , "),
+				},
+			},
+			authType:        AuthTypeTLS,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"},
+		},
+		{
+			name: "Single broker address",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringTls: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"),
+				},
+			},
+			authType:        AuthTypeTLS,
+			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"},
+		},
+		{
+			name: "Empty broker string",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringTls: aws.String(""),
+				},
+			},
+			authType:      AuthTypeTLS,
+			expectedError: "❌ No TLS brokers found in the cluster",
+		},
+		{
+			name: "Nil broker string",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+					BootstrapBrokerStringTls: nil,
+				},
+			},
+			authType:      AuthTypeTLS,
+			expectedError: "❌ No TLS brokers found in the cluster",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brokers, err := tt.clusterInfo.GetBootstrapBrokersForAuthType(tt.authType)
+
+			if tt.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+				assert.Nil(t, brokers)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedBrokers, brokers)
+			}
+		})
+	}
+}

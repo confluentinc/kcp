@@ -1,7 +1,6 @@
 package kafka
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -13,16 +12,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
-
-// MockMSKService is a mock implementation of MSKService
-type MockMSKService struct {
-	mock.Mock
-}
-
-func (m *MockMSKService) ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-	args := m.Called(brokers, authType)
-	return args.Get(0).([]string), args.Error(1)
-}
 
 // MockKafkaAdmin is a mock implementation of KafkaAdmin
 type MockKafkaAdmin struct {
@@ -55,13 +44,11 @@ func (m *MockKafkaAdmin) Close() error {
 }
 
 func TestNewKafkaService(t *testing.T) {
-	mockMSK := &MockMSKService{}
 	mockFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 		return &MockKafkaAdmin{}, nil
 	}
 
 	opts := KafkaServiceOpts{
-		MSKService:        mockMSK,
 		KafkaAdminFactory: mockFactory,
 		AuthType:          types.AuthTypeIAM,
 		ClusterArn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
@@ -70,13 +57,11 @@ func TestNewKafkaService(t *testing.T) {
 	service := NewKafkaService(opts)
 
 	assert.NotNil(t, service)
-	assert.Equal(t, mockMSK, service.mskService)
 	assert.Equal(t, types.AuthTypeIAM, service.authType)
 	assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster", service.clusterArn)
 }
 
 func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
-	mockMSK := &MockMSKService{}
 	mockAdmin := &MockKafkaAdmin{}
 
 	mockFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
@@ -84,7 +69,6 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 	}
 
 	service := NewKafkaService(KafkaServiceOpts{
-		MSKService:        mockMSK,
 		KafkaAdminFactory: mockFactory,
 		AuthType:          types.AuthTypeIAM,
 		ClusterArn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
@@ -100,11 +84,10 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 				},
 			},
 		},
-		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+			BootstrapBrokerStringPublicSaslIam: stringPtr("broker1:9092,broker2:9092"),
+		},
 	}
-
-	// Set up mock expectations
-	mockMSK.On("ParseBrokerAddresses", mock.Anything, types.AuthTypeIAM).Return([]string{"broker1:9092", "broker2:9092"}, nil)
 
 	mockAdmin.On("GetClusterKafkaMetadata").Return(&client.ClusterKafkaMetadata{
 		ClusterID: "test-cluster-id",
@@ -149,12 +132,10 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 	assert.Equal(t, "topic1", clusterInfo.Acls[0].ResourceName)
 
 	// Verify all mocks were called
-	mockMSK.AssertExpectations(t)
 	mockAdmin.AssertExpectations(t)
 }
 
 func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
-	mockMSK := &MockMSKService{}
 	mockAdmin := &MockKafkaAdmin{}
 
 	mockFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
@@ -162,7 +143,6 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	}
 
 	service := NewKafkaService(KafkaServiceOpts{
-		MSKService:        mockMSK,
 		KafkaAdminFactory: mockFactory,
 		AuthType:          types.AuthTypeIAM,
 		ClusterArn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
@@ -173,11 +153,10 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 		Cluster: kafkatypes.Cluster{
 			ClusterType: kafkatypes.ClusterTypeServerless,
 		},
-		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+			BootstrapBrokerStringPublicSaslIam: stringPtr("broker1:9092"),
+		},
 	}
-
-	// Set up mock expectations
-	mockMSK.On("ParseBrokerAddresses", mock.Anything, types.AuthTypeIAM).Return([]string{"broker1:9092"}, nil)
 
 	mockAdmin.On("GetClusterKafkaMetadata").Return(&client.ClusterKafkaMetadata{
 		ClusterID: "test-serverless-cluster-id",
@@ -200,15 +179,11 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	assert.Empty(t, clusterInfo.Acls) // ACLs should be empty for serverless
 
 	// Verify mocks were called (note: ListAcls should NOT be called for serverless)
-	mockMSK.AssertExpectations(t)
 	mockAdmin.AssertExpectations(t)
 }
 
 func TestKafkaService_ScanKafkaResources_Error(t *testing.T) {
-	mockMSK := &MockMSKService{}
-
 	service := NewKafkaService(KafkaServiceOpts{
-		MSKService: mockMSK,
 		AuthType:   types.AuthTypeIAM,
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
 	})
@@ -217,17 +192,12 @@ func TestKafkaService_ScanKafkaResources_Error(t *testing.T) {
 		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
 	}
 
-	// Set up mock to return error
-	mockMSK.On("ParseBrokerAddresses", mock.Anything, types.AuthTypeIAM).Return([]string{}, errors.New("parse error"))
-
-	// Execute the test
+	// Execute the test - should fail because no broker addresses are available
 	err := service.ScanKafkaResources(clusterInfo)
 
 	// Verify error is returned
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parse error")
-
-	mockMSK.AssertExpectations(t)
+	assert.Contains(t, err.Error(), "No SASL/IAM brokers found in the cluster")
 }
 
 func TestKafkaService_getKafkaVersion(t *testing.T) {
