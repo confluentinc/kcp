@@ -306,7 +306,6 @@ func (cm *ClusterMetrics) addClusterMetricsSummary(md *markdown.Markdown) {
 
 }
 
-
 func (cm *ClusterMetrics) addGlobalMetricsRows(md *markdown.Markdown) {
 
 	md.AddHeading("Cluster Metrics", 4)
@@ -334,7 +333,7 @@ func (cm *ClusterMetrics) addGlobalMetricsRows(md *markdown.Markdown) {
 		tableData = append(tableData, row)
 	}
 
-	md.AddTable(headers, tableData)	
+	md.AddTable(headers, tableData)
 
 }
 
