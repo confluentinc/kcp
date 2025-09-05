@@ -28,6 +28,7 @@ type MigrationInfraOpts struct {
 	CCClusterType                 string
 	AnsibleControlNodeSubnetCIDR  string
 	JumpClusterBrokerIAMRoleName  string
+	SecurityGroupIds              []string
 
 	ClusterInfo        types.ClusterInformation
 	MigrationInfraType types.MigrationInfraType
@@ -42,6 +43,7 @@ type MigrationInfraAssetGenerator struct {
 	ccClusterType                 string
 	ansibleControlNodeSubnetCIDR  string
 	jumpClusterBrokerIAMRoleName  string
+	securityGroupIds              []string
 
 	clusterInfo        types.ClusterInformation
 	migrationInfraType types.MigrationInfraType
@@ -59,6 +61,7 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 		jumpClusterBrokerIAMRoleName:  opts.JumpClusterBrokerIAMRoleName,
 		clusterInfo:                   opts.ClusterInfo,
 		migrationInfraType:            opts.MigrationInfraType,
+		securityGroupIds:              opts.SecurityGroupIds,
 	}
 }
 
@@ -205,6 +208,7 @@ func (mi *MigrationInfraAssetGenerator) generateInputsTfvars(outputDir string) e
 		CustomerVPCID                      string
 		AWSZones                           []utils.AWSZone
 		AWSRegion                          string
+		SecurityGroupIds                   []string
 	}{
 		ConfluentCloudProvider:             "AWS",
 		ConfluentCloudRegion:               mi.clusterInfo.Region,
@@ -219,6 +223,7 @@ func (mi *MigrationInfraAssetGenerator) generateInputsTfvars(outputDir string) e
 		CustomerVPCID:                      mi.vpcId,
 		AWSZones:                           awsZones,
 		AWSRegion:                          mi.region,
+		SecurityGroupIds:                   mi.securityGroupIds,
 	}
 	// Execute template
 	var buf strings.Builder

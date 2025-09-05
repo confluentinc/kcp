@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	clusterFile     string
-	region          string
-	vpcId           string
-	bastionHostCidr net.IPNet
-	createIGW       bool
+	clusterFile      string
+	region           string
+	vpcId            string
+	bastionHostCidr  net.IPNet
+	createIGW        bool
+	securityGroupIds []string
 )
 
 func NewBastionHostCmd() *cobra.Command {
@@ -53,6 +54,7 @@ func NewBastionHostCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&createIGW, "create-igw", false, "When set, Terraform will create a new internet gateway in the VPC.")
+	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
 	bastionHostCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -137,6 +139,7 @@ func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
 		VPCId:            vpcId,
 		PublicSubnetCidr: bastionHostCidr.String(),
 		CreateIGW:        createIGW,
+		SecurityGroupIds: securityGroupIds,
 	}
 
 	return &opts, nil

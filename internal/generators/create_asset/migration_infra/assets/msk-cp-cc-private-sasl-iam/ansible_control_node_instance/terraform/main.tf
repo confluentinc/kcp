@@ -27,7 +27,7 @@ resource "aws_instance" "ansible_control_node_instance" {
   ami                         = data.aws_ami.amzn_linux_ami.id
   instance_type               = "t2.medium"
   subnet_id                   = var.aws_public_subnet_id
-  vpc_security_group_ids      = [var.security_group_id]
+  vpc_security_group_ids      = var.security_group_id
   key_name                    = var.aws_key_pair_name
   associate_public_ip_address = true
 

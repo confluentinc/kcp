@@ -71,3 +71,8 @@ variable "confluent_platform_broker_iam_role_name" {
   description = "The name of the existing IAM role to attach to the Confluent Platform broker instances"
   type        = string
 }
+
+variable "aws_security_group_ids" {
+  description = "List of string of AWS Security Group Ids"
+  type        = list(string)
+}
