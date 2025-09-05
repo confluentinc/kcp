@@ -29,9 +29,9 @@ func NewClustersScanner(discoverDir string, credentials types.Credentials) *Clus
 
 func (cs *ClustersScanner) Run() error {
 	for _, regionEntry := range cs.Credentials.Regions {
-		for arn, clusterEntry := range regionEntry.Clusters {
+		for _, clusterEntry := range regionEntry.Clusters {
 			if err := cs.scanCluster(regionEntry.Name, clusterEntry); err != nil {
-				slog.Error("failed to scan cluster", "cluster", arn, "error", err)
+				slog.Error("failed to scan cluster", "cluster", clusterEntry.Arn, "error", err)
 				continue
 			}
 		}
