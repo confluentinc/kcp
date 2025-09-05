@@ -148,7 +148,11 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 
 		for _, usageType := range usageTypes {
 			totalCost := usageTypeSummary[service][usageType]
-			usageData = append(usageData, []string{service, usageType, fmt.Sprintf("$%.2f", totalCost)})
+			totalCostFormatted := fmt.Sprintf("$%.2f", totalCost)
+			if totalCostFormatted == "$0.00" {
+				continue
+			}
+			usageData = append(usageData, []string{service, usageType, totalCostFormatted})
 		}
 		// Add service total row
 		usageData = append(usageData, []string{service, "**TOTAL**", fmt.Sprintf("$%.2f", serviceTotals[service])})
@@ -245,6 +249,10 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 
 		for _, usageType := range usageTypes {
 			totalCost := usageTypeSummary[service][usageType]
+			totalCostFormatted := fmt.Sprintf("%.2f", totalCost)
+			if totalCostFormatted == "0.00" {
+				continue
+			}
 			records = append(records, []string{service, usageType, fmt.Sprintf("%.2f", totalCost), "", ""})
 		}
 		// Add service total row

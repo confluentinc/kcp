@@ -65,7 +65,6 @@ func TestRegionCosts_AsJson(t *testing.T) {
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 38.25,
 				},
 			},
 			wantErr: false,
@@ -76,7 +75,6 @@ func TestRegionCosts_AsJson(t *testing.T) {
 				assert.Equal(t, "us-west-2", unmarshaled.Region)
 				assert.Equal(t, "DAILY", unmarshaled.Granularity)
 				assert.Len(t, unmarshaled.CostData.Costs, 2)
-				assert.Equal(t, 38.25, unmarshaled.CostData.Total)
 				assert.Len(t, unmarshaled.Tags, 2)
 			},
 		},
@@ -102,7 +100,6 @@ func TestRegionCosts_AsJson(t *testing.T) {
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 150.00,
 				},
 			},
 			wantErr: false,
@@ -164,7 +161,6 @@ func TestRegionCosts_WriteAsJson(t *testing.T) {
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 100.00,
 				},
 			},
 			wantErr: false,
@@ -234,7 +230,6 @@ func TestRegionCosts_AsMarkdown(t *testing.T) {
 				Tags:        map[string][]string{},
 				CostData: CostData{
 					Costs: []Cost{},
-					Total: 0.0,
 				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -269,7 +264,6 @@ func TestRegionCosts_AsMarkdown(t *testing.T) {
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 38.25,
 				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -311,7 +305,6 @@ func TestRegionCosts_AsMarkdown(t *testing.T) {
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 275.00,
 				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -359,7 +352,6 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 100.00,
 				},
 			},
 			wantErr: false,
@@ -426,7 +418,6 @@ func TestRegionCosts_AsCSVRecords(t *testing.T) {
 				Tags:        map[string][]string{},
 				CostData: CostData{
 					Costs: []Cost{},
-					Total: 0.0,
 				},
 			},
 			validate: func(t *testing.T, records [][]string) {
@@ -459,7 +450,6 @@ func TestRegionCosts_AsCSVRecords(t *testing.T) {
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 38.25,
 				},
 			},
 			validate: func(t *testing.T, records [][]string) {
@@ -509,7 +499,6 @@ func TestRegionCosts_AsCSVRecords(t *testing.T) {
 							UsageType:       "EC2-Instance",
 						},
 					},
-					Total: 225.00,
 				},
 			},
 			validate: func(t *testing.T, records [][]string) {
@@ -568,7 +557,6 @@ func TestRegionCosts_WriteAsCSV(t *testing.T) {
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 100.00,
 				},
 			},
 			wantErr: false,
@@ -662,7 +650,6 @@ func TestRegionCosts_Integration(t *testing.T) {
 					UsageType:       "EC2-Instance",
 				},
 			},
-			Total: 275.00,
 		},
 	}
 
@@ -679,7 +666,6 @@ func TestRegionCosts_Integration(t *testing.T) {
 		assert.Equal(t, costs.Region, unmarshaled.Region)
 		assert.Equal(t, costs.Granularity, unmarshaled.Granularity)
 		assert.Len(t, unmarshaled.CostData.Costs, 3)
-		assert.Equal(t, costs.CostData.Total, unmarshaled.CostData.Total)
 		assert.Len(t, unmarshaled.Tags, 3)
 	})
 
@@ -813,10 +799,126 @@ func TestCostData_Struct(t *testing.T) {
 				UsageType:       "MSK-BrokerInstance",
 			},
 		},
-		Total: 150.00,
 	}
 
 	assert.Len(t, costData.Costs, 1)
-	assert.Equal(t, 150.00, costData.Total)
 	assert.Equal(t, "AmazonMSK", costData.Costs[0].Service)
+}
+
+func TestRegionCosts_AsCSVRecords_OmitsZeroCosts(t *testing.T) {
+	costs := &RegionCosts{
+		Region:      "us-east-1",
+		StartDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		EndDate:     time.Date(2023, 1, 31, 23, 59, 59, 0, time.UTC),
+		Granularity: "MONTHLY",
+		Tags:        map[string][]string{},
+		CostData: CostData{
+			Costs: []Cost{
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "AmazonMSK",
+					Cost:            150.00,
+					UsageType:       "MSK-BrokerInstance",
+				},
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "AmazonMSK",
+					Cost:            0.00,
+					UsageType:       "MSK-Storage",
+				},
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "AmazonEC2",
+					Cost:            75.00,
+					UsageType:       "EC2-Instance",
+				},
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "AmazonEC2",
+					Cost:            0.00,
+					UsageType:       "EC2-Storage",
+				},
+			},
+		},
+	}
+
+	records := costs.AsCSVRecords()
+	assert.NotNil(t, records)
+
+	// Find the summary section (after "SUMMARY" header)
+	summaryStart := -1
+	for i, record := range records {
+		if len(record) > 0 && record[0] == "SUMMARY" {
+			summaryStart = i
+			break
+		}
+	}
+	assert.True(t, summaryStart >= 0, "Should find SUMMARY section")
+
+	// Check that zero-cost usage types are omitted from summary
+	// We should see MSK-BrokerInstance and EC2-Instance but NOT MSK-Storage or EC2-Storage
+	foundMSKBroker := false
+	foundEC2Instance := false
+	foundMSKStorage := false
+	foundEC2Storage := false
+
+	for i := summaryStart + 2; i < len(records); i++ { // Skip SUMMARY and header rows
+		record := records[i]
+		if len(record) >= 3 {
+			service := record[0]
+			usageType := record[1]
+			cost := record[2]
+
+			if service == "AmazonMSK" && usageType == "MSK-BrokerInstance" {
+				foundMSKBroker = true
+				assert.Equal(t, "150.00", cost)
+			}
+			if service == "AmazonEC2" && usageType == "EC2-Instance" {
+				foundEC2Instance = true
+				assert.Equal(t, "75.00", cost)
+			}
+			if service == "AmazonMSK" && usageType == "MSK-Storage" {
+				foundMSKStorage = true
+			}
+			if service == "AmazonEC2" && usageType == "EC2-Storage" {
+				foundEC2Storage = true
+			}
+		}
+	}
+
+	assert.True(t, foundMSKBroker, "Should find MSK-BrokerInstance in summary")
+	assert.True(t, foundEC2Instance, "Should find EC2-Instance in summary")
+	assert.False(t, foundMSKStorage, "Should NOT find MSK-Storage in summary (zero cost)")
+	assert.False(t, foundEC2Storage, "Should NOT find EC2-Storage in summary (zero cost)")
+
+	// Verify that all costs are still present in the detailed breakdown section
+	detailedBreakdownStart := -1
+	for i, record := range records {
+		if len(record) > 0 && record[0] == "DETAILED BREAKDOWN" {
+			detailedBreakdownStart = i
+			break
+		}
+	}
+	assert.True(t, detailedBreakdownStart >= 0, "Should find DETAILED BREAKDOWN section")
+
+	// Check that all costs (including zero costs) are in detailed breakdown
+	foundAllInDetailed := make(map[string]bool)
+	for i := detailedBreakdownStart + 2; i < len(records); i++ { // Skip DETAILED BREAKDOWN and header rows
+		record := records[i]
+		if len(record) >= 5 {
+			service := record[2]
+			usageType := record[3]
+			key := service + "-" + usageType
+			foundAllInDetailed[key] = true
+		}
+	}
+
+	assert.True(t, foundAllInDetailed["AmazonMSK-MSK-BrokerInstance"], "Should find MSK-BrokerInstance in detailed breakdown")
+	assert.True(t, foundAllInDetailed["AmazonMSK-MSK-Storage"], "Should find MSK-Storage in detailed breakdown")
+	assert.True(t, foundAllInDetailed["AmazonEC2-EC2-Instance"], "Should find EC2-Instance in detailed breakdown")
+	assert.True(t, foundAllInDetailed["AmazonEC2-EC2-Storage"], "Should find EC2-Storage in detailed breakdown")
 }
