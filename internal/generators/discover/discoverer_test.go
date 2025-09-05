@@ -19,7 +19,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 		expected types.ClusterEntry
 	}{
 		{
-			name: "Provisioned cluster with all authentication methods enabled",
+			name: "Provisioned cluster with all authentication methods enabled - unauthentication selected",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-all-auth"),
 				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-all-auth/12345678-1234-1234-1234-123456789012-1"),
@@ -140,7 +140,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			},
 		},
 		{
-			name: "Provisioned cluster with IAM and SCRAM (IAM priority)",
+			name: "Provisioned cluster with IAM and SCRAM - IAM selected",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-iam-scram"),
 				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-iam-scram/12345678-1234-1234-1234-123456789012-6"),
@@ -168,7 +168,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			},
 		},
 		{
-			name: "Provisioned cluster with SCRAM and TLS (SCRAM priority)",
+			name: "Provisioned cluster with SASL_SCRAM and TLS - SASL_SCRAM selected",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-scram-tls"),
 				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-scram-tls/12345678-1234-1234-1234-123456789012-7"),
