@@ -8,7 +8,7 @@ import (
 )
 
 type Credentials struct {
-	Regions map[string]RegionEntry `yaml:"regions"`
+	Regions []RegionEntry `yaml:"regions"`
 }
 
 func NewCredentials(credentialsYamlPath string) (*Credentials, []error) {
@@ -52,10 +52,10 @@ func (c Credentials) Validate() (bool, []error) {
 	errs := []error{}
 
 	for _, clusters := range c.Regions {
-		for arn, cluster := range clusters.Clusters {
+		for _, cluster := range clusters.Clusters {
 			enabledMethods := cluster.GetAuthMethods()
 			if len(enabledMethods) > 1 {
-				errs = append(errs, fmt.Errorf("More than one authentication method enabled for %s", arn))
+				errs = append(errs, fmt.Errorf("More than one authentication method enabled for %s", cluster.Arn))
 				continue
 			}
 		}
@@ -64,10 +64,13 @@ func (c Credentials) Validate() (bool, []error) {
 }
 
 type RegionEntry struct {
-	Clusters map[string]ClusterEntry `yaml:"clusters"`
+	Name     string         `yaml:"name"`
+	Clusters []ClusterEntry `yaml:"clusters"`
 }
 
 type ClusterEntry struct {
+	Name       string           `yaml:"name"`
+	Arn        string           `yaml:"arn"`
 	AuthMethod AuthMethodConfig `yaml:"auth_method"`
 }
 

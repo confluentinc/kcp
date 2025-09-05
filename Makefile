@@ -81,9 +81,7 @@ fmt:
 test:
 	@echo "🧪 Running tests..."
 	@echo "=================="
-	@go test -v ./... || (echo ""; echo "❌ TESTS FAILED - See failures above"; echo "=========================================="; exit 1)
-	@echo ""
-	@echo "✅ All tests passed!"
+	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Tests failed with exit code $$exit_code"; else echo "✅ All tests passed!"; fi; exit $$exit_code'
 
 # Run tests with coverage - beautiful terminal output
 test-cov:

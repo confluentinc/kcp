@@ -53,9 +53,7 @@ func (d *Discoverer) Run() error {
 }
 
 func (d *Discoverer) processRegions(outputDir string) error {
-	credsYaml := types.Credentials{
-		Regions: make(map[string]types.RegionEntry),
-	}
+	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
 
 	for _, region := range d.regions {
@@ -178,22 +176,25 @@ func (d *Discoverer) processRegions(outputDir string) error {
 			}
 		}
 
-		// capture cluster auth entries
-		clusterEntries, err := d.getClusterEntries(mskService)
+		regionEntry, err := d.getRegionEntry(mskService, region)
 		if err != nil {
-			slog.Error("failed to get cluster entries", "region", region, "error", err)
+			slog.Error("failed to get region entry", "region", region, "error", err)
 			continue
 		}
 
-		if len(clusterEntries.Clusters) == 0 {
+		if len(regionEntry.Clusters) == 0 {
 			regionsWithoutClusters = append(regionsWithoutClusters, region)
 		} else {
-			credsYaml.Regions[region] = *clusterEntries
+			regionEntries = append(regionEntries, *regionEntry)
 		}
 	}
 
 	credsFilePath := filepath.Join(outputDir, "creds.yaml")
-	if err := credsYaml.WriteToFile(credsFilePath); err != nil {
+	credentials := types.Credentials{
+		Regions: regionEntries,
+	}
+
+	if err := credentials.WriteToFile(credsFilePath); err != nil {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
@@ -206,82 +207,97 @@ func (d *Discoverer) processRegions(outputDir string) error {
 	return nil
 }
 
-func (d *Discoverer) getClusterEntries(mskService *msk.MSKService) (*types.RegionEntry, error) {
+func (d *Discoverer) getRegionEntry(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
 	clusters, err := mskService.ListClusters(context.Background(), 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clusters: %v", err)
 	}
 
-	regionEntry := types.RegionEntry{
-		Clusters: make(map[string]types.ClusterEntry),
-	}
+	clusterEntries := []types.ClusterEntry{}
 
 	for _, cluster := range clusters {
-		var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
-
-		switch cluster.ClusterType {
-		case kafkatypes.ClusterTypeProvisioned:
-			if cluster.Provisioned != nil && cluster.Provisioned.ClientAuthentication != nil {
-				if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
-					cluster.Provisioned.ClientAuthentication.Sasl.Iam != nil {
-					isSaslIamEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Iam.Enabled)
-				}
-
-				if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
-					cluster.Provisioned.ClientAuthentication.Sasl.Scram != nil {
-					isSaslScramEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Scram.Enabled)
-				}
-
-				if cluster.Provisioned.ClientAuthentication.Tls != nil {
-					isTlsEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
-				}
-
-				if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil {
-					isUnauthenticatedEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled)
-				}
-			}
-
-		case kafkatypes.ClusterTypeServerless:
-			// For serverless clusters, typically only IAM is supported
-			isSaslIamEnabled = true
+		clusterEntry, err := d.getClusterEntry(cluster)
+		if err != nil {
+			slog.Error("failed to get cluster entry", "cluster", cluster.ClusterName, "error", err)
+			continue
 		}
-
-		clusterEntry := types.ClusterEntry{}
-		// we want a SINGLE auth mech to be enabled by default
-		// priority is unauthenticated > iam > sasl_scram > tls
-		defaultAuthSelected := false
-		if isUnauthenticatedEnabled {
-			clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
-				Use: !defaultAuthSelected,
-			}
-			defaultAuthSelected = true
-		}
-		if isSaslIamEnabled {
-			clusterEntry.AuthMethod.IAM = &types.IAMConfig{
-				Use: !defaultAuthSelected,
-			}
-			defaultAuthSelected = true
-		}
-		if isSaslScramEnabled {
-			clusterEntry.AuthMethod.SASLScram = &types.SASLScramConfig{
-				Use:      !defaultAuthSelected,
-				Username: "",
-				Password: "",
-			}
-			defaultAuthSelected = true
-		}
-		if isTlsEnabled {
-			clusterEntry.AuthMethod.TLS = &types.TLSConfig{
-				Use:        !defaultAuthSelected,
-				CACert:     "",
-				ClientCert: "",
-				ClientKey:  "",
-			}
-			defaultAuthSelected = true
-		}
-
-		regionEntry.Clusters[*cluster.ClusterArn] = clusterEntry
+		clusterEntries = append(clusterEntries, clusterEntry)
 	}
 
-	return &regionEntry, nil
+	return &types.RegionEntry{
+		Name:     region,
+		Clusters: clusterEntries,
+	}, nil
+
+}
+
+func (d *Discoverer) getClusterEntry(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
+	clusterEntry := types.ClusterEntry{
+		Name: aws.ToString(cluster.ClusterName),
+		Arn:  aws.ToString(cluster.ClusterArn),
+	}
+
+	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
+
+	switch cluster.ClusterType {
+	case kafkatypes.ClusterTypeProvisioned:
+		if cluster.Provisioned != nil && cluster.Provisioned.ClientAuthentication != nil {
+			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
+				cluster.Provisioned.ClientAuthentication.Sasl.Iam != nil {
+				isSaslIamEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Iam.Enabled)
+			}
+
+			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
+				cluster.Provisioned.ClientAuthentication.Sasl.Scram != nil {
+				isSaslScramEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Scram.Enabled)
+			}
+
+			if cluster.Provisioned.ClientAuthentication.Tls != nil {
+				isTlsEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
+			}
+
+			if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil {
+				isUnauthenticatedEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled)
+			}
+		}
+
+	case kafkatypes.ClusterTypeServerless:
+		// For serverless clusters, typically only IAM is supported
+		isSaslIamEnabled = true
+	}
+
+	// we want a SINGLE auth mech to be enabled by default
+	// priority is unauthenticated > iam > sasl_scram > tls
+	defaultAuthSelected := false
+	if isUnauthenticatedEnabled {
+		clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
+			Use: !defaultAuthSelected,
+		}
+		defaultAuthSelected = true
+	}
+	if isSaslIamEnabled {
+		clusterEntry.AuthMethod.IAM = &types.IAMConfig{
+			Use: !defaultAuthSelected,
+		}
+		defaultAuthSelected = true
+	}
+	if isSaslScramEnabled {
+		clusterEntry.AuthMethod.SASLScram = &types.SASLScramConfig{
+			Use:      !defaultAuthSelected,
+			Username: "",
+			Password: "",
+		}
+		defaultAuthSelected = true
+	}
+	if isTlsEnabled {
+		clusterEntry.AuthMethod.TLS = &types.TLSConfig{
+			Use:        !defaultAuthSelected,
+			CACert:     "",
+			ClientCert: "",
+			ClientKey:  "",
+		}
+		defaultAuthSelected = true
+	}
+
+	return clusterEntry, nil
 }
