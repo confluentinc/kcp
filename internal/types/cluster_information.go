@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,6 +46,69 @@ type ClusterInformation struct {
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
 	Topics               []string                               `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
+}
+
+func (c *ClusterInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
+	var brokerList string
+	var visibility string
+	slog.Info("🔍 parsing broker addresses", "authType", authType)
+
+	switch authType {
+	case AuthTypeIAM:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam)
+		visibility = "PUBLIC"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam)
+			visibility = "PRIVATE"
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
+		}
+	case AuthTypeSASLSCRAM:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
+		visibility = "PUBLIC"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram)
+			visibility = "PRIVATE"
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
+		}
+	case AuthTypeUnauthenticated:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
+		visibility = "PRIVATE"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
+		}
+	case AuthTypeTLS:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
+		visibility = "PUBLIC"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
+			visibility = "PRIVATE"
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
+		}
+	default:
+		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	}
+
+	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
+
+	// Split by comma and trim whitespace from each address, filter out empty strings
+	rawAddresses := strings.Split(brokerList, ",")
+	addresses := make([]string, 0, len(rawAddresses))
+	for _, addr := range rawAddresses {
+		trimmedAddr := strings.TrimSpace(addr)
+		if trimmedAddr != "" {
+			addresses = append(addresses, trimmedAddr)
+		}
+	}
+	return addresses, nil
 }
 
 func (c *ClusterInformation) GetJsonPath() string {

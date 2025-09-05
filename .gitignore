@@ -52,6 +52,7 @@ kcp
 migration_infra/
 reverse_proxy/
 set_migration_env_vars.sh
+kcp-scan*
 
 # Added by goreleaser init:
 dist/
