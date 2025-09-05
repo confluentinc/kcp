@@ -46,7 +46,6 @@ type MSKService interface {
 	DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error)
 	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
 	GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error)
-	ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 }
 
 type MetricService interface {
