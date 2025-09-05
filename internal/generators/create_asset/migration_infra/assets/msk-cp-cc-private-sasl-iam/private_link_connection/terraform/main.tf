@@ -20,7 +20,7 @@ resource "aws_vpc_endpoint" "main" {
   service_name       = confluent_private_link_attachment.aws.aws[0].vpc_endpoint_service_name
   vpc_endpoint_type  = "Interface"
   subnet_ids         = var.confluent_platform_broker_subnet_ids
-  security_group_ids = [var.security_group_id]
+  security_group_ids = var.security_group_id
 
   tags = {
     Name = "msk-mig-vpc-endpoint-${random_string.suffix.result}"

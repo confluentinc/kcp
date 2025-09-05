@@ -20,6 +20,7 @@ var (
 	vpcId                string
 	reverseProxyCidr     net.IPNet
 	migrationInfraFolder string
+	securityGroupIds     []string
 )
 
 func NewReverseProxyCmd() *cobra.Command {
@@ -50,11 +51,18 @@ func NewReverseProxyCmd() *cobra.Command {
 	reverseProxyCmd.Flags().AddFlagSet(conditionalFlags)
 	groups[conditionalFlags] = "Conditional Flags"
 
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
+	reverseProxyCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
 	reverseProxyCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, conditionalFlags}
-		groupNames := []string{"Required Flags", "Conditional Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, conditionalFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Conditional Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -136,6 +144,7 @@ func parseReverseProxyOpts() (*reverse_proxy.ReverseProxyOpts, error) {
 		VPCId:            vpcId,
 		PublicSubnetCidr: reverseProxyCidr.String(),
 		TerraformOutput:  terraformState.Outputs,
+		SecurityGroupIds: securityGroupIds,
 	}
 
 	return &opts, nil

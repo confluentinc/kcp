@@ -28,7 +28,7 @@ resource "aws_instance" "confluent-platform-broker" {
   ami                         = data.aws_ami.red_hat_linux_ami.id
   instance_type               = "m5.xlarge"
   subnet_id                   = each.value
-  vpc_security_group_ids      = [var.security_group_id]
+  vpc_security_group_ids      = var.security_group_id
   key_name                    = var.aws_key_pair_name
   associate_public_ip_address = false
 

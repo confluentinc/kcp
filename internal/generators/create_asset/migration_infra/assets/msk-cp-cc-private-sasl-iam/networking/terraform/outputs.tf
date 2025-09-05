@@ -1,9 +1,9 @@
 output "confluent_platform_broker_instances_security_group_id" {
-  value = aws_security_group.confluent_platform_broker_instances_security_group.id
+  value = length(var.aws_security_group_ids) != 0 ? var.aws_security_group_ids : aws_security_group.confluent_platform_broker_instances_security_group[*].id
 }
 
 output "private_link_security_group_id" {
-  value = aws_security_group.private_link_security_group.id
+  value = length(var.aws_security_group_ids) != 0 ? var.aws_security_group_ids : aws_security_group.private_link_security_group[*].id
 }
 
 output "public_subnet_id" {

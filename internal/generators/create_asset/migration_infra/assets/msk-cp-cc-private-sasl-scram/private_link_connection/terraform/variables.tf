@@ -19,6 +19,6 @@ variable "confluent_platform_broker_subnet_ids" {
 }
 
 variable "security_group_id" {
-  description = "The ID of the security group used to connect to the VPC endpoint and for the reverse proxy."
-  type        = string
+  description = "List of string of AWS Security Group Ids"
+  type        = list(string)
 }

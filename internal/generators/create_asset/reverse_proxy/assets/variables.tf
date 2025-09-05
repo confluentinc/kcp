@@ -19,3 +19,8 @@ variable "aws_region" {
   type        = string
   default     = "us-east-1"
 }
+
+variable "aws_security_group_ids" {
+  description = "List of string of AWS Security Group Ids"
+  type        = list(string)
+}

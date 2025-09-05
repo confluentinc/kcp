@@ -20,6 +20,7 @@ type BastionHostOpts struct {
 	VPCId            string
 	PublicSubnetCidr string
 	CreateIGW        bool
+	SecurityGroupIds []string
 }
 
 type BastionHostAssetGenerator struct {
@@ -27,6 +28,7 @@ type BastionHostAssetGenerator struct {
 	vpcId            string
 	publicSubnetCidr string
 	createIGW        bool
+	securityGroupIds []string
 }
 
 func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerator {
@@ -35,6 +37,7 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 		vpcId:            opts.VPCId,
 		publicSubnetCidr: opts.PublicSubnetCidr,
 		createIGW:        opts.CreateIGW,
+		securityGroupIds: opts.SecurityGroupIds,
 	}
 }
 
@@ -132,11 +135,13 @@ func (bh *BastionHostAssetGenerator) generateInputsTfvars(terraformDir string) e
 		PublicSubnetCIDR string
 		VPCID            string
 		CreateIGW        bool
+		SecurityGroupIds []string
 	}{
 		AWSRegion:        bh.region,
 		PublicSubnetCIDR: bh.publicSubnetCidr,
 		VPCID:            bh.vpcId,
 		CreateIGW:        bh.createIGW,
+		SecurityGroupIds: bh.securityGroupIds,
 	}
 	// Execute template
 	var buf strings.Builder

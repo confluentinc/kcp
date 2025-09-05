@@ -119,6 +119,7 @@ resource "aws_route_table_association" "public_rt_association" {
 }
 
 resource "aws_security_group" "bastion_host_security_group" {
+  count  = length(var.aws_security_group_ids) == 0 ? 1 : 0
   vpc_id = var.vpc_id
 
   ingress {
@@ -144,7 +145,7 @@ resource "aws_instance" "migration_bastion_host" {
   ami                         = data.aws_ami.amzn_linux_ami.id
   instance_type               = "t2.medium"
   subnet_id                   = aws_subnet.public_subnet.id
-  vpc_security_group_ids      = [aws_security_group.bastion_host_security_group.id]
+  vpc_security_group_ids      = length(var.aws_security_group_ids) == 0 ? [aws_security_group.bastion_host_security_group[0].id] : var.aws_security_group_ids
   key_name                    = aws_key_pair.deployer.key_name
   associate_public_ip_address = true
 
