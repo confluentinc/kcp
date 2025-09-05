@@ -11,6 +11,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
+	"github.com/confluentinc/kcp/internal/client"
+	mskConnect "github.com/confluentinc/kcp/internal/services/msk_connect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -190,6 +192,12 @@ func (rs *RegionScanner) ScanRegion(ctx context.Context) (*types.RegionScanResul
 	}
 	result.Replicators = replicators
 
+	connectors, err := rs.scanConnectors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result.Connectors = connectors
+
 	return result, nil
 }
 
@@ -363,4 +371,41 @@ func (rs *RegionScanner) scanReplicators(ctx context.Context, maxResults int32) 
 
 	slog.Info("✨ found replicators", "count", len(replicators))
 	return replicators, nil
+}
+
+func (rs *RegionScanner) scanConnectors(ctx context.Context) ([]types.ConnectorSummary, error) {
+	slog.Info("🔍 scanning for connectors", "region", rs.region)
+	var connectors []types.ConnectorSummary
+
+	mskConnectClient, err := client.NewMSKConnectClient(rs.region)
+	if err != nil {
+		slog.Error("❌ Failed to create msk connect client", "region", rs.region, "error", err)
+		return nil, fmt.Errorf("❌ Failed to create msk connect client: %w", err)
+	}
+
+	mskConnectService := mskConnect.NewMSKConnectService(mskConnectClient)
+	mskConnectResult, err := mskConnectService.ListConnectors(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to list connectors: %w", err)
+	}
+
+	for _, connector := range mskConnectResult.Connectors {
+		describeConnector, err := mskConnectService.DescribeConnector(ctx, connector.ConnectorArn)
+		if err != nil {
+			return nil, fmt.Errorf("❌ Failed to describe connector: %w", err)
+		}
+		connectors = append(connectors, types.ConnectorSummary{
+			ConnectorArn:                     aws.ToString(connector.ConnectorArn),
+			ConnectorName:                    aws.ToString(connector.ConnectorName),
+			ConnectorState:                   string(connector.ConnectorState),
+			CreationTime:                     connector.CreationTime.Format(time.RFC3339),
+			KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
+			KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
+			Capacity:                         *connector.Capacity,
+			Plugins:                          describeConnector.Plugins,
+			ConnectorConfiguration:           describeConnector.ConnectorConfiguration,
+		})
+	}
+
+	return connectors, nil
 }
