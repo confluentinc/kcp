@@ -28,10 +28,9 @@ func NewClustersScanner(discoverDir string, credentials types.Credentials) *Clus
 }
 
 func (cs *ClustersScanner) Run() error {
-
-	for region, clusterEntries := range cs.Credentials.Regions {
-		for arn, clusterEntry := range clusterEntries.Clusters {
-			if err := cs.scanCluster(region, arn, clusterEntry); err != nil {
+	for _, regionEntry := range cs.Credentials.Regions {
+		for arn, clusterEntry := range regionEntry.Clusters {
+			if err := cs.scanCluster(regionEntry.Name, clusterEntry); err != nil {
 				slog.Error("failed to scan cluster", "cluster", arn, "error", err)
 				continue
 			}
@@ -41,8 +40,8 @@ func (cs *ClustersScanner) Run() error {
 	return nil
 }
 
-func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.ClusterEntry) error {
-	clusterName, err := cs.getClusterName(arn)
+func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.ClusterEntry) error {
+	clusterName, err := cs.getClusterName(clusterEntry.Arn)
 	if err != nil {
 		return fmt.Errorf("❌ failed to get cluster name: %v", err)
 	}
@@ -90,7 +89,7 @@ func (cs *ClustersScanner) scanCluster(region, arn string, clusterEntry types.Cl
 	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
 		KafkaAdminFactory: kafkaAdminFactory,
 		AuthType:          authType,
-		ClusterArn:        arn,
+		ClusterArn:        clusterEntry.Arn,
 	})
 
 	if err := cs.scanKafkaResources(&clusterInfo, kafkaService, brokerAddresses); err != nil {
