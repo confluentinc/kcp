@@ -22,12 +22,13 @@ func TestNewCredentials(t *testing.T) {
 			setupFile: func() string {
 				content := `
 regions:
-  us-east-1:
-    clusters:
-      arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1:
-        auth_method:
-          iam:
-            use: true
+- name: us-east-1
+  clusters:
+  - name: test-cluster
+    arn: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1
+    auth_method:
+      iam:
+        use: true
 `
 				tmpFile := createTempFile(t, content)
 				return tmpFile
@@ -57,14 +58,15 @@ regions:
 			setupFile: func() string {
 				content := `
 regions:
-  us-east-1:
-    clusters:
-      arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1:
-        auth_method:
-          iam:
-            use: true
-          tls:
-            use: true
+- name: us-east-1
+  clusters:
+  - name: test-cluster
+    arn: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1
+    auth_method:
+      iam:
+        use: true
+	  tls:
+	    use: true
 `
 				tmpFile := createTempFile(t, content)
 				return tmpFile
@@ -103,10 +105,13 @@ func TestCredentials_Validate(t *testing.T) {
 		{
 			name: "valid single auth method",
 			credentials: Credentials{
-				Regions: map[string]RegionEntry{
-					"us-east-1": {
-						Clusters: map[string]ClusterEntry{
-							"test-cluster": {
+				Regions: []RegionEntry{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterEntry{
+							{
+								Name: "test-cluster",
+								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
 								AuthMethod: AuthMethodConfig{
 									IAM: &IAMConfig{Use: true},
 								},
@@ -119,12 +124,15 @@ func TestCredentials_Validate(t *testing.T) {
 			expectedErrors: 0,
 		},
 		{
-			name: "multiple auth methods enabled",
+			name: "multiple auth methods selected for a cluster is not allowed",
 			credentials: Credentials{
-				Regions: map[string]RegionEntry{
-					"us-east-1": {
-						Clusters: map[string]ClusterEntry{
-							"test-cluster": {
+				Regions: []RegionEntry{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterEntry{
+							{
+								Name: "test-cluster",
+								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
 								AuthMethod: AuthMethodConfig{
 									IAM: &IAMConfig{Use: true},
 									TLS: &TLSConfig{Use: true},
@@ -138,12 +146,15 @@ func TestCredentials_Validate(t *testing.T) {
 			expectedErrors: 1,
 		},
 		{
-			name: "no auth methods enabled",
+			name: "no auth methods enabled is valid - means skip this cluster",
 			credentials: Credentials{
-				Regions: map[string]RegionEntry{
-					"us-east-1": {
-						Clusters: map[string]ClusterEntry{
-							"test-cluster": {
+				Regions: []RegionEntry{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterEntry{
+							{
+								Name:       "test-cluster",
+								Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
 								AuthMethod: AuthMethodConfig{},
 							},
 						},
@@ -156,15 +167,20 @@ func TestCredentials_Validate(t *testing.T) {
 		{
 			name: "multiple clusters with mixed validity",
 			credentials: Credentials{
-				Regions: map[string]RegionEntry{
-					"us-east-1": {
-						Clusters: map[string]ClusterEntry{
-							"valid-cluster": {
+				Regions: []RegionEntry{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterEntry{
+							{
+								Name: "test-cluster",
+								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
 								AuthMethod: AuthMethodConfig{
 									IAM: &IAMConfig{Use: true},
 								},
 							},
-							"invalid-cluster": {
+							{
+								Name: "invalid-cluster-with-two-auth",
+								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-2/12345678-1234-1234-1234-123456789012-2",
 								AuthMethod: AuthMethodConfig{
 									IAM: &IAMConfig{Use: true},
 									TLS: &TLSConfig{Use: true},
@@ -351,10 +367,13 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 
 func TestCredentials_ToYaml(t *testing.T) {
 	creds := &Credentials{
-		Regions: map[string]RegionEntry{
-			"us-east-1": {
-				Clusters: map[string]ClusterEntry{
-					"test-cluster": {
+		Regions: []RegionEntry{
+			{
+				Name: "us-east-1",
+				Clusters: []ClusterEntry{
+					{
+						Name: "test-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
 						AuthMethod: AuthMethodConfig{
 							IAM: &IAMConfig{Use: true},
 						},
@@ -377,10 +396,13 @@ func TestCredentials_ToYaml(t *testing.T) {
 
 func TestCredentials_WriteToFile(t *testing.T) {
 	creds := &Credentials{
-		Regions: map[string]RegionEntry{
-			"us-east-1": {
-				Clusters: map[string]ClusterEntry{
-					"test-cluster": {
+		Regions: []RegionEntry{
+			{
+				Name: "us-east-1",
+				Clusters: []ClusterEntry{
+					{
+						Name: "test-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
 						AuthMethod: AuthMethodConfig{
 							IAM: &IAMConfig{Use: true},
 						},
@@ -402,13 +424,14 @@ func TestCredentials_WriteToFile(t *testing.T) {
 	content, err := os.ReadFile(tmpFile)
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "regions:")
-	assert.Contains(t, string(content), "us-east-1:")
-	assert.Contains(t, string(content), "test-cluster:")
+	assert.Contains(t, string(content), "- name: us-east-1")
+	assert.Contains(t, string(content), "clusters:")
+	assert.Contains(t, string(content), "- name: test-cluster")
 }
 
 func TestCredentials_WriteToFile_InvalidPath(t *testing.T) {
 	creds := &Credentials{
-		Regions: map[string]RegionEntry{},
+		Regions: []RegionEntry{},
 	}
 
 	// Try to write to a directory (should fail)
@@ -456,15 +479,20 @@ func TestAuthMethodConfigs(t *testing.T) {
 func TestCredentials_Integration(t *testing.T) {
 	// Test a complete round-trip: create, marshal, write, read, unmarshal
 	originalCreds := &Credentials{
-		Regions: map[string]RegionEntry{
-			"us-east-1": {
-				Clusters: map[string]ClusterEntry{
-					"cluster1": {
+		Regions: []RegionEntry{
+			{
+				Name: "us-east-1",
+				Clusters: []ClusterEntry{
+					{
+						Name: "cluster1",
+						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/cluster1/12345678-1234-1234-1234-123456789012-1",
 						AuthMethod: AuthMethodConfig{
 							IAM: &IAMConfig{Use: true},
 						},
 					},
-					"cluster2": {
+					{
+						Name: "cluster2",
+						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/cluster2/12345678-1234-1234-1234-123456789012-2",
 						AuthMethod: AuthMethodConfig{
 							TLS: &TLSConfig{
 								Use:        true,
@@ -476,9 +504,16 @@ func TestCredentials_Integration(t *testing.T) {
 					},
 				},
 			},
-			"us-west-2": {
-				Clusters: map[string]ClusterEntry{
-					"cluster3": {
+			{
+				Name: "us-west-2",
+				Clusters: []ClusterEntry{
+					{
+						Name: "cluster3",
+						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/cluster3/12345678-1234-1234-1234-123456789012-3",
+					},
+					{
+						Name: "cluster3",
+						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/cluster3/12345678-1234-1234-1234-123456789012-3",
 						AuthMethod: AuthMethodConfig{
 							SASLScram: &SASLScramConfig{
 								Use:      true,
