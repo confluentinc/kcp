@@ -2,9 +2,12 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -181,6 +184,12 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 	} else {
 		slog.Warn("⚠️ Cluster networking not supported for MSK Serverless clusters, skipping networking scan")
 	}
+
+	connectors, err := cs.retrieveClusterConnectors(clusterInfo)
+	if err != nil {
+		return err
+	}
+	clusterInfo.Connectors = connectors
 
 	return nil
 }
@@ -378,4 +387,50 @@ func (cs *ClusterScanner) scanClusterScramSecrets(ctx context.Context, clusterAr
 	}
 
 	return secrets, nil
+}
+
+func (cs *ClusterScanner) retrieveClusterConnectors(clusterInfo *types.ClusterInformation) ([]types.ConnectorSummary, error) {
+	slog.Info("🔍 retrieving cluster connectors", "clusterArn", cs.clusterArn)
+
+	clusterFile := filepath.Join(clusterInfo.GetRegionDirPath(), fmt.Sprintf("%s-region-scan.json", cs.region))
+	file, err := os.ReadFile(clusterFile)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to read cluster file: %v", err)
+	}
+
+	var regionScan types.RegionScanResult
+	if err := json.Unmarshal(file, &regionScan); err != nil {
+		return nil, fmt.Errorf("❌ Failed to unmarshal region scan: %v", err)
+	}
+
+	for _, connector := range regionScan.Connectors {
+		var authType types.AuthType
+		switch connector.KafkaClusterClientAuthentication.AuthenticationType {
+		case "IAM":
+			authType = types.AuthTypeIAM
+		case "SASL_SCRAM":
+			authType = types.AuthTypeSASLSCRAM
+		case "TLS":
+			authType = types.AuthTypeTLS
+		case "NONE":
+			authType = types.AuthTypeUnauthenticated
+		default:
+			return nil, fmt.Errorf("❌ Unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
+		}
+
+		brokerAddresses, err := clusterInfo.GetAllBootstrapBrokersForAuthType(authType)
+		if err != nil {
+			return nil, fmt.Errorf("❌ Failed to parse broker addresses: %v", err)
+		}
+
+		for _, brokerAddress := range brokerAddresses {
+			if strings.Contains(aws.ToString(connector.KafkaCluster.BootstrapServers), brokerAddress) {
+				slog.Info(fmt.Sprintf("🔍 found connector %s for cluster %s", aws.ToString(&connector.ConnectorName), aws.ToString(clusterInfo.Cluster.ClusterName)))
+				clusterInfo.Connectors = append(clusterInfo.Connectors, connector)
+				break
+			}
+		}
+	}
+
+	return clusterInfo.Connectors, nil
 }

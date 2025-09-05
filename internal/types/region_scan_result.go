@@ -22,7 +22,19 @@ type RegionScanResult struct {
 	KafkaVersions  []kafkatypes.KafkaVersion                   `json:"kafka_versions"`
 	Replicators    []kafka.DescribeReplicatorOutput            `json:"replicators"`
 	Region         string                                      `json:"region"`
-	Connectors     []kafkaconnecttypes.ConnectorSummary        `json:"connectors"`
+	Connectors     []ConnectorSummary                          `json:"connectors"`
+}
+
+type ConnectorSummary struct {
+	ConnectorArn                     string                                                        `json:"connector_arn"`
+	ConnectorName                    string                                                        `json:"connector_name"`
+	ConnectorState                   string                                                        `json:"connector_state"`
+	CreationTime                     string                                                        `json:"creation_time"`
+	KafkaCluster                     kafkaconnecttypes.ApacheKafkaClusterDescription               `json:"kafka_cluster"`
+	KafkaClusterClientAuthentication kafkaconnecttypes.KafkaClusterClientAuthenticationDescription `json:"kafka_cluster_client_authentication"`
+	Capacity                         kafkaconnecttypes.CapacityDescription                         `json:"capacity"`
+	Plugins                          []kafkaconnecttypes.PluginDescription                         `json:"plugins"`
+	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
 func (rs *RegionScanResult) GetJsonPath() string {

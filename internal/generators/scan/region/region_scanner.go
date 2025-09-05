@@ -8,7 +8,6 @@ import (
 	"time"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
@@ -374,8 +373,9 @@ func (rs *RegionScanner) scanReplicators(ctx context.Context, maxResults int32) 
 	return replicators, nil
 }
 
-func (rs *RegionScanner) scanConnectors(ctx context.Context) ([]kafkaconnecttypes.ConnectorSummary, error) {
+func (rs *RegionScanner) scanConnectors(ctx context.Context) ([]types.ConnectorSummary, error) {
 	slog.Info("🔍 scanning for connectors", "region", rs.region)
+	var connectors []types.ConnectorSummary
 
 	mskConnectClient, err := client.NewMSKConnectClient(rs.region)
 	if err != nil {
@@ -389,5 +389,23 @@ func (rs *RegionScanner) scanConnectors(ctx context.Context) ([]kafkaconnecttype
 		return nil, fmt.Errorf("❌ Failed to list connectors: %w", err)
 	}
 
-	return mskConnectResult.Connectors, nil
+	for _, connector := range mskConnectResult.Connectors {
+		describeConnector, err := mskConnectService.DescribeConnector(ctx, connector.ConnectorArn)
+		if err != nil {
+			return nil, fmt.Errorf("❌ Failed to describe connector: %w", err)
+		}
+		connectors = append(connectors, types.ConnectorSummary{
+			ConnectorArn:                     aws.ToString(connector.ConnectorArn),
+			ConnectorName:                    aws.ToString(connector.ConnectorName),
+			ConnectorState:                   string(connector.ConnectorState),
+			CreationTime:                     connector.CreationTime.Format(time.RFC3339),
+			KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
+			KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
+			Capacity:                         *connector.Capacity,
+			Plugins:                          describeConnector.Plugins,
+			ConnectorConfiguration:           describeConnector.ConnectorConfiguration,
+		})
+	}
+
+	return connectors, nil
 }
