@@ -69,7 +69,12 @@ func (d *Discoverer) processRegions(outputDir string) error {
 			Region: region,
 		}
 
-		regionScanner := sr.NewRegionScanner(mskClient, regionScanOpts)
+		mskConnectClient, err := client.NewMSKConnectClient(region)
+		if err != nil {
+			slog.Error("failed to create msk connect client", "region", region, "error", err)
+			continue
+		}
+		regionScanner := sr.NewRegionScanner(mskClient, mskConnectClient, regionScanOpts)
 		regionScanResult, err := regionScanner.ScanRegion(context.Background())
 		if err != nil {
 			slog.Error("failed to scan region", "region", region, "error", err)

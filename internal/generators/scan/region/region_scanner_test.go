@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,19 @@ type MockRegionScannerMSKClient struct {
 	ListKafkaVersionsFunc             func(ctx context.Context, params *kafka.ListKafkaVersionsInput, optFns ...func(*kafka.Options)) (*kafka.ListKafkaVersionsOutput, error)
 	ListReplicatorsFunc               func(ctx context.Context, params *kafka.ListReplicatorsInput, optFns ...func(*kafka.Options)) (*kafka.ListReplicatorsOutput, error)
 	DescribeReplicatorFunc            func(ctx context.Context, params *kafka.DescribeReplicatorInput, optFns ...func(*kafka.Options)) (*kafka.DescribeReplicatorOutput, error)
+}
+
+type MockRegionScannerMSKConnectClient struct {
+	ListConnectorsFunc    func(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error)
+	DescribeConnectorFunc func(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error)
+}
+
+func (m *MockRegionScannerMSKConnectClient) ListConnectors(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+	return m.ListConnectorsFunc(ctx, params, optFns...)
+}
+
+func (m *MockRegionScannerMSKConnectClient) DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+	return m.DescribeConnectorFunc(ctx, params, optFns...)
 }
 
 // MockAuthenticationSummarizer provides a simple mock for testing
@@ -197,7 +211,8 @@ func TestScanner_ListClusters(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			clusters, err := regionScanner.listClusters(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -311,10 +326,19 @@ func TestScanner_Run(t *testing.T) {
 				},
 			}
 
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{
+				ListConnectorsFunc: func(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+					return &kafkaconnect.ListConnectorsOutput{}, nil
+				},
+				DescribeConnectorFunc: func(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+					return &kafkaconnect.DescribeConnectorOutput{}, nil
+				},
+			}
+
 			opts := ScanRegionOpts{
 				Region: tt.region,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			err := regionScanner.Run()
 
 			if tt.wantError != "" {
@@ -515,7 +539,8 @@ func TestScanner_HandlePagination(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			clusters, err := regionScanner.listClusters(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -629,7 +654,8 @@ func TestScanner_HandleVpcConnectionsPagination(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			connections, err := regionScanner.scanVpcConnections(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -748,7 +774,8 @@ func TestScanner_HandleConfigurationsPagination(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			configurations, err := regionScanner.scanConfigurations(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -845,7 +872,8 @@ func TestScanner_HandleKafkaVersionsPagination(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			versions, err := regionScanner.scanKafkaVersions(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -955,7 +983,8 @@ func TestScanner_HandleReplicatorsPagination(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockRegionScannerMSKClient, mockMSKConnectClient, opts)
 			replicators, err := regionScanner.scanReplicators(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -1170,7 +1199,8 @@ func TestScanner_SummariseAuthentication(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(nil, opts) // No client needed for this test
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(nil, mockMSKConnectClient, opts) // No client needed for this test
 			result := regionScanner.authSummarizer.SummariseAuthentication(tt.cluster)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -1239,7 +1269,8 @@ func TestScanner_ListClusters_Simplified(t *testing.T) {
 				},
 			}
 
-			regionScanner := NewRegionScannerWithAuthSummarizer(defaultRegion, mockMSKClient, mockAuthSummarizer)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScannerWithAuthSummarizer(defaultRegion, mockMSKClient, mockMSKConnectClient, mockAuthSummarizer)
 			clusters, err := regionScanner.listClusters(context.Background(), defaultMaxResults)
 
 			if tt.wantError != "" {
@@ -1381,7 +1412,8 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(nil, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(nil, mockMSKConnectClient, opts)
 			result := regionScanner.authSummarizer.SummariseAuthentication(tt.cluster)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -1451,7 +1483,8 @@ func TestScanner_ScanConfigurations_ErrorHandling(t *testing.T) {
 				Region: defaultRegion,
 			}
 
-			regionScanner := NewRegionScanner(mockMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockMSKClient, mockMSKConnectClient, opts)
 			_, err := regionScanner.scanConfigurations(context.Background(), 100)
 
 			if tt.wantError != "" {
@@ -1526,7 +1559,8 @@ func TestScanner_ScanReplicators_ErrorHandling(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockMSKClient, mockMSKConnectClient, opts)
 			_, err := regionScanner.scanReplicators(context.Background(), 100)
 
 			if tt.wantError != "" {
@@ -1656,7 +1690,8 @@ func TestScanner_PublicAccess_EdgeCases(t *testing.T) {
 			opts := ScanRegionOpts{
 				Region: defaultRegion,
 			}
-			regionScanner := NewRegionScanner(mockMSKClient, opts)
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{}
+			regionScanner := NewRegionScanner(mockMSKClient, mockMSKConnectClient, opts)
 			clusters, err := regionScanner.listClusters(context.Background(), 100)
 
 			require.NoError(t, err)

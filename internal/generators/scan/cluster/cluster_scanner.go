@@ -395,6 +395,10 @@ func (cs *ClusterScanner) retrieveClusterConnectors(clusterInfo *types.ClusterIn
 	clusterFile := filepath.Join(clusterInfo.GetRegionDirPath(), fmt.Sprintf("%s-region-scan.json", cs.region))
 	file, err := os.ReadFile(clusterFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			slog.Warn(fmt.Sprintf("⚠️ Region scan file not found, skipping connector retrieval for cluster %s", aws.ToString(clusterInfo.Cluster.ClusterName)))
+			return []types.ConnectorSummary{}, nil
+		}
 		return nil, fmt.Errorf("❌ Failed to read cluster file: %v", err)
 	}
 

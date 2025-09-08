@@ -8,11 +8,10 @@ import (
 	"time"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
-	"github.com/confluentinc/kcp/internal/client"
-	mskConnect "github.com/confluentinc/kcp/internal/services/msk_connect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -100,30 +99,38 @@ type RegionScannerMSKClient interface {
 	DescribeReplicator(ctx context.Context, params *kafka.DescribeReplicatorInput, optFns ...func(*kafka.Options)) (*kafka.DescribeReplicatorOutput, error)
 }
 
+type RegionScannerMSKConnectClient interface {
+	ListConnectors(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error)
+	DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error)
+}
+
 type ScanRegionOpts struct {
 	Region string
 }
 
 type RegionScanner struct {
-	region         string
-	mskClient      RegionScannerMSKClient
-	authSummarizer AuthenticationSummarizer
+	region           string
+	mskClient        RegionScannerMSKClient
+	mskConnectClient RegionScannerMSKConnectClient
+	authSummarizer   AuthenticationSummarizer
 }
 
-func NewRegionScanner(mskClient RegionScannerMSKClient, opts ScanRegionOpts) *RegionScanner {
+func NewRegionScanner(mskClient RegionScannerMSKClient, mskConnectClient RegionScannerMSKConnectClient, opts ScanRegionOpts) *RegionScanner {
 	return &RegionScanner{
-		region:         opts.Region,
-		mskClient:      mskClient,
-		authSummarizer: &DefaultAuthenticationSummarizer{},
+		region:           opts.Region,
+		mskClient:        mskClient,
+		mskConnectClient: mskConnectClient,
+		authSummarizer:   &DefaultAuthenticationSummarizer{},
 	}
 }
 
 // NewRegionScannerWithAuthSummarizer creates a RegionScanner with a custom AuthenticationSummarizer (useful for testing)
-func NewRegionScannerWithAuthSummarizer(region string, mskClient RegionScannerMSKClient, authSummarizer AuthenticationSummarizer) *RegionScanner {
+func NewRegionScannerWithAuthSummarizer(region string, mskClient RegionScannerMSKClient, mskConnectClient RegionScannerMSKConnectClient, authSummarizer AuthenticationSummarizer) *RegionScanner {
 	return &RegionScanner{
-		region:         region,
-		mskClient:      mskClient,
-		authSummarizer: authSummarizer,
+		region:           region,
+		mskClient:        mskClient,
+		mskConnectClient: mskConnectClient,
+		authSummarizer:   authSummarizer,
 	}
 }
 
@@ -377,20 +384,15 @@ func (rs *RegionScanner) scanConnectors(ctx context.Context) ([]types.ConnectorS
 	slog.Info("🔍 scanning for connectors", "region", rs.region)
 	var connectors []types.ConnectorSummary
 
-	mskConnectClient, err := client.NewMSKConnectClient(rs.region)
-	if err != nil {
-		slog.Error("❌ Failed to create msk connect client", "region", rs.region, "error", err)
-		return nil, fmt.Errorf("❌ Failed to create msk connect client: %w", err)
-	}
-
-	mskConnectService := mskConnect.NewMSKConnectService(mskConnectClient)
-	mskConnectResult, err := mskConnectService.ListConnectors(ctx, nil)
+	mskConnectResult, err := rs.mskConnectClient.ListConnectors(ctx, &kafkaconnect.ListConnectorsInput{})
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to list connectors: %w", err)
 	}
 
 	for _, connector := range mskConnectResult.Connectors {
-		describeConnector, err := mskConnectService.DescribeConnector(ctx, connector.ConnectorArn)
+		describeConnector, err := rs.mskConnectClient.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
+			ConnectorArn: connector.ConnectorArn,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("❌ Failed to describe connector: %w", err)
 		}
