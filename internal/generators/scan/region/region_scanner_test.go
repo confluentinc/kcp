@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
+	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1697,6 +1698,319 @@ func TestScanner_PublicAccess_EdgeCases(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, clusters, 1)
 			assert.Equal(t, tt.expectedAccess, clusters[0].PublicAccess)
+		})
+	}
+}
+
+func TestScanner_ScanConnectors(t *testing.T) {
+	tests := []struct {
+		name                    string
+		mockConnectors          []kafkaconnecttypes.ConnectorSummary
+		mockDescribeResponses   map[string]*kafkaconnect.DescribeConnectorOutput
+		listConnectorsError     error
+		describeConnectorError  error
+		wantConnectorCount      int
+		wantError               string
+		expectDescribeCallCount int
+	}{
+		{
+			name: "successfully scans connectors",
+			mockConnectors: []kafkaconnecttypes.ConnectorSummary{
+				{
+					ConnectorArn:   aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:connector/test-connector-1"),
+					ConnectorName:  aws.String("test-connector-1"),
+					ConnectorState: "RUNNING",
+					CreationTime:   aws.Time(time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)),
+					KafkaCluster: &kafkaconnecttypes.KafkaClusterDescription{
+						ApacheKafkaCluster: &kafkaconnecttypes.ApacheKafkaClusterDescription{
+							BootstrapServers: aws.String("broker1:9092,broker2:9092"),
+						},
+					},
+					KafkaClusterClientAuthentication: &kafkaconnecttypes.KafkaClusterClientAuthenticationDescription{
+						AuthenticationType: "IAM",
+					},
+					Capacity: &kafkaconnecttypes.CapacityDescription{
+						AutoScaling: &kafkaconnecttypes.AutoScalingDescription{
+							MaxWorkerCount: 10,
+							MinWorkerCount: 1,
+						},
+					},
+				},
+				{
+					ConnectorArn:   aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:connector/test-connector-2"),
+					ConnectorName:  aws.String("test-connector-2"),
+					ConnectorState: "FAILED",
+					CreationTime:   aws.Time(time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC)),
+					KafkaCluster: &kafkaconnecttypes.KafkaClusterDescription{
+						ApacheKafkaCluster: &kafkaconnecttypes.ApacheKafkaClusterDescription{
+							BootstrapServers: aws.String("broker3:9092"),
+						},
+					},
+					KafkaClusterClientAuthentication: &kafkaconnecttypes.KafkaClusterClientAuthenticationDescription{
+						AuthenticationType: "SASL_SCRAM",
+					},
+					Capacity: &kafkaconnecttypes.CapacityDescription{
+						ProvisionedCapacity: &kafkaconnecttypes.ProvisionedCapacityDescription{
+							WorkerCount: 2,
+						},
+					},
+				},
+			},
+			mockDescribeResponses: map[string]*kafkaconnect.DescribeConnectorOutput{
+				"arn:aws:kafkaconnect:us-west-2:123456789012:connector/test-connector-1": {
+					ConnectorArn:  aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:connector/test-connector-1"),
+					ConnectorName: aws.String("test-connector-1"),
+					Plugins: []kafkaconnecttypes.PluginDescription{
+						{
+							CustomPlugin: &kafkaconnecttypes.CustomPluginDescription{
+								CustomPluginArn: aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:custom-plugin/my-plugin"),
+							},
+						},
+					},
+					ConnectorConfiguration: map[string]string{
+						"connector.class": "io.confluent.connect.s3.S3SinkConnector",
+						"tasks.max":       "1",
+					},
+				},
+				"arn:aws:kafkaconnect:us-west-2:123456789012:connector/test-connector-2": {
+					ConnectorArn:  aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:connector/test-connector-2"),
+					ConnectorName: aws.String("test-connector-2"),
+					Plugins: []kafkaconnecttypes.PluginDescription{
+						{
+							CustomPlugin: &kafkaconnecttypes.CustomPluginDescription{
+								CustomPluginArn: aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:custom-plugin/another-plugin"),
+							},
+						},
+					},
+					ConnectorConfiguration: map[string]string{
+						"connector.class": "org.apache.kafka.connect.file.FileStreamSourceConnector",
+						"tasks.max":       "2",
+					},
+				},
+			},
+			wantConnectorCount:      2,
+			expectDescribeCallCount: 2,
+		},
+		{
+			name:                    "handles empty connector list",
+			mockConnectors:          []kafkaconnecttypes.ConnectorSummary{},
+			wantConnectorCount:      0,
+			expectDescribeCallCount: 0,
+		},
+		{
+			name:                "handles ListConnectors error",
+			listConnectorsError: errors.New("failed to list connectors"),
+			wantError:           "❌ Failed to list connectors: failed to list connectors",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			describeCallCount := 0
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{
+				ListConnectorsFunc: func(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+					if tt.listConnectorsError != nil {
+						return nil, tt.listConnectorsError
+					}
+					return &kafkaconnect.ListConnectorsOutput{
+						Connectors: tt.mockConnectors,
+					}, nil
+				},
+				DescribeConnectorFunc: func(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+					describeCallCount++
+					if tt.describeConnectorError != nil {
+						return nil, tt.describeConnectorError
+					}
+					if tt.mockDescribeResponses != nil {
+						if response, exists := tt.mockDescribeResponses[*params.ConnectorArn]; exists {
+							return response, nil
+						}
+					}
+					return &kafkaconnect.DescribeConnectorOutput{
+						ConnectorArn:  params.ConnectorArn,
+						ConnectorName: aws.String("default-connector"),
+					}, nil
+				},
+			}
+
+			opts := ScanRegionOpts{
+				Region: defaultRegion,
+			}
+			regionScanner := NewRegionScanner(nil, mockMSKConnectClient, opts)
+			connectors, err := regionScanner.scanConnectors(context.Background())
+
+			if tt.wantError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantError)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantConnectorCount, len(connectors))
+			assert.Equal(t, tt.expectDescribeCallCount, describeCallCount)
+
+			// Verify connector data mapping for successful cases
+			if tt.wantConnectorCount > 0 && len(tt.mockConnectors) > 0 {
+				for i, expectedConnector := range tt.mockConnectors {
+					if i < len(connectors) {
+						actualConnector := connectors[i]
+						assert.Equal(t, aws.ToString(expectedConnector.ConnectorArn), actualConnector.ConnectorArn)
+						assert.Equal(t, aws.ToString(expectedConnector.ConnectorName), actualConnector.ConnectorName)
+						assert.Equal(t, string(expectedConnector.ConnectorState), actualConnector.ConnectorState)
+						assert.Equal(t, expectedConnector.CreationTime.Format(time.RFC3339), actualConnector.CreationTime)
+
+						// Verify Kafka cluster details
+						if expectedConnector.KafkaCluster != nil && expectedConnector.KafkaCluster.ApacheKafkaCluster != nil {
+							assert.Equal(t, *expectedConnector.KafkaCluster.ApacheKafkaCluster, actualConnector.KafkaCluster)
+						}
+
+						// Verify authentication details
+						if expectedConnector.KafkaClusterClientAuthentication != nil {
+							assert.Equal(t, *expectedConnector.KafkaClusterClientAuthentication, actualConnector.KafkaClusterClientAuthentication)
+						}
+
+						// Verify capacity details
+						if expectedConnector.Capacity != nil {
+							assert.Equal(t, *expectedConnector.Capacity, actualConnector.Capacity)
+						}
+
+						// Verify plugin and configuration details from DescribeConnector
+						if tt.mockDescribeResponses != nil {
+							if expectedDescribe, exists := tt.mockDescribeResponses[aws.ToString(expectedConnector.ConnectorArn)]; exists {
+								if expectedDescribe.Plugins != nil {
+									assert.Equal(t, expectedDescribe.Plugins, actualConnector.Plugins)
+								}
+								if expectedDescribe.ConnectorConfiguration != nil {
+									assert.Equal(t, expectedDescribe.ConnectorConfiguration, actualConnector.ConnectorConfiguration)
+								}
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestScanner_ScanConnectors_Integration(t *testing.T) {
+	tests := []struct {
+		name               string
+		mockConnectors     []kafkaconnecttypes.ConnectorSummary
+		mockDescribeOutput *kafkaconnect.DescribeConnectorOutput
+		wantConnectorCount int
+	}{
+		{
+			name: "integration test with realistic connector data",
+			mockConnectors: []kafkaconnecttypes.ConnectorSummary{
+				{
+					ConnectorArn:   aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:connector/s3-sink-connector"),
+					ConnectorName:  aws.String("s3-sink-connector"),
+					ConnectorState: "RUNNING",
+					CreationTime:   aws.Time(time.Now()),
+					KafkaCluster: &kafkaconnecttypes.KafkaClusterDescription{
+						ApacheKafkaCluster: &kafkaconnecttypes.ApacheKafkaClusterDescription{
+							BootstrapServers: aws.String("b-1.mycluster.abc123.c2.kafka.us-west-2.amazonaws.com:9092"),
+						},
+					},
+					KafkaClusterClientAuthentication: &kafkaconnecttypes.KafkaClusterClientAuthenticationDescription{
+						AuthenticationType: "IAM",
+					},
+					Capacity: &kafkaconnecttypes.CapacityDescription{
+						AutoScaling: &kafkaconnecttypes.AutoScalingDescription{
+							MaxWorkerCount: 10,
+							MinWorkerCount: 1,
+							ScaleInPolicy: &kafkaconnecttypes.ScaleInPolicyDescription{
+								CpuUtilizationPercentage: 20,
+							},
+							ScaleOutPolicy: &kafkaconnecttypes.ScaleOutPolicyDescription{
+								CpuUtilizationPercentage: 80,
+							},
+						},
+					},
+				},
+			},
+			mockDescribeOutput: &kafkaconnect.DescribeConnectorOutput{
+				ConnectorArn:  aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:connector/s3-sink-connector"),
+				ConnectorName: aws.String("s3-sink-connector"),
+				Plugins: []kafkaconnecttypes.PluginDescription{
+					{
+						CustomPlugin: &kafkaconnecttypes.CustomPluginDescription{
+							CustomPluginArn: aws.String("arn:aws:kafkaconnect:us-west-2:123456789012:custom-plugin/confluent-s3-sink"),
+							Revision:        1,
+						},
+					},
+				},
+				ConnectorConfiguration: map[string]string{
+					"connector.class":        "io.confluent.connect.s3.S3SinkConnector",
+					"tasks.max":              "4",
+					"topics":                 "orders,payments,inventory",
+					"s3.bucket.name":         "my-kafka-data-bucket",
+					"s3.region":              "us-west-2",
+					"flush.size":             "1000",
+					"rotate.interval.ms":     "60000",
+					"storage.class":          "io.confluent.connect.s3.storage.S3Storage",
+					"format.class":           "io.confluent.connect.s3.format.avro.AvroFormat",
+					"schema.generator.class": "io.confluent.connect.storage.hive.schema.DefaultSchemaGenerator",
+					"partitioner.class":      "io.confluent.connect.storage.partitioner.DefaultPartitioner",
+					"schema.compatibility":   "NONE",
+				},
+			},
+			wantConnectorCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockMSKConnectClient := &MockRegionScannerMSKConnectClient{
+				ListConnectorsFunc: func(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+					return &kafkaconnect.ListConnectorsOutput{
+						Connectors: tt.mockConnectors,
+					}, nil
+				},
+				DescribeConnectorFunc: func(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+					return tt.mockDescribeOutput, nil
+				},
+			}
+
+			opts := ScanRegionOpts{
+				Region: defaultRegion,
+			}
+			regionScanner := NewRegionScanner(nil, mockMSKConnectClient, opts)
+			connectors, err := regionScanner.scanConnectors(context.Background())
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantConnectorCount, len(connectors))
+
+			if len(connectors) > 0 {
+				connector := connectors[0]
+
+				// Verify basic connector properties
+				assert.Equal(t, "arn:aws:kafkaconnect:us-west-2:123456789012:connector/s3-sink-connector", connector.ConnectorArn)
+				assert.Equal(t, "s3-sink-connector", connector.ConnectorName)
+				assert.Equal(t, "RUNNING", connector.ConnectorState)
+				assert.NotEmpty(t, connector.CreationTime)
+
+				// Verify Kafka cluster configuration
+				assert.Equal(t, "b-1.mycluster.abc123.c2.kafka.us-west-2.amazonaws.com:9092", aws.ToString(connector.KafkaCluster.BootstrapServers))
+
+				// Verify authentication
+				assert.Equal(t, "IAM", connector.KafkaClusterClientAuthentication.AuthenticationType)
+
+				// Verify capacity configuration
+				assert.NotNil(t, connector.Capacity.AutoScaling)
+				assert.Equal(t, int32(10), connector.Capacity.AutoScaling.MaxWorkerCount)
+				assert.Equal(t, int32(1), connector.Capacity.AutoScaling.MinWorkerCount)
+
+				// Verify plugin configuration
+				assert.Len(t, connector.Plugins, 1)
+				assert.Equal(t, "arn:aws:kafkaconnect:us-west-2:123456789012:custom-plugin/confluent-s3-sink", aws.ToString(connector.Plugins[0].CustomPlugin.CustomPluginArn))
+
+				// Verify connector configuration
+				assert.Equal(t, "io.confluent.connect.s3.S3SinkConnector", connector.ConnectorConfiguration["connector.class"])
+				assert.Equal(t, "4", connector.ConnectorConfiguration["tasks.max"])
+				assert.Equal(t, "orders,payments,inventory", connector.ConnectorConfiguration["topics"])
+				assert.Equal(t, "my-kafka-data-bucket", connector.ConnectorConfiguration["s3.bucket.name"])
+			}
 		})
 	}
 }
