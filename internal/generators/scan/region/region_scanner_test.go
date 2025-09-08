@@ -1727,7 +1727,7 @@ func TestScanner_ScanConnectors(t *testing.T) {
 						},
 					},
 					KafkaClusterClientAuthentication: &kafkaconnecttypes.KafkaClusterClientAuthenticationDescription{
-						AuthenticationType: "IAM",
+						AuthenticationType: kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam,
 					},
 					Capacity: &kafkaconnecttypes.CapacityDescription{
 						AutoScaling: &kafkaconnecttypes.AutoScalingDescription{
@@ -1747,7 +1747,7 @@ func TestScanner_ScanConnectors(t *testing.T) {
 						},
 					},
 					KafkaClusterClientAuthentication: &kafkaconnecttypes.KafkaClusterClientAuthenticationDescription{
-						AuthenticationType: "SASL_SCRAM",
+						AuthenticationType: kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam,
 					},
 					Capacity: &kafkaconnecttypes.CapacityDescription{
 						ProvisionedCapacity: &kafkaconnecttypes.ProvisionedCapacityDescription{
@@ -1913,7 +1913,7 @@ func TestScanner_ScanConnectors_Integration(t *testing.T) {
 						},
 					},
 					KafkaClusterClientAuthentication: &kafkaconnecttypes.KafkaClusterClientAuthenticationDescription{
-						AuthenticationType: "IAM",
+						AuthenticationType: kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam,
 					},
 					Capacity: &kafkaconnecttypes.CapacityDescription{
 						AutoScaling: &kafkaconnecttypes.AutoScalingDescription{
@@ -1994,7 +1994,7 @@ func TestScanner_ScanConnectors_Integration(t *testing.T) {
 				assert.Equal(t, "b-1.mycluster.abc123.c2.kafka.us-west-2.amazonaws.com:9092", aws.ToString(connector.KafkaCluster.BootstrapServers))
 
 				// Verify authentication
-				assert.Equal(t, "IAM", connector.KafkaClusterClientAuthentication.AuthenticationType)
+				assert.Equal(t, string(kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam), string(connector.KafkaClusterClientAuthentication.AuthenticationType))
 
 				// Verify capacity configuration
 				assert.NotNil(t, connector.Capacity.AutoScaling)
