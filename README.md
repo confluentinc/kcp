@@ -53,23 +53,7 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 
 ## Installation
 
-### Build/Install from Source
-
-> [!TIP]
-> Make sure you have Go 1.24+ installed before building from source
-
-```bash
-# Clone the repository
-git clone https://github.com/confluentinc/kcp.git
-cd kcp
-
-# Install to system path (requires sudo)
-make install
-```
-
-#### Installing from GitHub Releases
-
-You can also download kcp from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). We provide support for Linux and Darwin arm64/amd64 systems respectively.
+You can download kcp from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). We provide support for Linux and Darwin arm64/amd64 systems respectively.
 
 Once downloaded, make sure to set the binary permissions to executable by running `chmod +x <binary name>`.
 
@@ -1298,6 +1282,15 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 - Go 1.24+
 - Make
+
+```bash
+# Clone the repository
+git clone https://github.com/confluentinc/kcp.git
+cd kcp
+
+# Install to system path (requires sudo)
+make install
+```
 
 ### Build Commands
 
