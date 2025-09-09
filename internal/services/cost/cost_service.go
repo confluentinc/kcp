@@ -35,7 +35,9 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 		endStr = aws.String(endDate.Format("2006-01-02T00:00:00Z"))
 	}
 
-	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, tags)
+	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
+
+	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags)
 
 	output, err := cs.client.GetCostAndUsage(context.Background(), input)
 	if err != nil {
@@ -50,11 +52,12 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 		EndDate:     endDate,
 		Granularity: string(granularity),
 		Tags:        tags,
+		Services:    services,
 	}
 	return regionCosts, nil
 }
 
-func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
+func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
 	filter := &costexplorertypes.Expression{
 		And: []costexplorertypes.Expression{
 			{
@@ -66,7 +69,7 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 			{
 				Dimensions: &costexplorertypes.DimensionValues{
 					Key:    costexplorertypes.DimensionService,
-					Values: []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"},
+					Values: services,
 				},
 			},
 		},
