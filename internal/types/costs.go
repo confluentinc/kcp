@@ -47,17 +47,24 @@ func (c *RegionCosts) GetCSVPath() string {
 }
 
 func (c *RegionCosts) GetDirPath() string {
-	return filepath.Join("kcp-scan", c.Region)
+	return c.GetDirPathWithBase("kcp-scan")
+}
+
+func (c *RegionCosts) GetDirPathWithBase(baseDir string) string {
+	return filepath.Join(baseDir, c.Region)
 }
 
 func (c *RegionCosts) WriteAsJson() error {
+	return c.WriteAsJsonWithBase("kcp-scan")
+}
 
-	dirPath := c.GetDirPath()
+func (c *RegionCosts) WriteAsJsonWithBase(baseDir string) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetJsonPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-cost-report.json", c.Region))
 
 	data, err := c.AsJson()
 	if err != nil {
@@ -80,12 +87,16 @@ func (c *RegionCosts) AsJson() ([]byte, error) {
 }
 
 func (c *RegionCosts) WriteAsMarkdown(suppressToTerminal bool) error {
-	dirPath := c.GetDirPath()
+	return c.WriteAsMarkdownWithBase("kcp-scan", suppressToTerminal)
+}
+
+func (c *RegionCosts) WriteAsMarkdownWithBase(baseDir string, suppressToTerminal bool) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetMarkdownPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-cost-report.md", c.Region))
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
@@ -290,13 +301,16 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 }
 
 func (c *RegionCosts) WriteAsCSV() error {
+	return c.WriteAsCSVWithBase("kcp-scan")
+}
 
-	dirPath := c.GetDirPath()
+func (c *RegionCosts) WriteAsCSVWithBase(baseDir string) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetCSVPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-cost-report.csv", c.Region))
 
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -315,5 +329,4 @@ func (c *RegionCosts) WriteAsCSV() error {
 		}
 	}
 	return nil
-
 }

@@ -68,7 +68,6 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 }
 
 func runScanClusters(cmd *cobra.Command, args []string) error {
-
 	credsFile, errs := types.NewCredentials(credentialsYaml)
 	if len(errs) > 0 {
 		errMsg := "Failed to parse credentials file:"
