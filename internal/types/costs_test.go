@@ -53,19 +53,18 @@ func TestRegionCosts_AsJson(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-02T00:00:00Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            25.50,
 							UsageType:       "MSK-BrokerInstance",
 						},
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-02T00:00:00Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            12.75,
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 38.25,
 				},
 			},
 			wantErr: false,
@@ -76,7 +75,6 @@ func TestRegionCosts_AsJson(t *testing.T) {
 				assert.Equal(t, "us-west-2", unmarshaled.Region)
 				assert.Equal(t, "DAILY", unmarshaled.Granularity)
 				assert.Len(t, unmarshaled.CostData.Costs, 2)
-				assert.Equal(t, 38.25, unmarshaled.CostData.Total)
 				assert.Len(t, unmarshaled.Tags, 2)
 			},
 		},
@@ -97,12 +95,11 @@ func TestRegionCosts_AsJson(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            150.00,
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 150.00,
 				},
 			},
 			wantErr: false,
@@ -159,12 +156,11 @@ func TestRegionCosts_WriteAsJson(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            100.00,
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 100.00,
 				},
 			},
 			wantErr: false,
@@ -234,7 +230,6 @@ func TestRegionCosts_AsMarkdown(t *testing.T) {
 				Tags:        map[string][]string{},
 				CostData: CostData{
 					Costs: []Cost{},
-					Total: 0.0,
 				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -257,19 +252,18 @@ func TestRegionCosts_AsMarkdown(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-02T00:00:00Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            25.50,
 							UsageType:       "MSK-BrokerInstance",
 						},
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-02T00:00:00Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            12.75,
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 38.25,
 				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -292,26 +286,25 @@ func TestRegionCosts_AsMarkdown(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            150.00,
 							UsageType:       "MSK-BrokerInstance",
 						},
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonEC2",
+							Service:         "EC2 - Other",
 							Cost:            75.00,
 							UsageType:       "EC2-Instance",
 						},
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            50.00,
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 275.00,
 				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -354,12 +347,11 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            100.00,
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 100.00,
 				},
 			},
 			wantErr: false,
@@ -404,7 +396,7 @@ func TestRegionCosts_WriteAsMarkdown(t *testing.T) {
 			fileData, err := os.ReadFile(expectedPath)
 			require.NoError(t, err)
 			content := string(fileData)
-			assert.Contains(t, content, "# AWS MSK Cost Report")
+			assert.Contains(t, content, "# AWS Service Cost Report for Region")
 			assert.Contains(t, content, tt.costs.Region)
 		})
 	}
@@ -426,12 +418,12 @@ func TestRegionCosts_AsCSVRecords(t *testing.T) {
 				Tags:        map[string][]string{},
 				CostData: CostData{
 					Costs: []Cost{},
-					Total: 0.0,
 				},
 			},
 			validate: func(t *testing.T, records [][]string) {
 				assert.NotNil(t, records)
-				assert.True(t, len(records) >= 5) // SUMMARY, header, empty rows, DETAILED BREAKDOWN, header
+				assert.True(t, len(records) >= 1) // header row
+				assert.Equal(t, "Time Period Start", records[0][0])
 			},
 		},
 		{
@@ -447,41 +439,37 @@ func TestRegionCosts_AsCSVRecords(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-02T00:00:00Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            25.50,
 							UsageType:       "MSK-BrokerInstance",
 						},
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-02T00:00:00Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            12.75,
 							UsageType:       "MSK-Storage",
 						},
 					},
-					Total: 38.25,
 				},
 			},
 			validate: func(t *testing.T, records [][]string) {
 				assert.NotNil(t, records)
-				// Should have: SUMMARY, header, 2 cost rows, 1 service total, 1 grand total, empty rows, DETAILED BREAKDOWN, header, 2 cost rows
-				assert.True(t, len(records) >= 10)
+				// Should have: header + 2 cost rows
+				assert.True(t, len(records) >= 3)
 
-				// Check summary section
-				assert.Equal(t, "SUMMARY", records[0][0])
-				assert.Equal(t, "Service", records[1][0])
-				assert.Equal(t, "Usage Type", records[1][1])
-				assert.Equal(t, "Total Cost (USD)", records[1][2])
+				// Check header
+				assert.Equal(t, "Time Period Start", records[0][0])
+				assert.Equal(t, "Time Period End", records[0][1])
+				assert.Equal(t, "Service", records[0][2])
+				assert.Equal(t, "Usage Type", records[0][3])
+				assert.Equal(t, "Cost (USD)", records[0][4])
 
-				// Check detailed breakdown section
-				foundDetailedBreakdown := false
-				for _, record := range records {
-					if len(record) > 0 && record[0] == "DETAILED BREAKDOWN" {
-						foundDetailedBreakdown = true
-						break
-					}
-				}
-				assert.True(t, foundDetailedBreakdown)
+				// Check data rows
+				assert.Equal(t, "2023-01-01T00:00:00Z", records[1][0])
+				assert.Equal(t, "2023-01-02T00:00:00Z", records[1][1])
+				assert.Equal(t, "Amazon Managed Streaming for Apache Kafka", records[1][2])
+				assert.Equal(t, "MSK-BrokerInstance", records[1][3])
 			},
 		},
 		{
@@ -497,34 +485,47 @@ func TestRegionCosts_AsCSVRecords(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            150.00,
 							UsageType:       "MSK-BrokerInstance",
 						},
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonEC2",
+							Service:         "EC2 - Other",
 							Cost:            75.00,
 							UsageType:       "EC2-Instance",
 						},
 					},
-					Total: 225.00,
 				},
 			},
 			validate: func(t *testing.T, records [][]string) {
 				assert.NotNil(t, records)
-				assert.True(t, len(records) >= 10)
+				// Should have: header + 2 cost rows
+				assert.True(t, len(records) >= 3)
 
-				// Check that we have service totals
-				foundServiceTotal := false
-				for _, record := range records {
-					if len(record) >= 2 && record[1] == "TOTAL" {
-						foundServiceTotal = true
-						break
+				// Check header
+				assert.Equal(t, "Time Period Start", records[0][0])
+				assert.Equal(t, "Time Period End", records[0][1])
+				assert.Equal(t, "Service", records[0][2])
+				assert.Equal(t, "Usage Type", records[0][3])
+				assert.Equal(t, "Cost (USD)", records[0][4])
+
+				// Check that we have the expected services
+				foundAmazonMSK := false
+				foundEC2Other := false
+				for _, record := range records[1:] { // Skip header
+					if len(record) >= 3 {
+						if record[2] == "Amazon Managed Streaming for Apache Kafka" {
+							foundAmazonMSK = true
+						}
+						if record[2] == "EC2 - Other" {
+							foundEC2Other = true
+						}
 					}
 				}
-				assert.True(t, foundServiceTotal)
+				assert.True(t, foundAmazonMSK)
+				assert.True(t, foundEC2Other)
 			},
 		},
 	}
@@ -563,12 +564,11 @@ func TestRegionCosts_WriteAsCSV(t *testing.T) {
 						{
 							TimePeriodStart: "2023-01-01T00:00:00Z",
 							TimePeriodEnd:   "2023-01-31T23:59:59Z",
-							Service:         "AmazonMSK",
+							Service:         "Amazon Managed Streaming for Apache Kafka",
 							Cost:            100.00,
 							UsageType:       "MSK-BrokerInstance",
 						},
 					},
-					Total: 100.00,
 				},
 			},
 			wantErr: false,
@@ -618,7 +618,7 @@ func TestRegionCosts_WriteAsCSV(t *testing.T) {
 			records, err := reader.ReadAll()
 			require.NoError(t, err)
 			assert.True(t, len(records) > 0)
-			assert.Equal(t, "SUMMARY", records[0][0])
+			assert.Equal(t, "Time Period Start", records[0][0])
 		})
 	}
 }
@@ -643,26 +643,25 @@ func TestRegionCosts_Integration(t *testing.T) {
 				{
 					TimePeriodStart: "2023-01-01T00:00:00Z",
 					TimePeriodEnd:   "2023-01-31T23:59:59Z",
-					Service:         "AmazonMSK",
+					Service:         "Amazon Managed Streaming for Apache Kafka",
 					Cost:            150.00,
 					UsageType:       "MSK-BrokerInstance",
 				},
 				{
 					TimePeriodStart: "2023-01-01T00:00:00Z",
 					TimePeriodEnd:   "2023-01-31T23:59:59Z",
-					Service:         "AmazonMSK",
+					Service:         "Amazon Managed Streaming for Apache Kafka",
 					Cost:            50.00,
 					UsageType:       "MSK-Storage",
 				},
 				{
 					TimePeriodStart: "2023-01-01T00:00:00Z",
 					TimePeriodEnd:   "2023-01-31T23:59:59Z",
-					Service:         "AmazonEC2",
+					Service:         "EC2 - Other",
 					Cost:            75.00,
 					UsageType:       "EC2-Instance",
 				},
 			},
-			Total: 275.00,
 		},
 	}
 
@@ -679,7 +678,6 @@ func TestRegionCosts_Integration(t *testing.T) {
 		assert.Equal(t, costs.Region, unmarshaled.Region)
 		assert.Equal(t, costs.Granularity, unmarshaled.Granularity)
 		assert.Len(t, unmarshaled.CostData.Costs, 3)
-		assert.Equal(t, costs.CostData.Total, unmarshaled.CostData.Total)
 		assert.Len(t, unmarshaled.Tags, 3)
 	})
 
@@ -732,9 +730,9 @@ func TestRegionCosts_Integration(t *testing.T) {
 		fileData, err := os.ReadFile(expectedPath)
 		require.NoError(t, err)
 		content := string(fileData)
-		assert.Contains(t, content, "# AWS MSK Cost Report")
+		assert.Contains(t, content, "# AWS Service Cost Report for Region")
 		assert.Contains(t, content, "us-east-1")
-		assert.Contains(t, content, "AmazonMSK")
+		assert.Contains(t, content, "Amazon Managed Streaming for Apache Kafka")
 	})
 
 	// Test CSV generation
@@ -772,17 +770,11 @@ func TestRegionCosts_Integration(t *testing.T) {
 		records, err := reader.ReadAll()
 		require.NoError(t, err)
 		assert.True(t, len(records) > 0)
-		assert.Equal(t, "SUMMARY", records[0][0])
-
-		// Find DETAILED BREAKDOWN section
-		foundDetailedBreakdown := false
-		for _, record := range records {
-			if len(record) > 0 && record[0] == "DETAILED BREAKDOWN" {
-				foundDetailedBreakdown = true
-				break
-			}
-		}
-		assert.True(t, foundDetailedBreakdown)
+		assert.Equal(t, "Time Period Start", records[0][0])
+		assert.Equal(t, "Time Period End", records[0][1])
+		assert.Equal(t, "Service", records[0][2])
+		assert.Equal(t, "Usage Type", records[0][3])
+		assert.Equal(t, "Cost (USD)", records[0][4])
 	})
 }
 
@@ -790,14 +782,14 @@ func TestCost_Struct(t *testing.T) {
 	cost := Cost{
 		TimePeriodStart: "2023-01-01T00:00:00Z",
 		TimePeriodEnd:   "2023-01-31T23:59:59Z",
-		Service:         "AmazonMSK",
+		Service:         "Amazon Managed Streaming for Apache Kafka",
 		Cost:            150.00,
 		UsageType:       "MSK-BrokerInstance",
 	}
 
 	assert.Equal(t, "2023-01-01T00:00:00Z", cost.TimePeriodStart)
 	assert.Equal(t, "2023-01-31T23:59:59Z", cost.TimePeriodEnd)
-	assert.Equal(t, "AmazonMSK", cost.Service)
+	assert.Equal(t, "Amazon Managed Streaming for Apache Kafka", cost.Service)
 	assert.Equal(t, 150.00, cost.Cost)
 	assert.Equal(t, "MSK-BrokerInstance", cost.UsageType)
 }
@@ -808,15 +800,101 @@ func TestCostData_Struct(t *testing.T) {
 			{
 				TimePeriodStart: "2023-01-01T00:00:00Z",
 				TimePeriodEnd:   "2023-01-31T23:59:59Z",
-				Service:         "AmazonMSK",
+				Service:         "Amazon Managed Streaming for Apache Kafka",
 				Cost:            150.00,
 				UsageType:       "MSK-BrokerInstance",
 			},
 		},
-		Total: 150.00,
 	}
 
 	assert.Len(t, costData.Costs, 1)
-	assert.Equal(t, 150.00, costData.Total)
-	assert.Equal(t, "AmazonMSK", costData.Costs[0].Service)
+	assert.Equal(t, "Amazon Managed Streaming for Apache Kafka", costData.Costs[0].Service)
+}
+
+func TestRegionCosts_AsCSVRecords_IncludesZeroCosts(t *testing.T) {
+	costs := &RegionCosts{
+		Region:      "us-east-1",
+		StartDate:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		EndDate:     time.Date(2023, 1, 31, 23, 59, 59, 0, time.UTC),
+		Granularity: "MONTHLY",
+		Tags:        map[string][]string{},
+		CostData: CostData{
+			Costs: []Cost{
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "Amazon Managed Streaming for Apache Kafka",
+					Cost:            150.00,
+					UsageType:       "MSK-BrokerInstance",
+				},
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "Amazon Managed Streaming for Apache Kafka",
+					Cost:            0.00,
+					UsageType:       "MSK-Storage",
+				},
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "EC2 - Other",
+					Cost:            75.00,
+					UsageType:       "EC2-Instance",
+				},
+				{
+					TimePeriodStart: "2023-01-01T00:00:00Z",
+					TimePeriodEnd:   "2023-01-31T23:59:59Z",
+					Service:         "EC2 - Other",
+					Cost:            0.00,
+					UsageType:       "EC2-Storage",
+				},
+			},
+		},
+	}
+
+	records := costs.AsCSVRecords()
+	assert.NotNil(t, records)
+
+	// Check header
+	assert.Equal(t, "Time Period Start", records[0][0])
+	assert.Equal(t, "Time Period End", records[0][1])
+	assert.Equal(t, "Service", records[0][2])
+	assert.Equal(t, "Usage Type", records[0][3])
+	assert.Equal(t, "Cost (USD)", records[0][4])
+
+	// Check that zero-cost usage types are omitted from CSV output
+	// We should see MSK-BrokerInstance and EC2-Instance but NOT MSK-Storage or EC2-Storage
+	foundMSKBroker := false
+	foundEC2Instance := false
+	foundMSKStorage := false
+	foundEC2Storage := false
+
+	for i := 1; i < len(records); i++ { // Skip header row
+		record := records[i]
+		if len(record) >= 5 {
+			service := record[2]
+			usageType := record[3]
+			cost := record[4]
+
+			if service == "Amazon Managed Streaming for Apache Kafka" && usageType == "MSK-BrokerInstance" {
+				foundMSKBroker = true
+				assert.Equal(t, "150.00", cost)
+			}
+			if service == "EC2 - Other" && usageType == "EC2-Instance" {
+				foundEC2Instance = true
+				assert.Equal(t, "75.00", cost)
+			}
+			if service == "Amazon Managed Streaming for Apache Kafka" && usageType == "MSK-Storage" {
+				foundMSKStorage = true
+			}
+			if service == "EC2 - Other" && usageType == "EC2-Storage" {
+				foundEC2Storage = true
+			}
+		}
+	}
+
+	assert.True(t, foundMSKBroker, "Should find MSK-BrokerInstance in CSV")
+	assert.True(t, foundEC2Instance, "Should find EC2-Instance in CSV")
+	assert.True(t, foundMSKStorage, "Should find MSK-Storage in CSV (zero cost included)")
+	assert.True(t, foundEC2Storage, "Should find EC2-Storage in CSV (zero cost included)")
 }
