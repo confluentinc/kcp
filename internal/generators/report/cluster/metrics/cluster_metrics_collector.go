@@ -255,23 +255,21 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetricsSummary.ReplicationFactor = rm.calculateReplicationFactor(nodesMetrics, globalMetrics.GlobalPartitionCountMax)
 	clusterMetricsSummary.Partitions = aws.Float64(float64(globalMetrics.GlobalPartitionCountMax))
 
-	clusterMetric := types.ClusterMetrics{
-		Region:                rm.region,
-		ClusterArn:            *cluster.ClusterArn,
-		StartDate:             rm.startDate,
-		EndDate:               rm.endDate,
-		ClusterName:           *cluster.ClusterName,
-		ClusterType:           string(cluster.ClusterType),
-		BrokerAZDistribution:  brokerAZDistribution,
-		KafkaVersion:          kafkaVersion,
-		EnhancedMonitoring:    enhancedMonitoring,
-		Authentication:        authentication,
-		NodesMetrics:          nodesMetrics,
-		ClusterMetricsSummary: clusterMetricsSummary,
-		GlobalMetrics:         *globalMetrics,
-	}
+	clusterMetric := types.NewClusterMetrics(rm.region, time.Now())
+	clusterMetric.ClusterArn = *cluster.ClusterArn
+	clusterMetric.StartDate = rm.startDate
+	clusterMetric.EndDate = rm.endDate
+	clusterMetric.ClusterName = *cluster.ClusterName
+	clusterMetric.ClusterType = string(cluster.ClusterType)
+	clusterMetric.BrokerAZDistribution = brokerAZDistribution
+	clusterMetric.KafkaVersion = kafkaVersion
+	clusterMetric.EnhancedMonitoring = enhancedMonitoring
+	clusterMetric.Authentication = authentication
+	clusterMetric.NodesMetrics = nodesMetrics
+	clusterMetric.ClusterMetricsSummary = clusterMetricsSummary
+	clusterMetric.GlobalMetrics = *globalMetrics
 
-	return &clusterMetric, nil
+	return clusterMetric, nil
 }
 
 func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []types.NodeMetrics, globalPartitionCountMax float64) *float64 {
@@ -327,20 +325,18 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	clusterMetricsSummary.Partitions = aws.Float64(float64(globalMetrics.GlobalPartitionCountMax))
 	clusterMetricsSummary.ReplicationFactor = rm.calculateReplicationFactor(nodesMetrics, globalMetrics.GlobalPartitionCountMax)
 
-	clusterMetric := types.ClusterMetrics{
-		Region:                rm.region,
-		ClusterArn:            *cluster.ClusterArn,
-		StartDate:             rm.startDate,
-		EndDate:               rm.endDate,
-		ClusterName:           *cluster.ClusterName,
-		ClusterType:           string(cluster.ClusterType),
-		Authentication:        authentication,
-		NodesMetrics:          nodesMetrics,
-		ClusterMetricsSummary: clusterMetricsSummary,
-		GlobalMetrics:         *globalMetrics,
-	}
+	clusterMetric := types.NewClusterMetrics(rm.region, time.Now())
+	clusterMetric.ClusterArn = *cluster.ClusterArn
+	clusterMetric.StartDate = rm.startDate
+	clusterMetric.EndDate = rm.endDate
+	clusterMetric.ClusterName = *cluster.ClusterName
+	clusterMetric.ClusterType = string(cluster.ClusterType)
+	clusterMetric.Authentication = authentication
+	clusterMetric.NodesMetrics = nodesMetrics
+	clusterMetric.ClusterMetricsSummary = clusterMetricsSummary
+	clusterMetric.GlobalMetrics = *globalMetrics
 
-	return &clusterMetric, nil
+	return clusterMetric, nil
 }
 
 func (rm *ClusterMetricsCollector) getGlobalMetrics(clusterName string) (*types.GlobalMetrics, error) {

@@ -10,15 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
 type Cost struct {
-	TimePeriodStart string  `json:"time_period_start"`
-	TimePeriodEnd   string  `json:"time_period_end"`
-	Service         string  `json:"service"`
-	Cost            float64 `json:"cost"`
-	UsageType       string  `json:"usage_type"`
+	Timestamp       time.Time `json:"timestamp"`
+	TimePeriodStart string    `json:"time_period_start"`
+	TimePeriodEnd   string    `json:"time_period_end"`
+	Service         string    `json:"service"`
+	Cost            float64   `json:"cost"`
+	UsageType       string    `json:"usage_type"`
 }
 
 type CostData struct {
@@ -26,13 +28,27 @@ type CostData struct {
 }
 
 type RegionCosts struct {
-	Region      string              `json:"region"`
-	CostData    CostData            `json:"cost_data"`
-	StartDate   time.Time           `json:"start_date"`
-	EndDate     time.Time           `json:"end_date"`
-	Granularity string              `json:"granularity"`
-	Tags        map[string][]string `json:"tags"`
-	Services    []string            `json:"services"`
+	KcpBuildInfo KcpBuildInfo        `json:"kcp_build_info"`
+	Timestamp    time.Time           `json:"timestamp"`
+	Region       string              `json:"region"`
+	CostData     CostData            `json:"cost_data"`
+	StartDate    time.Time           `json:"start_date"`
+	EndDate      time.Time           `json:"end_date"`
+	Granularity  string              `json:"granularity"`
+	Tags         map[string][]string `json:"tags"`
+	Services     []string            `json:"services"`
+}
+
+func NewRegionCosts(region string, timestamp time.Time) *RegionCosts {
+	return &RegionCosts{
+		Region:    region,
+		Timestamp: timestamp,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
 }
 
 func (c *RegionCosts) GetJsonPath() string {
@@ -261,7 +277,18 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 	// Use skip repeat for time period columns (0 and 1) to avoid repeating start/end times
 	md.AddTable(headers, data, 0, 1, 2)
 
+	// build info section
+	md.AddHeading("KCP Build Info", 2)
+	c.addBuildInfoSection(md)
+
+	// Save to file
 	return md
+}
+
+func (c *RegionCosts) addBuildInfoSection(md *markdown.Markdown) {
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", c.KcpBuildInfo.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", c.KcpBuildInfo.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", c.KcpBuildInfo.Date))
 }
 
 func (c *RegionCosts) AsCSVRecords() [][]string {

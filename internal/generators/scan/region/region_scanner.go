@@ -155,10 +155,8 @@ func (rs *RegionScanner) Run() error {
 
 func (rs *RegionScanner) ScanRegion(ctx context.Context) (*types.RegionScanResult, error) {
 	maxResults := int32(100)
-	result := &types.RegionScanResult{
-		Timestamp: time.Now(),
-		Region:    rs.region,
-	}
+
+	result := types.NewRegionScanResult(rs.region, time.Now())
 
 	clusters, err := rs.listClusters(ctx, maxResults)
 	if err != nil {

@@ -102,10 +102,11 @@ func (cs *ClusterScanner) Run() error {
 }
 
 func (cs *ClusterScanner) ScanCluster(ctx context.Context) (*types.ClusterInformation, error) {
-	clusterInfo := &types.ClusterInformation{
-		Timestamp: time.Now(),
-		Region:    cs.region,
-	}
+	clusterInfo := types.NewClusterInformation(cs.region, time.Now())
+	// clusterInfo := &types.ClusterInformation{
+	// 	Timestamp: time.Now(),
+	// 	Region:    cs.region,
+	// }
 
 	if err := cs.scanAWSResources(ctx, clusterInfo); err != nil {
 		return nil, err
