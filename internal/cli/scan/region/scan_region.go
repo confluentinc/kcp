@@ -78,7 +78,12 @@ func runScanRegion(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create msk client: %v", err)
 	}
 
-	regionScanner := rs.NewRegionScanner(mskClient, *opts)
+	mskConnectClient, err := client.NewMSKConnectClient(opts.Region)
+	if err != nil {
+		return fmt.Errorf("failed to create msk connect client: %v", err)
+	}
+
+	regionScanner := rs.NewRegionScanner(mskClient, mskConnectClient, *opts)
 	if err := regionScanner.Run(); err != nil {
 		return fmt.Errorf("failed to scan region: %v", err)
 	}

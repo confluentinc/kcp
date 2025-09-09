@@ -3,12 +3,14 @@ package types
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/kafka"
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/services/markdown"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/kafka"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
 // RegionScanResult contains the results of scanning an AWS region for MSK resources
@@ -20,6 +22,19 @@ type RegionScanResult struct {
 	KafkaVersions  []kafkatypes.KafkaVersion                   `json:"kafka_versions"`
 	Replicators    []kafka.DescribeReplicatorOutput            `json:"replicators"`
 	Region         string                                      `json:"region"`
+	Connectors     []ConnectorSummary                          `json:"connectors"`
+}
+
+type ConnectorSummary struct {
+	ConnectorArn                     string                                                        `json:"connector_arn"`
+	ConnectorName                    string                                                        `json:"connector_name"`
+	ConnectorState                   string                                                        `json:"connector_state"`
+	CreationTime                     string                                                        `json:"creation_time"`
+	KafkaCluster                     kafkaconnecttypes.ApacheKafkaClusterDescription               `json:"kafka_cluster"`
+	KafkaClusterClientAuthentication kafkaconnecttypes.KafkaClusterClientAuthenticationDescription `json:"kafka_cluster_client_authentication"`
+	Capacity                         kafkaconnecttypes.CapacityDescription                         `json:"capacity"`
+	Plugins                          []kafkaconnecttypes.PluginDescription                         `json:"plugins"`
+	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
 func (rs *RegionScanResult) GetJsonPath() string {
