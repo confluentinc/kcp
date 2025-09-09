@@ -120,17 +120,24 @@ func (c *ClusterInformation) GetMarkdownPath() string {
 }
 
 func (c *ClusterInformation) GetDirPath() string {
-	return filepath.Join("kcp-scan", c.Region, aws.ToString(c.Cluster.ClusterName))
+	return c.GetDirPathWithBase("kcp-scan")
+}
+
+func (c *ClusterInformation) GetDirPathWithBase(baseDir string) string {
+	return filepath.Join(baseDir, c.Region, aws.ToString(c.Cluster.ClusterName))
 }
 
 func (c *ClusterInformation) WriteAsJson() error {
+	return c.WriteAsJsonWithBase("kcp-scan")
+}
 
-	dirPath := c.GetDirPath()
+func (c *ClusterInformation) WriteAsJsonWithBase(baseDir string) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetJsonPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.json", aws.ToString(c.Cluster.ClusterName)))
 
 	data, err := c.AsJson()
 	if err != nil {
@@ -153,12 +160,16 @@ func (c *ClusterInformation) AsJson() ([]byte, error) {
 }
 
 func (c *ClusterInformation) WriteAsMarkdown(suppressToTerminal bool) error {
-	dirPath := c.GetDirPath()
+	return c.WriteAsMarkdownWithBase("kcp-scan", suppressToTerminal)
+}
+
+func (c *ClusterInformation) WriteAsMarkdownWithBase(baseDir string, suppressToTerminal bool) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetMarkdownPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.md", aws.ToString(c.Cluster.ClusterName)))
 
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
