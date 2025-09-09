@@ -102,11 +102,11 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
 
-	if err := clusterInfo.WriteAsJson(); err != nil {
+	if err := clusterInfo.WriteAsJsonWithBase(cs.DiscoverDir); err != nil {
 		return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
 	}
 
-	if err := clusterInfo.WriteAsMarkdown(true); err != nil {
+	if err := clusterInfo.WriteAsMarkdownWithBase(cs.DiscoverDir, true); err != nil {
 		return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
 	}
 

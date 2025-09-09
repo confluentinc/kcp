@@ -35,7 +35,9 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 		endStr = aws.String(endDate.Format("2006-01-02T00:00:00Z"))
 	}
 
-	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, tags)
+	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
+
+	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags)
 
 	output, err := cs.client.GetCostAndUsage(context.Background(), input)
 	if err != nil {
@@ -49,10 +51,11 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 	regionCosts.EndDate = endDate
 	regionCosts.Granularity = string(granularity)
 	regionCosts.Tags = tags
+	regionCosts.Services = services
 	return *regionCosts, nil
 }
 
-func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
+func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
 	filter := &costexplorertypes.Expression{
 		And: []costexplorertypes.Expression{
 			{
@@ -64,7 +67,7 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 			{
 				Dimensions: &costexplorertypes.DimensionValues{
 					Key:    costexplorertypes.DimensionService,
-					Values: []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"},
+					Values: services,
 				},
 			},
 		},
@@ -105,7 +108,6 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 
 func (cs *CostService) processCostExplorerOutput(output *costexplorer.GetCostAndUsageOutput) types.CostData {
 	var costs []types.Cost
-	var totalCost float64
 
 	for _, result := range output.ResultsByTime {
 		for _, group := range result.Groups {
@@ -138,12 +140,10 @@ func (cs *CostService) processCostExplorerOutput(output *costexplorer.GetCostAnd
 				UsageType:       usageType,
 				Cost:            cost,
 			})
-			totalCost += cost
 		}
 	}
 
 	return types.CostData{
 		Costs: costs,
-		Total: totalCost,
 	}
 }

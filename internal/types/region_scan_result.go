@@ -46,17 +46,24 @@ func (rs *RegionScanResult) GetMarkdownPath() string {
 }
 
 func (rs *RegionScanResult) GetDirPath() string {
-	return filepath.Join("kcp-scan", rs.Region)
+	return rs.GetDirPathWithBase("kcp-scan")
+}
+
+func (rs *RegionScanResult) GetDirPathWithBase(baseDir string) string {
+	return filepath.Join(baseDir, rs.Region)
 }
 
 func (rs *RegionScanResult) WriteAsJson() error {
+	return rs.WriteAsJsonWithBase("kcp-scan")
+}
 
-	dirPath := rs.GetDirPath()
+func (rs *RegionScanResult) WriteAsJsonWithBase(baseDir string) error {
+	dirPath := rs.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := rs.GetJsonPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.json", rs.Region))
 
 	data, err := rs.AsJson()
 	if err != nil {
@@ -79,12 +86,16 @@ func (rs *RegionScanResult) AsJson() ([]byte, error) {
 }
 
 func (rs *RegionScanResult) WriteAsMarkdown(suppressToTerminal bool) error {
-	dirPath := rs.GetDirPath()
+	return rs.WriteAsMarkdownWithBase("kcp-scan", suppressToTerminal)
+}
+
+func (rs *RegionScanResult) WriteAsMarkdownWithBase(baseDir string, suppressToTerminal bool) error {
+	dirPath := rs.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := rs.GetMarkdownPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.md", rs.Region))
 	md := rs.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }

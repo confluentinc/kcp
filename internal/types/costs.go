@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,7 @@ type Cost struct {
 }
 
 type CostData struct {
-	Costs []Cost  `json:"costs"`
-	Total float64 `json:"total"`
+	Costs []Cost `json:"costs"`
 }
 
 type RegionCosts struct {
@@ -36,6 +36,7 @@ type RegionCosts struct {
 	EndDate      time.Time           `json:"end_date"`
 	Granularity  string              `json:"granularity"`
 	Tags         map[string][]string `json:"tags"`
+	Services     []string            `json:"services"`
 }
 
 func NewRegionCosts(region string, timestamp time.Time) *RegionCosts {
@@ -63,17 +64,24 @@ func (c *RegionCosts) GetCSVPath() string {
 }
 
 func (c *RegionCosts) GetDirPath() string {
-	return filepath.Join("kcp-scan", c.Region)
+	return c.GetDirPathWithBase("kcp-scan")
+}
+
+func (c *RegionCosts) GetDirPathWithBase(baseDir string) string {
+	return filepath.Join(baseDir, c.Region)
 }
 
 func (c *RegionCosts) WriteAsJson() error {
+	return c.WriteAsJsonWithBase("kcp-scan")
+}
 
-	dirPath := c.GetDirPath()
+func (c *RegionCosts) WriteAsJsonWithBase(baseDir string) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetJsonPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-cost-report.json", c.Region))
 
 	data, err := c.AsJson()
 	if err != nil {
@@ -96,12 +104,16 @@ func (c *RegionCosts) AsJson() ([]byte, error) {
 }
 
 func (c *RegionCosts) WriteAsMarkdown(suppressToTerminal bool) error {
-	dirPath := c.GetDirPath()
+	return c.WriteAsMarkdownWithBase("kcp-scan", suppressToTerminal)
+}
+
+func (c *RegionCosts) WriteAsMarkdownWithBase(baseDir string, suppressToTerminal bool) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetMarkdownPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-cost-report.md", c.Region))
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
@@ -109,22 +121,24 @@ func (c *RegionCosts) WriteAsMarkdown(suppressToTerminal bool) error {
 func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 
 	md := markdown.New()
-	md.AddHeading(fmt.Sprintf("AWS MSK Cost Report - %s", c.Region), 1)
-	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s", c.StartDate.Format("2006-01-02"), c.EndDate.Format("2006-01-02")))
-	md.AddParagraph(fmt.Sprintf("**Granularity:** %s", c.Granularity))
+	md.AddHeading(fmt.Sprintf("AWS Service Cost Report for Region %s", c.Region), 1)
 
-	// Format tags as key=value pairs, comma-separated
-	md.AddParagraph("**Tags:**")
+	md.AddParagraph(fmt.Sprintf("This is a report of costs retrieved from the AWS Cost Explorer API for the region **%s**.", c.Region))
+
+	md.AddHeading("Dimensions Used", 3)
+
+	md.AddParagraph(fmt.Sprintf("**Region:** %s", c.Region))
+	md.AddParagraph(fmt.Sprintf("**Services:** %s", strings.Join(c.Services, ", ")))
+	md.AddParagraph(fmt.Sprintf("**Aggregation Period:** %s to %s", c.StartDate.Format("2006-01-02"), c.EndDate.Format("2006-01-02")))
+	md.AddParagraph(fmt.Sprintf("**Aggregation Granularity:** %s", c.Granularity))
+	md.AddParagraph("**Resource Filter Tags:**")
 	for k, v := range c.Tags {
 		md.AddParagraph(fmt.Sprintf("%s=%s", k, strings.Join(v, ",")))
 	}
 
-	md.AddParagraph(fmt.Sprintf("**Total Cost:** $%.2f USD", c.CostData.Total))
-
 	// Usage Type Summary
 	usageTypeSummary := make(map[string]map[string]float64) // service -> usageType -> cost
 	serviceTotals := make(map[string]float64)               // service -> total cost
-	var grandTotal float64
 
 	for _, cost := range c.CostData.Costs {
 		if usageTypeSummary[cost.Service] == nil {
@@ -132,11 +146,8 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 		}
 		usageTypeSummary[cost.Service][cost.UsageType] += cost.Cost
 		serviceTotals[cost.Service] += cost.Cost
-		grandTotal += cost.Cost
 	}
 
-	md.AddHeading("Usage Type Summary", 2)
-	usageHeaders := []string{"Service", "Usage Type", "Total Cost (USD)"}
 	usageData := [][]string{}
 
 	// Sort services for consistent output
@@ -169,18 +180,67 @@ func (c *RegionCosts) AsMarkdown() *markdown.Markdown {
 
 		for _, usageType := range usageTypes {
 			totalCost := usageTypeSummary[service][usageType]
-			usageData = append(usageData, []string{service, usageType, fmt.Sprintf("$%.2f", totalCost)})
+			totalCostFormatted := fmt.Sprintf("$%.2f", totalCost)
+			if totalCostFormatted == "$0.00" {
+				continue
+			}
+			usageData = append(usageData, []string{service, usageType, totalCostFormatted})
 		}
 		// Add service total row
 		usageData = append(usageData, []string{service, "**TOTAL**", fmt.Sprintf("$%.2f", serviceTotals[service])})
-		// Add empty row for spacing
-		usageData = append(usageData, []string{"", "", ""})
 	}
 
-	// Add grand total at the bottom
-	usageData = append(usageData, []string{"**GRAND TOTAL**", "", fmt.Sprintf("$%.2f", grandTotal)})
+	mskUsageData := [][]string{}
+	otherUsageData := [][]string{}
 
-	md.AddTable(usageHeaders, usageData, 0, 1)
+	var mskDataTransferCost, ec2DataTransferCost float64
+
+	for i := range usageData {
+		if usageData[i][0] == "Amazon Managed Streaming for Apache Kafka" {
+			if strings.Contains(usageData[i][1], "DataTransfer-Regional-Bytes") {
+				if v, err := strconv.ParseFloat(strings.TrimPrefix(usageData[i][2], "$"), 64); err == nil {
+					mskDataTransferCost = v
+				}
+			}
+			mskUsageData = append(mskUsageData, []string{usageData[i][1], usageData[i][2]})
+		} else {
+			if strings.Contains(usageData[i][1], "DataTransfer-Regional-Bytes") && usageData[i][0] == "EC2 - Other" {
+				if v, err := strconv.ParseFloat(strings.TrimPrefix(usageData[i][2], "$"), 64); err == nil {
+					ec2DataTransferCost = v
+				}
+			}
+			otherUsageData = append(otherUsageData, usageData[i])
+		}
+	}
+
+	mskUsageHeaders := []string{"Usage Type", "Total Cost (USD)"}
+	md.AddHeading("Amazon Managed Streaming for Apache Kafka (MSK) Service Costs Summary", 2)
+	md.AddParagraph("This section presents a summary of directly attributable costs for the Amazon Managed Streaming for Apache Kafka (MSK) service.")
+	md.AddTable(mskUsageHeaders, mskUsageData, 0, 1)
+
+	otherUsageHeaders := []string{"Service", "Usage Type", "Total Cost (USD)"}
+	md.AddHeading("Other Services Costs Summary", 2)
+	md.AddParagraph("This section details costs for additional AWS services. " +
+		"Some portions of some costs may be indirectly attributable to Amazon MSK operations, while others may arise from unrelated service activities. " +
+		"These *hidden* costs are not identifiable through AWS Cost APIs without comprehensive resource tagging across all resources used by MSK operations.")
+	md.AddTable(otherUsageHeaders, otherUsageData, 0, 1)
+
+	md.AddHeading("Estimated Amazon MSK Hidden Costs", 2)
+	md.AddParagraph("This section details potential *hidden* costs of Amazon MSK operations.  " +
+		"These are costs attributed to other AWS services, which may be caused by the operations of Amazon MSK, but are not directly attributable to the service itself.")
+
+	hiddenHeaders := []string{"Hidden Cost Type", "Description", "Service", "Hidden Cost (USD)"}
+	hiddenCosts := [][]string{}
+
+	crossAZDataTransferCosts := []string{
+		"Cross AZ Data Transfer costs",
+		fmt.Sprintf("$%.2f of the $%.2f **EC2 - Other:DataTransfer-Regional-Bytes** cost is MSK-attributable (equivalent to **MSK:DataTransfer-Regional-Bytes** cost).", mskDataTransferCost, ec2DataTransferCost),
+		"EC2 - Other",
+		fmt.Sprintf("$%.2f", mskDataTransferCost)}
+
+	hiddenCosts = append(hiddenCosts, crossAZDataTransferCosts)
+
+	md.AddTable(hiddenHeaders, hiddenCosts, 0, 1, 2)
 
 	// Detailed Cost Breakdown
 	md.AddHeading("Detailed Cost Breakdown", 2)
@@ -234,70 +294,6 @@ func (c *RegionCosts) addBuildInfoSection(md *markdown.Markdown) {
 func (c *RegionCosts) AsCSVRecords() [][]string {
 	records := [][]string{}
 
-	records = append(records, []string{"SUMMARY", "", "", "", ""})
-	records = append(records, []string{"Service", "Usage Type", "Total Cost (USD)", "", ""})
-
-	// Calculate summary data
-	usageTypeSummary := make(map[string]map[string]float64) // service -> usageType -> cost
-	serviceTotals := make(map[string]float64)               // service -> total cost
-	var grandTotal float64
-
-	for _, cost := range c.CostData.Costs {
-		if usageTypeSummary[cost.Service] == nil {
-			usageTypeSummary[cost.Service] = make(map[string]float64)
-		}
-		usageTypeSummary[cost.Service][cost.UsageType] += cost.Cost
-		serviceTotals[cost.Service] += cost.Cost
-		grandTotal += cost.Cost
-	}
-
-	// Sort services for consistent output
-	services := make([]string, 0, len(usageTypeSummary))
-	for service := range usageTypeSummary {
-		services = append(services, service)
-	}
-	// Sort services alphabetically
-	for i := 0; i < len(services)-1; i++ {
-		for j := i + 1; j < len(services); j++ {
-			if services[i] > services[j] {
-				services[i], services[j] = services[j], services[i]
-			}
-		}
-	}
-
-	for _, service := range services {
-		usageTypes := make([]string, 0, len(usageTypeSummary[service]))
-		for usageType := range usageTypeSummary[service] {
-			usageTypes = append(usageTypes, usageType)
-		}
-		// Sort usage types alphabetically
-		for i := 0; i < len(usageTypes)-1; i++ {
-			for j := i + 1; j < len(usageTypes); j++ {
-				if usageTypes[i] > usageTypes[j] {
-					usageTypes[i], usageTypes[j] = usageTypes[j], usageTypes[i]
-				}
-			}
-		}
-
-		for _, usageType := range usageTypes {
-			totalCost := usageTypeSummary[service][usageType]
-			records = append(records, []string{service, usageType, fmt.Sprintf("%.2f", totalCost), "", ""})
-		}
-		// Add service total row
-		records = append(records, []string{service, "TOTAL", fmt.Sprintf("%.2f", serviceTotals[service]), "", ""})
-		// Add empty row for spacing
-		records = append(records, []string{"", "", "", "", ""})
-	}
-
-	// Add grand total at the bottom
-	records = append(records, []string{"GRAND TOTAL", "", fmt.Sprintf("%.2f", grandTotal), "", ""})
-
-	// Add empty row between summary and detailed breakdown
-	records = append(records, []string{"", "", "", "", ""})
-	records = append(records, []string{"", "", "", "", ""})
-
-	// Write detailed breakdown section
-	records = append(records, []string{"DETAILED BREAKDOWN", "", "", "", ""})
 	header := []string{"Time Period Start", "Time Period End", "Service", "Usage Type", "Cost (USD)"}
 	records = append(records, header)
 
@@ -317,13 +313,16 @@ func (c *RegionCosts) AsCSVRecords() [][]string {
 }
 
 func (c *RegionCosts) WriteAsCSV() error {
+	return c.WriteAsCSVWithBase("kcp-scan")
+}
 
-	dirPath := c.GetDirPath()
+func (c *RegionCosts) WriteAsCSVWithBase(baseDir string) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetCSVPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-cost-report.csv", c.Region))
 
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -342,5 +341,4 @@ func (c *RegionCosts) WriteAsCSV() error {
 		}
 	}
 	return nil
-
 }
