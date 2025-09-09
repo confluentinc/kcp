@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
 type ClusterMetrics struct {
+	Timestamp             time.Time             `json:"timestamp"`
+	KcpBuildInfo          KcpBuildInfo          `json:"kcp_build_info"`
 	Region                string                `json:"region"`
 	ClusterArn            string                `json:"cluster_arn"`
 	ClusterName           string                `json:"cluster_name"`
@@ -66,6 +69,18 @@ type ClusterMetricsSummary struct {
 	TieredStorage                           *bool    `json:"tiered_storage"`
 	LocalRetentionInPrimaryStorageHours     *float64 `json:"local_retention_in_primary_storage_hours,omitempty"`
 	InstanceType                            *string  `json:"instance_type"`
+}
+
+func NewClusterMetrics(region string, timestamp time.Time) *ClusterMetrics {
+	return &ClusterMetrics{
+		Region:    region,
+		Timestamp: timestamp,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
 }
 
 func (cm *ClusterMetrics) GetJsonPath() string {
@@ -132,9 +147,19 @@ func (cm *ClusterMetrics) AsMarkdown() *markdown.Markdown {
 	md.AddHeading("Cluster Details", 2)
 	cm.addIndividualClusterSections(md)
 
+	// build info section
+	md.AddHeading("KCP Build Info", 2)
+	cm.addBuildInfoSection(md)
+
+	// Save to file
 	return md
 }
 
+func (cm *ClusterMetrics) addBuildInfoSection(md *markdown.Markdown) {
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", cm.KcpBuildInfo.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", cm.KcpBuildInfo.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", cm.KcpBuildInfo.Date))
+}
 // addIndividualClusterSections adds individual sections for each cluster
 func (cm *ClusterMetrics) addIndividualClusterSections(md *markdown.Markdown) {
 	// Add cluster heading

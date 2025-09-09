@@ -10,6 +10,7 @@ import (
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
@@ -57,6 +58,11 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 		if err := json.Unmarshal(file, &clusterInfo); err != nil {
 			return fmt.Errorf("❌ failed to unmarshal cluster info: %v", err)
 		}
+	}
+	clusterInfo.KcpBuildInfo = types.KcpBuildInfo{
+		Version: build_info.Version,
+		Commit:  build_info.Commit,
+		Date:    build_info.Date,
 	}
 
 	authType, err := clusterEntry.GetSelectedAuthType()
