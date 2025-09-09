@@ -18,3 +18,8 @@ variable "create_igw" {
   type        = bool
   default     = false
 }
+
+variable "aws_security_group_ids" {
+  description = "List of string of AWS Security Group Ids"
+  type        = list(string)
+}

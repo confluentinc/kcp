@@ -4,8 +4,8 @@ variable "vpc_id" {
 }
 
 variable "security_group_id" {
-  description = "The ID of the security group"
-  type        = string
+  description = "List of string of AWS Security Group Ids"
+  type        = list(string)
 }
 
 variable "aws_public_subnet_id" {

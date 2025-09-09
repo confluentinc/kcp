@@ -53,6 +53,9 @@ func NewScanClustersCmd() *cobra.Command {
 		return nil
 	})
 
+	clustersCmd.MarkFlagRequired("discover-dir")
+	clustersCmd.MarkFlagRequired("credentials-yaml")
+
 	return clustersCmd
 }
 
