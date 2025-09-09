@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,124 +25,129 @@ type TemplateData struct {
 }
 
 var (
-	principalArn    string
+	principalArns   []string
 	outputDir       string
 	skipAuditReport bool
 )
 
-func RunConvertIamAcls(userPrincipalArn, userOutputDir string, userSkipAuditReport bool) error {
+func RunConvertIamAcls(userPrincipalArns []string, userOutputDir string, userSkipAuditReport bool) error {
 	ctx := context.Background()
 
-	principalArn = userPrincipalArn
+	principalArns = userPrincipalArns
 	outputDir = userOutputDir
 	skipAuditReport = userSkipAuditReport
 
-	fmt.Printf("🚀 Converting IAM ACLs for principal: %s\n", principalArn)
+	slog.Info("🚀 Converting IAM ACLs for principals", "principals", principalArns)
 
 	iamClient, err := client.NewIAMClient()
 	if err != nil {
 		return fmt.Errorf("failed to create IAM client: %v", err)
 	}
 
-	fmt.Printf("📋 Retrieving IAM policies for principal: %s\n", principalArn)
-	policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
-	if err != nil {
-		return fmt.Errorf("failed to get principal policies: %v", err)
-	}
-
-	extractedACLs, err := extractKafkaPermissionsFromPrincipalPolicies(policies)
-	if err != nil {
-		return fmt.Errorf("failed to extract Kafka permissions: %v", err)
-	}
-
-	if len(extractedACLs) == 0 {
-		fmt.Println("No `kafka-cluster` permissions found in the specified principal's policies so therefore nothing to convert.")
-		return nil
-	}
-
-	if outputDir == "" {
-		principal := cleanPrincipalName(getPrincipalFromArn(principalArn))
-		outputDir = fmt.Sprintf("%s_iam_acls", principal)
-	}
-
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	aclsByPrincipal := make(map[string][]types.Acls)
-	for _, acl := range extractedACLs {
-		principal := acl.Principal
-		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)
-	}
-
-	tmplContent, err := assetsFS.ReadFile("assets/acls.tmpl")
-	if err != nil {
-		return fmt.Errorf("failed to read template file: %w", err)
-	}
-
-	tmpl, err := template.New("acls").Funcs(template.FuncMap{
-		"lower": strings.ToLower,
-	}).Parse(string(tmplContent))
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	// Generate a separate file for each principal
-	for principal, acls := range aclsByPrincipal {
-		filename := fmt.Sprintf("%s-acls.tf", principal)
-		filepath := filepath.Join(outputDir, filename)
-
-		file, err := os.Create(filepath)
+	for _, principal := range principalArns {
+		slog.Info("📋 Retrieving IAM policies for principal", "principal", principal)
+		policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principal)
 		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", filepath, err)
-		}
-		defer file.Close()
-
-		templateData := TemplateData{
-			Principal: principal,
-			Acls:      acls,
+			return fmt.Errorf("failed to get principal policies: %v", err)
 		}
 
-		if err := tmpl.Execute(file, templateData); err != nil {
-			return fmt.Errorf("failed to execute template for principal %s: %w", principal, err)
+		extractedACLs, err := extractKafkaPermissionsFromPrincipalPolicies(principal, policies)
+		if err != nil {
+			return fmt.Errorf("failed to extract Kafka permissions: %v", err)
+		}
+
+		if len(extractedACLs) == 0 {
+			fmt.Println("No `kafka-cluster` permissions found in the specified principal's policies so therefore nothing to convert.")
+			return nil
+		}
+
+		if outputDir == "" {
+			principal := cleanPrincipalName(getPrincipalFromArn(principal))
+			outputDir = fmt.Sprintf("%s_iam_acls", principal)
+		}
+
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory: %w", err)
+		}
+
+		aclsByPrincipal := make(map[string][]types.Acls)
+		for _, acl := range extractedACLs {
+			principal := acl.Principal
+			aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)
+		}
+
+		tmplContent, err := assetsFS.ReadFile("assets/acls.tmpl")
+		if err != nil {
+			return fmt.Errorf("failed to read template file: %w", err)
+		}
+
+		tmpl, err := template.New("acls").Funcs(template.FuncMap{
+			"lower": strings.ToLower,
+		}).Parse(string(tmplContent))
+		if err != nil {
+			return fmt.Errorf("failed to parse template: %w", err)
+		}
+
+		// Generate a separate file for each principal
+		for principal, acls := range aclsByPrincipal {
+			filename := fmt.Sprintf("%s-acls.tf", principal)
+			filepath := filepath.Join(outputDir, filename)
+
+			file, err := os.Create(filepath)
+			if err != nil {
+				return fmt.Errorf("failed to create file %s: %w", filepath, err)
+			}
+			defer file.Close()
+
+			templateData := TemplateData{
+				Principal: principal,
+				Acls:      acls,
+			}
+
+			if err := tmpl.Execute(file, templateData); err != nil {
+				return fmt.Errorf("failed to execute template for principal %s: %w", principal, err)
+			}
+		}
+
+		principal := cleanPrincipalName(getPrincipalFromArn(principal))
+
+		if !skipAuditReport {
+			aclAuditReportPath := filepath.Join(outputDir, "migrated-acls-report.md")
+			if err := migrate_acls.GenerateIamAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
+				return fmt.Errorf("failed to generate audit report: %w", err)
+			}
 		}
 	}
 
-	principal := cleanPrincipalName(getPrincipalFromArn(principalArn))
-
-	if !skipAuditReport {
-		aclAuditReportPath := filepath.Join(outputDir, "migrated-acls-report.md")
-		if err := migrate_acls.GenerateIamAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
-			return fmt.Errorf("failed to generate audit report: %w", err)
-		}
-
-		fmt.Printf("\n✅ Successfully generated audit report for '%s' in %s\n", principal, aclAuditReportPath)
+	for _, principal := range principalArns {
+		principal := cleanPrincipalName(getPrincipalFromArn(principal))
+		slog.Info("✅ Successfully generated ACL files", "principal", principal, "outputDir", outputDir)
 	}
 
-	fmt.Printf("\n✅ Successfully generated ACL files for '%s' in %s\n", principal, outputDir)
+	slog.Info(fmt.Sprintf("✅ Successfully generated ACL files for %d principals in %s", len(principalArns), outputDir))
 
 	return nil
 }
 
-func extractKafkaPermissionsFromPrincipalPolicies(policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
+func extractKafkaPermissionsFromPrincipalPolicies(principalArn string, policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
 		fmt.Printf("📝 Processing attached policy: %s\n", policy.PolicyName)
-		acls := processPolicy(policy.PolicyDocument)
+		acls := processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	for _, policy := range policies.InlinePolicies {
 		fmt.Printf("📝 Processing inline policy: %s\n", policy.PolicyName)
-		acls := processPolicy(policy.PolicyDocument)
+		acls := processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	return extractedACLs, nil
 }
 
-func processPolicy(policyDocument map[string]any) []types.Acls {
+func processPolicy(principalArn string, policyDocument map[string]any) []types.Acls {
 	var extractedACLs []types.Acls
 
 	for _, statement := range policyDocument["Statement"].([]any) {
@@ -181,13 +187,13 @@ func processPolicy(policyDocument map[string]any) []types.Acls {
 				if action == "kafka-cluster:*" {
 					// If wildcard on action - apply all ACL mappings.
 					for _, mapping := range types.AclMap {
-						acl := createACLFromMapping(mapping, effect, resources)
+						acl := createACLFromMapping(principalArn, mapping, effect, resources)
 						extractedACLs = append(extractedACLs, acl)
 					}
 				} else {
 					mapping, found := TranslateIAMToKafkaACL(action)
 					if found {
-						acl := createACLFromMapping(mapping, effect, resources)
+						acl := createACLFromMapping(principalArn, mapping, effect, resources)
 						extractedACLs = append(extractedACLs, acl)
 					} else {
 						continue
@@ -206,7 +212,7 @@ func TranslateIAMToKafkaACL(iamPermission string) (types.ACLMapping, bool) {
 	return acl, found
 }
 
-func createACLFromMapping(mapping types.ACLMapping, effect string, resources []string) types.Acls {
+func createACLFromMapping(principalArn string, mapping types.ACLMapping, effect string, resources []string) types.Acls {
 	// Set defaults
 	resourceName := "*"
 	patternType := "LITERAL"

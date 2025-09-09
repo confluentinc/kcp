@@ -1,6 +1,13 @@
 # Simple Makefile for kcp
-BINARY_NAME=kcp
-MAIN_PATH=./cmd/cli
+BINARY_NAME := kcp
+MAIN_PATH := ./cmd/cli
+
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
+DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+VERSION := dev
+LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION) \
+			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
+			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
 .PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-all build-frontend
 
@@ -13,41 +20,29 @@ build-frontend:
 # Build the binary (depends on frontend)
 build: build-frontend
 	@echo "🔨 Building $(BINARY_NAME)..."
-	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
-	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
-	go build -ldflags "-s -w -X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME) $(MAIN_PATH)
+	go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "✅ Build complete: $(BINARY_NAME)"
 
 # Individual platform builds
 build-linux: build-frontend
-	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
-	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
-	GOOS=linux GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
 
 build-linux-arm64: build-frontend
-	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
-	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
-	GOOS=linux GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
 
 build-darwin: build-frontend
-	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
-	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
-	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
 
 build-darwin-arm64: build-frontend
-	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
-	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
-	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
 
 # Build for all platforms and architectures
 build-all: build-frontend
 	@echo "🔨 Building for all platforms..."
-	@COMMIT=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
-	DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
-	GOOS=linux GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH); \
-	GOOS=linux GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH); \
-	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH); \
-	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.commit=$$COMMIT -X main.date=$$DATE" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH); \
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH); \
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH); \
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
 	@echo "✅ All platform builds complete!"
 
 # Clean build artifacts
@@ -93,9 +88,7 @@ fmt:
 test:
 	@echo "🧪 Running tests..."
 	@echo "=================="
-	@go test -v ./... || (echo ""; echo "❌ TESTS FAILED - See failures above"; echo "=========================================="; exit 1)
-	@echo ""
-	@echo "✅ All tests passed!"
+	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Tests failed with exit code $$exit_code"; else echo "✅ All tests passed!"; fi; exit $$exit_code'
 
 # Run tests with coverage - beautiful terminal output
 test-cov:

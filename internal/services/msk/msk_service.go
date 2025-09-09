@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 type MSKService struct {
@@ -40,70 +39,6 @@ func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn *strin
 		return nil, fmt.Errorf("❌ Failed to get bootstrap brokers: %v", err)
 	}
 	return brokers, nil
-}
-
-func (ms *MSKService) ParseBrokerAddresses(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-
-	var brokerList string
-	var visibility string
-	slog.Info("🔍 parsing broker addresses", "authType", authType)
-
-	switch authType {
-	case types.AuthTypeIAM:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslIam)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-		}
-	case types.AuthTypeSASLSCRAM:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslScram)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslScram)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
-		}
-	case types.AuthTypeUnauthenticated:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
-		visibility = "PRIVATE"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerString)
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
-		}
-	case types.AuthTypeTLS:
-		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicTls)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
-		}
-	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
-	}
-
-	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
-
-	// Split by comma and trim whitespace from each address, filter out empty strings
-	rawAddresses := strings.Split(brokerList, ",")
-	addresses := make([]string, 0, len(rawAddresses))
-	for _, addr := range rawAddresses {
-		trimmedAddr := strings.TrimSpace(addr)
-		if trimmedAddr != "" {
-			addresses = append(addresses, trimmedAddr)
-		}
-	}
-	return addresses, nil
 }
 
 func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {
@@ -288,4 +223,33 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn *string) 
 	}
 
 	return secrets, nil
+}
+
+func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
+	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
+
+	var nextToken *string
+
+	var clusterInfoList []kafkatypes.Cluster
+
+	for {
+		listClustersOutput, err := ms.client.ListClustersV2(ctx, &kafka.ListClustersV2Input{
+			MaxResults: &maxResults,
+			NextToken:  nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("❌ Failed to list clusters: %v", err)
+		}
+
+		clusterInfoList = append(clusterInfoList, listClustersOutput.ClusterInfoList...)
+
+		if listClustersOutput.NextToken == nil {
+			break
+		}
+		nextToken = listClustersOutput.NextToken
+	}
+
+	slog.Info("✨ found clusters", "count", len(clusterInfoList))
+
+	return clusterInfoList, nil
 }

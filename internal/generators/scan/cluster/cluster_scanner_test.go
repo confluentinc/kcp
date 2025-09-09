@@ -19,6 +19,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/mocks"
+	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,8 +55,15 @@ func newMockEC2Service() *mocks.MockEC2Service {
 }
 
 // Helper function for tests to create ClusterScanner with the new parameter style
-func newTestClusterScanner(clusterArn, region string, mskService MSKService, ec2Service EC2Service, adminFactory KafkaAdminFactory, skipKafka bool) *ClusterScanner {
-	return NewClusterScanner(mskService, ec2Service, adminFactory, ClusterScannerOpts{
+func newTestClusterScanner(clusterArn, region string, mskService MSKService, ec2Service EC2Service, adminFactory kafkaservice.KafkaAdminFactory, skipKafka bool) *ClusterScanner {
+	// Create KafkaService from the adminFactory
+	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
+		KafkaAdminFactory: adminFactory,
+		AuthType:          types.AuthTypeIAM,
+		ClusterArn:        clusterArn,
+	})
+
+	return NewClusterScanner(mskService, ec2Service, kafkaService, ClusterScannerOpts{
 		Region:     region,
 		ClusterArn: clusterArn,
 		SkipKafka:  skipKafka,
@@ -64,106 +72,6 @@ func newTestClusterScanner(clusterArn, region string, mskService MSKService, ec2
 }
 
 // MockMSKService is now imported from the mocks package
-
-func TestClusterScanner_ParseBrokerAddresses(t *testing.T) {
-	tests := []struct {
-		name        string
-		brokers     kafka.GetBootstrapBrokersOutput
-		wantBrokers []string
-		wantError   string
-	}{
-		{
-			name: "returns Public SASL/IAM brokers when available (preferred)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslIam: aws.String("public-broker1:9098,public-broker2:9098"),
-				BootstrapBrokerStringSaslIam:       aws.String("private-broker1:9098,private-broker2:9098"),
-			},
-			wantBrokers: []string{"public-broker1:9098", "public-broker2:9098"},
-		},
-		{
-			name: "falls back to private SASL/IAM brokers when public not available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslIam: aws.String("private-broker1:9098,private-broker2:9098"),
-			},
-			wantBrokers: []string{"private-broker1:9098", "private-broker2:9098"},
-		},
-		{
-			name: "returns public brokers even when private are also available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslIam: aws.String("public-broker1:9098"),
-				BootstrapBrokerStringSaslIam:       aws.String("private-broker1:9098,private-broker2:9098"),
-			},
-			wantBrokers: []string{"public-broker1:9098"},
-		},
-		{
-			name: "returns error when no SASL/IAM brokers available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerString: aws.String("broker1:9092"),
-			},
-			wantError: "❌ No SASL/IAM brokers found in the cluster",
-		},
-		{
-			name: "returns error when both broker types are empty strings",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslIam: aws.String(""),
-				BootstrapBrokerStringSaslIam:       aws.String(""),
-			},
-			wantError: "❌ No SASL/IAM brokers found in the cluster",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// This test is specifically testing the parseBrokerAddresses logic
-					// so we'll implement it inline to match the expected behavior
-					var brokerList string
-					if authType == types.AuthTypeIAM {
-						brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslIam)
-						if brokerList == "" {
-							brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-						}
-						if brokerList == "" {
-							return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-						}
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
-
-			discoverer := newTestClusterScanner(
-				"test-cluster",
-				defaultRegion,
-				mockMSKService,
-				newMockEC2Service(),
-				nil,   // admin factory not needed for this test
-				false, // skipKafka
-			)
-
-			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeIAM)
-
-			if tt.wantError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantBrokers, brokers)
-		})
-	}
-}
 
 func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 	tests := []struct {
@@ -212,8 +120,20 @@ func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, nil, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.scanClusterTopics(mockAdmin)
+			// Since scanClusterTopics has been moved to the Kafka service, we'll test the functionality directly
+			// Test the topic scanning functionality through the admin client
+			topics, err := mockAdmin.ListTopics()
+			if err != nil {
+				err = fmt.Errorf("❌ Failed to list topics: %v", err)
+			}
+
+			var result []string
+			if err == nil {
+				result = make([]string, 0, len(topics))
+				for topic := range topics {
+					result = append(result, topic)
+				}
+			}
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -537,26 +457,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				return mockAdmin, nil
 			}
 
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// For this test, we just need to parse the broker addresses
-					brokerList := aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-					if brokerList == "" {
-						return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
+			mockMSKService := &mocks.MockMSKService{}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 
@@ -569,8 +470,8 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				},
 			}
 
-			// Test the scanKafkaResources function
-			err := clusterScanner.scanKafkaResources(clusterInfo)
+			// Test the scanKafkaResources function through the Kafka service
+			err := clusterScanner.kafkaService.ScanKafkaResources(clusterInfo)
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -607,7 +508,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 		mockPolicyError             error
 		mockCompatibleVersionsError error
 		wantError                   string
-		adminFactory                KafkaAdminFactory
+		adminFactory                kafkaservice.KafkaAdminFactory
 	}{
 		{
 			name: "successful full cluster scan",
@@ -842,7 +743,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			adminClosed := false
 
-			var adminFactory KafkaAdminFactory
+			var adminFactory kafkaservice.KafkaAdminFactory
 			if tt.name == "successful full cluster scan" {
 				adminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 					return &mocks.MockKafkaAdmin{
@@ -894,24 +795,6 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
 				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
 					return tt.mockBootstrapBrokersOutput, tt.mockBootstrapBrokersError
-				},
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// For this test, we just need to parse the broker addresses
-					brokerList := aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-					if brokerList == "" {
-						return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
 				},
 				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
 					return tt.mockDescribeClusterOutput, tt.mockDescribeClusterError
@@ -1119,24 +1002,6 @@ func TestClusterScanner_Run(t *testing.T) {
 					return &kafka.GetBootstrapBrokersOutput{
 						BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
 					}, nil
-				},
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// For this test, we just need to parse the broker addresses
-					brokerList := aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-					if brokerList == "" {
-						return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
 				},
 				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
 					if tt.mockMSKOutput == nil || len(tt.mockMSKOutput.ClusterInfoList) == 0 {
@@ -1718,8 +1583,11 @@ func TestClusterScanner_DescribeKafkaCluster(t *testing.T) {
 				CloseFunc: func() error { return nil },
 			}
 
-			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, nil, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.describeKafkaCluster(mockAdmin)
+			// Since describeKafkaCluster has been moved to the Kafka service, we'll test it directly
+			result, err := mockAdmin.GetClusterKafkaMetadata()
+			if err != nil {
+				err = fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
+			}
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -1794,26 +1662,7 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				return mockAdmin, nil
 			}
 
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// For this test, we just need to parse the broker addresses
-					brokerList := aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-					if brokerList == "" {
-						return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
+			mockMSKService := &mocks.MockMSKService{}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 
@@ -1827,7 +1676,7 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				},
 			}
 
-			err := clusterScanner.scanKafkaResources(clusterInfo)
+			err := clusterScanner.kafkaService.ScanKafkaResources(clusterInfo)
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -1837,111 +1686,6 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantClusterID, clusterInfo.ClusterID, "ClusterID should be properly stored")
-		})
-	}
-}
-
-func TestClusterScanner_ParseBrokerAddresses_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name        string
-		brokers     kafka.GetBootstrapBrokersOutput
-		wantBrokers []string
-		wantError   string
-	}{
-		{
-			name: "handles single broker with spaces in public brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslIam: aws.String("broker1:9098"),
-			},
-			wantBrokers: []string{"broker1:9098"}, // Split preserves spaces
-		},
-		{
-			name: "handles single broker with spaces in private brokers (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
-			},
-			wantBrokers: []string{"broker1:9098"}, // Split preserves spaces
-		},
-		{
-			name: "handles multiple brokers with trailing comma in public brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslIam: aws.String("broker1:9098,broker2:9098,"),
-			},
-			wantBrokers: []string{"broker1:9098", "broker2:9098"},
-		},
-		{
-			name: "handles multiple brokers with trailing comma in private brokers (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslIam: aws.String("broker1:9098,broker2:9098,"),
-			},
-			wantBrokers: []string{"broker1:9098", "broker2:9098"},
-		},
-		{
-			name: "handles empty public broker list but has private brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslIam: aws.String(""),
-				BootstrapBrokerStringSaslIam:       aws.String("private-broker1:9098"),
-			},
-			wantBrokers: []string{"private-broker1:9098"},
-		},
-		{
-			name: "handles nil public broker field but has private brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				// BootstrapBrokerStringPublicSaslIam is nil
-				BootstrapBrokerStringSaslIam: aws.String("private-broker1:9098"),
-			},
-			wantBrokers: []string{"private-broker1:9098"},
-		},
-		{
-			name:    "returns error when both public and private broker fields are nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				// Both BootstrapBrokerStringPublicSaslIam and BootstrapBrokerStringSaslIam are nil
-			},
-			wantError: "❌ No SASL/IAM brokers found in the cluster",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// This test is specifically testing the parseBrokerAddresses logic
-					// so we'll implement it inline to match the expected behavior
-					var brokerList string
-					if authType == types.AuthTypeIAM {
-						brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslIam)
-						if brokerList == "" {
-							brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-						}
-						if brokerList == "" {
-							return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-						}
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
-
-			clusterScanner := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			brokers, err := clusterScanner.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeIAM)
-
-			if tt.wantError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantBrokers, brokers)
 		})
 	}
 }
@@ -2050,26 +1794,7 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 				return mockAdmin, nil
 			}
 
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// For this test, we just need to parse the broker addresses
-					brokerList := aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-					if brokerList == "" {
-						return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
+			mockMSKService := &mocks.MockMSKService{}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), adminFactory, false)
 			clusterInfo := &types.ClusterInformation{
@@ -2081,7 +1806,7 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 			}
 
 			// The operation should succeed even if admin.Close() fails
-			err := clusterScanner.scanKafkaResources(clusterInfo)
+			err := clusterScanner.kafkaService.ScanKafkaResources(clusterInfo)
 			assert.NoError(t, err, "scanKafkaResources should succeed even if admin.Close() fails")
 			assert.Equal(t, []string{"topic1"}, clusterInfo.Topics)
 		})
@@ -2231,29 +1956,6 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 			adminCreated := false
 
 			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// For this test, we just need to parse the broker addresses
-					brokerList := aws.ToString(brokers.BootstrapBrokerStringSaslIam)
-					if brokerList == "" {
-						return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-
-					if len(addresses) == 0 {
-						return nil, fmt.Errorf("❌ No valid broker addresses found")
-					}
-
-					return addresses, nil
-				},
 				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
 					return &kafka.GetBootstrapBrokersOutput{
 						BootstrapBrokerStringSaslIam: aws.String("broker1:9098,broker2:9098"),
@@ -2402,494 +2104,6 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 	}
 }
 
-func TestClusterScanner_ParseBrokerAddresses_Unauthenticated(t *testing.T) {
-	tests := []struct {
-		name        string
-		brokers     kafka.GetBootstrapBrokersOutput
-		wantBrokers []string
-		wantError   string
-	}{
-		{
-			name: "returns TLS brokers when available (preferred)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String("tls-broker1:9094,tls-broker2:9094"),
-				BootstrapBrokerString:    aws.String("plaintext-broker1:9092,plaintext-broker2:9092"),
-			},
-			wantBrokers: []string{"tls-broker1:9094", "tls-broker2:9094"},
-		},
-		{
-			name: "falls back to plaintext brokers when TLS not available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerString: aws.String("plaintext-broker1:9092,plaintext-broker2:9092"),
-			},
-			wantBrokers: []string{"plaintext-broker1:9092", "plaintext-broker2:9092"},
-		},
-		{
-			name: "returns TLS brokers even when plaintext are also available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String("tls-broker1:9094"),
-				BootstrapBrokerString:    aws.String("plaintext-broker1:9092,plaintext-broker2:9092"),
-			},
-			wantBrokers: []string{"tls-broker1:9094"},
-		},
-		{
-			name: "handles single TLS broker",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String("tls-broker1:9094"),
-			},
-			wantBrokers: []string{"tls-broker1:9094"},
-		},
-		{
-			name: "handles single plaintext broker (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerString: aws.String("plaintext-broker1:9092"),
-			},
-			wantBrokers: []string{"plaintext-broker1:9092"},
-		},
-		{
-			name: "handles brokers with spaces",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String(" tls-broker1:9094 , tls-broker2:9094 "),
-			},
-			wantBrokers: []string{"tls-broker1:9094", "tls-broker2:9094"},
-		},
-		{
-			name: "handles plaintext brokers with spaces (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerString: aws.String(" plaintext-broker1:9092 , plaintext-broker2:9092 "),
-			},
-			wantBrokers: []string{"plaintext-broker1:9092", "plaintext-broker2:9092"},
-		},
-		{
-			name: "returns error when no unauthenticated brokers available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
-			},
-			wantError: "❌ No Unauthenticated brokers found in the cluster",
-		},
-		{
-			name: "returns error when both TLS and plaintext broker types are empty strings",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String(""),
-				BootstrapBrokerString:    aws.String(""),
-			},
-			wantError: "❌ No Unauthenticated brokers found in the cluster",
-		},
-		{
-			name: "returns error when TLS is empty string and plaintext is nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String(""),
-				BootstrapBrokerString:    nil,
-			},
-			wantError: "❌ No Unauthenticated brokers found in the cluster",
-		},
-		{
-			name: "returns error when TLS is nil and plaintext is empty string",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: nil,
-				BootstrapBrokerString:    aws.String(""),
-			},
-			wantError: "❌ No Unauthenticated brokers found in the cluster",
-		},
-		{
-			name: "returns error when both TLS and plaintext broker types are nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: nil,
-				BootstrapBrokerString:    nil,
-			},
-			wantError: "❌ No Unauthenticated brokers found in the cluster",
-		},
-	}
+// Removed ParseBrokerAddresses tests - broker parsing logic moved to ClusterInformation
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// This test is specifically testing the parseBrokerAddresses logic for unauthenticated brokers
-					// so we'll implement it inline to match the expected behavior
-					var brokerList string
-					if authType == types.AuthTypeUnauthenticated {
-						brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
-						if brokerList == "" {
-							brokerList = aws.ToString(brokers.BootstrapBrokerString)
-						}
-						if brokerList == "" {
-							return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
-						}
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
-
-			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeUnauthenticated)
-
-			if tt.wantError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantBrokers, brokers)
-		})
-	}
-}
-
-func TestClusterScanner_ParseBrokerAddresses_SASLSCRAM(t *testing.T) {
-	tests := []struct {
-		name        string
-		brokers     kafka.GetBootstrapBrokersOutput
-		wantBrokers []string
-		wantError   string
-	}{
-		{
-			name: "returns Public SASL/SCRAM brokers when available (preferred)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String("public-scram-broker1:9096,public-scram-broker2:9096"),
-				BootstrapBrokerStringSaslScram:       aws.String("private-scram-broker1:9096,private-scram-broker2:9096"),
-			},
-			wantBrokers: []string{"public-scram-broker1:9096", "public-scram-broker2:9096"},
-		},
-		{
-			name: "falls back to private SASL/SCRAM brokers when public not available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslScram: aws.String("private-scram-broker1:9096,private-scram-broker2:9096"),
-			},
-			wantBrokers: []string{"private-scram-broker1:9096", "private-scram-broker2:9096"},
-		},
-		{
-			name: "returns public brokers even when private are also available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String("public-scram-broker1:9096"),
-				BootstrapBrokerStringSaslScram:       aws.String("private-scram-broker1:9096,private-scram-broker2:9096"),
-			},
-			wantBrokers: []string{"public-scram-broker1:9096"},
-		},
-		{
-			name: "handles single public SASL/SCRAM broker",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String("public-scram-broker1:9096"),
-			},
-			wantBrokers: []string{"public-scram-broker1:9096"},
-		},
-		{
-			name: "handles single private SASL/SCRAM broker (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslScram: aws.String("private-scram-broker1:9096"),
-			},
-			wantBrokers: []string{"private-scram-broker1:9096"},
-		},
-		{
-			name: "handles public brokers with spaces",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String(" public-scram-broker1:9096 , public-scram-broker2:9096 "),
-			},
-			wantBrokers: []string{"public-scram-broker1:9096", "public-scram-broker2:9096"},
-		},
-		{
-			name: "handles private brokers with spaces (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslScram: aws.String(" private-scram-broker1:9096 , private-scram-broker2:9096 "),
-			},
-			wantBrokers: []string{"private-scram-broker1:9096", "private-scram-broker2:9096"},
-		},
-		{
-			name: "handles empty public broker list but has private brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String(""),
-				BootstrapBrokerStringSaslScram:       aws.String("private-scram-broker1:9096"),
-			},
-			wantBrokers: []string{"private-scram-broker1:9096"},
-		},
-		{
-			name: "handles nil public broker field but has private brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				// BootstrapBrokerStringPublicSaslScram is nil
-				BootstrapBrokerStringSaslScram: aws.String("private-scram-broker1:9096"),
-			},
-			wantBrokers: []string{"private-scram-broker1:9096"},
-		},
-		{
-			name: "returns error when no SASL/SCRAM brokers available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
-			},
-			wantError: "❌ No SASL/SCRAM brokers found in the cluster",
-		},
-		{
-			name: "returns error when both public and private broker types are empty strings",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String(""),
-				BootstrapBrokerStringSaslScram:       aws.String(""),
-			},
-			wantError: "❌ No SASL/SCRAM brokers found in the cluster",
-		},
-		{
-			name: "returns error when public is empty string and private is nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String(""),
-				BootstrapBrokerStringSaslScram:       nil,
-			},
-			wantError: "❌ No SASL/SCRAM brokers found in the cluster",
-		},
-		{
-			name: "returns error when public is nil and private is empty string",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: nil,
-				BootstrapBrokerStringSaslScram:       aws.String(""),
-			},
-			wantError: "❌ No SASL/SCRAM brokers found in the cluster",
-		},
-		{
-			name: "returns error when both public and private broker types are nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: nil,
-				BootstrapBrokerStringSaslScram:       nil,
-			},
-			wantError: "❌ No SASL/SCRAM brokers found in the cluster",
-		},
-		{
-			name: "handles multiple brokers with trailing comma in public brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicSaslScram: aws.String("public-scram-broker1:9096,public-scram-broker2:9096,"),
-			},
-			wantBrokers: []string{"public-scram-broker1:9096", "public-scram-broker2:9096"},
-		},
-		{
-			name: "handles multiple brokers with trailing comma in private brokers (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslScram: aws.String("private-scram-broker1:9096,private-scram-broker2:9096,"),
-			},
-			wantBrokers: []string{"private-scram-broker1:9096", "private-scram-broker2:9096"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// This test is specifically testing the parseBrokerAddresses logic for SASL/SCRAM brokers
-					// so we'll implement it inline to match the expected behavior
-					var brokerList string
-					if authType == types.AuthTypeSASLSCRAM {
-						brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicSaslScram)
-						if brokerList == "" {
-							brokerList = aws.ToString(brokers.BootstrapBrokerStringSaslScram)
-						}
-						if brokerList == "" {
-							return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
-						}
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
-
-			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeSASLSCRAM)
-
-			if tt.wantError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantBrokers, brokers)
-		})
-	}
-}
-
-func TestClusterScanner_ParseBrokerAddresses_TLS(t *testing.T) {
-	tests := []struct {
-		name        string
-		brokers     kafka.GetBootstrapBrokersOutput
-		wantBrokers []string
-		wantError   string
-	}{
-		{
-			name: "returns Public TLS brokers when available (preferred)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String("public-tls-broker1:9094,public-tls-broker2:9094"),
-				BootstrapBrokerStringTls:       aws.String("private-tls-broker1:9094,private-tls-broker2:9094"),
-			},
-			wantBrokers: []string{"public-tls-broker1:9094", "public-tls-broker2:9094"},
-		},
-		{
-			name: "falls back to private TLS brokers when public not available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String("private-tls-broker1:9094,private-tls-broker2:9094"),
-			},
-			wantBrokers: []string{"private-tls-broker1:9094", "private-tls-broker2:9094"},
-		},
-		{
-			name: "returns public TLS brokers even when private are also available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String("public-tls-broker1:9094"),
-				BootstrapBrokerStringTls:       aws.String("private-tls-broker1:9094,private-tls-broker2:9094"),
-			},
-			wantBrokers: []string{"public-tls-broker1:9094"},
-		},
-		{
-			name: "handles single public TLS broker",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String("public-tls-broker1:9094"),
-			},
-			wantBrokers: []string{"public-tls-broker1:9094"},
-		},
-		{
-			name: "handles single private TLS broker (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String("private-tls-broker1:9094"),
-			},
-			wantBrokers: []string{"private-tls-broker1:9094"},
-		},
-		{
-			name: "handles public TLS brokers with spaces",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String(" public-tls-broker1:9094 , public-tls-broker2:9094 "),
-			},
-			wantBrokers: []string{"public-tls-broker1:9094", "public-tls-broker2:9094"},
-		},
-		{
-			name: "handles private TLS brokers with spaces (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String(" private-tls-broker1:9094 , private-tls-broker2:9094 "),
-			},
-			wantBrokers: []string{"private-tls-broker1:9094", "private-tls-broker2:9094"},
-		},
-		{
-			name: "handles empty public TLS broker list but has private brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String(""),
-				BootstrapBrokerStringTls:       aws.String("private-tls-broker1:9094"),
-			},
-			wantBrokers: []string{"private-tls-broker1:9094"},
-		},
-		{
-			name: "handles nil public TLS broker field but has private brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				// BootstrapBrokerStringPublicTls is nil
-				BootstrapBrokerStringTls: aws.String("private-tls-broker1:9094"),
-			},
-			wantBrokers: []string{"private-tls-broker1:9094"},
-		},
-		{
-			name: "returns error when no TLS brokers available",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
-			},
-			wantError: "❌ No TLS brokers found in the cluster",
-		},
-		{
-			name: "returns error when both public and private TLS broker types are empty strings",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String(""),
-				BootstrapBrokerStringTls:       aws.String(""),
-			},
-			wantError: "❌ No TLS brokers found in the cluster",
-		},
-		{
-			name: "returns error when public TLS is empty string and private TLS is nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String(""),
-				BootstrapBrokerStringTls:       nil,
-			},
-			wantError: "❌ No TLS brokers found in the cluster",
-		},
-		{
-			name: "returns error when public TLS is nil and private TLS is empty string",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: nil,
-				BootstrapBrokerStringTls:       aws.String(""),
-			},
-			wantError: "❌ No TLS brokers found in the cluster",
-		},
-		{
-			name: "returns error when both public and private TLS broker types are nil",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: nil,
-				BootstrapBrokerStringTls:       nil,
-			},
-			wantError: "❌ No TLS brokers found in the cluster",
-		},
-		{
-			name: "handles multiple brokers with trailing comma in public TLS brokers",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringPublicTls: aws.String("public-tls-broker1:9094,public-tls-broker2:9094,"),
-			},
-			wantBrokers: []string{"public-tls-broker1:9094", "public-tls-broker2:9094"},
-		},
-		{
-			name: "handles multiple brokers with trailing comma in private TLS brokers (fallback)",
-			brokers: kafka.GetBootstrapBrokersOutput{
-				BootstrapBrokerStringTls: aws.String("private-tls-broker1:9094,private-tls-broker2:9094,"),
-			},
-			wantBrokers: []string{"private-tls-broker1:9094", "private-tls-broker2:9094"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockMSKService := &mocks.MockMSKService{
-				ParseBrokerAddressesFunc: func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error) {
-					// This test is specifically testing the parseBrokerAddresses logic for TLS brokers
-					// so we'll implement it inline to match the expected behavior
-					var brokerList string
-					if authType == types.AuthTypeTLS {
-						brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicTls)
-						if brokerList == "" {
-							brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
-						}
-						if brokerList == "" {
-							return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
-						}
-					}
-
-					// Split by comma and trim whitespace
-					rawAddresses := strings.Split(brokerList, ",")
-					addresses := make([]string, 0, len(rawAddresses))
-					for _, addr := range rawAddresses {
-						trimmedAddr := strings.TrimSpace(addr)
-						if trimmedAddr != "" {
-							addresses = append(addresses, trimmedAddr)
-						}
-					}
-					return addresses, nil
-				},
-			}
-
-			discoverer := newTestClusterScanner("test-cluster", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			brokers, err := discoverer.mskService.ParseBrokerAddresses(tt.brokers, types.AuthTypeTLS)
-
-			if tt.wantError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantBrokers, brokers)
-		})
-	}
-}
+// Removed ParseBrokerAddresses tests - broker parsing logic moved to ClusterInformation

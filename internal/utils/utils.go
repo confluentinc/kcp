@@ -1,6 +1,8 @@
 package utils
 
-import "strings"
+import (
+	"strings"
+)
 
 func ConvertKafkaVersion(kafkaVersion *string) string {
 	switch {
