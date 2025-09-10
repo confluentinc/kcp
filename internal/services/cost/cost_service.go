@@ -45,16 +45,14 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 	}
 
 	costData := cs.processCostExplorerOutput(output)
-	regionCosts := types.RegionCosts{
-		Region:      region,
-		CostData:    costData,
-		StartDate:   startDate,
-		EndDate:     endDate,
-		Granularity: string(granularity),
-		Tags:        tags,
-		Services:    services,
-	}
-	return regionCosts, nil
+	regionCosts := types.NewRegionCosts(region, time.Now())
+	regionCosts.CostData = costData
+	regionCosts.StartDate = startDate
+	regionCosts.EndDate = endDate
+	regionCosts.Granularity = string(granularity)
+	regionCosts.Tags = tags
+	regionCosts.Services = services
+	return *regionCosts, nil
 }
 
 func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string) *costexplorer.GetCostAndUsageInput {

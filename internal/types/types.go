@@ -232,3 +232,9 @@ var AclMap = map[string]ACLMapping{
 		RequiresPattern: true,
 	},
 }
+
+type KcpBuildInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Date    string `json:"date"`
+}
