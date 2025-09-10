@@ -15,7 +15,6 @@ import (
 )
 
 type Cost struct {
-	Timestamp       time.Time `json:"timestamp"`
 	TimePeriodStart string    `json:"time_period_start"`
 	TimePeriodEnd   string    `json:"time_period_end"`
 	Service         string    `json:"service"`
