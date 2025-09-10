@@ -108,6 +108,10 @@ func (d *Discoverer) processRegions(outputDir string) error {
 			if err := costs.WriteAsMarkdown(true); err != nil {
 				slog.Error("failed to write region costs", "region", region, "error", err)
 			}
+
+			if err := costs.WriteAsCSV(); err != nil {
+				slog.Error("failed to write region costs", "region", region, "error", err)
+			}
 		}
 
 		// scan clusters within the region
