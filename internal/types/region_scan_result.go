@@ -9,18 +9,32 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
 // RegionScanResult contains the results of scanning an AWS region for MSK resources
 type RegionScanResult struct {
 	Timestamp      time.Time                                   `json:"timestamp"`
+	KcpBuildInfo   KcpBuildInfo                                `json:"kcp_build_info"`
 	Clusters       []ClusterSummary                            `json:"clusters"`
 	VpcConnections []kafkatypes.VpcConnection                  `json:"vpc_connections"`
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
 	KafkaVersions  []kafkatypes.KafkaVersion                   `json:"kafka_versions"`
 	Replicators    []kafka.DescribeReplicatorOutput            `json:"replicators"`
 	Region         string                                      `json:"region"`
+}
+
+func NewRegionScanResult(region string, timestamp time.Time) *RegionScanResult {
+	return &RegionScanResult{
+		Region:    region,
+		Timestamp: timestamp,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
 }
 
 func (rs *RegionScanResult) GetJsonPath() string {
@@ -108,8 +122,18 @@ func (rs *RegionScanResult) AsMarkdown() *markdown.Markdown {
 	md.AddHeading("Cluster ARNs", 2)
 	rs.addClusterArnsSection(md)
 
+	// build info section
+	md.AddHeading("KCP Build Info", 2)
+	rs.addBuildInfoSection(md)
+
 	// Save to file
 	return md
+}
+
+func (rs *RegionScanResult) addBuildInfoSection(md *markdown.Markdown) {
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", rs.KcpBuildInfo.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", rs.KcpBuildInfo.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", rs.KcpBuildInfo.Date))
 }
 
 // addSummarySection adds a summary of the scan results

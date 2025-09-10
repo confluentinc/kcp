@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
@@ -32,6 +33,7 @@ type SubnetInfo struct {
 }
 
 type ClusterInformation struct {
+	KcpBuildInfo         KcpBuildInfo                           `json:"kcp_build_info"`
 	ClusterID            string                                 `json:"cluster_id"`
 	Region               string                                 `json:"region"`
 	Timestamp            time.Time                              `json:"timestamp"`
@@ -46,6 +48,18 @@ type ClusterInformation struct {
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
 	Topics               []string                               `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
+}
+
+func NewClusterInformation(region string, timestamp time.Time) *ClusterInformation {
+	return &ClusterInformation{
+		Region:    region,
+		Timestamp: timestamp,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
 }
 
 func (c *ClusterInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
@@ -251,7 +265,18 @@ func (c *ClusterInformation) AsMarkdown() *markdown.Markdown {
 		c.addAclsSection(md)
 	}
 
+	// build info section
+	md.AddHeading("KCP Build Info", 2)
+	c.addBuildInfoSection(md)
+
+	// Save to file
 	return md
+}
+
+func (c *ClusterInformation) addBuildInfoSection(md *markdown.Markdown) {
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", c.KcpBuildInfo.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", c.KcpBuildInfo.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", c.KcpBuildInfo.Date))
 }
 
 func (c *ClusterInformation) addSummarySection(md *markdown.Markdown) {
