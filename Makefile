@@ -4,7 +4,8 @@ MAIN_PATH := ./cmd/cli
 
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
-VERSION := dev
+# VERSION := dev
+VERSION := 0.1.0
 LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION) \
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
