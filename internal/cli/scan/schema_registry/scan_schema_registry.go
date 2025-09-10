@@ -11,10 +11,10 @@ import (
 
 var (
 	schemaRegistryURL string
-	username string
-	password string
 	useUnauthenticated bool
 	useBasicAuth bool
+	username string
+	password string
 	groups = make(map[*pflag.FlagSet]string)
 )
 
@@ -40,6 +40,8 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
 	authFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use Basic Authentication")
+	authFlags.StringVar(&username, "username", "", "Username for Basic Authentication")
+	authFlags.StringVar(&password, "password", "", "Password for Basic Authentication")
 	schemaRegistryCmd.Flags().AddFlagSet(authFlags)
 	groups[authFlags] = "Authentication Flags"
 
@@ -85,6 +87,8 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("❌ Authentication type not supported")
 	}
 
+	fmt.Printf("Using URL: %s, Username: %s, Password: %s\n", config.URL, config.Username, config.Password)
+
 	schemaRegistryClient, err := client.NewSchemaRegistryClient(config)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to create schema registry client: %v", err)
@@ -93,6 +97,6 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 	service := schema_registry.NewSchemaRegistryService(schemaRegistryClient)
 
 	scanner := sr.NewSchemaRegistryScanner(service, schemaRegistryURL)
-
+	
 	return scanner.Run()
 }
