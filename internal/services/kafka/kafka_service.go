@@ -89,7 +89,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 }
 
 // scanClusterTopics scans for topics in the Kafka cluster
-func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
+func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.Topics, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
 	topics, err := admin.ListTopics()
@@ -97,10 +97,40 @@ func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]string, er
 		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
 	}
 
-	topicList := make([]string, 0, len(topics))
-	for topic := range topics {
-		topicList = append(topicList, topic)
+	/*
+		configEntries: map[
+			local.retention.ms:0x14000230a50
+			message.timestamp.after.max.ms:0x14000231010
+			message.timestamp.before.max.ms:0x14000231050
+			min.insync.replicas:0x14000230990
+			retention.ms:0x14000230bd0
+			segment.bytes:0x14000230b90
+			segment.ms:0x14000231090
+			unclean.leader.election.enable:0x14000230f50
+		]"
+	*/
+	var topicList []types.Topics
+	for topicName, topic := range topics {
+		// slog.Info(fmt.Sprintf("topicName: %s | configEntries: %v", topicName, topic.ConfigEntries))
+		topicList = append(topicList, types.Topics{
+			Name:              topicName,
+			Partitions:        int(topic.NumPartitions),
+			ReplicationFactor: int(topic.ReplicationFactor),
+			Configurations: types.TopicConfigurations{
+				CleanupPolicy:     "delete",
+				LocalRetentionMs:  *topic.ConfigEntries["local.retention.ms"],
+				RetentionMs:       *topic.ConfigEntries["retention.ms"],
+				MinInsyncReplicas: *topic.ConfigEntries["min.insync.replicas"],
+			},
+		})
 	}
+
+	fmt.Println(topicList)
+
+	// topicList := make([]string, 0, len(topics))
+	// for topic := range topics {
+	// 	topicList = append(topicList, topic)
+	// }
 
 	return topicList, nil
 }

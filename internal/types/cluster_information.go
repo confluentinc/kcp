@@ -46,7 +46,7 @@ type ClusterInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
-	Topics               []string                               `json:"topics"`
+	Topics               []Topics                               `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
 }
 
@@ -559,9 +559,28 @@ func (c *ClusterInformation) addCompatibleVersionsSection(md *markdown.Markdown)
 	md.AddTable(headers, tableData)
 }
 
-// addTopicsSection adds Kafka topics list
+// addTopicsSection adds Kafka topics table
 func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
-	md.AddList(c.Topics)
+	if len(c.Topics) == 0 {
+		md.AddParagraph("No topics found.")
+		return
+	}
+
+	headers := []string{"Topic Name", "Partitions", "Replication Factor", "Cleanup Policy", "Retention (ms)"}
+
+	var tableData [][]string
+	for _, topic := range c.Topics {
+		row := []string{
+			topic.Name,
+			fmt.Sprintf("%d", topic.Partitions),
+			fmt.Sprintf("%d", topic.ReplicationFactor),
+			topic.Configurations.CleanupPolicy,
+			topic.Configurations.RetentionMs,
+		}
+		tableData = append(tableData, row)
+	}
+
+	md.AddTable(headers, tableData)
 }
 
 // addAclsSection adds Kafka ACLs in a table format
