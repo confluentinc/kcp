@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	rcm "github.com/confluentinc/kcp/internal/cli/report/cluster/metrics"
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +12,7 @@ func NewReportClusterCmd() *cobra.Command {
 	}
 
 	clusterCmd.AddCommand(
-		rcm.NewReportClusterMetricsCmd(),
+	// rcm.NewReportClusterMetricsCmd(),
 	)
 
 	return clusterCmd

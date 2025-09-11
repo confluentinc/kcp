@@ -1,7 +1,9 @@
 package types
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -245,6 +247,7 @@ type KcpBuildInfo struct {
 type Discovery struct {
 	Regions      []DiscoveredRegion `json:"regions"`
 	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
+	Timestamp    time.Time          `json:"timestamp"`
 }
 
 func NewDiscovery(discoveredRegions []DiscoveredRegion) Discovery {
@@ -255,19 +258,28 @@ func NewDiscovery(discoveredRegions []DiscoveredRegion) Discovery {
 			Commit:  build_info.Commit,
 			Date:    build_info.Date,
 		},
+		Timestamp: time.Now(),
 	}
 }
 
+func (d *Discovery) WriteToJsonFile(filePath string) error {
+	data, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal discovery: %v", err)
+	}
+	return os.WriteFile(filePath, data, 0644)
+}
+
 type DiscoveredRegion struct {
-	Name     string              `json:"name"`
-	Clusters []DiscoveredCluster `json:"clusters"`
+	Name           string                                      `json:"name"`
+	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
+	Clusters       []DiscoveredCluster                         `json:"clusters"`
 }
 
 type DiscoveredCluster struct {
 	Name                       string                     `json:"name"`
 	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
 	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
-	Timestamp                  time.Time                  `json:"timestamp"`
 }
 
 type AWSClientInformation struct {

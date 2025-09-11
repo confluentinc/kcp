@@ -2,7 +2,6 @@ package cli
 
 import (
 	"github.com/confluentinc/kcp/internal/cli/create_asset"
-	"github.com/confluentinc/kcp/internal/cli/discover"
 	"github.com/confluentinc/kcp/internal/cli/discover_v2"
 	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
@@ -23,7 +22,7 @@ func init() {
 		create_asset.NewCreateAssetCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
-		discover.NewDiscoverCmd(),
+		// discover.NewDiscoverCmd(),
 		discover_v2.NewDiscoverV2Cmd(),
 		version.NewVersionCmd(),
 	)

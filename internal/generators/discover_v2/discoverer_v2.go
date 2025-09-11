@@ -10,10 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
-	cs "github.com/confluentinc/kcp/internal/generators/scan/cluster"
-	sr "github.com/confluentinc/kcp/internal/generators/scan/region"
 	"github.com/confluentinc/kcp/internal/services/ec2"
-	"github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -35,8 +32,8 @@ func NewDiscovererV2(opts DiscovererV2Opts) *DiscovererV2 {
 func (d *DiscovererV2) Run() error {
 	fmt.Println("Running Discover V2")
 
-	if err := d.processRegions(); err != nil {
-		slog.Error("failed to discover region", "error", err)
+	if err := d.discoverRegions(); err != nil {
+		slog.Error("failed to discover regions", "error", err)
 	}
 
 	return nil
@@ -45,14 +42,12 @@ func (d *DiscovererV2) Run() error {
 // cost == region
 // metrics == cluster
 
-func (d *DiscovererV2) processRegions() error {
+func (d *DiscovererV2) discoverRegions() error {
 	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
 
 	discoveredRegions := []types.DiscoveredRegion{}
 
-	// for each region i need region stuff
-	// 	for each cluster in region need msk cluster stuff
 	for _, region := range d.regions {
 		mskClient, err := client.NewMSKClient(region)
 		if err != nil {
@@ -61,81 +56,22 @@ func (d *DiscovererV2) processRegions() error {
 		}
 		mskService := msk.NewMSKService(mskClient)
 
-		// region scanning
-		regionScanOpts := sr.ScanRegionOpts{
-			Region: region,
-		}
-
-		regionScanner := sr.NewRegionScanner(mskClient, regionScanOpts)
-		regionScanResult, err := regionScanner.ScanRegion(context.Background())
+		ec2Service, err := ec2.NewEC2Service(region)
 		if err != nil {
-			slog.Error("failed to scan region", "region", region, "error", err)
+			slog.Error("failed to create ec2 service", "region", region, "error", err)
 			continue
 		}
 
-		// scan clusters within the region
-		if regionScanResult != nil {
-			ec2Service, err := ec2.NewEC2Service(region)
-			if err != nil {
-				slog.Error("failed to create ec2 service", "region", region, "error", err)
-				continue
-			}
+		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service)
+		regionDiscoverer := NewRegionDiscoverer(mskService, clusterDiscoverer)
 
-			discoveredClusters := []types.DiscoveredCluster{}
-			for _, cluster := range regionScanResult.Clusters {
-				// scan the cluster
-				clusterScannerOpts := cs.ClusterScannerOpts{
-					Region:     region,
-					ClusterArn: cluster.ClusterARN,
-					// never want to attempt to connect to brokers in this discovery phase
-					SkipKafka: true,
-				}
-
-				kafkaService := kafka.NewKafkaService(kafka.KafkaServiceOpts{})
-
-				clusterScanner := cs.NewClusterScanner(mskService, ec2Service, kafkaService, clusterScannerOpts)
-				clusterScanResult, err := clusterScanner.ScanCluster(context.Background())
-				if err != nil {
-					slog.Error("failed to scan cluster", "cluster", cluster.ClusterARN, "error", err)
-					continue
-				}
-
-				awsClientInfo := types.AWSClientInformation{
-					MskClusterConfig:     clusterScanResult.Cluster,
-					ClientVpcConnections: clusterScanResult.ClientVpcConnections,
-					ClusterOperations:    clusterScanResult.ClusterOperations,
-					Nodes:                clusterScanResult.Nodes,
-					ScramSecrets:         clusterScanResult.ScramSecrets,
-					BootstrapBrokers:     clusterScanResult.BootstrapBrokers,
-					Policy:               clusterScanResult.Policy,
-					CompatibleVersions:   clusterScanResult.CompatibleVersions,
-					ClusterNetworking:    clusterScanResult.ClusterNetworking,
-				}
-
-				kafkAdminClientInfo := types.KafkAdminClientInformation{
-					ClusterID: clusterScanResult.ClusterID,
-					Topics:    clusterScanResult.Topics,
-					Acls:      clusterScanResult.Acls,
-				}
-
-				discoveredCluster := types.DiscoveredCluster{
-					Name:                       aws.ToString(clusterScanResult.Cluster.ClusterName),
-					AWSClientInformation:       awsClientInfo,
-					KafkAdminClientInformation: kafkAdminClientInfo,
-					Timestamp:                  clusterScanResult.Timestamp,
-				}
-
-				discoveredClusters = append(discoveredClusters, discoveredCluster)
-			}
-			discoveredRegion := types.DiscoveredRegion{
-				Name:     region,
-				Clusters: discoveredClusters,
-			}
-
-			discoveredRegions = append(discoveredRegions, discoveredRegion)
+		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
+		if err != nil {
+			slog.Error("failed to discover region", "region", region, "error", err)
+			continue
 		}
-
 		// add region to the discovered regions
+		discoveredRegions = append(discoveredRegions, *discoveredRegion)
 
 		regionEntry, err := d.getRegionEntry(mskService, region)
 		if err != nil {
@@ -151,15 +87,13 @@ func (d *DiscovererV2) processRegions() error {
 	}
 
 	discovery := types.NewDiscovery(discoveredRegions)
-
-	if err := d.writeToJsonFile(discovery, "kcp-state.json"); err != nil {
+	if err := discovery.WriteToJsonFile("kcp-state.json"); err != nil {
 		slog.Error("failed to write discovery to file", "error", err)
 	}
 
 	credentials := types.Credentials{
 		Regions: regionEntries,
 	}
-
 	if err := credentials.WriteToFile("cluster-credentials.yaml"); err != nil {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
