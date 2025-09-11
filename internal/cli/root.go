@@ -91,7 +91,7 @@ func NewPrettyHandler(
 	opts PrettyHandlerOptions,
 ) *PrettyHandler {
 	h := &PrettyHandler{
-		Handler: slog.NewJSONHandler(out, &opts.SlogOpts),
+		Handler: slog.NewTextHandler(out, &opts.SlogOpts),
 		l:       log.New(out, "", 0),
 	}
 
