@@ -40,7 +40,7 @@ func (u *Updater) Run(force, checkOnly bool) error {
 	currentVersion := build_info.Version
 
 	// Skip update check for dev versions. If `--force` is set, push install of latest version.
-	if ((currentVersion == "dev" || currentVersion == "") && !force) {
+	if (currentVersion == "dev" || currentVersion == "") && !force {
 		slog.Warn("Development version detected, skipping update check. Use `--force` to install latest version.")
 		return nil
 	}
