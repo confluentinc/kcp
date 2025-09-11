@@ -3,8 +3,11 @@ package types
 import (
 	"fmt"
 	"strconv"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/build_info"
 )
 
 // DefaultClientBrokerEncryptionInTransit is the fallback encryption type when cluster encryption info is not available
@@ -237,4 +240,50 @@ type KcpBuildInfo struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
 	Date    string `json:"date"`
+}
+
+type Discovery struct {
+	Regions      []DiscoveredRegion `json:"regions"`
+	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
+}
+
+func NewDiscovery(discoveredRegions []DiscoveredRegion) Discovery {
+	return Discovery{
+		Regions: discoveredRegions,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
+}
+
+type DiscoveredRegion struct {
+	Name     string              `json:"name"`
+	Clusters []DiscoveredCluster `json:"clusters"`
+}
+
+type DiscoveredCluster struct {
+	Name                       string                     `json:"name"`
+	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
+	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
+	Timestamp                  time.Time                  `json:"timestamp"`
+}
+
+type AWSClientInformation struct {
+	MskClusterConfig     kafkatypes.Cluster                     `json:"msk_cluster_config"`
+	ClientVpcConnections []kafkatypes.ClientVpcConnection       `json:"client_vpc_connections"`
+	ClusterOperations    []kafkatypes.ClusterOperationV2Summary `json:"cluster_operations"`
+	Nodes                []kafkatypes.NodeInfo                  `json:"nodes"`
+	ScramSecrets         []string                               `json:"ScramSecrets"`
+	BootstrapBrokers     kafka.GetBootstrapBrokersOutput        `json:"bootstrap_brokers"`
+	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
+	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatible_versions"`
+	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
+}
+
+type KafkAdminClientInformation struct {
+	ClusterID string   `json:"cluster_id"`
+	Topics    []string `json:"topics"`
+	Acls      []Acls   `json:"acls"`
 }
