@@ -23,6 +23,10 @@ type ClusterDiscovererMSKService interface {
 	ListScramSecrets(ctx context.Context, clusterArn string) ([]string, error)
 	GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error)
 	GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
+	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
+}
+
+type ClusterDiscovererMetricService interface {
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -30,18 +34,34 @@ type ClusterDiscovererEC2Service interface {
 }
 
 type ClusterDiscoverer struct {
-	mskService ClusterDiscovererMSKService
-	ec2Service ClusterDiscovererEC2Service
+	mskService    ClusterDiscovererMSKService
+	ec2Service    ClusterDiscovererEC2Service
+	metricService ClusterDiscovererMetricService
 }
 
-func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service ClusterDiscovererEC2Service) ClusterDiscoverer {
+func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service ClusterDiscovererEC2Service, metricService ClusterDiscovererMetricService) ClusterDiscoverer {
 	return ClusterDiscoverer{
-		mskService: mskService,
-		ec2Service: ec2Service,
+		mskService:    mskService,
+		ec2Service:    ec2Service,
+		metricService: metricService,
 	}
 }
 
 func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*types.DiscoveredCluster, error) {
+	awsClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn)
+	if err != nil {
+		return nil, err
+	}
+
+	// didscover metrids
+
+	return &types.DiscoveredCluster{
+		Name:                 aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
+		AWSClientInformation: *awsClientInfo,
+	}, nil
+}
+
+func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string) (*types.AWSClientInformation, error) {
 	awsClientInfo := types.AWSClientInformation{}
 
 	cluster, err := cd.describeCluster(ctx, clusterArn)
@@ -102,10 +122,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	return &types.DiscoveredCluster{
-		Name:                 aws.ToString(cluster.ClusterInfo.ClusterName),
-		AWSClientInformation: awsClientInfo,
-	}, nil
+	return &awsClientInfo, nil
 }
 
 func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {

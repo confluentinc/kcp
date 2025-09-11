@@ -15,17 +15,10 @@ import (
 )
 
 type ClusterMetricsOpts struct {
-	Region            string
-	StartDate         time.Time
-	EndDate           time.Time
-	ClusterArn        string
-	SkipKafka         bool
-	AuthType          types.AuthType
-	SASLScramUsername string
-	SASLScramPassword string
-	TLSCACert         string
-	TLSClientCert     string
-	TLSClientKey      string
+	Region     string
+	StartDate  time.Time
+	EndDate    time.Time
+	ClusterArn string
 }
 
 type Topic struct {
