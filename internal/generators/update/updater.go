@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,9 +39,9 @@ func (u *Updater) Run(force, checkOnly bool) error {
 	// Get current version
 	currentVersion := build_info.Version
 
-	// Skip update check for dev versions
-	if currentVersion == "dev" || currentVersion == "" {
-		fmt.Println("Development version detected, skipping update check")
+	// Skip update check for dev versions. If `--force` is set, push install of latest version.
+	if ((currentVersion == "dev" || currentVersion == "") && !force) {
+		slog.Warn("Development version detected, skipping update check. Use `--force` to install latest version.")
 		return nil
 	}
 
@@ -52,15 +53,15 @@ func (u *Updater) Run(force, checkOnly bool) error {
 
 	// Compare versions
 	if !u.isNewerVersion(latestVersion, currentVersion) {
-		fmt.Printf("✅ Your installed version (%s) is already the latest available\n", currentVersion)
+		slog.Info(fmt.Sprintf("✅ Your installed version (%s) is already the latest available", currentVersion))
 		return nil
 	}
 
-	fmt.Printf("🎉 New version available: %s\n", latestVersion)
+	slog.Info(fmt.Sprintf("🎉 New version available: %s", latestVersion))
 
 	// Ask for confirmation unless force flag is set
 	if !force && !u.askForConfirmation("Do you want to update now? (y/N): ") {
-		fmt.Println("Update cancelled")
+		slog.Warn("Update cancelled")
 		return nil
 	}
 
@@ -69,7 +70,7 @@ func (u *Updater) Run(force, checkOnly bool) error {
 		return fmt.Errorf("update failed: %w", err)
 	}
 
-	fmt.Printf("✅ Successfully updated to version %s\n", latestVersion)
+	slog.Info(fmt.Sprintf("✅ Successfully updated to version %s", latestVersion))
 
 	return nil
 }
@@ -122,7 +123,7 @@ func (u *Updater) performUpdate(version string) error {
 		return fmt.Errorf("failed to get current binary path: %w", err)
 	}
 
-	fmt.Printf("Current binary: %s\n", currentBinary)
+	slog.Info(fmt.Sprintf("Current binary: %s", currentBinary))
 
 	// 2. Create backup
 	backupPath := currentBinary + ".backup"
@@ -133,7 +134,7 @@ func (u *Updater) performUpdate(version string) error {
 	// 3. Download and install new version
 	if err := u.downloadAndInstall(version, currentBinary); err != nil {
 		// Rollback on failure
-		fmt.Println("Update failed, rolling back...")
+		slog.Error("Update failed, rolling back...")
 		u.rollback(backupPath, currentBinary)
 		return err
 	}
@@ -162,7 +163,7 @@ func (u *Updater) downloadAndInstall(version, targetPath string) error {
 	fileName := fmt.Sprintf("kcp_%s_%s.tar.gz", platform, arch)
 	downloadURL := fmt.Sprintf("https://github.com/confluentinc/kcp/releases/download/%s/%s", version, fileName)
 
-	fmt.Printf("Downloading %s...\n", downloadURL)
+	slog.Info(fmt.Sprintf("Downloading %s...", downloadURL))
 
 	// Download the tar.gz file
 	resp, err := http.Get(downloadURL)
@@ -180,7 +181,7 @@ func (u *Updater) downloadAndInstall(version, targetPath string) error {
 }
 
 func (u *Updater) extractAndInstall(gzipReader io.Reader, targetPath string) error {
-	fmt.Println("Extracting and installing...")
+	slog.Info("Extracting and installing...")
 
 	// Open gzip reader
 	gzr, err := gzip.NewReader(gzipReader)
@@ -232,7 +233,7 @@ func (u *Updater) extractAndInstall(gzipReader io.Reader, targetPath string) err
 }
 
 func (u *Updater) installBinary(newBinary, targetPath string) error {
-	fmt.Println("Installing new binary...")
+	slog.Info("Installing new binary...")
 
 	if u.needsSudo(targetPath) {
 		return exec.Command("sudo", "cp", newBinary, targetPath).Run()
@@ -242,7 +243,7 @@ func (u *Updater) installBinary(newBinary, targetPath string) error {
 }
 
 func (u *Updater) rollback(backupPath, targetPath string) {
-	fmt.Println("Rolling back to previous version...")
+	slog.Warn("Rolling back to previous version...")
 
 	if u.needsSudo(targetPath) {
 		exec.Command("sudo", "mv", backupPath, targetPath).Run()
