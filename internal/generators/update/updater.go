@@ -1,219 +1,266 @@
 package update
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
-	"github.com/blang/semver"
 	"github.com/confluentinc/kcp/internal/build_info"
-	"github.com/rhysd/go-github-selfupdate/selfupdate"
 )
 
 const (
-	githubRepo = "confluentinc/kcp"
+	githubAPIURL = "https://api.github.com/repos/confluentinc/kcp/releases/latest"
+	timeout      = 30 * time.Second
 )
 
 type Updater struct {
-	repo string
+}
+
+type GitHubRelease struct {
+	TagName string `json:"tag_name"`
 }
 
 func NewUpdater() *Updater {
-	return &Updater{
-		repo: githubRepo,
-	}
+	return &Updater{}
 }
 
 func (u *Updater) Run(force, checkOnly bool) error {
-	fmt.Println("Checking for updates...")
-
+	// Get current version
 	currentVersion := build_info.Version
 
-	fmt.Println("Current version:", currentVersion)
+	// Skip update check for dev versions
 	if currentVersion == "dev" || currentVersion == "" {
 		fmt.Println("Development version detected, skipping update check")
 		return nil
 	}
 
-	v, err := semver.Parse(currentVersion)
+	// Get latest version from GitHub
+	latestVersion, err := u.getLatestVersion()
 	if err != nil {
-		return fmt.Errorf("failed to parse current version %s: %w", currentVersion, err)
+		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
-	if checkOnly {
-		return u.checkForUpdates(v)
-	}
-
-	return u.performUpdate(v, force)
-}
-
-func (u *Updater) checkForUpdates(currentVersion semver.Version) error {
-	latest, found, err := selfupdate.DetectLatest(u.repo)
-	if err != nil {
-		return fmt.Errorf("failed to detect latest version: %w", err)
-	}
-
-	if !found {
-		fmt.Println("No release found")
+	// Compare versions
+	if !u.isNewerVersion(latestVersion, currentVersion) {
+		fmt.Printf("✅ Your installed version (%s) is already the latest available\n", currentVersion)
 		return nil
 	}
 
-	if latest.Version.LTE(currentVersion) {
-		fmt.Printf("You are already running the latest version (%s)\n", currentVersion)
-		return nil
-	}
+	fmt.Printf("🎉 New version available: %s\n", latestVersion)
 
-	fmt.Printf("New version available: %s (current: %s)\n", latest.Version, currentVersion)
-	fmt.Printf("Release notes:\n%s\n", latest.ReleaseNotes)
-	return nil
-}
-
-func (u *Updater) performUpdate(currentVersion semver.Version, force bool) error {
-	// Ask user for confirmation unless force flag is set
+	// Ask for confirmation unless force flag is set
 	if !force && !u.askForConfirmation("Do you want to update now? (y/N): ") {
 		fmt.Println("Update cancelled")
 		return nil
 	}
 
-	// Get latest release info
-	latest, found, err := selfupdate.DetectLatest(u.repo)
-	if err != nil {
-		return fmt.Errorf("failed to detect latest version: %w", err)
-	}
-	if !found {
-		return fmt.Errorf("no release found")
+	// Perform the update with backup/rollback
+	if err := u.performUpdate(latestVersion); err != nil {
+		return fmt.Errorf("update failed: %w", err)
 	}
 
-	// Download the new binary to temp location
-	fmt.Printf("Downloading version %s...\n", latest.Version)
-	tempBinary, err := u.downloadBinary(latest)
-	if err != nil {
-		return fmt.Errorf("failed to download binary: %w", err)
-	}
-	defer os.Remove(tempBinary)
-
-	// Get current executable path
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	// Check if we need sudo permissions
-	needsSudo := u.needsSudoPermissions(execPath)
-
-	if needsSudo {
-		fmt.Printf("\nThe binary is installed in a system directory (%s)\n", filepath.Dir(execPath))
-		fmt.Printf("We will use 'sudo' to safely replace the binary with backup/rollback protection.\n")
-		if !u.askForConfirmation("Continue with sudo replacement? (y/N): ") {
-			fmt.Println("Update cancelled")
-			return nil
-		}
-	}
-
-	// Replace the binary
-	if err := u.replaceBinary(tempBinary, execPath, needsSudo); err != nil {
-		return fmt.Errorf("failed to replace binary: %w", err)
-	}
-
-	fmt.Printf("Successfully updated to version %s\n", latest.Version)
-	if latest.ReleaseNotes != "" {
-		fmt.Printf("\nRelease notes:\n%s\n", latest.ReleaseNotes)
-	}
+	fmt.Printf("✅ Successfully updated to version %s\n", latestVersion)
 
 	return nil
 }
 
-func (u *Updater) downloadBinary(release *selfupdate.Release) (string, error) {
-	// Create temporary file
-	tempFile, err := os.CreateTemp("", "kcp-update-*")
+func (u *Updater) getLatestVersion() (string, error) {
+	client := &http.Client{Timeout: timeout}
+
+	resp, err := client.Get(githubAPIURL)
 	if err != nil {
 		return "", err
 	}
-	defer tempFile.Close()
+	defer resp.Body.Close()
 
-	// Use the selfupdate library to download the appropriate binary
-	if err := selfupdate.UpdateTo(release.AssetURL, tempFile.Name()); err != nil {
-		os.Remove(tempFile.Name())
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var release GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return "", err
 	}
 
-	// Make it executable
-	if err := os.Chmod(tempFile.Name(), 0755); err != nil {
-		os.Remove(tempFile.Name())
-		return "", err
-	}
-
-	return tempFile.Name(), nil
+	return release.TagName, nil
 }
 
-func (u *Updater) needsSudoPermissions(execPath string) bool {
-	// Test if we can write to the directory
-	dir := filepath.Dir(execPath)
-	testFile, err := os.CreateTemp(dir, ".kcp-permission-test-*")
+func (u *Updater) isNewerVersion(latest, current string) bool {
+	latest = strings.TrimPrefix(latest, "v")
+	current = strings.TrimPrefix(current, "v")
+
+	return latest != current
+}
+
+func (u *Updater) askForConfirmation(prompt string) bool {
+	fmt.Print(prompt)
+
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
 	if err != nil {
-		return true // Assume we need sudo if we can't test
+		return false
+	}
+
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
+}
+
+func (u *Updater) performUpdate(version string) error {
+	// 1. Find current binary location
+	currentBinary, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get current binary path: %w", err)
+	}
+
+	fmt.Printf("Current binary: %s\n", currentBinary)
+
+	// 2. Create backup
+	backupPath := currentBinary + ".backup"
+	if err := u.createBackup(currentBinary, backupPath); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+
+	// 3. Download and install new version
+	if err := u.downloadAndInstall(version, currentBinary); err != nil {
+		// Rollback on failure
+		fmt.Println("Update failed, rolling back...")
+		u.rollback(backupPath, currentBinary)
+		return err
+	}
+
+	// 4. Clean up backup on success
+	os.Remove(backupPath)
+
+	return nil
+}
+
+func (u *Updater) createBackup(source, backup string) error {
+	fmt.Println("Creating backup...")
+
+	// Check if we need sudo
+	if u.needsSudo(source) {
+		return exec.Command("sudo", "cp", source, backup).Run()
+	}
+
+	return u.copyFile(source, backup)
+}
+
+func (u *Updater) downloadAndInstall(version, targetPath string) error {
+	// Construct download URL for tar.gz
+	platform := runtime.GOOS
+	arch := runtime.GOARCH
+	fileName := fmt.Sprintf("kcp_%s_%s.tar.gz", platform, arch)
+	downloadURL := fmt.Sprintf("https://github.com/confluentinc/kcp/releases/download/%s/%s", version, fileName)
+
+	fmt.Printf("Downloading %s...\n", downloadURL)
+
+	// Download the tar.gz file
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Extract and install
+	return u.extractAndInstall(resp.Body, targetPath)
+}
+
+func (u *Updater) extractAndInstall(gzipReader io.Reader, targetPath string) error {
+	fmt.Println("Extracting and installing...")
+
+	// Open gzip reader
+	gzr, err := gzip.NewReader(gzipReader)
+	if err != nil {
+		return fmt.Errorf("failed to open gzip: %w", err)
+	}
+	defer gzr.Close()
+
+	// Open tar reader
+	tr := tar.NewReader(gzr)
+
+	// Find the binary in the tar
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar read error: %w", err)
+		}
+
+		// Look for the kcp binary
+		if header.Name == "kcp" || strings.HasSuffix(header.Name, "/kcp") {
+			// Create temp file for the new binary
+			tempFile, err := os.CreateTemp("", "kcp-new-*")
+			if err != nil {
+				return fmt.Errorf("failed to create temp file: %w", err)
+			}
+			defer os.Remove(tempFile.Name())
+
+			// Copy binary content
+			if _, err := io.Copy(tempFile, tr); err != nil {
+				tempFile.Close()
+				return fmt.Errorf("failed to extract binary: %w", err)
+			}
+			tempFile.Close()
+
+			// Make executable
+			if err := os.Chmod(tempFile.Name(), 0755); err != nil {
+				return fmt.Errorf("failed to make executable: %w", err)
+			}
+
+			// Install the new binary
+			return u.installBinary(tempFile.Name(), targetPath)
+		}
+	}
+
+	return fmt.Errorf("kcp binary not found in archive")
+}
+
+func (u *Updater) installBinary(newBinary, targetPath string) error {
+	fmt.Println("Installing new binary...")
+
+	if u.needsSudo(targetPath) {
+		return exec.Command("sudo", "cp", newBinary, targetPath).Run()
+	}
+
+	return u.copyFile(newBinary, targetPath)
+}
+
+func (u *Updater) rollback(backupPath, targetPath string) {
+	fmt.Println("Rolling back to previous version...")
+
+	if u.needsSudo(targetPath) {
+		exec.Command("sudo", "mv", backupPath, targetPath).Run()
+	} else {
+		u.copyFile(backupPath, targetPath)
+		os.Remove(backupPath)
+	}
+}
+
+func (u *Updater) needsSudo(path string) bool {
+	dir := filepath.Dir(path)
+	testFile, err := os.CreateTemp(dir, ".kcp-test-*")
+	if err != nil {
+		return true // Assume sudo needed if we can't test
 	}
 	testFile.Close()
 	os.Remove(testFile.Name())
 	return false
-}
-
-func (u *Updater) replaceBinary(newBinary, currentBinary string, useSudo bool) error {
-	backupPath := currentBinary + ".backup"
-
-	if useSudo {
-		return u.replaceBinaryWithSudo(newBinary, currentBinary, backupPath)
-	}
-
-	return u.replaceBinaryDirect(newBinary, currentBinary, backupPath)
-}
-
-func (u *Updater) replaceBinaryWithSudo(newBinary, currentBinary, backupPath string) error {
-	fmt.Println("Creating backup and replacing binary (you may be prompted for your password)...")
-
-	// Create backup with sudo
-	cmd := exec.Command("sudo", "cp", currentBinary, backupPath)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
-	}
-
-	// Replace binary with sudo
-	cmd = exec.Command("sudo", "cp", newBinary, currentBinary)
-	if err := cmd.Run(); err != nil {
-		// Try to restore backup
-		restoreCmd := exec.Command("sudo", "mv", backupPath, currentBinary)
-		restoreCmd.Run()
-		return fmt.Errorf("failed to replace binary: %w", err)
-	}
-
-	// Remove backup on success
-	cmd = exec.Command("sudo", "rm", backupPath)
-	cmd.Run()
-
-	return nil
-}
-
-func (u *Updater) replaceBinaryDirect(newBinary, currentBinary, backupPath string) error {
-	// Create backup
-	if err := u.copyFile(currentBinary, backupPath); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
-	}
-
-	// Replace binary
-	if err := u.copyFile(newBinary, currentBinary); err != nil {
-		// Restore backup on failure
-		u.copyFile(backupPath, currentBinary)
-		return fmt.Errorf("failed to replace binary: %w", err)
-	}
-
-	// Remove backup on success
-	os.Remove(backupPath)
-
-	return nil
 }
 
 func (u *Updater) copyFile(src, dst string) error {
@@ -240,17 +287,4 @@ func (u *Updater) copyFile(src, dst string) error {
 	}
 
 	return os.Chmod(dst, sourceInfo.Mode())
-}
-
-func (u *Updater) askForConfirmation(prompt string) bool {
-	fmt.Print(prompt)
-
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return false
-	}
-
-	response = strings.TrimSpace(strings.ToLower(response))
-	return response == "y" || response == "yes"
 }

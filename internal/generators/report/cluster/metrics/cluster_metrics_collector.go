@@ -202,7 +202,6 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 }
 
 func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
-
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName)
 	authentication, err := structToMap(cluster.Provisioned.ClientAuthentication)
 	if err != nil {
