@@ -6,6 +6,7 @@ import (
 	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
 	"github.com/confluentinc/kcp/internal/cli/scan"
+	"github.com/confluentinc/kcp/internal/cli/update"
 	"github.com/confluentinc/kcp/internal/cli/version"
 	"github.com/spf13/cobra"
 )
@@ -24,5 +25,6 @@ func init() {
 		report.NewReportCmd(),
 		discover.NewDiscoverCmd(),
 		version.NewVersionCmd(),
+		update.NewUpdateCmd(),
 	)
 }
