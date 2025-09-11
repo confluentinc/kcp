@@ -172,6 +172,7 @@ func (cm *ClusterMetrics) addBuildInfoSection(md *markdown.Markdown) {
 	md.AddParagraph(fmt.Sprintf("**Commit:** %s", cm.KcpBuildInfo.Commit))
 	md.AddParagraph(fmt.Sprintf("**Date:** %s", cm.KcpBuildInfo.Date))
 }
+
 // addIndividualClusterSections adds individual sections for each cluster
 func (cm *ClusterMetrics) addIndividualClusterSections(md *markdown.Markdown) {
 	// Add cluster heading
