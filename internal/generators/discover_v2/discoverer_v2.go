@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
@@ -56,6 +57,13 @@ func (d *DiscovererV2) discoverRegions() error {
 		}
 		mskService := msk.NewMSKService(mskClient)
 
+		costExplorerClient, err := client.NewCostExplorerClient(region)
+		if err != nil {
+			return fmt.Errorf("failed to create cost explorer client: %v", err)
+		}
+
+		costService := cost.NewCostService(costExplorerClient)
+
 		ec2Service, err := ec2.NewEC2Service(region)
 		if err != nil {
 			slog.Error("failed to create ec2 service", "region", region, "error", err)
@@ -63,16 +71,18 @@ func (d *DiscovererV2) discoverRegions() error {
 		}
 
 		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service)
-		regionDiscoverer := NewRegionDiscoverer(mskService, clusterDiscoverer)
+		regionDiscoverer := NewRegionDiscoverer(mskService, costService, clusterDiscoverer)
 
 		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
 		if err != nil {
 			slog.Error("failed to discover region", "region", region, "error", err)
 			continue
 		}
+
 		// add region to the discovered regions
 		discoveredRegions = append(discoveredRegions, *discoveredRegion)
 
+		// capture credentials
 		regionEntry, err := d.getRegionEntry(mskService, region)
 		if err != nil {
 			slog.Error("failed to get region entry", "region", region, "error", err)

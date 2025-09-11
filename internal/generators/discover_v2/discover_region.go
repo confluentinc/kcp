@@ -2,11 +2,16 @@ package discover_v2
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -15,22 +20,27 @@ type RegionDiscovererMSKService interface {
 	GetConfigurationsNEW(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error)
 }
 
+type RegionDiscovererCostService interface {
+	GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error)
+}
+
 type RegionDiscoverer struct {
-	region            string
 	mskService        RegionDiscovererMSKService
+	costService       RegionDiscovererCostService
 	clusterDiscoverer ClusterDiscoverer
 }
 
-func NewRegionDiscoverer(mskService RegionDiscovererMSKService, clusterDiscoverer ClusterDiscoverer) *RegionDiscoverer {
+func NewRegionDiscoverer(mskService RegionDiscovererMSKService, costService RegionDiscovererCostService, clusterDiscoverer ClusterDiscoverer) *RegionDiscoverer {
 	return &RegionDiscoverer{
 		mskService:        mskService,
+		costService:       costService,
 		clusterDiscoverer: clusterDiscoverer,
 	}
 }
 
 func (rd *RegionDiscoverer) Discover(ctx context.Context, region string) (*types.DiscoveredRegion, error) {
 	slog.Info("🔍 discovering region", "region", region)
-	result := types.DiscoveredRegion{
+	discoveredRegion := types.DiscoveredRegion{
 		Name: region,
 	}
 
@@ -40,17 +50,48 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string) (*types
 	if err != nil {
 		return nil, err
 	}
-	result.Configurations = configurations
+	discoveredRegion.Configurations = configurations
+
+	regionCosts, err := rd.discoverCosts(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	discoveredRegion.Costs = *regionCosts
 
 	clusters, err := rd.discoverClusters(ctx, maxResults)
 	if err != nil {
 		return nil, err
 	}
-	result.Clusters = clusters
+	discoveredRegion.Clusters = clusters
 
-	// do costs also
+	return &discoveredRegion, nil
+}
 
-	return &result, nil
+func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*types.CostInformation, error) {
+	// todo what we doing here?
+	tags := []string{}
+	tagsMap := rd.convertTagsToMap(tags)
+
+	// time range of 6 months from now
+	startDate := time.Now().AddDate(0, -6, 0)
+	endDate := time.Now()
+	regionCosts, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, costexplorertypes.GranularityDaily, tagsMap)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to get AWS costs: %v", err)
+	}
+
+	costMetadata := types.CostMetadata{
+		StartDate:   startDate,
+		EndDate:     endDate,
+		Granularity: string(costexplorertypes.GranularityDaily),
+		Tags:        tagsMap,
+		Services:    regionCosts.Services,
+	}
+	costInformation := types.CostInformation{
+		CostData:     regionCosts.CostData.Costs,
+		CostMetadata: costMetadata,
+	}
+	return &costInformation, nil
 }
 
 func (rd *RegionDiscoverer) discoverClusters(ctx context.Context, maxResults int32) ([]types.DiscoveredCluster, error) {
@@ -73,7 +114,23 @@ func (rd *RegionDiscoverer) discoverClusters(ctx context.Context, maxResults int
 	}
 
 	return discoveredClusters, nil
+}
 
+func (rd *RegionDiscoverer) convertTagsToMap(tags []string) map[string][]string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	tagMap := make(map[string][]string)
+	for _, tag := range tags {
+		parts := strings.Split(tag, "=")
+		if len(parts) == 2 {
+			key := parts[0]
+			value := parts[1]
+			tagMap[key] = append(tagMap[key], value)
+		}
+	}
+	return tagMap
 }
 
 // func (rd *RegionDiscoverer) listClusters(ctx context.Context, maxResults int32) ([]types.ClusterSummary, error) {

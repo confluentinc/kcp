@@ -24,7 +24,7 @@ func NewCostService(client *costexplorer.Client) *CostService {
 	}
 }
 
-func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
+func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
 	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
 
 	startStr := aws.String(startDate.Format("2006-01-02"))
@@ -39,7 +39,7 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 
 	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags)
 
-	output, err := cs.client.GetCostAndUsage(context.Background(), input)
+	output, err := cs.client.GetCostAndUsage(ctx, input)
 	if err != nil {
 		return types.RegionCosts{}, fmt.Errorf("failed to get cost and usage: %v", err)
 	}

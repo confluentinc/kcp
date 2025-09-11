@@ -1,6 +1,7 @@
 package costs
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -28,7 +29,7 @@ type RegionCoster struct {
 }
 
 type CostService interface {
-	GetCostsForTimeRange(region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error)
+	GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error)
 }
 
 func NewRegionCoster(costService CostService, opts RegionCosterOpts) *RegionCoster {
@@ -63,7 +64,7 @@ func (rc *RegionCoster) Run() error {
 	slog.Info("🚀 starting region costs report", "region", rc.region)
 
 	tags := rc.convertTagsToMap()
-	regionCosts, err := rc.costService.GetCostsForTimeRange(rc.region, rc.startDate, rc.endDate, rc.granularity, tags)
+	regionCosts, err := rc.costService.GetCostsForTimeRange(context.Background(), rc.region, rc.startDate, rc.endDate, rc.granularity, tags)
 	if err != nil {
 		return fmt.Errorf("❌ Failed to get AWS costs: %v", err)
 	}

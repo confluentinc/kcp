@@ -273,6 +273,7 @@ func (d *Discovery) WriteToJsonFile(filePath string) error {
 type DiscoveredRegion struct {
 	Name           string                                      `json:"name"`
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
+	Costs          CostInformation                             `json:"costs"`
 	Clusters       []DiscoveredCluster                         `json:"clusters"`
 }
 
@@ -280,6 +281,19 @@ type DiscoveredCluster struct {
 	Name                       string                     `json:"name"`
 	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
 	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
+}
+
+type CostInformation struct {
+	CostData     []Cost       `json:"data"`
+	CostMetadata CostMetadata `json:"metadata"`
+}
+
+type CostMetadata struct {
+	StartDate   time.Time           `json:"start_date"`
+	EndDate     time.Time           `json:"end_date"`
+	Granularity string              `json:"granularity"`
+	Tags        map[string][]string `json:"tags"`
+	Services    []string            `json:"services"`
 }
 
 type AWSClientInformation struct {
