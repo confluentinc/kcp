@@ -84,7 +84,6 @@ func (d *DiscovererV2) discoverRegions() error {
 			continue
 		}
 
-		// add region to the discovered regions
 		discoveredRegions = append(discoveredRegions, *discoveredRegion)
 
 		// capture credentials

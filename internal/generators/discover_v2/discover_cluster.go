@@ -352,9 +352,9 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	// Handle case where followerFetching is nil (cluster doesn't have configuration info)
 	followerFetchingEnabled := aws.ToBool(followerFetching)
 
-	// / last 30 days time range
+	// time range of 6 months from now
+	startDate := time.Now().AddDate(0, -6, 0)
 	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -30)
 
 	clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
 	if err != nil {
