@@ -74,14 +74,14 @@ func (rd *RegionDiscoverer) discoverConfigurations(ctx context.Context, maxResul
 }
 
 func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*types.CostInformation, error) {
-	// todo what we doing here?
+	// todo - include tags in future?
 	tags := []string{}
 	tagsMap := rd.convertTagsToMap(tags)
 
-	// time range of 6 months from now
-	startDate := time.Now().AddDate(0, -6, 0)
+	// time range of 12 months from now
+	startDate := time.Now().AddDate(0, -12, 0)
 	endDate := time.Now()
-	regionCosts, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, costexplorertypes.GranularityDaily, tagsMap)
+	regionCosts, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, costexplorertypes.GranularityMonthly, tagsMap)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get AWS costs: %v", err)
 	}

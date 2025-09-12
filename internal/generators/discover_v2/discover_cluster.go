@@ -352,8 +352,8 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	// Handle case where followerFetching is nil (cluster doesn't have configuration info)
 	followerFetchingEnabled := aws.ToBool(followerFetching)
 
-	// time range of 6 months from now
-	startDate := time.Now().AddDate(0, -6, 0)
+	// time range of 12 months from now
+	startDate := time.Now().AddDate(0, -12, 0)
 	endDate := time.Now()
 
 	var clusterMetric *types.ClusterMetrics

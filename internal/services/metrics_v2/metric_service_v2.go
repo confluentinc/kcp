@@ -17,6 +17,11 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
+const (
+	DailyPeriodSeconds   = 86400   // 24 hours * 60 minutes * 60 seconds
+	MonthlyPeriodSeconds = 2592000 // 30 days * 24 hours * 60 minutes * 60 seconds
+)
+
 type MetricServiceV2 struct {
 	client *cloudwatch.Client
 }
@@ -468,18 +473,19 @@ func (ms *MetricServiceV2) calculateReplicationFactor(nodesMetrics []types.NodeM
 
 // Metric Retrieval Functions
 
-func (ms *MetricServiceV2) getAverageMetric(ctx context.Context, clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) (float64, error) {
+func (ms *MetricServiceV2) getAverageMetric(ctx context.Context, clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) ([]cloudwatchtypes.Datapoint, error) {
 	slog.Info("📊 getting cloudwatch average metric", "cluster", clusterName, "metric", metricName, "node", *node)
 	metricRequest := ms.buildCloudWatchInput(clusterName, metricName, node, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage}, startTime, endTime)
 
 	response, err := ms.client.GetMetricStatistics(ctx, metricRequest)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
+		return nil, fmt.Errorf("failed to get metric statistics: %v", err)
 	}
 	if len(response.Datapoints) == 0 {
-		return 0, nil
+		return nil, nil
 	}
-	return *response.Datapoints[0].Average, nil
+
+	return response.Datapoints, nil
 }
 
 func (ms *MetricServiceV2) getPeakMetric(ctx context.Context, clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) (float64, error) {
@@ -499,9 +505,8 @@ func (ms *MetricServiceV2) getPeakMetric(ctx context.Context, clusterName string
 // CloudWatch Helper Functions
 
 func (ms *MetricServiceV2) buildCloudWatchInputGlobalMetrics(clusterName, metricName string, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
+	// Use monthly period for consistent monthly data points
+	period := int32(DailyPeriodSeconds)
 
 	dimensions := []cloudwatchtypes.Dimension{
 		{
@@ -522,9 +527,8 @@ func (ms *MetricServiceV2) buildCloudWatchInputGlobalMetrics(clusterName, metric
 }
 
 func (ms *MetricServiceV2) buildCloudWatchInput(clusterName, metricName string, node *int, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
+	// Use monthly period for consistent monthly data points
+	period := int32(DailyPeriodSeconds)
 
 	dimensions := []cloudwatchtypes.Dimension{
 		{
@@ -576,9 +580,8 @@ func (ms *MetricServiceV2) calculateRetention(nodesMetrics []types.NodeMetrics) 
 }
 
 func (ms *MetricServiceV2) getServerlessMetric(ctx context.Context, clusterName string, metricName string, statistic cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) (float64, error) {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
+	// Use monthly period for consistent monthly data points
+	period := int32(DailyPeriodSeconds)
 
 	topics := make(map[string]struct{})
 
