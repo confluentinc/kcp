@@ -473,19 +473,19 @@ func (ms *MetricServiceV2) calculateReplicationFactor(nodesMetrics []types.NodeM
 
 // Metric Retrieval Functions
 
-func (ms *MetricServiceV2) getAverageMetric(ctx context.Context, clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) ([]cloudwatchtypes.Datapoint, error) {
+func (ms *MetricServiceV2) getAverageMetric(ctx context.Context, clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) (float64, error) {
 	slog.Info("📊 getting cloudwatch average metric", "cluster", clusterName, "metric", metricName, "node", *node)
 	metricRequest := ms.buildCloudWatchInput(clusterName, metricName, node, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage}, startTime, endTime)
 
 	response, err := ms.client.GetMetricStatistics(ctx, metricRequest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get metric statistics: %v", err)
+		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
 	}
 	if len(response.Datapoints) == 0 {
-		return nil, nil
+		return 0, nil
 	}
 
-	return response.Datapoints, nil
+	return *response.Datapoints[0].Average, nil
 }
 
 func (ms *MetricServiceV2) getPeakMetric(ctx context.Context, clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) (float64, error) {
