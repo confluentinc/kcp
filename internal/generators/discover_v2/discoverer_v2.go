@@ -30,7 +30,7 @@ func NewDiscovererV2(opts DiscovererV2Opts) *DiscovererV2 {
 }
 
 func (d *DiscovererV2) Run() error {
-	fmt.Println("Running Discover V2")
+	slog.Info("🚀 starting discover")
 
 	if err := d.discoverRegions(); err != nil {
 		slog.Error("failed to discover regions", "error", err)
@@ -42,7 +42,6 @@ func (d *DiscovererV2) Run() error {
 func (d *DiscovererV2) discoverRegions() error {
 	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
-
 	discoveredRegions := []types.DiscoveredRegion{}
 
 	for _, region := range d.regions {
@@ -73,14 +72,15 @@ func (d *DiscovererV2) discoverRegions() error {
 			continue
 		}
 
+		// Discover region-level resources (costs, configurations, cluster ARNs)
 		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
-
 		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
 		if err != nil {
 			slog.Error("failed to discover region", "region", region, "error", err)
 			continue
 		}
 
+		// Discover detailed cluster information for each cluster in the region
 		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService)
 		discoveredClusters := []types.DiscoveredCluster{}
 
@@ -96,13 +96,14 @@ func (d *DiscovererV2) discoverRegions() error {
 
 		discoveredRegions = append(discoveredRegions, *discoveredRegion)
 
-		// capture credentials
-		regionEntry, err := d.getRegionEntry(mskService, region)
+		// Generate credential configurations for connecting to clusters
+		regionEntry, err := d.captureCredentials(mskService, region)
 		if err != nil {
 			slog.Error("failed to get region entry", "region", region, "error", err)
 			continue
 		}
 
+		// Track regions with/without clusters for reporting
 		if len(regionEntry.Clusters) == 0 {
 			regionsWithoutClusters = append(regionsWithoutClusters, region)
 		} else {
@@ -110,11 +111,13 @@ func (d *DiscovererV2) discoverRegions() error {
 		}
 	}
 
+	// Write discovery results to JSON file
 	discovery := types.NewDiscovery(discoveredRegions)
 	if err := discovery.WriteToJsonFile("kcp-state.json"); err != nil {
-		slog.Error("failed to write discovery to file", "error", err)
+		return fmt.Errorf("failed to write discovery to file: %w", err)
 	}
 
+	// Write credential configurations to YAML file
 	credentials := types.Credentials{
 		Regions: regionEntries,
 	}
@@ -122,6 +125,7 @@ func (d *DiscovererV2) discoverRegions() error {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
+	// Report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {
 			slog.Info("no clusters found in region", "region", region)
@@ -131,7 +135,8 @@ func (d *DiscovererV2) discoverRegions() error {
 	return nil
 }
 
-func (d *DiscovererV2) getRegionEntry(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
+func (d *DiscovererV2) captureCredentials(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
+	// Get basic cluster info for credential generation
 	clusters, err := mskService.ListClusters(context.Background(), 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clusters: %v", err)
@@ -139,8 +144,9 @@ func (d *DiscovererV2) getRegionEntry(mskService *msk.MSKService, region string)
 
 	clusterEntries := []types.ClusterEntry{}
 
+	// Parse authentication options for each cluster
 	for _, cluster := range clusters {
-		clusterEntry, err := d.getClusterEntry(cluster)
+		clusterEntry, err := d.getAvailableClusterAuthOptions(cluster)
 		if err != nil {
 			slog.Error("failed to get cluster entry", "cluster", cluster.ClusterName, "error", err)
 			continue
@@ -155,16 +161,18 @@ func (d *DiscovererV2) getRegionEntry(mskService *msk.MSKService, region string)
 
 }
 
-func (d *DiscovererV2) getClusterEntry(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
+func (d *DiscovererV2) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
 	clusterEntry := types.ClusterEntry{
 		Name: aws.ToString(cluster.ClusterName),
 		Arn:  aws.ToString(cluster.ClusterArn),
 	}
 
+	// Check which authentication methods are enabled on the cluster
 	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
 
 	switch cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
+		// Parse authentication settings from provisioned cluster config
 		if cluster.Provisioned != nil && cluster.Provisioned.ClientAuthentication != nil {
 			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
 				cluster.Provisioned.ClientAuthentication.Sasl.Iam != nil {
@@ -186,12 +194,12 @@ func (d *DiscovererV2) getClusterEntry(cluster kafkatypes.Cluster) (types.Cluste
 		}
 
 	case kafkatypes.ClusterTypeServerless:
-		// For serverless clusters, typically only IAM is supported
+		// Serverless clusters only support IAM authentication
 		isSaslIamEnabled = true
 	}
 
-	// we want a SINGLE auth mech to be enabled by default
-	// priority is unauthenticated > iam > sasl_scram > tls
+	// Configure auth methods with priority: unauthenticated > iam > sasl_scram > tls
+	// Only one method is set as default to avoid conflicts
 	defaultAuthSelected := false
 	if isUnauthenticatedEnabled {
 		clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
