@@ -115,10 +115,10 @@ func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.Topi
 			ReplicationFactor: int(topic.ReplicationFactor),
 			Configurations: types.TopicConfigurations{
 				// Defaults from: https://kafka.apache.org/30/generated/topic_config.html
-				CleanupPolicy:     getConfigValue("cleanup.policy", "delete (*)"),
-				LocalRetentionMs:  getConfigValue("local.retention.ms", "-2 (*)"),
-				RetentionMs:       getConfigValue("retention.ms", "604800000 (*)"),
-				MinInsyncReplicas: getConfigValue("min.insync.replicas", "1 (*)"),
+				CleanupPolicy:     getConfigValue("cleanup.policy", "delete"),
+				LocalRetentionMs:  getConfigValue("local.retention.ms", "-2"),
+				RetentionMs:       getConfigValue("retention.ms", "604800000"),
+				MinInsyncReplicas: getConfigValue("min.insync.replicas", "1"),
 			},
 		})
 	}

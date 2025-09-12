@@ -587,8 +587,6 @@ func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
 		}
 	}
 
-	md.AddParagraph("**Note:** Config values with an asterisk indicate they are default values inherited from the cluster configuration or another source.")
-
 	md.AddTable(headers, tableData)
 
 	if internalTopics > 0 {
