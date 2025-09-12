@@ -163,7 +163,7 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 			assert.Equal(t, 1, topic.ReplicationFactor)
 			// Verify default values are used when ConfigEntries is nil
 			assert.Equal(t, "delete", topic.Configurations.CleanupPolicy)
-			assert.Equal(t, "0", topic.Configurations.LocalRetentionMs)
+			assert.Equal(t, "-2", topic.Configurations.LocalRetentionMs)
 			assert.Equal(t, "604800000", topic.Configurations.RetentionMs)
 			assert.Equal(t, "1", topic.Configurations.MinInsyncReplicas)
 		}
@@ -228,7 +228,7 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	assert.Equal(t, 1, clusterInfo.Topics[0].ReplicationFactor)
 	// Verify default values are used when ConfigEntries is nil
 	assert.Equal(t, "delete", clusterInfo.Topics[0].Configurations.CleanupPolicy)
-	assert.Equal(t, "0", clusterInfo.Topics[0].Configurations.LocalRetentionMs)
+	assert.Equal(t, "-2", clusterInfo.Topics[0].Configurations.LocalRetentionMs)
 	assert.Equal(t, "604800000", clusterInfo.Topics[0].Configurations.RetentionMs)
 	assert.Equal(t, "1", clusterInfo.Topics[0].Configurations.MinInsyncReplicas)
 	assert.Empty(t, clusterInfo.Acls) // ACLs should be empty for serverless
