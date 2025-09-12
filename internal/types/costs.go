@@ -15,11 +15,11 @@ import (
 )
 
 type Cost struct {
-	TimePeriodStart string    `json:"time_period_start"`
-	TimePeriodEnd   string    `json:"time_period_end"`
-	Service         string    `json:"service"`
-	Cost            float64   `json:"cost"`
-	UsageType       string    `json:"usage_type"`
+	TimePeriodStart string  `json:"time_period_start"`
+	TimePeriodEnd   string  `json:"time_period_end"`
+	Service         string  `json:"service"`
+	Cost            float64 `json:"cost"`
+	UsageType       string  `json:"usage_type"`
 }
 
 type CostData struct {

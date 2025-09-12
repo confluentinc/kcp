@@ -59,4 +59,5 @@ dist/
 
 local/
 
-kcp.log
+*.log
+*.log.gz
