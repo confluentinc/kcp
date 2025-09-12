@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -27,6 +28,7 @@ type ClusterDiscovererMSKService interface {
 }
 
 type ClusterDiscovererMetricService interface {
+	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, followerFetching bool) (*types.ClusterMetrics, error)
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -53,11 +55,26 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*
 		return nil, err
 	}
 
-	// didscover metrids
+	clusterMetric, err := cd.discoverMetrics(ctx, clusterArn)
+	if err != nil {
+		return nil, err
+	}
+
+	metricInformation := types.MetricInformation{
+		BrokerAZDistribution:  clusterMetric.BrokerAZDistribution,
+		KafkaVersion:          clusterMetric.KafkaVersion,
+		EnhancedMonitoring:    clusterMetric.EnhancedMonitoring,
+		StartDate:             clusterMetric.StartDate,
+		EndDate:               clusterMetric.EndDate,
+		NodesMetrics:          clusterMetric.NodesMetrics,
+		GlobalMetrics:         clusterMetric.GlobalMetrics,
+		ClusterMetricsSummary: clusterMetric.ClusterMetricsSummary,
+	}
 
 	return &types.DiscoveredCluster{
 		Name:                 aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
 		AWSClientInformation: *awsClientInfo,
+		MetricInformation:    metricInformation,
 	}, nil
 }
 
@@ -318,4 +335,31 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 	}
 
 	return subnetInfo
+}
+
+func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
+	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
+	}
+	var clusterMetric *types.ClusterMetrics
+
+	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
+	}
+
+	// Handle case where followerFetching is nil (cluster doesn't have configuration info)
+	followerFetchingEnabled := aws.ToBool(followerFetching)
+
+	// / last 30 days time range
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -30)
+
+	clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process cluster metrics: %v", err)
+	}
+
+	return clusterMetric, nil
 }

@@ -2,17 +2,15 @@ package discover_v2
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
-	"github.com/confluentinc/kcp/internal/services/metrics"
+	"github.com/confluentinc/kcp/internal/services/metrics_v2"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -69,7 +67,7 @@ func (d *DiscovererV2) discoverRegions() error {
 			continue
 		}
 
-		metricService := metrics.NewMetricService(cloudWatchClient)
+		metricService := metrics_v2.NewMetricServiceV2(cloudWatchClient)
 
 		ec2Service, err := ec2.NewEC2Service(region)
 		if err != nil {
@@ -121,17 +119,6 @@ func (d *DiscovererV2) discoverRegions() error {
 		}
 	}
 
-	return nil
-}
-
-func (d *DiscovererV2) writeToJsonFile(discovery types.Discovery, filePath string) error {
-	data, err := json.MarshalIndent(discovery, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal discovery: %v", err)
-	}
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write discovery to file: %v", err)
-	}
 	return nil
 }
 

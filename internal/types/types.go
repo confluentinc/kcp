@@ -244,6 +244,7 @@ type KcpBuildInfo struct {
 	Date    string `json:"date"`
 }
 
+// new types for discover v2
 type Discovery struct {
 	Regions      []DiscoveredRegion `json:"regions"`
 	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
@@ -279,8 +280,20 @@ type DiscoveredRegion struct {
 
 type DiscoveredCluster struct {
 	Name                       string                     `json:"name"`
+	MetricInformation          MetricInformation          `json:"metrics"`
 	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
 	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
+}
+
+type MetricInformation struct {
+	BrokerAZDistribution  *string               `json:"broker_az_distribution"`
+	KafkaVersion          *string               `json:"kafka_version"`
+	EnhancedMonitoring    *string               `json:"enhanced_monitoring"`
+	StartDate             time.Time             `json:"start_date"`
+	EndDate               time.Time             `json:"end_date"`
+	NodesMetrics          []NodeMetrics         `json:"nodes"`
+	GlobalMetrics         GlobalMetrics         `json:"global_metrics"`
+	ClusterMetricsSummary ClusterMetricsSummary `json:"cluster_metrics_summary"`
 }
 
 type CostInformation struct {

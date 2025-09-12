@@ -333,7 +333,6 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 }
 
 func (rm *ClusterMetricsCollector) getGlobalMetrics(clusterName string) (*types.GlobalMetrics, error) {
-
 	globalMetrics := types.GlobalMetrics{}
 
 	globalMetricAssignments := []struct {

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"strings"
 )
 
@@ -17,4 +18,15 @@ func ConvertKafkaVersion(kafkaVersion *string) string {
 	default:
 		return *kafkaVersion
 	}
+}
+
+func StructToMap(s any) (map[string]any, error) {
+	jsonBytes, err := json.Marshal(s)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]any
+	err = json.Unmarshal(jsonBytes, &result)
+	return result, err
 }
