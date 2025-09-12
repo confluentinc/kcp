@@ -25,16 +25,14 @@ type RegionDiscovererCostService interface {
 }
 
 type RegionDiscoverer struct {
-	mskService        RegionDiscovererMSKService
-	costService       RegionDiscovererCostService
-	clusterDiscoverer ClusterDiscoverer
+	mskService  RegionDiscovererMSKService
+	costService RegionDiscovererCostService
 }
 
-func NewRegionDiscoverer(mskService RegionDiscovererMSKService, costService RegionDiscovererCostService, clusterDiscoverer ClusterDiscoverer) *RegionDiscoverer {
+func NewRegionDiscoverer(mskService RegionDiscovererMSKService, costService RegionDiscovererCostService) *RegionDiscoverer {
 	return &RegionDiscoverer{
-		mskService:        mskService,
-		costService:       costService,
-		clusterDiscoverer: clusterDiscoverer,
+		mskService:  mskService,
+		costService: costService,
 	}
 }
 
@@ -46,7 +44,7 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string) (*types
 
 	maxResults := int32(250)
 
-	configurations, err := rd.mskService.GetConfigurationsNEW(ctx, maxResults)
+	configurations, err := rd.discoverConfigurations(ctx, maxResults)
 	if err != nil {
 		return nil, err
 	}
@@ -58,13 +56,21 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string) (*types
 	}
 	discoveredRegion.Costs = *regionCosts
 
-	clusters, err := rd.discoverClusters(ctx, maxResults)
+	clusterArns, err := rd.discoverClusterArns(ctx, maxResults)
 	if err != nil {
 		return nil, err
 	}
-	discoveredRegion.Clusters = clusters
+	discoveredRegion.ClusterArns = clusterArns
 
 	return &discoveredRegion, nil
+}
+
+func (rd *RegionDiscoverer) discoverConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
+	configurations, err := rd.mskService.GetConfigurationsNEW(ctx, maxResults)
+	if err != nil {
+		return nil, err
+	}
+	return configurations, nil
 }
 
 func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*types.CostInformation, error) {
@@ -94,26 +100,20 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 	return &costInformation, nil
 }
 
-func (rd *RegionDiscoverer) discoverClusters(ctx context.Context, maxResults int32) ([]types.DiscoveredCluster, error) {
-	slog.Info("🔍 discovering clusters")
+func (rd *RegionDiscoverer) discoverClusterArns(ctx context.Context, maxResults int32) ([]string, error) {
+	slog.Info("🔍 listing clusters")
 
 	clusters, err := rd.mskService.ListClustersNEW(ctx, maxResults)
 	if err != nil {
 		return nil, err
 	}
 
-	discoveredClusters := []types.DiscoveredCluster{}
-
+	clusterArns := []string{}
 	for _, cluster := range clusters {
-		discoveredCluster, err := rd.clusterDiscoverer.Discover(ctx, aws.ToString(cluster.ClusterArn))
-		if err != nil {
-			slog.Error("failed to discover cluster", "cluster", aws.ToString(cluster.ClusterArn), "error", err)
-			continue
-		}
-		discoveredClusters = append(discoveredClusters, *discoveredCluster)
+		clusterArns = append(clusterArns, aws.ToString(cluster.ClusterArn))
 	}
 
-	return discoveredClusters, nil
+	return clusterArns, nil
 }
 
 func (rd *RegionDiscoverer) convertTagsToMap(tags []string) map[string][]string {

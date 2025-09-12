@@ -74,13 +74,25 @@ func (d *DiscovererV2) discoverRegions() error {
 		}
 
 		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService)
-		regionDiscoverer := NewRegionDiscoverer(mskService, costService, clusterDiscoverer)
+		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
 
 		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
 		if err != nil {
 			slog.Error("failed to discover region", "region", region, "error", err)
 			continue
 		}
+
+		// Now discover clusters for this region
+		discoveredClusters := []types.DiscoveredCluster{}
+		for _, clusterArn := range discoveredRegion.ClusterArns {
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn)
+			if err != nil {
+				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
+				continue
+			}
+			discoveredClusters = append(discoveredClusters, *discoveredCluster)
+		}
+		discoveredRegion.Clusters = discoveredClusters
 
 		discoveredRegions = append(discoveredRegions, *discoveredRegion)
 

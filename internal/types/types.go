@@ -276,6 +276,8 @@ type DiscoveredRegion struct {
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
 	Costs          CostInformation                             `json:"costs"`
 	Clusters       []DiscoveredCluster                         `json:"clusters"`
+	// internal only - exclude from JSON output
+	ClusterArns []string `json:"-"`
 }
 
 type DiscoveredCluster struct {
