@@ -58,7 +58,6 @@ func (d *DiscovererV2) discoverRegions() error {
 			slog.Error("failed to create cost explorer client", "region", region, "error", err)
 			continue
 		}
-
 		costService := cost.NewCostService(costExplorerClient)
 
 		cloudWatchClient, err := client.NewCloudWatchClient(region)
@@ -66,7 +65,6 @@ func (d *DiscovererV2) discoverRegions() error {
 			slog.Error("failed to create cloudwatch client", "region", region, "error", err)
 			continue
 		}
-
 		metricService := metrics_v2.NewMetricServiceV2(cloudWatchClient)
 
 		ec2Service, err := ec2.NewEC2Service(region)
