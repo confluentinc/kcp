@@ -118,7 +118,38 @@ func TestClusterInformation_AsJson(t *testing.T) {
 				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
 					BootstrapBrokerStringTls: aws.String("b-1.test-cluster-3.abc123.c2.kafka.eu-west-1.amazonaws.com:9094"),
 				},
-				Topics: []string{"topic1", "topic2", "topic3"},
+				Topics: []Topics{
+					{
+						Name: "topic1",
+						Partitions: 1,
+						ReplicationFactor: 1,
+						Configurations: TopicConfigurations{
+							CleanupPolicy: "compact",
+							RetentionMs: "1111111111",
+							MinInsyncReplicas: "1",
+						},
+					},
+					{
+						Name: "topic2",
+						Partitions: 2,
+						ReplicationFactor: 2,
+						Configurations: TopicConfigurations{
+							CleanupPolicy: "delete",
+							RetentionMs: "2222222222",
+							MinInsyncReplicas: "2",
+						},
+					},
+					{
+						Name: "topic3",
+						Partitions: 3,
+						ReplicationFactor: 3,
+						Configurations: TopicConfigurations{
+							CleanupPolicy: "compact",
+							RetentionMs: "3333333333",
+							MinInsyncReplicas: "3",
+						},
+					},
+				},
 				Acls: []Acls{
 					{
 						ResourceType:        "TOPIC",
@@ -272,7 +303,7 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 						NumberOfBrokerNodes: aws.Int32(3),
 					},
 				},
-				Topics: []string{},
+				Topics: []Topics{},
 				Acls:   []Acls{},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -295,8 +326,48 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 						NumberOfBrokerNodes: aws.Int32(3),
 					},
 				},
-				Topics: []string{"topic1", "topic2"},
-				Acls:   []Acls{},
+				Topics: []Topics{
+					{
+						Name: "topic1",
+						Partitions: 1,
+						ReplicationFactor: 1,
+						Configurations: TopicConfigurations{
+							CleanupPolicy: "compact",
+							RetentionMs: "1111111111",
+							MinInsyncReplicas: "1",
+						},
+					},
+					{
+						Name: "topic2",
+						Partitions: 2,
+						ReplicationFactor: 2,
+						Configurations: TopicConfigurations{
+							CleanupPolicy: "delete",
+							RetentionMs: "2222222222",
+							MinInsyncReplicas: "2",
+						},
+					},
+				},
+				Acls:   []Acls{
+					{
+						ResourceType:        "TOPIC",
+						ResourceName:        "topic1",
+						ResourcePatternType: "LITERAL",
+						Principal:           "User:test-user",
+						Host:                "*",
+						Operation:           "READ",
+						PermissionType:      "ALLOW",
+					},
+					{
+						ResourceType:        "TOPIC",
+						ResourceName:        "topic2",
+						ResourcePatternType: "LITERAL",
+						Principal:           "User:test-user",
+						Host:                "*",
+						Operation:           "WRITE",
+						PermissionType:      "ALLOW",
+					},
+				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
 				assert.NotNil(t, md)

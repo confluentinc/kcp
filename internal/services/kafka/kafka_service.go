@@ -89,7 +89,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 }
 
 // scanClusterTopics scans for topics in the Kafka cluster
-func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
+func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.Topics, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
 	topics, err := admin.ListTopics()
@@ -97,9 +97,30 @@ func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]string, er
 		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
 	}
 
-	topicList := make([]string, 0, len(topics))
-	for topic := range topics {
-		topicList = append(topicList, topic)
+	var topicList []types.Topics
+	for topicName, topic := range topics {
+		getConfigValue := func(key, defaultValue string) string {
+			if topic.ConfigEntries == nil {
+				return defaultValue
+			}
+			if value, exists := topic.ConfigEntries[key]; exists && value != nil {
+				return *value
+			}
+			return defaultValue
+		}
+
+		topicList = append(topicList, types.Topics{
+			Name:              topicName,
+			Partitions:        int(topic.NumPartitions),
+			ReplicationFactor: int(topic.ReplicationFactor),
+			Configurations: types.TopicConfigurations{
+				// Defaults from: https://kafka.apache.org/30/generated/topic_config.html
+				CleanupPolicy:     getConfigValue("cleanup.policy", "delete"),
+				LocalRetentionMs:  getConfigValue("local.retention.ms", "-2"),
+				RetentionMs:       getConfigValue("retention.ms", "604800000"),
+				MinInsyncReplicas: getConfigValue("min.insync.replicas", "1"),
+			},
+		})
 	}
 
 	return topicList, nil

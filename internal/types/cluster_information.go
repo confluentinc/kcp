@@ -46,7 +46,7 @@ type ClusterInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
-	Topics               []string                               `json:"topics"`
+	Topics               []Topics                               `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
 }
 
@@ -559,9 +559,39 @@ func (c *ClusterInformation) addCompatibleVersionsSection(md *markdown.Markdown)
 	md.AddTable(headers, tableData)
 }
 
-// addTopicsSection adds Kafka topics list
+// addTopicsSection adds Kafka topics table
 func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
-	md.AddList(c.Topics)
+	if len(c.Topics) == 0 {
+		md.AddParagraph("No topics found.")
+		return
+	}
+
+	headers := []string{"Topic Name", "Partitions", "Replication Factor", "Cleanup Policy", "Local Retention (ms)", "Retention (ms)", "Min Insync Replicas"}
+
+	var internalTopics int
+	var tableData [][]string
+	for _, topic := range c.Topics {
+		if !strings.HasPrefix(topic.Name, "__") {
+			row := []string{
+				topic.Name,
+				fmt.Sprintf("%d", topic.Partitions),
+				fmt.Sprintf("%d", topic.ReplicationFactor),
+				topic.Configurations.CleanupPolicy,
+				topic.Configurations.LocalRetentionMs,
+				topic.Configurations.RetentionMs,
+				topic.Configurations.MinInsyncReplicas,
+			}
+			tableData = append(tableData, row)
+		} else {
+			internalTopics++
+		}
+	}
+
+	md.AddTable(headers, tableData)
+
+	if internalTopics > 0 {
+		md.AddParagraph(fmt.Sprintf("**Note:** %d internal topics, starting with the '__' prefix, are hidden from this table.", internalTopics))
+	}
 }
 
 // addAclsSection adds Kafka ACLs in a table format
