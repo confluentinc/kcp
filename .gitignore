@@ -58,3 +58,5 @@ kcp-scan*
 dist/
 
 local/
+
+kcp.log

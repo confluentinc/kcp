@@ -1315,6 +1315,28 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 > [!NOTE]
 > A `README.md` is generated in the `reverse-proxy` directory to further assist in setting up the reverse proxy on your local machine to view the private networked Confluent Cloud cluster.
 
+---
+
+### `kcp update`
+
+This command will update the kcp binary to the latest version by downloading latest release from GitHub and installing it.
+
+**Example Usage**
+
+```shell
+kcp update
+```
+
+**Optional Arguments**:
+
+- `--force`: Force update without user confirmation
+- `--check-only`: Only check for updates, don't install
+
+>[!NOTE]
+> This will require sudo to update the binary.
+
+---
+
 ## Development
 
 ### Prerequisites

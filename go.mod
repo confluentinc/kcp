@@ -20,6 +20,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/xdg-go/scram v1.1.2
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
