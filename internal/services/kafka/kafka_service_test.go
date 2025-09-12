@@ -93,9 +93,28 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 		ClusterID: "test-cluster-id",
 	}, nil)
 
+	// Create test config entries with proper values
+	localRetentionMs := "86400000" // 1 day
+	retentionMs := "604800000"     // 7 days
+	minInsyncReplicas := "2"
+	cleanupPolicy := "compact"
+
 	mockAdmin.On("ListTopics").Return(map[string]sarama.TopicDetail{
-		"topic1": {},
-		"topic2": {},
+		"topic1": {
+			NumPartitions:     3,
+			ReplicationFactor: 3,
+			ConfigEntries: map[string]*string{
+				"cleanup.policy":      &cleanupPolicy,
+				"local.retention.ms":  &localRetentionMs,
+				"retention.ms":        &retentionMs,
+				"min.insync.replicas": &minInsyncReplicas,
+			},
+		},
+		"topic2": {
+			NumPartitions:     1,
+			ReplicationFactor: 1,
+			ConfigEntries:     nil, // Test nil ConfigEntries case
+		},
 	}, nil)
 
 	mockAdmin.On("ListAcls").Return([]sarama.ResourceAcls{
@@ -125,8 +144,33 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-cluster-id", clusterInfo.ClusterID)
 	assert.Len(t, clusterInfo.Topics, 2)
-	assert.Contains(t, clusterInfo.Topics, "topic1")
-	assert.Contains(t, clusterInfo.Topics, "topic2")
+
+	// Verify topic1 with ConfigEntries
+	topic1Found := false
+	topic2Found := false
+	for _, topic := range clusterInfo.Topics {
+		if topic.Name == "topic1" {
+			topic1Found = true
+			assert.Equal(t, 3, topic.Partitions)
+			assert.Equal(t, 3, topic.ReplicationFactor)
+			assert.Equal(t, "compact", topic.Configurations.CleanupPolicy)
+			assert.Equal(t, "86400000", topic.Configurations.LocalRetentionMs)
+			assert.Equal(t, "604800000", topic.Configurations.RetentionMs)
+			assert.Equal(t, "2", topic.Configurations.MinInsyncReplicas)
+		} else if topic.Name == "topic2" {
+			topic2Found = true
+			assert.Equal(t, 1, topic.Partitions)
+			assert.Equal(t, 1, topic.ReplicationFactor)
+			// Verify default values are used when ConfigEntries is nil
+			assert.Equal(t, "delete", topic.Configurations.CleanupPolicy)
+			assert.Equal(t, "0", topic.Configurations.LocalRetentionMs)
+			assert.Equal(t, "604800000", topic.Configurations.RetentionMs)
+			assert.Equal(t, "1", topic.Configurations.MinInsyncReplicas)
+		}
+	}
+	assert.True(t, topic1Found, "topic1 should be found")
+	assert.True(t, topic2Found, "topic2 should be found")
+
 	assert.Len(t, clusterInfo.Acls, 1)
 	assert.Equal(t, "Topic", clusterInfo.Acls[0].ResourceType)
 	assert.Equal(t, "topic1", clusterInfo.Acls[0].ResourceName)
@@ -163,7 +207,11 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	}, nil)
 
 	mockAdmin.On("ListTopics").Return(map[string]sarama.TopicDetail{
-		"serverless-topic": {},
+		"serverless-topic": {
+			NumPartitions:     1,
+			ReplicationFactor: 1,
+			ConfigEntries:     nil, // Test nil ConfigEntries case for serverless
+		},
 	}, nil)
 
 	mockAdmin.On("Close").Return(nil)
@@ -175,7 +223,14 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-serverless-cluster-id", clusterInfo.ClusterID)
 	assert.Len(t, clusterInfo.Topics, 1)
-	assert.Contains(t, clusterInfo.Topics, "serverless-topic")
+	assert.Equal(t, "serverless-topic", clusterInfo.Topics[0].Name)
+	assert.Equal(t, 1, clusterInfo.Topics[0].Partitions)
+	assert.Equal(t, 1, clusterInfo.Topics[0].ReplicationFactor)
+	// Verify default values are used when ConfigEntries is nil
+	assert.Equal(t, "delete", clusterInfo.Topics[0].Configurations.CleanupPolicy)
+	assert.Equal(t, "0", clusterInfo.Topics[0].Configurations.LocalRetentionMs)
+	assert.Equal(t, "604800000", clusterInfo.Topics[0].Configurations.RetentionMs)
+	assert.Equal(t, "1", clusterInfo.Topics[0].Configurations.MinInsyncReplicas)
 	assert.Empty(t, clusterInfo.Acls) // ACLs should be empty for serverless
 
 	// Verify mocks were called (note: ListAcls should NOT be called for serverless)

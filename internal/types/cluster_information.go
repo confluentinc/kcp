@@ -566,21 +566,34 @@ func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
 		return
 	}
 
-	headers := []string{"Topic Name", "Partitions", "Replication Factor", "Cleanup Policy", "Retention (ms)"}
+	headers := []string{"Topic Name", "Partitions", "Replication Factor", "Cleanup Policy", "Local Retention (ms)", "Retention (ms)", "Min Insync Replicas"}
 
+	var internalTopics int
 	var tableData [][]string
 	for _, topic := range c.Topics {
-		row := []string{
-			topic.Name,
-			fmt.Sprintf("%d", topic.Partitions),
-			fmt.Sprintf("%d", topic.ReplicationFactor),
-			topic.Configurations.CleanupPolicy,
-			topic.Configurations.RetentionMs,
+		if !strings.HasPrefix(topic.Name, "__") {
+			row := []string{
+				topic.Name,
+				fmt.Sprintf("%d", topic.Partitions),
+				fmt.Sprintf("%d", topic.ReplicationFactor),
+				topic.Configurations.CleanupPolicy,
+				topic.Configurations.LocalRetentionMs,
+				topic.Configurations.RetentionMs,
+				topic.Configurations.MinInsyncReplicas,
+			}
+			tableData = append(tableData, row)
+		} else {
+			internalTopics++
 		}
-		tableData = append(tableData, row)
 	}
 
+	md.AddParagraph("**Note:** Config values with an asterisk indicate they are default values inherited from the cluster configuration or another source.")
+
 	md.AddTable(headers, tableData)
+
+	if internalTopics > 0 {
+		md.AddParagraph(fmt.Sprintf("**Note:** %d internal topics, starting with the '__' prefix, are hidden from this table.", internalTopics))
+	}
 }
 
 // addAclsSection adds Kafka ACLs in a table format
