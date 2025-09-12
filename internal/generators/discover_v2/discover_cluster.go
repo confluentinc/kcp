@@ -29,6 +29,7 @@ type ClusterDiscovererMSKService interface {
 
 type ClusterDiscovererMetricService interface {
 	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, followerFetching bool) (*types.ClusterMetrics, error)
+	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, followerFetching bool) (*types.ClusterMetrics, error)
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -342,7 +343,6 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
 	}
-	var clusterMetric *types.ClusterMetrics
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)
 	if err != nil {
@@ -356,9 +356,18 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	startDate := time.Now().AddDate(0, -6, 0)
 	endDate := time.Now()
 
-	clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
-	if err != nil {
-		return nil, fmt.Errorf("failed to process cluster metrics: %v", err)
+	var clusterMetric *types.ClusterMetrics
+
+	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
+		}
+	} else {
+		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
+		}
 	}
 
 	return clusterMetric, nil

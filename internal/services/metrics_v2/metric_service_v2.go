@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +89,153 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 	clusterMetric.GlobalMetrics = *globalMetrics
 
 	return clusterMetric, nil
+}
+
+func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, followerFetching bool) (*types.ClusterMetrics, error) {
+	slog.Info("☁️ processing serverless cluster", "cluster", *cluster.ClusterName)
+	authentication, err := utils.StructToMap(cluster.Serverless.ClientAuthentication)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert serverless client authentication to map: %w", err)
+	}
+
+	if authentication == nil {
+		return nil, fmt.Errorf("serverless client authentication is nil")
+	}
+
+	// Get global metrics
+	globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	}
+
+	nodesMetrics := []types.NodeMetrics{}
+	// serverless has 1 broker node
+	nodeMetric, err := ms.processServerlessNode(ctx, *cluster.ClusterName, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process node: %v", err)
+	}
+
+	nodesMetrics = append(nodesMetrics, *nodeMetric)
+
+	clusterMetricsSummary := ms.calculateClusterMetricsSummary(nodesMetrics)
+	clusterMetricsSummary.InstanceType = nil
+
+	clusterMetricsSummary.TieredStorage = aws.Bool(false)
+
+	clusterMetricsSummary.FollowerFetching = &followerFetching
+	clusterMetricsSummary.Partitions = aws.Float64(float64(globalMetrics.GlobalPartitionCountMax))
+	clusterMetricsSummary.ReplicationFactor = ms.calculateReplicationFactor(nodesMetrics, globalMetrics.GlobalPartitionCountMax)
+
+	clusterMetric := types.NewClusterMetrics("something-for-now", time.Now())
+	clusterMetric.ClusterArn = *cluster.ClusterArn
+	clusterMetric.StartDate = startDate
+	clusterMetric.EndDate = endDate
+	clusterMetric.ClusterName = *cluster.ClusterName
+	clusterMetric.ClusterType = string(cluster.ClusterType)
+	clusterMetric.Authentication = authentication
+	clusterMetric.NodesMetrics = nodesMetrics
+	clusterMetric.ClusterMetricsSummary = clusterMetricsSummary
+	clusterMetric.GlobalMetrics = *globalMetrics
+
+	return clusterMetric, nil
+}
+
+func (ms *MetricServiceV2) processServerlessNode(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.NodeMetrics, error) {
+	slog.Info("☁️ processing serverless node", "cluster", clusterName)
+	nodeMetric := types.NodeMetrics{
+		NodeID:       1,
+		InstanceType: nil,
+		VolumeSizeGB: nil,
+	}
+
+	averageMetricAssignments := []struct {
+		metricName  string
+		targetField *float64
+	}{
+		{"BytesInPerSec", &nodeMetric.BytesInPerSecAvg},
+		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecAvg},
+		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecAvg},
+		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedAvg},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesAvg},
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(averageMetricAssignments))
+
+	for _, assignment := range averageMetricAssignments {
+		wg.Add(1)
+		go func(assignment struct {
+			metricName  string
+			targetField *float64
+		}) {
+			defer wg.Done()
+			metricValue, err := ms.getServerlessMetric(ctx, clusterName, assignment.metricName, cloudwatchtypes.StatisticAverage, startTime, endTime)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
+				return
+			}
+			*assignment.targetField = metricValue
+		}(assignment)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for any errors
+	for err := range errChan {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	peakMetricsAssignments := []struct {
+		metricName  string
+		targetField *float64
+	}{
+		{"BytesInPerSec", &nodeMetric.BytesInPerSecMax},
+		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecMax},
+		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecMax},
+		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedMax},
+		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesMax},
+		{"ClientConnectionCount", &nodeMetric.ClientConnectionCountMax},
+		{"PartitionCount", &nodeMetric.PartitionCountMax},
+		// {"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
+		{"LeaderCount", &nodeMetric.LeaderCountMax},
+		{"ReplicationBytesOutPerSec", &nodeMetric.ReplicationBytesOutPerSecMax},
+		{"ReplicationBytesInPerSec", &nodeMetric.ReplicationBytesInPerSecMax},
+	}
+
+	var peakWg sync.WaitGroup
+	peakErrChan := make(chan error, len(peakMetricsAssignments))
+
+	for _, assignment := range peakMetricsAssignments {
+		peakWg.Add(1)
+		go func(assignment struct {
+			metricName  string
+			targetField *float64
+		}) {
+			defer peakWg.Done()
+			metricValue, err := ms.getServerlessMetric(ctx, clusterName, assignment.metricName, cloudwatchtypes.StatisticMaximum, startTime, endTime)
+
+			if err != nil {
+				peakErrChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
+				return
+			}
+			*assignment.targetField = metricValue
+		}(assignment)
+	}
+
+	peakWg.Wait()
+	close(peakErrChan)
+
+	// Check for any errors
+	for err := range peakErrChan {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &nodeMetric, nil
 }
 
 func (ms *MetricServiceV2) getGlobalMetrics(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.GlobalMetrics, error) {
@@ -425,4 +573,113 @@ func (ms *MetricServiceV2) calculateRetention(nodesMetrics []types.NodeMetrics) 
 	local_retention_days := totalLocalStorageUsed / totalBytesInPerDay
 
 	return retention_days, local_retention_days
+}
+
+func (ms *MetricServiceV2) getServerlessMetric(ctx context.Context, clusterName string, metricName string, statistic cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) (float64, error) {
+	// Calculate period in seconds based on the time range
+	duration := endTime.Sub(startTime)
+	period := int32(duration.Seconds())
+
+	topics := make(map[string]struct{})
+
+	listMetricsInput := &cloudwatch.ListMetricsInput{
+		Namespace:  aws.String("AWS/Kafka"),
+		MetricName: aws.String(metricName),
+		Dimensions: []cloudwatchtypes.DimensionFilter{
+			{
+				Name:  aws.String("Cluster Name"),
+				Value: aws.String(clusterName),
+			},
+		},
+	}
+
+	var nextToken *string
+	for {
+		listMetricsInput.NextToken = nextToken
+		output, err := ms.client.ListMetrics(ctx, listMetricsInput)
+		if err != nil {
+			return 0, fmt.Errorf("failed to list metrics: %v", err)
+		}
+
+		for _, metric := range output.Metrics {
+			for _, dim := range metric.Dimensions {
+				if *dim.Name == "Topic" {
+					topics[*dim.Value] = struct{}{}
+					break
+				}
+			}
+		}
+
+		if output.NextToken == nil {
+			break
+		}
+		nextToken = output.NextToken
+	}
+
+	if len(topics) == 0 {
+		slog.Info("No topics found for cluster and metric with a 'Topic' dimension", "cluster", clusterName, "metric", metricName)
+
+		return 0, nil
+	}
+
+	topicList := make([]string, 0, len(topics))
+	for topic := range topics {
+		topicList = append(topicList, topic)
+	}
+
+	aggregatedSum := 0.0
+	maxQueriesPerCall := 500
+
+	for i := 0; i < len(topicList); i += maxQueriesPerCall {
+		end := min(i+maxQueriesPerCall, len(topicList))
+
+		metricDataQueries := make([]cloudwatchtypes.MetricDataQuery, 0, end-i)
+		for j, topic := range topicList[i:end] {
+			queryID := fmt.Sprintf("query_%s_%d", strings.ToLower(strings.ReplaceAll(metricName, "-", "_")), j)
+
+			metricDataQueries = append(metricDataQueries, cloudwatchtypes.MetricDataQuery{
+				Id: aws.String(queryID),
+				MetricStat: &cloudwatchtypes.MetricStat{
+					Metric: &cloudwatchtypes.Metric{
+						Namespace:  aws.String("AWS/Kafka"),
+						MetricName: aws.String(metricName),
+						Dimensions: []cloudwatchtypes.Dimension{
+							{
+								Name:  aws.String("Cluster Name"),
+								Value: aws.String(clusterName),
+							},
+							{
+								Name:  aws.String("Topic"),
+								Value: aws.String(topic),
+							},
+						},
+					},
+					Period: aws.Int32(period),
+					Stat:   aws.String(string(statistic)),
+				},
+				ReturnData: aws.Bool(true),
+			})
+		}
+
+		input := &cloudwatch.GetMetricDataInput{
+			MetricDataQueries: metricDataQueries,
+			StartTime:         aws.Time(startTime),
+			EndTime:           aws.Time(endTime),
+			ScanBy:            cloudwatchtypes.ScanByTimestampAscending,
+		}
+
+		output, err := ms.client.GetMetricData(ctx, input)
+		if err != nil {
+			slog.Error("Error during get_metric_data call", "error", err)
+			continue
+		}
+
+		for _, result := range output.MetricDataResults {
+			if len(result.Values) > 0 {
+				aggregatedSum += result.Values[0]
+			}
+		}
+	}
+
+	return aggregatedSum, nil
 }
