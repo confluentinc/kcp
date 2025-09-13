@@ -6,13 +6,13 @@ require (
 	github.com/IBM/sarama v1.46.0
 	github.com/aws/aws-msk-iam-sasl-signer-go v1.0.4
 	github.com/aws/aws-sdk-go-v2 v1.39.0
-	github.com/aws/aws-sdk-go-v2/config v1.31.7
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.49.3
-	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.55.4
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.251.1
-	github.com/aws/aws-sdk-go-v2/service/iam v1.47.4
-	github.com/aws/aws-sdk-go-v2/service/kafka v1.43.3
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.0
+	github.com/aws/aws-sdk-go-v2/config v1.31.8
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.50.1
+	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.55.5
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.251.2
+	github.com/aws/aws-sdk-go-v2/service/iam v1.47.5
+	github.com/aws/aws-sdk-go-v2/service/kafka v1.43.4
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.1
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/goccy/go-yaml v1.18.0
 	github.com/spf13/cobra v1.10.1
@@ -26,7 +26,7 @@ require (
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.1 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.18.11 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.12 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.7 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.7 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.7 // indirect
@@ -36,9 +36,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.8.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.29.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.34.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.38.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.29.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.34.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.38.4 // indirect
 	github.com/aws/smithy-go v1.23.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
