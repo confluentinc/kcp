@@ -391,7 +391,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		mockTopics map[string]sarama.TopicDetail
 		mockError  error
 		wantError  string
-		wantTopics []types.Topics
+		wantTopics []types.TopicDetails
 	}{
 		{
 			name: "successful Kafka resources scan",
@@ -400,16 +400,16 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				"topic2": {},
 				"topic3": {},
 			},
-			wantTopics: []types.Topics{
-				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
+			wantTopics: []types.TopicDetails{
+				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 			},
 		},
 		{
 			name:       "handles empty topics list",
 			mockTopics: map[string]sarama.TopicDetail{},
-			wantTopics: []types.Topics{},
+			wantTopics: []types.TopicDetails{},
 		},
 		{
 			name:      "handles topic listing error",
@@ -430,17 +430,17 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				"topic9":  {},
 				"topic10": {},
 			},
-			wantTopics: []types.Topics{
-				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic4", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic5", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic6", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic7", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic8", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic9", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic10", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
+			wantTopics: []types.TopicDetails{
+				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic4", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic5", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic6", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic7", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic8", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic9", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				{Name: "topic10", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 			},
 		},
 	}
@@ -457,6 +457,18 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						ControllerID: 1,
 						ClusterID:    "test-cluster-id",
 					}, nil
+				},
+				DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+					result := make(map[string][]sarama.ConfigEntry)
+					for _, topicName := range topicNames {
+						result[topicName] = []sarama.ConfigEntry{
+							{Name: "cleanup.policy", Value: "delete"},
+							{Name: "local.retention.ms", Value: "-2"},
+							{Name: "retention.ms", Value: "604800000"},
+							{Name: "min.insync.replicas", Value: "1"},
+						}
+					}
+					return result, nil
 				},
 				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 					return []sarama.ResourceAcls{}, nil
@@ -492,7 +504,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantError)
 				// Verify topics are not set on error
-				assert.Nil(t, clusterInfo.Topics)
+				assert.Nil(t, clusterInfo.Topics.Details)
 				return
 			}
 
@@ -500,8 +512,8 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify topics are properly populated
-			assert.ElementsMatch(t, tt.wantTopics, clusterInfo.Topics, "Topics should match expected list")
-			assert.Len(t, clusterInfo.Topics, len(tt.wantTopics), "Topic count should match")
+			assert.ElementsMatch(t, tt.wantTopics, clusterInfo.Topics.Details, "Topics should match expected list")
+			assert.Len(t, clusterInfo.Topics.Details, len(tt.wantTopics), "Topic count should match")
 
 			// Verify other fields are unchanged
 			assert.Equal(t, defaultRegion, clusterInfo.Region)
@@ -770,6 +782,19 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 								ClusterID: "test-cluster-id",
 							}, nil
 						},
+						DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+							// Return default configurations for all topics
+							result := make(map[string][]sarama.ConfigEntry)
+							for _, topicName := range topicNames {
+								result[topicName] = []sarama.ConfigEntry{
+									{Name: "cleanup.policy", Value: "delete"},
+									{Name: "local.retention.ms", Value: "-2"},
+									{Name: "retention.ms", Value: "604800000"},
+									{Name: "min.insync.replicas", Value: "1"},
+								}
+							}
+							return result, nil
+						},
 						ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 							return []sarama.ResourceAcls{}, nil
 						},
@@ -795,6 +820,19 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 							return &client.ClusterKafkaMetadata{
 								ClusterID: "test-cluster-id",
 							}, nil
+						},
+						DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+							// Return default configurations for all topics
+							result := make(map[string][]sarama.ConfigEntry)
+							for _, topicName := range topicNames {
+								result[topicName] = []sarama.ConfigEntry{
+									{Name: "cleanup.policy", Value: "delete"},
+									{Name: "local.retention.ms", Value: "-2"},
+									{Name: "retention.ms", Value: "604800000"},
+									{Name: "min.insync.replicas", Value: "1"},
+								}
+							}
+							return result, nil
 						},
 						ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 							return []sarama.ResourceAcls{}, nil
@@ -879,11 +917,11 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			}
 
 			if tt.mockTopics != nil {
-				expectedTopics := make([]types.Topics, 0, len(tt.mockTopics))
+				expectedTopics := make([]types.TopicDetails, 0, len(tt.mockTopics))
 				for topic := range tt.mockTopics {
-					expectedTopics = append(expectedTopics, types.Topics{Name: topic, Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}})
+					expectedTopics = append(expectedTopics, types.TopicDetails{Name: topic, Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}})
 				}
-				assert.ElementsMatch(t, expectedTopics, result.Topics)
+				assert.ElementsMatch(t, expectedTopics, result.Topics.Details)
 			}
 
 			// Verify admin client was closed
@@ -1108,6 +1146,19 @@ func TestClusterScanner_Run(t *testing.T) {
 					GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
 						return &client.ClusterKafkaMetadata{ClusterID: "test-cluster-id"}, nil
 					},
+					DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+						// Return default configurations for all topics
+						result := make(map[string][]sarama.ConfigEntry)
+						for _, topicName := range topicNames {
+							result[topicName] = []sarama.ConfigEntry{
+								{Name: "cleanup.policy", Value: "delete"},
+								{Name: "local.retention.ms", Value: "-2"},
+								{Name: "retention.ms", Value: "604800000"},
+								{Name: "min.insync.replicas", Value: "1"},
+							}
+						}
+						return result, nil
+					},
 					ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 						return []sarama.ResourceAcls{}, nil
 					},
@@ -1135,10 +1186,10 @@ func TestClusterScanner_Run(t *testing.T) {
 				require.NoError(t, err)
 
 				assert.Equal(t, aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName), aws.ToString(clusterInfo.Cluster.ClusterName))
-				assert.ElementsMatch(t, []types.Topics{
-					{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-					{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				}, clusterInfo.Topics)
+				assert.ElementsMatch(t, []types.TopicDetails{
+					{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+					{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				}, clusterInfo.Topics.Details)
 				assert.Equal(t, defaultRegion, clusterInfo.Region)
 
 				// Cleanup test directories
@@ -1670,6 +1721,19 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
 					return tt.mockClusterMetadata, tt.mockDescribeError
 				},
+				DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+					// Return default configurations for all topics
+					result := make(map[string][]sarama.ConfigEntry)
+					for _, topicName := range topicNames {
+						result[topicName] = []sarama.ConfigEntry{
+							{Name: "cleanup.policy", Value: "delete"},
+							{Name: "local.retention.ms", Value: "-2"},
+							{Name: "retention.ms", Value: "604800000"},
+							{Name: "min.insync.replicas", Value: "1"},
+						}
+					}
+					return result, nil
+				},
 				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 					return []sarama.ResourceAcls{}, nil
 				},
@@ -1800,6 +1864,19 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 						ClusterID:    "test-cluster-id",
 					}, nil
 				},
+				DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+					// Return default configurations for all topics
+					result := make(map[string][]sarama.ConfigEntry)
+					for _, topicName := range topicNames {
+						result[topicName] = []sarama.ConfigEntry{
+							{Name: "cleanup.policy", Value: "delete"},
+							{Name: "local.retention.ms", Value: "-2"},
+							{Name: "retention.ms", Value: "604800000"},
+							{Name: "min.insync.replicas", Value: "1"},
+						}
+					}
+					return result, nil
+				},
 				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 					return []sarama.ResourceAcls{}, nil
 				},
@@ -1826,9 +1903,9 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 			// The operation should succeed even if admin.Close() fails
 			err := clusterScanner.kafkaService.ScanKafkaResources(clusterInfo)
 			assert.NoError(t, err, "scanKafkaResources should succeed even if admin.Close() fails")
-			assert.Equal(t, []types.Topics{
-				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-			}, clusterInfo.Topics)
+			assert.Equal(t, []types.TopicDetails{
+				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+			}, clusterInfo.Topics.Details)
 		})
 	}
 }
@@ -2060,6 +2137,19 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 						ClusterID: "test-cluster-id",
 					}, nil
 				},
+				DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+					// Return default configurations for all topics
+					result := make(map[string][]sarama.ConfigEntry)
+					for _, topicName := range topicNames {
+						result[topicName] = []sarama.ConfigEntry{
+							{Name: "cleanup.policy", Value: "delete"},
+							{Name: "local.retention.ms", Value: "-2"},
+							{Name: "retention.ms", Value: "604800000"},
+							{Name: "min.insync.replicas", Value: "1"},
+						}
+					}
+					return result, nil
+				},
 				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 					return []sarama.ResourceAcls{}, nil
 				},
@@ -2104,14 +2194,14 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 
 			// Verify Kafka-level resources behavior
 			if tt.expectTopics {
-				assert.NotNil(t, result.Topics, "Topics should be populated when skipKafka=false")
-				assert.Len(t, result.Topics, 2, "Should have 2 topics when skipKafka=false")
-				assert.ElementsMatch(t, []types.Topics{
-					{Name: "test-topic-1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-					{Name: "test-topic-2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				}, result.Topics)
+				assert.NotNil(t, result.Topics.Details, "Topics should be populated when skipKafka=false")
+				assert.Len(t, result.Topics.Details, 2, "Should have 2 topics when skipKafka=false")
+				assert.ElementsMatch(t, []types.TopicDetails{
+					{Name: "test-topic-1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+					{Name: "test-topic-2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
+				}, result.Topics.Details)
 			} else {
-				assert.Nil(t, result.Topics, "Topics should be nil when skipKafka=true")
+				assert.Nil(t, result.Topics.Details, "Topics should be nil when skipKafka=true")
 			}
 
 			if tt.expectClusterID {
