@@ -139,7 +139,7 @@ func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformat
 	}
 
 	for _, topic := range topics {
-		clusterInfo.Topics = append(clusterInfo.Topics, topic)
+		clusterInfo.Topics.Details = append(clusterInfo.Topics.Details, topic)
 	}
 
 	// Use KafkaService's ACL scanning logic instead of duplicating it

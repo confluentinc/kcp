@@ -144,6 +144,7 @@ type KafkaAdmin interface {
 	ListTopics() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
+	DescribeTopicConfigs(topicNames []string) (map[string][]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
 	Close() error
 }
@@ -178,6 +179,29 @@ func (k *KafkaAdminClient) DescribeConfig() ([]sarama.ConfigEntry, error) {
 		Type: sarama.ConfigResourceType(sarama.ConfigResourceType(sarama.BrokerResource)),
 		Name: "1",
 	})
+}
+
+func (k *KafkaAdminClient) DescribeTopicConfigs(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+	if len(topicNames) == 0 {
+		return make(map[string][]sarama.ConfigEntry), nil
+	}
+
+	configMap := make(map[string][]sarama.ConfigEntry)
+	for _, topicName := range topicNames {
+		resource := sarama.ConfigResource{
+			Type: sarama.TopicResource,
+			Name: topicName,
+		}
+
+		config, err := k.admin.DescribeConfig(resource)
+		if err != nil {
+			return nil, fmt.Errorf("failed to describe config for topic %s: %w", topicName, err)
+		}
+
+		configMap[topicName] = config
+	}
+
+	return configMap, nil
 }
 
 func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error) {
