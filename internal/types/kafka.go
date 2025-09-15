@@ -1,28 +1,10 @@
 package types
 
-/*
-	{
-		"name": "payment-events",
-		"partitions": 3,
-		"replication_factor": 3,
-		"configurations": {
-			"cleanup.policy": "delete",
-			"retention.ms": "7776000000",
-			"min.insync.replicas": "1"
-		}
-*/
 type Topics struct {
-	Name              string              `json:"name"`
-	Partitions        int                 `json:"partitions"`
-	ReplicationFactor int                 `json:"replication_factor"`
-	Configurations    TopicConfigurations `json:"configurations"`
-}
-
-type TopicConfigurations struct {
-	CleanupPolicy     string `json:"cleanup.policy"`
-	LocalRetentionMs  string `json:"local.retention.ms"`
-	RetentionMs       string `json:"retention.ms"`
-	MinInsyncReplicas string `json:"min.insync.replicas"`
+	Name              string            `json:"name"`
+	Partitions        int               `json:"partitions"`
+	ReplicationFactor int               `json:"replication_factor"`
+	Configurations    map[string]string `json:"configurations"`
 }
 
 // Preferred over sarama.ResourceAcls because it is flattened vs sarama's nested structure.

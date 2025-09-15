@@ -97,29 +97,33 @@ func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.Topi
 		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
 	}
 
+	topicNames := make([]string, 0, len(topics))
+	for topicName := range topics {
+		topicNames = append(topicNames, topicName)
+	}
+
+	topicConfigs, err := admin.DescribeTopicConfigs(topicNames)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to describe topic configs: %v", err)
+	}
+
 	var topicList []types.Topics
 	for topicName, topic := range topics {
-		getConfigValue := func(key, defaultValue string) string {
-			if topic.ConfigEntries == nil {
-				return defaultValue
+		configurations := make(map[string]string)
+
+		if configs, exists := topicConfigs[topicName]; exists {
+			for _, config := range configs {
+				if config.Name != "" && config.Value != "" {
+					configurations[config.Name] = config.Value
+				}
 			}
-			if value, exists := topic.ConfigEntries[key]; exists && value != nil {
-				return *value
-			}
-			return defaultValue
 		}
 
 		topicList = append(topicList, types.Topics{
 			Name:              topicName,
 			Partitions:        int(topic.NumPartitions),
 			ReplicationFactor: int(topic.ReplicationFactor),
-			Configurations: types.TopicConfigurations{
-				// Defaults from: https://kafka.apache.org/30/generated/topic_config.html
-				CleanupPolicy:     getConfigValue("cleanup.policy", "delete"),
-				LocalRetentionMs:  getConfigValue("local.retention.ms", "-2"),
-				RetentionMs:       getConfigValue("retention.ms", "604800000"),
-				MinInsyncReplicas: getConfigValue("min.insync.replicas", "1"),
-			},
+			Configurations:    configurations,
 		})
 	}
 

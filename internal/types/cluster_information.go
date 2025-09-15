@@ -576,10 +576,10 @@ func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
 				topic.Name,
 				fmt.Sprintf("%d", topic.Partitions),
 				fmt.Sprintf("%d", topic.ReplicationFactor),
-				topic.Configurations.CleanupPolicy,
-				topic.Configurations.LocalRetentionMs,
-				topic.Configurations.RetentionMs,
-				topic.Configurations.MinInsyncReplicas,
+				topic.Configurations["cleanup.policy"],
+				topic.Configurations["local.retention.ms"],
+				topic.Configurations["retention.ms"],
+				topic.Configurations["min.insync.replicas"],
 			}
 			tableData = append(tableData, row)
 		} else {
