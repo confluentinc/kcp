@@ -78,10 +78,12 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 	tags := []string{}
 	tagsMap := rd.convertTagsToMap(tags)
 
-	// time range of 12 months from now
+	// time range of 12 months from now with monthly granularity
 	startDate := time.Now().AddDate(0, -12, 0)
 	endDate := time.Now()
-	regionCosts, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, costexplorertypes.GranularityMonthly, tagsMap)
+	granularity := costexplorertypes.GranularityMonthly
+
+	regionCosts, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, granularity, tagsMap)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get AWS costs: %v", err)
 	}
@@ -89,7 +91,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 	costMetadata := types.CostMetadata{
 		StartDate:   startDate,
 		EndDate:     endDate,
-		Granularity: string(costexplorertypes.GranularityDaily),
+		Granularity: string(granularity),
 		Tags:        tagsMap,
 		Services:    regionCosts.Services,
 	}
