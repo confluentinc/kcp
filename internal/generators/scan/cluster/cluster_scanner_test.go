@@ -391,7 +391,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		mockTopics map[string]sarama.TopicDetail
 		mockError  error
 		wantError  string
-		wantTopics []types.Topics
+		wantTopics []types.TopicDetails
 	}{
 		{
 			name: "successful Kafka resources scan",
@@ -400,7 +400,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				"topic2": {},
 				"topic3": {},
 			},
-			wantTopics: []types.Topics{
+			wantTopics: []types.TopicDetails{
 				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
@@ -409,7 +409,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		{
 			name:       "handles empty topics list",
 			mockTopics: map[string]sarama.TopicDetail{},
-			wantTopics: []types.Topics{},
+			wantTopics: []types.TopicDetails{},
 		},
 		{
 			name:      "handles topic listing error",
@@ -430,7 +430,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				"topic9":  {},
 				"topic10": {},
 			},
-			wantTopics: []types.Topics{
+			wantTopics: []types.TopicDetails{
 				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
@@ -917,9 +917,9 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			}
 
 			if tt.mockTopics != nil {
-				expectedTopics := make([]types.Topics, 0, len(tt.mockTopics))
+				expectedTopics := make([]types.TopicDetails, 0, len(tt.mockTopics))
 				for topic := range tt.mockTopics {
-					expectedTopics = append(expectedTopics, types.Topics{Name: topic, Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}})
+					expectedTopics = append(expectedTopics, types.TopicDetails{Name: topic, Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}})
 				}
 				assert.ElementsMatch(t, expectedTopics, result.Topics)
 			}
@@ -1186,7 +1186,7 @@ func TestClusterScanner_Run(t *testing.T) {
 				require.NoError(t, err)
 
 				assert.Equal(t, aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName), aws.ToString(clusterInfo.Cluster.ClusterName))
-				assert.ElementsMatch(t, []types.Topics{
+				assert.ElementsMatch(t, []types.TopicDetails{
 					{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 					{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 				}, clusterInfo.Topics)
@@ -1903,7 +1903,7 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 			// The operation should succeed even if admin.Close() fails
 			err := clusterScanner.kafkaService.ScanKafkaResources(clusterInfo)
 			assert.NoError(t, err, "scanKafkaResources should succeed even if admin.Close() fails")
-			assert.Equal(t, []types.Topics{
+			assert.Equal(t, []types.TopicDetails{
 				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 			}, clusterInfo.Topics)
 		})
@@ -2196,7 +2196,7 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 			if tt.expectTopics {
 				assert.NotNil(t, result.Topics, "Topics should be populated when skipKafka=false")
 				assert.Len(t, result.Topics, 2, "Should have 2 topics when skipKafka=false")
-				assert.ElementsMatch(t, []types.Topics{
+				assert.ElementsMatch(t, []types.TopicDetails{
 					{Name: "test-topic-1", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 					{Name: "test-topic-2", Partitions: 0, ReplicationFactor: 0, Configurations: map[string]string{"cleanup.policy": "delete", "local.retention.ms": "-2", "retention.ms": "604800000", "min.insync.replicas": "1"}},
 				}, result.Topics)

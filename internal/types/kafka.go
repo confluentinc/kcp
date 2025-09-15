@@ -1,10 +1,26 @@
 package types
 
-type Topics struct {
+type TopicSummary struct {
+	Topics                    int `json:"topics"`
+	InternalTopics            int `json:"internal_topics"`
+	TotalPartitions           int `json:"total_partitions"`
+	TotalInternalPartitions   int `json:"total_internal_partitions"`
+	CompactTopics             int `json:"compact_topics"`
+	CompactInternalTopics     int `json:"compact_internal_topics"`
+	CompactPartitions         int `json:"compact_partitions"`
+	CompactInternalPartitions int `json:"compact_internal_partitions"`
+}
+
+type TopicDetails struct {
 	Name              string            `json:"name"`
 	Partitions        int               `json:"partitions"`
 	ReplicationFactor int               `json:"replication_factor"`
 	Configurations    map[string]string `json:"configurations"`
+}
+
+type Topics struct {
+	Summary TopicSummary   `json:"summary"`
+	Details []TopicDetails `json:"details"`
 }
 
 // Preferred over sarama.ResourceAcls because it is flattened vs sarama's nested structure.

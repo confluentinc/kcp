@@ -163,12 +163,12 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 	// Verify results
 	require.NoError(t, err)
 	assert.Equal(t, "test-cluster-id", clusterInfo.ClusterID)
-	assert.Len(t, clusterInfo.Topics, 2)
+	assert.Len(t, clusterInfo.Topics.Details, 2)
 
 	// Verify topic1 with ConfigEntries
 	topic1Found := false
 	topic2Found := false
-	for _, topic := range clusterInfo.Topics {
+	for _, topic := range clusterInfo.Topics.Details {
 		switch topic.Name {
 		case "topic1":
 			topic1Found = true
@@ -246,13 +246,13 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	// Verify results
 	require.NoError(t, err)
 	assert.Equal(t, "test-serverless-cluster-id", clusterInfo.ClusterID)
-	assert.Len(t, clusterInfo.Topics, 1)
-	assert.Equal(t, "serverless-topic", clusterInfo.Topics[0].Name)
-	assert.Equal(t, 1, clusterInfo.Topics[0].Partitions)
-	assert.Equal(t, 1, clusterInfo.Topics[0].ReplicationFactor)
+	assert.Len(t, clusterInfo.Topics.Details, 1)
+	assert.Equal(t, "serverless-topic", clusterInfo.Topics.Details[0].Name)
+	assert.Equal(t, 1, clusterInfo.Topics.Details[0].Partitions)
+	assert.Equal(t, 1, clusterInfo.Topics.Details[0].ReplicationFactor)
 	// Verify that configurations map is empty since DescribeTopicConfigs returned empty configs
 	// and ConfigEntries is nil
-	assert.Empty(t, clusterInfo.Topics[0].Configurations)
+	assert.Empty(t, clusterInfo.Topics.Details[0].Configurations)
 	assert.Empty(t, clusterInfo.Acls) // ACLs should be empty for serverless
 
 	// Verify mocks were called (note: ListAcls should NOT be called for serverless)
