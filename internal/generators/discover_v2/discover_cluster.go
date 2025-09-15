@@ -28,8 +28,8 @@ type ClusterDiscovererMSKService interface {
 }
 
 type ClusterDiscovererMetricService interface {
-	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, followerFetching bool) (*types.ClusterMetrics, error)
-	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, followerFetching bool) (*types.ClusterMetrics, error)
+	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time) (*types.ClusterMetricsV2, error)
+	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time) (*types.ClusterMetricsV2, error)
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -61,21 +61,10 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*
 		return nil, err
 	}
 
-	metricInformation := types.MetricInformation{
-		BrokerAZDistribution:  clusterMetric.BrokerAZDistribution,
-		KafkaVersion:          clusterMetric.KafkaVersion,
-		EnhancedMonitoring:    clusterMetric.EnhancedMonitoring,
-		StartDate:             clusterMetric.StartDate,
-		EndDate:               clusterMetric.EndDate,
-		NodesMetrics:          clusterMetric.NodesMetrics,
-		GlobalMetrics:         clusterMetric.GlobalMetrics,
-		ClusterMetricsSummary: clusterMetric.ClusterMetricsSummary,
-	}
-
 	return &types.DiscoveredCluster{
 		Name:                 aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
 		AWSClientInformation: *awsClientInfo,
-		MetricInformation:    metricInformation,
+		ClusterMetricsV2:     *clusterMetric,
 	}, nil
 }
 
@@ -338,7 +327,7 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 	return subnetInfo
 }
 
-func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
+func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetricsV2, error) {
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
@@ -352,23 +341,25 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	// Handle case where followerFetching is nil (cluster doesn't have configuration info)
 	followerFetchingEnabled := aws.ToBool(followerFetching)
 
-	// time range of 12 months from now
-	startDate := time.Now().AddDate(0, -12, 0)
-	endDate := time.Now()
+	now := time.Now().UTC()
+	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startDate := endDate.AddDate(0, 0, -7)
 
-	var clusterMetric *types.ClusterMetrics
+	var clusterMetric *types.ClusterMetricsV2
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
+		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
-		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, startDate, endDate, followerFetchingEnabled)
+		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, startDate, endDate)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
 		}
 	}
+
+	clusterMetric.MetricMetadata.FollowerFetching = followerFetchingEnabled
 
 	return clusterMetric, nil
 }

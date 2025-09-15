@@ -9,9 +9,25 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
+
+type ClusterMetricsV2 struct {
+	MetricMetadata MetricMetadata                     `json:"metadata"`
+	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
+}
+
+type MetricMetadata struct {
+	FollowerFetching     bool  `json:"follower_fetching"`
+	BrokerAzDistribution string `json:"broker_az_distribution"`
+	KafkaVersion         string `json:"kafka_version"`
+	EnhancedMonitoring   string `json:"enhanced_monitoring"`
+	StartWindowDate      string `json:"start_window_date"`
+	EndWindowDate        string `json:"end_window_date"`
+	Period               int32  `json:"period"`
+}
 
 type ClusterMetrics struct {
 	Timestamp             time.Time             `json:"timestamp"`
@@ -84,7 +100,7 @@ func NewClusterMetrics(region string, timestamp time.Time) *ClusterMetrics {
 }
 
 func (cm *ClusterMetrics) GetJsonPath() string {
-	return filepath.Join(cm.GetDirPath(), fmt.Sprintf("%s-metrics.json", aws.ToString(&cm.ClusterName)))
+	return filepath.Join(cm.GetDirPath(), fmt.Sprintf("%s-f", aws.ToString(&cm.ClusterName)))
 }
 
 func (cm *ClusterMetrics) GetMarkdownPath() string {

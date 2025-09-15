@@ -282,7 +282,7 @@ type DiscoveredRegion struct {
 
 type DiscoveredCluster struct {
 	Name                       string                     `json:"name"`
-	MetricInformation          MetricInformation          `json:"metrics"`
+	ClusterMetricsV2           ClusterMetricsV2           `json:"metrics"`
 	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
 	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
 }
