@@ -120,33 +120,33 @@ func TestClusterInformation_AsJson(t *testing.T) {
 				},
 				Topics: []Topics{
 					{
-						Name: "topic1",
-						Partitions: 1,
+						Name:              "topic1",
+						Partitions:        1,
 						ReplicationFactor: 1,
-						Configurations: TopicConfigurations{
-							CleanupPolicy: "compact",
-							RetentionMs: "1111111111",
-							MinInsyncReplicas: "1",
+						Configurations: map[string]string{
+							"cleanup.policy":      "compact",
+							"retention.ms":        "1111111111",
+							"min.insync.replicas": "1",
 						},
 					},
 					{
-						Name: "topic2",
-						Partitions: 2,
+						Name:              "topic2",
+						Partitions:        2,
 						ReplicationFactor: 2,
-						Configurations: TopicConfigurations{
-							CleanupPolicy: "delete",
-							RetentionMs: "2222222222",
-							MinInsyncReplicas: "2",
+						Configurations: map[string]string{
+							"cleanup.policy":      "delete",
+							"retention.ms":        "2222222222",
+							"min.insync.replicas": "2",
 						},
 					},
 					{
-						Name: "topic3",
-						Partitions: 3,
+						Name:              "topic3",
+						Partitions:        3,
 						ReplicationFactor: 3,
-						Configurations: TopicConfigurations{
-							CleanupPolicy: "compact",
-							RetentionMs: "3333333333",
-							MinInsyncReplicas: "3",
+						Configurations: map[string]string{
+							"cleanup.policy":      "compact",
+							"retention.ms":        "3333333333",
+							"min.insync.replicas": "3",
 						},
 					},
 				},
@@ -328,27 +328,27 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 				},
 				Topics: []Topics{
 					{
-						Name: "topic1",
-						Partitions: 1,
+						Name:              "topic1",
+						Partitions:        1,
 						ReplicationFactor: 1,
-						Configurations: TopicConfigurations{
-							CleanupPolicy: "compact",
-							RetentionMs: "1111111111",
-							MinInsyncReplicas: "1",
+						Configurations: map[string]string{
+							"cleanup.policy":      "compact",
+							"retention.ms":        "1111111111",
+							"min.insync.replicas": "1",
 						},
 					},
 					{
-						Name: "topic2",
-						Partitions: 2,
+						Name:              "topic2",
+						Partitions:        2,
 						ReplicationFactor: 2,
-						Configurations: TopicConfigurations{
-							CleanupPolicy: "delete",
-							RetentionMs: "2222222222",
-							MinInsyncReplicas: "2",
+						Configurations: map[string]string{
+							"cleanup.policy":      "delete",
+							"retention.ms":        "2222222222",
+							"min.insync.replicas": "2",
 						},
 					},
 				},
-				Acls:   []Acls{
+				Acls: []Acls{
 					{
 						ResourceType:        "TOPIC",
 						ResourceName:        "topic1",

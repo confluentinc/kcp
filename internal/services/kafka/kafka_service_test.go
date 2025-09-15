@@ -33,6 +33,11 @@ func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
 	return args.Get(0).([]sarama.ConfigEntry), args.Error(1)
 }
 
+func (m *MockKafkaAdmin) DescribeTopicConfigs(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
+	args := m.Called(topicNames)
+	return args.Get(0).(map[string][]sarama.ConfigEntry), args.Error(1)
+}
+
 func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
 	args := m.Called()
 	return args.Get(0).([]sarama.ResourceAcls), args.Error(1)
@@ -117,6 +122,21 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 		},
 	}, nil)
 
+	// Mock DescribeTopicConfigs to return raw configurations
+	mockAdmin.On("DescribeTopicConfigs", []string{"topic1", "topic2"}).Return(map[string][]sarama.ConfigEntry{
+		"topic1": {
+			{Name: "cleanup.policy", Value: "compact"},
+			{Name: "local.retention.ms", Value: "86400000"},
+			{Name: "retention.ms", Value: "604800000"},
+			{Name: "min.insync.replicas", Value: "2"},
+		},
+		"topic2": {
+			{Name: "cleanup.policy", Value: "delete"},
+			{Name: "retention.ms", Value: "604800000"},
+			{Name: "min.insync.replicas", Value: "1"},
+		},
+	}, nil)
+
 	mockAdmin.On("ListAcls").Return([]sarama.ResourceAcls{
 		{
 			Resource: sarama.Resource{
@@ -149,23 +169,22 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 	topic1Found := false
 	topic2Found := false
 	for _, topic := range clusterInfo.Topics {
-		if topic.Name == "topic1" {
+		switch topic.Name {
+		case "topic1":
 			topic1Found = true
 			assert.Equal(t, 3, topic.Partitions)
 			assert.Equal(t, 3, topic.ReplicationFactor)
-			assert.Equal(t, "compact", topic.Configurations.CleanupPolicy)
-			assert.Equal(t, "86400000", topic.Configurations.LocalRetentionMs)
-			assert.Equal(t, "604800000", topic.Configurations.RetentionMs)
-			assert.Equal(t, "2", topic.Configurations.MinInsyncReplicas)
-		} else if topic.Name == "topic2" {
+			assert.Equal(t, "compact", topic.Configurations["cleanup.policy"])
+			assert.Equal(t, "86400000", topic.Configurations["local.retention.ms"])
+			assert.Equal(t, "604800000", topic.Configurations["retention.ms"])
+			assert.Equal(t, "2", topic.Configurations["min.insync.replicas"])
+		case "topic2":
 			topic2Found = true
 			assert.Equal(t, 1, topic.Partitions)
 			assert.Equal(t, 1, topic.ReplicationFactor)
-			// Verify default values are used when ConfigEntries is nil
-			assert.Equal(t, "delete", topic.Configurations.CleanupPolicy)
-			assert.Equal(t, "-2", topic.Configurations.LocalRetentionMs)
-			assert.Equal(t, "604800000", topic.Configurations.RetentionMs)
-			assert.Equal(t, "1", topic.Configurations.MinInsyncReplicas)
+			assert.Equal(t, "delete", topic.Configurations["cleanup.policy"])
+			assert.Equal(t, "604800000", topic.Configurations["retention.ms"])
+			assert.Equal(t, "1", topic.Configurations["min.insync.replicas"])
 		}
 	}
 	assert.True(t, topic1Found, "topic1 should be found")
@@ -214,6 +233,11 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 		},
 	}, nil)
 
+	// Mock DescribeTopicConfigs for serverless topic (might return empty configs)
+	mockAdmin.On("DescribeTopicConfigs", []string{"serverless-topic"}).Return(map[string][]sarama.ConfigEntry{
+		"serverless-topic": {}, // Empty config entries to test fallback to defaults
+	}, nil)
+
 	mockAdmin.On("Close").Return(nil)
 
 	// Execute the test
@@ -226,11 +250,9 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 	assert.Equal(t, "serverless-topic", clusterInfo.Topics[0].Name)
 	assert.Equal(t, 1, clusterInfo.Topics[0].Partitions)
 	assert.Equal(t, 1, clusterInfo.Topics[0].ReplicationFactor)
-	// Verify default values are used when ConfigEntries is nil
-	assert.Equal(t, "delete", clusterInfo.Topics[0].Configurations.CleanupPolicy)
-	assert.Equal(t, "-2", clusterInfo.Topics[0].Configurations.LocalRetentionMs)
-	assert.Equal(t, "604800000", clusterInfo.Topics[0].Configurations.RetentionMs)
-	assert.Equal(t, "1", clusterInfo.Topics[0].Configurations.MinInsyncReplicas)
+	// Verify that configurations map is empty since DescribeTopicConfigs returned empty configs
+	// and ConfigEntries is nil
+	assert.Empty(t, clusterInfo.Topics[0].Configurations)
 	assert.Empty(t, clusterInfo.Acls) // ACLs should be empty for serverless
 
 	// Verify mocks were called (note: ListAcls should NOT be called for serverless)

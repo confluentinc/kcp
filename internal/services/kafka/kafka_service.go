@@ -3,6 +3,7 @@ package kafka
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -101,6 +102,8 @@ func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.Topi
 	for topicName := range topics {
 		topicNames = append(topicNames, topicName)
 	}
+
+	sort.Strings(topicNames)
 
 	topicConfigs, err := admin.DescribeTopicConfigs(topicNames)
 	if err != nil {
