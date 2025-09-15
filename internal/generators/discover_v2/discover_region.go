@@ -16,8 +16,8 @@ import (
 )
 
 type RegionDiscovererMSKService interface {
-	ListClustersNEW(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error)
-	GetConfigurationsNEW(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error)
+	ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error)
+	GetConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error)
 }
 
 type RegionDiscovererCostService interface {
@@ -66,7 +66,7 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string) (*types
 }
 
 func (rd *RegionDiscoverer) discoverConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
-	configurations, err := rd.mskService.GetConfigurationsNEW(ctx, maxResults)
+	configurations, err := rd.mskService.GetConfigurations(ctx, maxResults)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 func (rd *RegionDiscoverer) discoverClusterArns(ctx context.Context, maxResults int32) ([]string, error) {
 	slog.Info("🔍 listing clusters")
 
-	clusters, err := rd.mskService.ListClustersNEW(ctx, maxResults)
+	clusters, err := rd.mskService.ListClusters(ctx, maxResults)
 	if err != nil {
 		return nil, err
 	}
