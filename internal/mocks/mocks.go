@@ -13,15 +13,15 @@ import (
 
 // MockKafkaAdmin is a mock implementation of the KafkaAdmin interface
 type MockKafkaAdmin struct {
-	ListTopicsFunc              func() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithConfigsFunc   func() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadataFunc func() (*client.ClusterKafkaMetadata, error)
 	DescribeConfigFunc          func() ([]sarama.ConfigEntry, error)
 	ListAclsFunc                func() ([]sarama.ResourceAcls, error)
 	CloseFunc                   func() error
 }
 
-func (m *MockKafkaAdmin) ListTopics() (map[string]sarama.TopicDetail, error) {
-	return m.ListTopicsFunc()
+func (m *MockKafkaAdmin) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+	return m.ListTopicsWithConfigsFunc()
 }
 
 func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error) {

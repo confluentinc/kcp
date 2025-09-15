@@ -93,7 +93,7 @@ func (cs *ClusterScanner) Run() error {
 	slog.Info("✅ cluster scan complete",
 		"cluster", cs.clusterArn,
 		"clusterName", clusterInfo.Cluster.ClusterName,
-		"topicCount", len(clusterInfo.Topics),
+		"topicCount", clusterInfo.Topics.Summary.Topics,
 		"filePath", clusterInfo.GetJsonPath(),
 		"markdownPath", clusterInfo.GetMarkdownPath(),
 	)
