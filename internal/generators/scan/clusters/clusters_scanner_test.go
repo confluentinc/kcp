@@ -162,7 +162,7 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedClusterID, clusterInfo.ClusterID)
-			assert.Len(t, clusterInfo.Topics, tt.expectedTopicCount)
+			assert.Len(t, clusterInfo.Topics.Details, tt.expectedTopicCount)
 			assert.Len(t, clusterInfo.Acls, tt.expectedAclCount)
 		})
 	}
