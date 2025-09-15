@@ -124,40 +124,40 @@ func TestClusterInformation_AsJson(t *testing.T) {
 							Name:              "topic1",
 							Partitions:        1,
 							ReplicationFactor: 1,
-							Configurations: map[string]string{
-								"cleanup.policy":      "compact",
-								"retention.ms":        "1111111111",
-								"min.insync.replicas": "1",
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("1111111111"),
+								"min.insync.replicas": aws.String("1"),
 							},
 						},
 						{
 							Name:              "topic2",
 							Partitions:        2,
 							ReplicationFactor: 2,
-							Configurations: map[string]string{
-								"cleanup.policy":      "delete",
-								"retention.ms":        "2222222222",
-								"min.insync.replicas": "2",
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("delete"),
+								"retention.ms":        aws.String("2222222222"),
+								"min.insync.replicas": aws.String("2"),
 							},
 						},
 						{
 							Name:              "topic3",
 							Partitions:        3,
 							ReplicationFactor: 3,
-							Configurations: map[string]string{
-								"cleanup.policy":      "compact",
-								"retention.ms":        "3333333333",
-								"min.insync.replicas": "3",
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("3333333333"),
+								"min.insync.replicas": aws.String("3"),
 							},
 						},
 						{
 							Name:              "__internal_topic",
 							Partitions:        2,
 							ReplicationFactor: 1,
-							Configurations: map[string]string{
-								"cleanup.policy":      "compact",
-								"retention.ms":        "4444444444",
-								"min.insync.replicas": "1",
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("4444444444"),
+								"min.insync.replicas": aws.String("1"),
 							},
 						},
 					},
@@ -364,20 +364,20 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 							Name:              "topic1",
 							Partitions:        1,
 							ReplicationFactor: 1,
-							Configurations: map[string]string{
-								"cleanup.policy":      "compact",
-								"retention.ms":        "1111111111",
-								"min.insync.replicas": "1",
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("1111111111"),
+								"min.insync.replicas": aws.String("1"),
 							},
 						},
 						{
 							Name:              "topic2",
 							Partitions:        2,
 							ReplicationFactor: 2,
-							Configurations: map[string]string{
-								"cleanup.policy":      "delete",
-								"retention.ms":        "2222222222",
-								"min.insync.replicas": "2",
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("delete"),
+								"retention.ms":        aws.String("2222222222"),
+								"min.insync.replicas": aws.String("2"),
 							},
 						},
 					},
@@ -724,29 +724,29 @@ func TestClusterInformation_CalculateTopicSummary(t *testing.T) {
 				{
 					Name:       "user-topic-1",
 					Partitions: 3,
-					Configurations: map[string]string{
-						"cleanup.policy": "delete",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("delete"),
 					},
 				},
 				{
 					Name:       "user-topic-2",
 					Partitions: 5,
-					Configurations: map[string]string{
-						"cleanup.policy": "compact",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
 					},
 				},
 				{
 					Name:       "__internal-topic-1",
 					Partitions: 2,
-					Configurations: map[string]string{
-						"cleanup.policy": "compact",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
 					},
 				},
 				{
 					Name:       "__internal-topic-2",
 					Partitions: 1,
-					Configurations: map[string]string{
-						"cleanup.policy": "delete",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("delete"),
 					},
 				},
 			},
@@ -767,15 +767,15 @@ func TestClusterInformation_CalculateTopicSummary(t *testing.T) {
 				{
 					Name:       "topic-1",
 					Partitions: 1,
-					Configurations: map[string]string{
-						"cleanup.policy": "compact",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
 					},
 				},
 				{
 					Name:       "topic-2",
 					Partitions: 2,
-					Configurations: map[string]string{
-						"cleanup.policy": "delete",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("delete"),
 					},
 				},
 			},
@@ -796,8 +796,8 @@ func TestClusterInformation_CalculateTopicSummary(t *testing.T) {
 				{
 					Name:       "__consumer_offsets",
 					Partitions: 50,
-					Configurations: map[string]string{
-						"cleanup.policy": "compact",
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
 					},
 				},
 			},
@@ -810,6 +810,33 @@ func TestClusterInformation_CalculateTopicSummary(t *testing.T) {
 				CompactInternalTopics:     1,
 				CompactPartitions:         0,
 				CompactInternalPartitions: 50,
+			},
+		},
+		{
+			name: "topics with missing cleanup.policy (serverless scenario)",
+			topics: []TopicDetails{
+				{
+					Name:           "serverless-topic",
+					Partitions:     1,
+					Configurations: map[string]*string{}, // Empty configurations
+				},
+				{
+					Name:       "topic-with-nil-policy",
+					Partitions: 2,
+					Configurations: map[string]*string{
+						"cleanup.policy": nil, // Nil cleanup.policy
+					},
+				},
+			},
+			expected: TopicSummary{
+				Topics:                    2,
+				InternalTopics:            0,
+				TotalPartitions:           3,
+				TotalInternalPartitions:   0,
+				CompactTopics:             0, // Should be 0 since cleanup.policy is missing/nil
+				CompactInternalTopics:     0,
+				CompactPartitions:         0,
+				CompactInternalPartitions: 0,
 			},
 		},
 	}

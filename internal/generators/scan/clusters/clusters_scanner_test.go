@@ -40,7 +40,7 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 		name                string
 		mockClusterMetadata *client.ClusterKafkaMetadata
 		mockTopics          map[string]sarama.TopicDetail
-		mockTopicConfigs    map[string][]sarama.ConfigEntry
+		mockTopicConfigs    map[string]*[]sarama.ConfigEntry
 		mockAcls            []sarama.ResourceAcls
 		mockError           error
 		wantError           string
@@ -59,7 +59,7 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 				"topic1": {},
 				"topic2": {},
 			},
-			mockTopicConfigs: map[string][]sarama.ConfigEntry{
+			mockTopicConfigs: map[string]*[]sarama.ConfigEntry{
 				"topic1": {
 					{Name: "cleanup.policy", Value: "delete"},
 					{Name: "local.retention.ms", Value: "-2"},
@@ -104,22 +104,11 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAdmin := &mocks.MockKafkaAdmin{
-				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
-					return tt.mockClusterMetadata, nil
-				},
-				ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 					return tt.mockTopics, nil
 				},
-				DescribeTopicConfigsFunc: func(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
-					if tt.mockTopicConfigs != nil {
-						return tt.mockTopicConfigs, nil
-					}
-					// Fallback to empty configs for error test cases
-					result := make(map[string][]sarama.ConfigEntry)
-					for _, topicName := range topicNames {
-						result[topicName] = []sarama.ConfigEntry{}
-					}
-					return result, nil
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return tt.mockClusterMetadata, nil
 				},
 				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
 					return tt.mockAcls, nil

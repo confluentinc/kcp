@@ -134,7 +134,12 @@ func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary 
 
 	for _, topic := range topicDetails {
 		isInternal := strings.HasPrefix(topic.Name, "__")
-		isCompact := strings.Contains(topic.Configurations["cleanup.policy"], "compact")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
 
 		if isInternal {
 			summary.InternalTopics++
@@ -633,10 +638,10 @@ func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
 				topic.Name,
 				fmt.Sprintf("%d", topic.Partitions),
 				fmt.Sprintf("%d", topic.ReplicationFactor),
-				topic.Configurations["cleanup.policy"],
-				topic.Configurations["local.retention.ms"],
-				topic.Configurations["retention.ms"],
-				topic.Configurations["min.insync.replicas"],
+				aws.ToString(topic.Configurations["cleanup.policy"]),
+				aws.ToString(topic.Configurations["local.retention.ms"]),
+				aws.ToString(topic.Configurations["retention.ms"]),
+				aws.ToString(topic.Configurations["min.insync.replicas"]),
 			}
 			tableData = append(tableData, row)
 		}

@@ -3,7 +3,6 @@ package kafka
 import (
 	"fmt"
 	"log/slog"
-	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -93,32 +92,17 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.TopicDetails, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
-	topics, err := admin.ListTopics()
+	topics, err := admin.ListTopicsWithConfigs()
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
-	}
-
-	topicNames := make([]string, 0, len(topics))
-	for topicName := range topics {
-		topicNames = append(topicNames, topicName)
-	}
-
-	sort.Strings(topicNames)
-
-	topicConfigs, err := admin.DescribeTopicConfigs(topicNames)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe topic configs: %v", err)
+		return nil, fmt.Errorf("❌ Failed to list topics with configs: %v", err)
 	}
 
 	var topicList []types.TopicDetails
 	for topicName, topic := range topics {
-		configurations := make(map[string]string)
-
-		if configs, exists := topicConfigs[topicName]; exists {
-			for _, config := range configs {
-				if config.Name != "" && config.Value != "" {
-					configurations[config.Name] = config.Value
-				}
+		configurations := make(map[string]*string)
+		for key, valuePtr := range topic.ConfigEntries {
+			if valuePtr != nil {
+				configurations[key] = valuePtr
 			}
 		}
 

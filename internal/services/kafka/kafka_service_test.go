@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/IBM/sarama"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -18,7 +19,7 @@ type MockKafkaAdmin struct {
 	mock.Mock
 }
 
-func (m *MockKafkaAdmin) ListTopics() (map[string]sarama.TopicDetail, error) {
+func (m *MockKafkaAdmin) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
 	args := m.Called()
 	return args.Get(0).(map[string]sarama.TopicDetail), args.Error(1)
 }
@@ -31,11 +32,6 @@ func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata
 func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
 	args := m.Called()
 	return args.Get(0).([]sarama.ConfigEntry), args.Error(1)
-}
-
-func (m *MockKafkaAdmin) DescribeTopicConfigs(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
-	args := m.Called(topicNames)
-	return args.Get(0).(map[string][]sarama.ConfigEntry), args.Error(1)
 }
 
 func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
@@ -98,42 +94,26 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 		ClusterID: "test-cluster-id",
 	}, nil)
 
-	// Create test config entries with proper values
-	localRetentionMs := "86400000" // 1 day
-	retentionMs := "604800000"     // 7 days
-	minInsyncReplicas := "2"
-	cleanupPolicy := "compact"
-
-	mockAdmin.On("ListTopics").Return(map[string]sarama.TopicDetail{
+	mockAdmin.On("ListTopicsWithConfigs").Return(map[string]sarama.TopicDetail{
 		"topic1": {
 			NumPartitions:     3,
 			ReplicationFactor: 3,
 			ConfigEntries: map[string]*string{
-				"cleanup.policy":      &cleanupPolicy,
-				"local.retention.ms":  &localRetentionMs,
-				"retention.ms":        &retentionMs,
-				"min.insync.replicas": &minInsyncReplicas,
+				"cleanup.policy":      aws.String("compact"),
+				"local.retention.ms":  aws.String("11111111"),
+				"retention.ms":        aws.String("111111111"),
+				"min.insync.replicas": aws.String("1"),
 			},
 		},
 		"topic2": {
 			NumPartitions:     1,
 			ReplicationFactor: 1,
-			ConfigEntries:     nil, // Test nil ConfigEntries case
-		},
-	}, nil)
-
-	// Mock DescribeTopicConfigs to return raw configurations
-	mockAdmin.On("DescribeTopicConfigs", []string{"topic1", "topic2"}).Return(map[string][]sarama.ConfigEntry{
-		"topic1": {
-			{Name: "cleanup.policy", Value: "compact"},
-			{Name: "local.retention.ms", Value: "86400000"},
-			{Name: "retention.ms", Value: "604800000"},
-			{Name: "min.insync.replicas", Value: "2"},
-		},
-		"topic2": {
-			{Name: "cleanup.policy", Value: "delete"},
-			{Name: "retention.ms", Value: "604800000"},
-			{Name: "min.insync.replicas", Value: "1"},
+			ConfigEntries: map[string]*string{
+				"cleanup.policy":      aws.String("delete"),
+				"local.retention.ms":  aws.String("22222222"),
+				"retention.ms":        aws.String("222222222"),
+				"min.insync.replicas": aws.String("2"),
+			},
 		},
 	}, nil)
 
@@ -174,17 +154,18 @@ func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
 			topic1Found = true
 			assert.Equal(t, 3, topic.Partitions)
 			assert.Equal(t, 3, topic.ReplicationFactor)
-			assert.Equal(t, "compact", topic.Configurations["cleanup.policy"])
-			assert.Equal(t, "86400000", topic.Configurations["local.retention.ms"])
-			assert.Equal(t, "604800000", topic.Configurations["retention.ms"])
-			assert.Equal(t, "2", topic.Configurations["min.insync.replicas"])
+			assert.Equal(t, aws.String("compact"), topic.Configurations["cleanup.policy"])
+			assert.Equal(t, aws.String("11111111"), topic.Configurations["local.retention.ms"])
+			assert.Equal(t, aws.String("111111111"), topic.Configurations["retention.ms"])
+			assert.Equal(t, aws.String("1"), topic.Configurations["min.insync.replicas"])
 		case "topic2":
 			topic2Found = true
 			assert.Equal(t, 1, topic.Partitions)
 			assert.Equal(t, 1, topic.ReplicationFactor)
-			assert.Equal(t, "delete", topic.Configurations["cleanup.policy"])
-			assert.Equal(t, "604800000", topic.Configurations["retention.ms"])
-			assert.Equal(t, "1", topic.Configurations["min.insync.replicas"])
+			assert.Equal(t, aws.String("delete"), topic.Configurations["cleanup.policy"])
+			assert.Equal(t, aws.String("22222222"), topic.Configurations["local.retention.ms"])
+			assert.Equal(t, aws.String("222222222"), topic.Configurations["retention.ms"])
+			assert.Equal(t, aws.String("2"), topic.Configurations["min.insync.replicas"])
 		}
 	}
 	assert.True(t, topic1Found, "topic1 should be found")
@@ -225,17 +206,13 @@ func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
 		ClusterID: "test-serverless-cluster-id",
 	}, nil)
 
-	mockAdmin.On("ListTopics").Return(map[string]sarama.TopicDetail{
+	// Mock ListTopicsWithConfigs for serverless topic (returns empty configs)
+	mockAdmin.On("ListTopicsWithConfigs").Return(map[string]sarama.TopicDetail{
 		"serverless-topic": {
 			NumPartitions:     1,
 			ReplicationFactor: 1,
-			ConfigEntries:     nil, // Test nil ConfigEntries case for serverless
+			ConfigEntries:     map[string]*string{}, // Empty config entries for serverless
 		},
-	}, nil)
-
-	// Mock DescribeTopicConfigs for serverless topic (might return empty configs)
-	mockAdmin.On("DescribeTopicConfigs", []string{"serverless-topic"}).Return(map[string][]sarama.ConfigEntry{
-		"serverless-topic": {}, // Empty config entries to test fallback to defaults
 	}, nil)
 
 	mockAdmin.On("Close").Return(nil)

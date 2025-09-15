@@ -13,16 +13,15 @@ import (
 
 // MockKafkaAdmin is a mock implementation of the KafkaAdmin interface
 type MockKafkaAdmin struct {
-	ListTopicsFunc              func() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithConfigsFunc   func() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadataFunc func() (*client.ClusterKafkaMetadata, error)
 	DescribeConfigFunc          func() ([]sarama.ConfigEntry, error)
-	DescribeTopicConfigsFunc    func(topicNames []string) (map[string][]sarama.ConfigEntry, error)
 	ListAclsFunc                func() ([]sarama.ResourceAcls, error)
 	CloseFunc                   func() error
 }
 
-func (m *MockKafkaAdmin) ListTopics() (map[string]sarama.TopicDetail, error) {
-	return m.ListTopicsFunc()
+func (m *MockKafkaAdmin) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+	return m.ListTopicsWithConfigsFunc()
 }
 
 func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error) {
@@ -31,10 +30,6 @@ func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata
 
 func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
 	return m.DescribeConfigFunc()
-}
-
-func (m *MockKafkaAdmin) DescribeTopicConfigs(topicNames []string) (map[string][]sarama.ConfigEntry, error) {
-	return m.DescribeTopicConfigsFunc(topicNames)
 }
 
 func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {

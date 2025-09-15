@@ -15,7 +15,7 @@ type TopicDetails struct {
 	Name              string            `json:"name"`
 	Partitions        int               `json:"partitions"`
 	ReplicationFactor int               `json:"replication_factor"`
-	Configurations    map[string]string `json:"configurations"`
+	Configurations    map[string]*string `json:"configurations"`
 }
 
 type Topics struct {
