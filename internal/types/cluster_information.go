@@ -134,7 +134,7 @@ func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary 
 
 	for _, topic := range topicDetails {
 		isInternal := strings.HasPrefix(topic.Name, "__")
-		isCompact := topic.Configurations["cleanup.policy"] == "compact"
+		isCompact := strings.Contains(topic.Configurations["cleanup.policy"], "compact")
 
 		if isInternal {
 			summary.InternalTopics++
@@ -604,16 +604,16 @@ func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
 		return
 	}
 
-	topicSummaryHeaders := []string{"Topics", "Internal Topics", "Partitions", "Internal Partitions", "Compact Topics", "Compact Internal Topics", "Compact Partitions", "Compact Internal Partitions"}
+	topicSummaryHeaders := []string{"Topics", "Partitions", "Internal Topics", "Internal Partitions", "Compact Topics", "Compact Partitions", "Compact Internal Topics", "Compact Internal Partitions"}
 	topicSummaryData := [][]string{
 		{
 			fmt.Sprintf("%d", c.Topics.Summary.Topics),
-			fmt.Sprintf("%d", c.Topics.Summary.InternalTopics),
 			fmt.Sprintf("%d", c.Topics.Summary.TotalPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.InternalTopics),
 			fmt.Sprintf("%d", c.Topics.Summary.TotalInternalPartitions),
 			fmt.Sprintf("%d", c.Topics.Summary.CompactTopics),
-			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalTopics),
 			fmt.Sprintf("%d", c.Topics.Summary.CompactPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalTopics),
 			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalPartitions),
 		},
 	}
