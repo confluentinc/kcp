@@ -166,6 +166,7 @@ type KafkaAdminClient struct {
 	config       AdminConfig
 	saramaConfig *sarama.Config
 	resourceAcls map[string]sarama.ResourceAcls
+	brokerAddresses []string
 }
 
 /*
@@ -174,24 +175,16 @@ type KafkaAdminClient struct {
 	https://github.com/IBM/sarama/blob/main/admin.go#L349
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
-	// Send the all-topic MetadataRequest
-	brokers, _, err := k.admin.DescribeCluster()
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %w", err)
-	}
 
-	if len(brokers) == 0 {
-		return nil, fmt.Errorf("no brokers available")
-	}
-
-	// Use the first available broker
-	broker := brokers[0]
-	err = broker.Open(k.saramaConfig)
+	// Get  broker connection
+	broker := sarama.NewBroker(k.brokerAddresses[0])
+	err := broker.Open(k.saramaConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open broker connection: %w", err)
+		return nil, fmt.Errorf("failed to open broker connection: %v", err)
 	}
 	defer broker.Close()
 
+	// Send the all-topic MetadataRequest
 	metadataReq := &sarama.MetadataRequest{}
 	if k.saramaConfig.Version.IsAtLeast(sarama.V0_10_0_0) {
 		metadataReq.Version = 1
@@ -385,5 +378,6 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		config:       config,
 		saramaConfig: saramaConfig,
 		resourceAcls: make(map[string]sarama.ResourceAcls),
+		brokerAddresses: brokerAddresses,
 	}, nil
 }
