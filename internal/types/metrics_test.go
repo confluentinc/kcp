@@ -86,7 +86,6 @@ func TestClusterMetrics_AsJson(t *testing.T) {
 				ClusterName:          "test-cluster-full",
 				ClusterType:          "SERVERLESS",
 				BrokerAZDistribution: stringPtr("MULTI_AZ"),
-				Authentication:       map[string]any{"SASL": "SCRAM-SHA-512"},
 				KafkaVersion:         stringPtr("3.5.0"),
 				EnhancedMonitoring:   stringPtr("DEFAULT"),
 				StartDate:            time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
@@ -113,7 +112,6 @@ func TestClusterMetrics_AsJson(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, "SERVERLESS", unmarshaled.ClusterType)
 				assert.Equal(t, "MULTI_AZ", *unmarshaled.BrokerAZDistribution)
-				assert.Equal(t, "SCRAM-SHA-512", unmarshaled.Authentication["SASL"])
 				assert.Equal(t, 5.5, *unmarshaled.ClusterMetricsSummary.AvgIngressThroughputMegabytesPerSecond)
 				assert.Equal(t, true, *unmarshaled.ClusterMetricsSummary.FollowerFetching)
 				assert.Equal(t, "kafka.m5.xlarge", *unmarshaled.ClusterMetricsSummary.InstanceType)
