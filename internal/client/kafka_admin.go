@@ -176,13 +176,13 @@ type KafkaAdminClient struct {
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
 
-	// Get  broker controller to use as a connection broker
+	// Get controller to use as a connection broker to avoid opening a new broker connection
 	controller, err := k.admin.Controller()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get controller: %w", err)
 	}	
 
-	// Send the all-topic MetadataRequest to 
+	// Send the all-topic MetadataRequest
 	metadataReq := sarama.NewMetadataRequest(k.saramaConfig.Version, nil)
 	metadataResp, err := controller.GetMetadata(metadataReq)
 	if err != nil {
