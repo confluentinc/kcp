@@ -203,13 +203,6 @@ func (rm *ClusterMetricsCollector) calculateClusterMetricsSummary(nodesMetrics [
 
 func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName)
-	authentication, err := structToMap(cluster.Provisioned.ClientAuthentication)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert provisioned client authentication to map: %w", err)
-	}
-	if authentication == nil {
-		return nil, fmt.Errorf("provisioned client authentication is nil")
-	}
 
 	brokerAZDistribution := aws.String(string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution))
 	kafkaVersion := cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion
@@ -263,7 +256,6 @@ func (rm *ClusterMetricsCollector) processProvisionedCluster(cluster kafkatypes.
 	clusterMetric.BrokerAZDistribution = brokerAZDistribution
 	clusterMetric.KafkaVersion = kafkaVersion
 	clusterMetric.EnhancedMonitoring = enhancedMonitoring
-	clusterMetric.Authentication = authentication
 	clusterMetric.NodesMetrics = nodesMetrics
 	clusterMetric.ClusterMetricsSummary = clusterMetricsSummary
 	clusterMetric.GlobalMetrics = *globalMetrics
@@ -287,14 +279,6 @@ func (rm *ClusterMetricsCollector) calculateReplicationFactor(nodesMetrics []typ
 
 func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.Cluster) (*types.ClusterMetrics, error) {
 	slog.Info("☁️ processing serverless cluster", "cluster", *cluster.ClusterName)
-	authentication, err := structToMap(cluster.Serverless.ClientAuthentication)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert serverless client authentication to map: %w", err)
-	}
-
-	if authentication == nil {
-		return nil, fmt.Errorf("serverless client authentication is nil")
-	}
 
 	// Get global metrics
 	globalMetrics, err := rm.getGlobalMetrics(*cluster.ClusterName)
@@ -330,7 +314,6 @@ func (rm *ClusterMetricsCollector) processServerlessCluster(cluster kafkatypes.C
 	clusterMetric.EndDate = rm.endDate
 	clusterMetric.ClusterName = *cluster.ClusterName
 	clusterMetric.ClusterType = string(cluster.ClusterType)
-	clusterMetric.Authentication = authentication
 	clusterMetric.NodesMetrics = nodesMetrics
 	clusterMetric.ClusterMetricsSummary = clusterMetricsSummary
 	clusterMetric.GlobalMetrics = *globalMetrics
