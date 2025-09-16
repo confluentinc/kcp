@@ -15,6 +15,15 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+const (
+	// testing using daily periond with 7 days of data
+	DailyPeriodInSeconds int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
+	// we will want to use monthly period with 12 months of data
+	MonthlyPeriodInSeconds int32 = 60 * 60 * 24 * 30 // 60 seconds * 60 minutes * 24 hours * 30 days
+	// debugging period
+	TwoHoursPeriodInSeconds int32 = 60 * 60 * 2 // 60 seconds * 60 minutes * 2 hours
+)
+
 type ClusterDiscovererMSKService interface {
 	DescribeClusterV2(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error)
 	GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error)
@@ -28,8 +37,8 @@ type ClusterDiscovererMSKService interface {
 }
 
 type ClusterDiscovererMetricService interface {
-	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time) (*types.ClusterMetricsV2, error)
-	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time) (*types.ClusterMetricsV2, error)
+	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, period int32) (*types.ClusterMetricsV2, error)
+	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, period int32) (*types.ClusterMetricsV2, error)
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -339,18 +348,20 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	}
 
 	now := time.Now().UTC()
-	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	startDate := endDate.AddDate(0, 0, -7)
+	endTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startTime := endTime.AddDate(0, 0, -7)
 
 	var clusterMetric *types.ClusterMetricsV2
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startDate, endDate)
+		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, startTime, endTime, DailyPeriodInSeconds)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
-		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, startDate, endDate)
+		// increase range for serverless to get todays data
+		endTime = endTime.AddDate(0, 0, 1)
+		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, startTime, endTime, TwoHoursPeriodInSeconds)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
 		}

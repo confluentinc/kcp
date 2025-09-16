@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,16 +14,6 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
-)
-
-const (
-	// testing using daily periond with 7 days of data
-	DailyPeriodSeconds int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
-	// we will want to use monthly period with 12 months of data
-	MonthlyPeriodSeconds int32 = 60 * 60 * 24 * 30 // 60 seconds * 60 minutes * 24 hours * 30 days
-
-	// debugging period
-	TwoHoursPeriodSeconds int32 = 60 * 60 * 2 // 60 seconds * 60 minutes * 2 hours
 )
 
 var Metrics = []string{
@@ -44,8 +33,7 @@ func NewMetricServiceV2(client *cloudwatch.Client) *MetricServiceV2 {
 }
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
-func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startTime time.Time, endTime time.Time) (*types.ClusterMetricsV2, error) {
-	period := DailyPeriodSeconds
+func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startTime time.Time, endTime time.Time, period int32) (*types.ClusterMetricsV2, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", startTime, "endDate", endTime)
 	authentication, err := utils.StructToMap(cluster.Provisioned.ClientAuthentication)
 	if err != nil {
@@ -55,13 +43,13 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 		return nil, fmt.Errorf("provisioned client authentication is nil")
 	}
 
-	globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get global metrics: %v", err)
-	}
+	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	// }
 
-	// todo how to use this?
-	_ = globalMetrics
+	// // todo how to use this?
+	// _ = globalMetrics
 
 	brokerAZDistribution := aws.String(string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution))
 	kafkaVersion := aws.ToString(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
@@ -94,10 +82,7 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 }
 
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
-func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startTime time.Time, endTime time.Time) (*types.ClusterMetricsV2, error) {
-	period := TwoHoursPeriodSeconds
-	// temp to access data
-	endTime = endTime.AddDate(0, 0, 1)
+func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startTime time.Time, endTime time.Time, period int32) (*types.ClusterMetricsV2, error) {
 	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", startTime, "endDate", endTime)
 
 	authentication, err := utils.StructToMap(cluster.Serverless.ClientAuthentication)
@@ -108,13 +93,13 @@ func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster
 		return nil, fmt.Errorf("serverless client authentication is nil")
 	}
 
-	globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get global metrics: %v", err)
-	}
+	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	// }
 
-	// TODO: do we want this?
-	_ = globalMetrics
+	// // TODO: do we want this?
+	// _ = globalMetrics
 
 	metricsMetadata := types.MetricMetadata{
 		ClusterType:     string(cluster.ClusterType),
@@ -323,83 +308,83 @@ func (ms *MetricServiceV2) getTopicsForCluster(ctx context.Context, clusterName 
 
 // Private Helper Functions - Global Metrics
 
-func (ms *MetricServiceV2) getGlobalMetrics(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.GlobalMetrics, error) {
-	globalMetrics := types.GlobalMetrics{}
+// func (ms *MetricServiceV2) getGlobalMetrics(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.GlobalMetrics, error) {
+// 	globalMetrics := types.GlobalMetrics{}
 
-	globalMetricAssignments := []struct {
-		metricName  string
-		targetField *float64
-	}{
-		{"GlobalPartitionCount", &globalMetrics.GlobalPartitionCountMax},
-		{"GlobalTopicCount", &globalMetrics.GlobalTopicCountMax},
-	}
+// 	globalMetricAssignments := []struct {
+// 		metricName  string
+// 		targetField *float64
+// 	}{
+// 		{"GlobalPartitionCount", &globalMetrics.GlobalPartitionCountMax},
+// 		{"GlobalTopicCount", &globalMetrics.GlobalTopicCountMax},
+// 	}
 
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(globalMetricAssignments))
+// 	var wg sync.WaitGroup
+// 	errChan := make(chan error, len(globalMetricAssignments))
 
-	for _, assignment := range globalMetricAssignments {
-		wg.Add(1)
-		go func(assignment struct {
-			metricName  string
-			targetField *float64
-		}) {
-			defer wg.Done()
-			metricValue, err := ms.getGlobalMetric(ctx, clusterName, assignment.metricName, startTime, endTime)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
-				return
-			}
-			*assignment.targetField = metricValue
-		}(assignment)
-	}
+// 	for _, assignment := range globalMetricAssignments {
+// 		wg.Add(1)
+// 		go func(assignment struct {
+// 			metricName  string
+// 			targetField *float64
+// 		}) {
+// 			defer wg.Done()
+// 			metricValue, err := ms.getGlobalMetric(ctx, clusterName, assignment.metricName, startTime, endTime)
+// 			if err != nil {
+// 				errChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
+// 				return
+// 			}
+// 			*assignment.targetField = metricValue
+// 		}(assignment)
+// 	}
 
-	wg.Wait()
-	close(errChan)
+// 	wg.Wait()
+// 	close(errChan)
 
-	for err := range errChan {
-		if err != nil {
-			return nil, err
-		}
-	}
+// 	for err := range errChan {
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
 
-	return &globalMetrics, nil
-}
+// 	return &globalMetrics, nil
+// }
 
-func (ms *MetricServiceV2) getGlobalMetric(ctx context.Context, clusterName string, metricName string, startTime time.Time, endTime time.Time) (float64, error) {
-	slog.Info("📊 getting global metric", "cluster", clusterName, "metric", metricName)
-	metricRequest := ms.buildCloudWatchInputGlobalMetrics(clusterName, metricName, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticMaximum}, startTime, endTime)
-	response, err := ms.client.GetMetricStatistics(ctx, metricRequest)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
-	}
-	if len(response.Datapoints) == 0 {
-		slog.Info("🔍 No data points found for global metric", "cluster", clusterName, "metric", metricName)
-		return 0, nil
-	}
-	slog.Info("🔍 got global metric", "cluster", clusterName, "metric", metricName, "data", response.Datapoints[0].Maximum)
-	return *response.Datapoints[0].Maximum, nil
-}
+// func (ms *MetricServiceV2) getGlobalMetric(ctx context.Context, clusterName string, metricName string, startTime time.Time, endTime time.Time) (float64, error) {
+// 	slog.Info("📊 getting global metric", "cluster", clusterName, "metric", metricName)
+// 	metricRequest := ms.buildCloudWatchInputGlobalMetrics(clusterName, metricName, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticMaximum}, startTime, endTime)
+// 	response, err := ms.client.GetMetricStatistics(ctx, metricRequest)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
+// 	}
+// 	if len(response.Datapoints) == 0 {
+// 		slog.Info("🔍 No data points found for global metric", "cluster", clusterName, "metric", metricName)
+// 		return 0, nil
+// 	}
+// 	slog.Info("🔍 got global metric", "cluster", clusterName, "metric", metricName, "data", response.Datapoints[0].Maximum)
+// 	return *response.Datapoints[0].Maximum, nil
+// }
 
 // Private Helper Functions - CloudWatch Helpers
 
-func (ms *MetricServiceV2) buildCloudWatchInputGlobalMetrics(clusterName, metricName string, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
-	// Use monthly period for consistent monthly data points
-	period := int32(DailyPeriodSeconds)
+// func (ms *MetricServiceV2) buildCloudWatchInputGlobalMetrics(clusterName, metricName string, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
+// 	// Use monthly period for consistent monthly data points
+// 	period := int32(DailyPeriodSeconds)
 
-	dimensions := []cloudwatchtypes.Dimension{
-		{
-			Name:  aws.String("Cluster Name"),
-			Value: aws.String(clusterName),
-		},
-	}
+// 	dimensions := []cloudwatchtypes.Dimension{
+// 		{
+// 			Name:  aws.String("Cluster Name"),
+// 			Value: aws.String(clusterName),
+// 		},
+// 	}
 
-	return &cloudwatch.GetMetricStatisticsInput{
-		Namespace:  aws.String("AWS/Kafka"),
-		MetricName: aws.String(metricName),
-		Dimensions: dimensions,
-		StartTime:  aws.Time(startTime),
-		EndTime:    aws.Time(endTime),
-		Period:     aws.Int32(period),
-		Statistics: statistics,
-	}
-}
+// 	return &cloudwatch.GetMetricStatisticsInput{
+// 		Namespace:  aws.String("AWS/Kafka"),
+// 		MetricName: aws.String(metricName),
+// 		Dimensions: dimensions,
+// 		StartTime:  aws.Time(startTime),
+// 		EndTime:    aws.Time(endTime),
+// 		Period:     aws.Int32(period),
+// 		Statistics: statistics,
+// 	}
+// }
