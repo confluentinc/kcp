@@ -46,7 +46,7 @@ func (ms *MigrationScriptsAssetGenerator) Run() error {
 	}
 
 	mirrorTopics := []string{}
-	for _, topic := range ms.clusterInfo.Topics {
+	for _, topic := range ms.clusterInfo.Topics.Details {
 		if !strings.HasPrefix(topic.Name, "__") {
 			mirrorTopics = append(mirrorTopics, topic.Name)
 		}
