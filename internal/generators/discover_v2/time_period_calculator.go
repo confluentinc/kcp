@@ -7,7 +7,7 @@ import (
 
 const (
 	// debugging period
-	OneHourPeriodInSeconds int32 = 60 * 60 * 2 // 60 seconds * 60 minutes * 2 hours
+	OneHourPeriodInSeconds int32 = 60 * 60 // 60 seconds * 60 minutes
 	// testing using daily periond with 7 days of data
 	DailyPeriodInSeconds int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
 	// we will want to use monthly period with 12 months of data
