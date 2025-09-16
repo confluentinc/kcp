@@ -176,21 +176,15 @@ type KafkaAdminClient struct {
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
 
-	// Get  broker connection
-	broker := sarama.NewBroker(k.brokerAddresses[0])
-	err := broker.Open(k.saramaConfig)
+	// Get  broker controller to use as a connection broker
+	controller, err := k.admin.Controller()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open broker connection: %v", err)
-	}
-	defer broker.Close()
+		return nil, fmt.Errorf("failed to get controller: %w", err)
+	}	
 
-	// Send the all-topic MetadataRequest
-	metadataReq := &sarama.MetadataRequest{}
-	if k.saramaConfig.Version.IsAtLeast(sarama.V0_10_0_0) {
-		metadataReq.Version = 1
-	}
-
-	metadataResp, err := broker.GetMetadata(metadataReq)
+	// Send the all-topic MetadataRequest to 
+	metadataReq := sarama.NewMetadataRequest(k.saramaConfig.Version, nil)
+	metadataResp, err := controller.GetMetadata(metadataReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metadata: %w", err)
 	}
@@ -232,7 +226,7 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 		describeConfigsReq.Version = 2
 	}
 
-	describeConfigsResp, err := broker.DescribeConfigs(describeConfigsReq)
+	describeConfigsResp, err := controller.DescribeConfigs(describeConfigsReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe configs: %w", err)
 	}
