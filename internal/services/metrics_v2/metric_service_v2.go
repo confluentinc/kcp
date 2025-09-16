@@ -2,6 +2,7 @@ package metrics_v2
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -64,6 +65,7 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 	numberOfBrokerNodes := int(*cluster.Provisioned.NumberOfBrokerNodes)
 
 	metricsMetadata := types.MetricMetadata{
+		ClusterType:          string(cluster.ClusterType),
 		BrokerAzDistribution: *brokerAZDistribution,
 		KafkaVersion:         kafkaVersion,
 		EnhancedMonitoring:   enhancedMonitoring,
@@ -81,7 +83,11 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 
 	clusterMetrics := types.ClusterMetricsV2{
 		MetricMetadata: metricsMetadata,
-		Results:        queryResult.MetricDataResults,
+		Results: types.ResultWrapper{
+			Provisioned: &types.ProvisionedResult{
+				Results: queryResult.MetricDataResults,
+			},
+		},
 	}
 
 	return &clusterMetrics, nil
@@ -103,26 +109,33 @@ func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster
 		return nil, fmt.Errorf("failed to get global metrics: %v", err)
 	}
 
+	ms.processServerlessNode(ctx, *cluster.ClusterName, startTime, endTime)
+
 	// todo how to use this?
 	_ = globalMetrics
 
 	metricsMetadata := types.MetricMetadata{
+		ClusterType:     string(cluster.ClusterType),
 		StartWindowDate: startTime.Format(time.RFC3339),
 		EndWindowDate:   endTime.Format(time.RFC3339),
 		Period:          DailyPeriodSeconds,
 	}
 
 	// this wont work for serverless clusters as we need to get the metrics for the topics
-	queries := ms.buildMetricQueries(1, *cluster.ClusterName)
+	// queries := ms.buildMetricQueries(1, *cluster.ClusterName)
 
-	queryResult, err := ms.executeMetricQuery(ctx, queries, startTime, endTime)
-	if err != nil {
-		return nil, err
-	}
+	// queryResult, err := ms.executeMetricQuery(ctx, queries, startTime, endTime)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// _ = queryResult
 
 	clusterMetrics := types.ClusterMetricsV2{
 		MetricMetadata: metricsMetadata,
-		Results:        queryResult.MetricDataResults,
+		Results: types.ResultWrapper{
+			Serverless: &types.ServerlessResult{},
+		},
 	}
 
 	// nodesMetrics := []types.NodeMetrics{}
@@ -262,53 +275,6 @@ func (ms *MetricServiceV2) processServerlessNode(ctx context.Context, clusterNam
 
 	// Check for any errors
 	for err := range errChan {
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	peakMetricsAssignments := []struct {
-		metricName  string
-		targetField *float64
-	}{
-		{"BytesInPerSec", &nodeMetric.BytesInPerSecMax},
-		{"BytesOutPerSec", &nodeMetric.BytesOutPerSecMax},
-		{"MessagesInPerSec", &nodeMetric.MessagesInPerSecMax},
-		{"KafkaDataLogsDiskUsed", &nodeMetric.KafkaDataLogsDiskUsedMax},
-		{"RemoteLogSizeBytes", &nodeMetric.RemoteLogSizeBytesMax},
-		{"ClientConnectionCount", &nodeMetric.ClientConnectionCountMax},
-		{"PartitionCount", &nodeMetric.PartitionCountMax},
-		// {"GlobalTopicCount", &nodeMetric.GlobalTopicCountMax},
-		{"LeaderCount", &nodeMetric.LeaderCountMax},
-		{"ReplicationBytesOutPerSec", &nodeMetric.ReplicationBytesOutPerSecMax},
-		{"ReplicationBytesInPerSec", &nodeMetric.ReplicationBytesInPerSecMax},
-	}
-
-	var peakWg sync.WaitGroup
-	peakErrChan := make(chan error, len(peakMetricsAssignments))
-
-	for _, assignment := range peakMetricsAssignments {
-		peakWg.Add(1)
-		go func(assignment struct {
-			metricName  string
-			targetField *float64
-		}) {
-			defer peakWg.Done()
-			metricValue, err := ms.getServerlessMetric(ctx, clusterName, assignment.metricName, cloudwatchtypes.StatisticMaximum, startTime, endTime)
-
-			if err != nil {
-				peakErrChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
-				return
-			}
-			*assignment.targetField = metricValue
-		}(assignment)
-	}
-
-	peakWg.Wait()
-	close(peakErrChan)
-
-	// Check for any errors
-	for err := range peakErrChan {
 		if err != nil {
 			return nil, err
 		}
@@ -707,6 +673,8 @@ func (ms *MetricServiceV2) getServerlessMetric(ctx context.Context, clusterName 
 	aggregatedSum := 0.0
 	maxQueriesPerCall := 500
 
+	var output *cloudwatch.GetMetricDataOutput
+	var err error
 	for i := 0; i < len(topicList); i += maxQueriesPerCall {
 		end := min(i+maxQueriesPerCall, len(topicList))
 
@@ -745,7 +713,7 @@ func (ms *MetricServiceV2) getServerlessMetric(ctx context.Context, clusterName 
 			ScanBy:            cloudwatchtypes.ScanByTimestampAscending,
 		}
 
-		output, err := ms.client.GetMetricData(ctx, input)
+		output, err = ms.client.GetMetricData(ctx, input)
 		if err != nil {
 			slog.Error("Error during get_metric_data call", "error", err)
 			continue
@@ -757,6 +725,12 @@ func (ms *MetricServiceV2) getServerlessMetric(ctx context.Context, clusterName 
 			}
 		}
 	}
+
+	outputJSON, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal output: %v", err)
+	}
+	slog.Info("🔄 output", "output", string(outputJSON))
 
 	return aggregatedSum, nil
 }
