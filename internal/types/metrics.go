@@ -15,27 +15,31 @@ import (
 )
 
 type ClusterMetricsV2 struct {
-	MetricMetadata MetricMetadata `json:"metadata"`
-	Results        ResultWrapper  `json:"results"`
+	MetricMetadata MetricMetadata                     `json:"metadata"`
+	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
 }
 
 // todo -- better name
-type ResultWrapper struct {
-	Provisioned *ProvisionedResult `json:"provisioned"`
-	Serverless  *ServerlessResult  `json:"serverless"`
-}
+// type ResultWrapper struct {
+// 	Provisioned *ProvisionedResult `json:"provisioned"`
+// 	Serverless  *ServerlessResult  `json:"serverless"`
+// }
 
-type ProvisionedResult struct {
-	Results []cloudwatchtypes.MetricDataResult `json:"results"`
-}
+// type ProvisionedResult struct {
+// 	Results []cloudwatchtypes.MetricDataResult `json:"results"`
+// }
 
-type ServerlessResult struct {
-	BytesInPerSecAvg         float64 `json:"bytes_in_per_sec_avg"`
-	BytesOutPerSecAvg        float64 `json:"bytes_out_per_sec_avg"`
-	MessagesInPerSecAvg      float64 `json:"messages_in_per_sec_avg"`
-	KafkaDataLogsDiskUsedAvg float64 `json:"kafka_data_logs_disk_used_avg"`
-	RemoteLogSizeBytesAvg    float64 `json:"remote_log_size_bytes_avg"`
-}
+// type ServerlessResult struct {
+// 	// Time-series data similar to provisioned clusters
+// 	Results []cloudwatchtypes.MetricDataResult `json:"results"`
+
+// 	// // Legacy fields for backward compatibility (can be removed later)
+// 	// BytesInPerSecAvg         float64 `json:"bytes_in_per_sec_avg,omitempty"`
+// 	// BytesOutPerSecAvg        float64 `json:"bytes_out_per_sec_avg,omitempty"`
+// 	// MessagesInPerSecAvg      float64 `json:"messages_in_per_sec_avg,omitempty"`
+// 	// KafkaDataLogsDiskUsedAvg float64 `json:"kafka_data_logs_disk_used_avg,omitempty"`
+// 	// RemoteLogSizeBytesAvg    float64 `json:"remote_log_size_bytes_avg,omitempty"`
+// }
 
 type MetricMetadata struct {
 	ClusterType          string `json:"cluster_type"`
