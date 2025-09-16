@@ -166,6 +166,7 @@ type KafkaAdminClient struct {
 	config       AdminConfig
 	saramaConfig *sarama.Config
 	resourceAcls map[string]sarama.ResourceAcls
+	brokerAddresses []string
 }
 
 /*
@@ -174,30 +175,16 @@ type KafkaAdminClient struct {
 	https://github.com/IBM/sarama/blob/main/admin.go#L349
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+
+	// Get controller to use as a connection broker to avoid opening a new broker connection
+	controller, err := k.admin.Controller()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get controller: %w", err)
+	}	
+
 	// Send the all-topic MetadataRequest
-	brokers, _, err := k.admin.DescribeCluster()
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %w", err)
-	}
-
-	if len(brokers) == 0 {
-		return nil, fmt.Errorf("no brokers available")
-	}
-
-	// Use the first available broker
-	broker := brokers[0]
-	err = broker.Open(k.saramaConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open broker connection: %w", err)
-	}
-	defer broker.Close()
-
-	metadataReq := &sarama.MetadataRequest{}
-	if k.saramaConfig.Version.IsAtLeast(sarama.V0_10_0_0) {
-		metadataReq.Version = 1
-	}
-
-	metadataResp, err := broker.GetMetadata(metadataReq)
+	metadataReq := sarama.NewMetadataRequest(k.saramaConfig.Version, nil)
+	metadataResp, err := controller.GetMetadata(metadataReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metadata: %w", err)
 	}
@@ -239,7 +226,7 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 		describeConfigsReq.Version = 2
 	}
 
-	describeConfigsResp, err := broker.DescribeConfigs(describeConfigsReq)
+	describeConfigsResp, err := controller.DescribeConfigs(describeConfigsReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe configs: %w", err)
 	}
@@ -385,5 +372,6 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		config:       config,
 		saramaConfig: saramaConfig,
 		resourceAcls: make(map[string]sarama.ResourceAcls),
+		brokerAddresses: brokerAddresses,
 	}, nil
 }
