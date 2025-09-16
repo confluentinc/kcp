@@ -141,7 +141,7 @@ type ClusterKafkaMetadata struct {
 
 // KafkaAdmin interface defines the Kafka admin operations we need
 type KafkaAdmin interface {
-	ListTopics() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
@@ -168,8 +168,95 @@ type KafkaAdminClient struct {
 	resourceAcls map[string]sarama.ResourceAcls
 }
 
-func (k *KafkaAdminClient) ListTopics() (map[string]sarama.TopicDetail, error) {
-	return k.admin.ListTopics()
+/*
+	A custom implementation of the ListTopics() function in Sarama that returns all topic configs
+	instead of just overridden configs. This was done to reduce the number of requests to the broker.
+	https://github.com/IBM/sarama/blob/main/admin.go#L349
+*/
+func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+	// Send the all-topic MetadataRequest
+	brokers, _, err := k.admin.DescribeCluster()
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe cluster: %w", err)
+	}
+
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("no brokers available")
+	}
+
+	// Use the first available broker
+	broker := brokers[0]
+	err = broker.Open(k.saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open broker connection: %w", err)
+	}
+	defer broker.Close()
+
+	metadataReq := &sarama.MetadataRequest{}
+	if k.saramaConfig.Version.IsAtLeast(sarama.V0_10_0_0) {
+		metadataReq.Version = 1
+	}
+
+	metadataResp, err := broker.GetMetadata(metadataReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata: %w", err)
+	}
+
+	topicsDetailsMap := make(map[string]sarama.TopicDetail)
+	var describeConfigsResources []*sarama.ConfigResource
+
+	for _, topic := range metadataResp.Topics {
+		topicDetails := sarama.TopicDetail{
+			NumPartitions: int32(len(topic.Partitions)),
+		}
+		if len(topic.Partitions) > 0 {
+			topicDetails.ReplicaAssignment = map[int32][]int32{}
+			for _, partition := range topic.Partitions {
+				topicDetails.ReplicaAssignment[partition.ID] = partition.Replicas
+			}
+			topicDetails.ReplicationFactor = int16(len(topic.Partitions[0].Replicas))
+		}
+		topicsDetailsMap[topic.Name] = topicDetails
+
+		// we populate the resources we want to describe from the MetadataResponse
+		topicResource := &sarama.ConfigResource{
+			Type: sarama.TopicResource,
+			Name: topic.Name,
+		}
+		describeConfigsResources = append(describeConfigsResources, topicResource)
+	}
+
+	// Send the DescribeConfigsRequest
+	describeConfigsReq := &sarama.DescribeConfigsRequest{
+		Resources: describeConfigsResources,
+	}
+
+	if k.saramaConfig.Version.IsAtLeast(sarama.V1_1_0_0) {
+		describeConfigsReq.Version = 1
+	}
+
+	if k.saramaConfig.Version.IsAtLeast(sarama.V2_0_0_0) {
+		describeConfigsReq.Version = 2
+	}
+
+	describeConfigsResp, err := broker.DescribeConfigs(describeConfigsReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe configs: %w", err)
+	}
+
+	for _, resource := range describeConfigsResp.Resources {
+		topicDetails := topicsDetailsMap[resource.Name]
+		topicDetails.ConfigEntries = make(map[string]*string)
+
+		for _, entry := range resource.Configs {
+			// Include ALL configs without filtering (no default/sensitive filtering)
+			topicDetails.ConfigEntries[entry.Name] = &entry.Value
+		}
+
+		topicsDetailsMap[resource.Name] = topicDetails
+	}
+
+	return topicsDetailsMap, nil
 }
 
 func (k *KafkaAdminClient) DescribeConfig() ([]sarama.ConfigEntry, error) {

@@ -84,8 +84,26 @@ func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 		{
 			name: "returns topics successfully",
 			topics: map[string]sarama.TopicDetail{
-				"topic1": {},
-				"topic2": {},
+				"topic1": {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-1"),
+						"retention.ms":        aws.String("111111111"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
+				"topic2": {
+					NumPartitions:     2,
+					ReplicationFactor: 2,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("222222222"),
+						"min.insync.replicas": aws.String("2"),
+					},
+				},
 			},
 			wantTopics: []string{"topic1", "topic2"},
 		},
@@ -104,7 +122,7 @@ func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAdmin := &mocks.MockKafkaAdmin{
-				ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 					return tt.topics, tt.mockError
 				},
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -122,7 +140,7 @@ func TestClusterScanner_ScanClusterTopics(t *testing.T) {
 
 			// Since scanClusterTopics has been moved to the Kafka service, we'll test the functionality directly
 			// Test the topic scanning functionality through the admin client
-			topics, err := mockAdmin.ListTopics()
+			topics, err := mockAdmin.ListTopicsWithConfigs()
 			if err != nil {
 				err = fmt.Errorf("❌ Failed to list topics: %v", err)
 			}
@@ -391,25 +409,52 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		mockTopics map[string]sarama.TopicDetail
 		mockError  error
 		wantError  string
-		wantTopics []types.Topics
+		wantTopics []types.TopicDetails
 	}{
 		{
 			name: "successful Kafka resources scan",
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1": {},
-				"topic2": {},
-				"topic3": {},
+				"topic1": {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-1"),
+						"retention.ms":        aws.String("111111111"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
+				"topic2": {
+					NumPartitions:     2,
+					ReplicationFactor: 2,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("222222222"),
+						"min.insync.replicas": aws.String("2"),
+					},
+				},
+				"topic3": {
+					NumPartitions:     3,
+					ReplicationFactor: 3,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact,delete"),
+						"local.retention.ms":  aws.String("33333333"),
+						"retention.ms":        aws.String("333333333"),
+						"min.insync.replicas": aws.String("3"),
+					},
+				},
 			},
-			wantTopics: []types.Topics{
-				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
+			wantTopics: []types.TopicDetails{
+				{Name: "topic1", Partitions: 1, ReplicationFactor: 1, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-1"), "retention.ms": aws.String("111111111"), "min.insync.replicas": aws.String("1")}},
+				{Name: "topic2", Partitions: 2, ReplicationFactor: 2, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("222222222"), "min.insync.replicas": aws.String("2")}},
+				{Name: "topic3", Partitions: 3, ReplicationFactor: 3, Configurations: map[string]*string{"cleanup.policy": aws.String("compact,delete"), "local.retention.ms": aws.String("33333333"), "retention.ms": aws.String("333333333"), "min.insync.replicas": aws.String("3")}},
 			},
 		},
 		{
 			name:       "handles empty topics list",
 			mockTopics: map[string]sarama.TopicDetail{},
-			wantTopics: []types.Topics{},
+			wantTopics: []types.TopicDetails{},
 		},
 		{
 			name:      "handles topic listing error",
@@ -419,28 +464,118 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		{
 			name: "handles large number of topics",
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1":  {},
-				"topic2":  {},
-				"topic3":  {},
-				"topic4":  {},
-				"topic5":  {},
-				"topic6":  {},
-				"topic7":  {},
-				"topic8":  {},
-				"topic9":  {},
-				"topic10": {},
+				"topic1":  {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
+				"topic2":  {
+					NumPartitions:     2,
+					ReplicationFactor: 2,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("2"),
+					},
+				},
+				"topic3":  {
+					NumPartitions:     3,
+					ReplicationFactor: 3,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("3"),
+					},
+				},
+				"topic4":  {
+					NumPartitions:     4,
+					ReplicationFactor: 4,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("4"),
+					},
+				},
+				"topic5":  {
+					NumPartitions:     5,
+					ReplicationFactor: 5,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("5"),
+					},
+				},
+				"topic6":  {
+					NumPartitions:     6,
+					ReplicationFactor: 6,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("6"),
+					},
+				},
+				"topic7":  {
+					NumPartitions:     7,
+					ReplicationFactor: 7,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("7"),
+					},
+				},
+				"topic8":  {
+					NumPartitions:     8,
+					ReplicationFactor: 8,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("8"),
+					},
+				},
+				"topic9":  {
+					NumPartitions:     9,
+					ReplicationFactor: 9,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("9"),
+					},
+				},
+				"topic10": {
+					NumPartitions:     10,
+					ReplicationFactor: 10,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("compact"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("10"),
+					},
+				},
 			},
-			wantTopics: []types.Topics{
-				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic3", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic4", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic5", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic6", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic7", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic8", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic9", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				{Name: "topic10", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
+			wantTopics: []types.TopicDetails{
+				{Name: "topic1", Partitions: 1, ReplicationFactor: 1, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("1")}},
+				{Name: "topic2", Partitions: 2, ReplicationFactor: 2, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("2")}},
+				{Name: "topic3", Partitions: 3, ReplicationFactor: 3, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("3")}},
+				{Name: "topic4", Partitions: 4, ReplicationFactor: 4, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("4")}},
+				{Name: "topic5", Partitions: 5, ReplicationFactor: 5, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("5")}},
+				{Name: "topic6", Partitions: 6, ReplicationFactor: 6, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("6")}},
+				{Name: "topic7", Partitions: 7, ReplicationFactor: 7, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("7")}},
+				{Name: "topic8", Partitions: 8, ReplicationFactor: 8, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("8")}},
+				{Name: "topic9", Partitions: 9, ReplicationFactor: 9, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("9")}},
+				{Name: "topic10", Partitions: 10, ReplicationFactor: 10, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("10")}},
 			},
 		},
 	}
@@ -448,7 +583,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAdmin := &mocks.MockKafkaAdmin{
-				ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 					return tt.mockTopics, tt.mockError
 				},
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -492,7 +627,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantError)
 				// Verify topics are not set on error
-				assert.Nil(t, clusterInfo.Topics)
+				assert.Nil(t, clusterInfo.Topics.Details)
 				return
 			}
 
@@ -500,8 +635,8 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify topics are properly populated
-			assert.ElementsMatch(t, tt.wantTopics, clusterInfo.Topics, "Topics should match expected list")
-			assert.Len(t, clusterInfo.Topics, len(tt.wantTopics), "Topic count should match")
+			assert.ElementsMatch(t, tt.wantTopics, clusterInfo.Topics.Details, "Topics should match expected list")
+			assert.Len(t, clusterInfo.Topics.Details, len(tt.wantTopics), "Topic count should match")
 
 			// Verify other fields are unchanged
 			assert.Equal(t, defaultRegion, clusterInfo.Region)
@@ -559,8 +694,26 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 				},
 			},
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1": {},
-				"topic2": {},
+				"topic1": {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
+				"topic2": {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
 			},
 		},
 		{
@@ -762,7 +915,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			if tt.name == "successful full cluster scan" {
 				adminFactory = func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 					return &mocks.MockKafkaAdmin{
-						ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+						ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 							return tt.mockTopics, nil
 						},
 						GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -788,7 +941,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 						return nil, tt.mockAdminError
 					}
 					return &mocks.MockKafkaAdmin{
-						ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+						ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 							return tt.mockTopics, tt.mockTopicsError
 						},
 						GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -879,11 +1032,11 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			}
 
 			if tt.mockTopics != nil {
-				expectedTopics := make([]types.Topics, 0, len(tt.mockTopics))
+				expectedTopics := make([]types.TopicDetails, 0, len(tt.mockTopics))
 				for topic := range tt.mockTopics {
-					expectedTopics = append(expectedTopics, types.Topics{Name: topic, Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}})
+					expectedTopics = append(expectedTopics, types.TopicDetails{Name: topic, Partitions: 1, ReplicationFactor: 1, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("1")}})
 				}
-				assert.ElementsMatch(t, expectedTopics, result.Topics)
+				assert.ElementsMatch(t, expectedTopics, result.Topics.Details)
 			}
 
 			// Verify admin client was closed
@@ -935,8 +1088,26 @@ func TestClusterScanner_Run(t *testing.T) {
 				},
 			},
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1": {},
-				"topic2": {},
+				"topic1": {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
+				"topic2": {
+					NumPartitions:     2,
+					ReplicationFactor: 2,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
 			},
 		},
 		{
@@ -1001,7 +1172,16 @@ func TestClusterScanner_Run(t *testing.T) {
 				},
 			},
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1": {},
+				"topic1": {
+					NumPartitions:     1,
+					ReplicationFactor: 1,
+					ConfigEntries: map[string]*string{
+						"cleanup.policy":      aws.String("delete"),
+						"local.retention.ms":  aws.String("-2"),
+						"retention.ms":        aws.String("604800000"),
+						"min.insync.replicas": aws.String("1"),
+					},
+				},
 			},
 			wantError: "❌ Failed to write file",
 		},
@@ -1102,7 +1282,7 @@ func TestClusterScanner_Run(t *testing.T) {
 
 			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
 				return &mocks.MockKafkaAdmin{
-					ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+					ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 						return tt.mockTopics, tt.mockTopicsError
 					},
 					GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -1135,10 +1315,10 @@ func TestClusterScanner_Run(t *testing.T) {
 				require.NoError(t, err)
 
 				assert.Equal(t, aws.ToString(tt.mockMSKOutput.ClusterInfoList[0].ClusterName), aws.ToString(clusterInfo.Cluster.ClusterName))
-				assert.ElementsMatch(t, []types.Topics{
-					{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-					{Name: "topic2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				}, clusterInfo.Topics)
+				assert.ElementsMatch(t, []types.TopicDetails{
+					{Name: "topic1", Partitions: 1, ReplicationFactor: 1, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("1")}},
+					{Name: "topic2", Partitions: 2, ReplicationFactor: 2, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("604800000"), "min.insync.replicas": aws.String("1")}},
+				}, clusterInfo.Topics.Details)
 				assert.Equal(t, defaultRegion, clusterInfo.Region)
 
 				// Cleanup test directories
@@ -1664,7 +1844,7 @@ func TestClusterScanner_DescribeKafkaCluster_Integration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAdmin := &mocks.MockKafkaAdmin{
-				ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 					return map[string]sarama.TopicDetail{"test-topic": {}}, nil
 				},
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -1790,8 +1970,17 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAdmin := &mocks.MockKafkaAdmin{
-				ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
-					return map[string]sarama.TopicDetail{"topic1": {}}, nil
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					return map[string]sarama.TopicDetail{"topic1": {
+						NumPartitions:     1,
+						ReplicationFactor: 1,
+						ConfigEntries: map[string]*string{
+							"cleanup.policy":      aws.String("delete"),
+							"local.retention.ms":  aws.String("-1"),
+							"retention.ms":        aws.String("111111111"),
+							"min.insync.replicas": aws.String("1"),
+						},
+					}}, nil
 				},
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
 					return &client.ClusterKafkaMetadata{
@@ -1826,9 +2015,9 @@ func TestClusterScanner_AdminClose_Failures(t *testing.T) {
 			// The operation should succeed even if admin.Close() fails
 			err := clusterScanner.kafkaService.ScanKafkaResources(clusterInfo)
 			assert.NoError(t, err, "scanKafkaResources should succeed even if admin.Close() fails")
-			assert.Equal(t, []types.Topics{
-				{Name: "topic1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-			}, clusterInfo.Topics)
+			assert.Equal(t, []types.TopicDetails{
+				{Name: "topic1", Partitions: 1, ReplicationFactor: 1, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-1"), "retention.ms": aws.String("111111111"), "min.insync.replicas": aws.String("1")}},
+			}, clusterInfo.Topics.Details)
 		})
 	}
 }
@@ -2049,10 +2238,28 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 			}
 
 			mockAdmin := &mocks.MockKafkaAdmin{
-				ListTopicsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 					return map[string]sarama.TopicDetail{
-						"test-topic-1": {},
-						"test-topic-2": {},
+						"test-topic-1": {
+							NumPartitions:     1,
+							ReplicationFactor: 1,
+							ConfigEntries: map[string]*string{
+								"cleanup.policy":      aws.String("delete"),
+								"local.retention.ms":  aws.String("-1"),
+								"retention.ms":        aws.String("111111111"),
+								"min.insync.replicas": aws.String("1"),
+							},
+						},
+						"test-topic-2": {
+							NumPartitions:     2,
+							ReplicationFactor: 2,
+							ConfigEntries: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"local.retention.ms":  aws.String("-2"),
+								"retention.ms":        aws.String("222222222"),
+								"min.insync.replicas": aws.String("2"),
+							},
+						},
 					}, nil
 				},
 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
@@ -2104,14 +2311,14 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 
 			// Verify Kafka-level resources behavior
 			if tt.expectTopics {
-				assert.NotNil(t, result.Topics, "Topics should be populated when skipKafka=false")
-				assert.Len(t, result.Topics, 2, "Should have 2 topics when skipKafka=false")
-				assert.ElementsMatch(t, []types.Topics{
-					{Name: "test-topic-1", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-					{Name: "test-topic-2", Partitions: 0, ReplicationFactor: 0, Configurations: types.TopicConfigurations{CleanupPolicy: "delete", LocalRetentionMs: "-2", RetentionMs: "604800000", MinInsyncReplicas: "1"}},
-				}, result.Topics)
+				assert.NotNil(t, result.Topics.Details, "Topics should be populated when skipKafka=false")
+				assert.Len(t, result.Topics.Details, 2, "Should have 2 topics when skipKafka=false")
+				assert.ElementsMatch(t, []types.TopicDetails{
+					{Name: "test-topic-1", Partitions: 1, ReplicationFactor: 1, Configurations: map[string]*string{"cleanup.policy": aws.String("delete"), "local.retention.ms": aws.String("-1"), "retention.ms": aws.String("111111111"), "min.insync.replicas": aws.String("1")}},
+					{Name: "test-topic-2", Partitions: 2, ReplicationFactor: 2, Configurations: map[string]*string{"cleanup.policy": aws.String("compact"), "local.retention.ms": aws.String("-2"), "retention.ms": aws.String("222222222"), "min.insync.replicas": aws.String("2")}},
+				}, result.Topics.Details)
 			} else {
-				assert.Nil(t, result.Topics, "Topics should be nil when skipKafka=true")
+				assert.Nil(t, result.Topics.Details, "Topics should be nil when skipKafka=true")
 			}
 
 			if tt.expectClusterID {
