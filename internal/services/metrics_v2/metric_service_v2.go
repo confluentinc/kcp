@@ -87,69 +87,6 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 	return &clusterMetrics, nil
 }
 
-func (ms *MetricServiceV2) buildMetricQueries(brokers int, clusterName string) []cloudwatchtypes.MetricDataQuery {
-	var queries []cloudwatchtypes.MetricDataQuery
-
-	for metricIndex, metricName := range Metrics {
-		var metricIDs []string
-
-		// brokerIDs are 1-indexed
-		for brokerID := 1; brokerID <= brokers; brokerID++ {
-			metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
-			metricIDs = append(metricIDs, metricID)
-
-			queries = append(queries, cloudwatchtypes.MetricDataQuery{
-				Id: aws.String(metricID),
-				MetricStat: &cloudwatchtypes.MetricStat{
-					Metric: &cloudwatchtypes.Metric{
-						Namespace:  aws.String("AWS/Kafka"),
-						MetricName: aws.String(metricName),
-						Dimensions: []cloudwatchtypes.Dimension{
-							{
-								Name:  aws.String("Cluster Name"),
-								Value: aws.String(clusterName),
-							},
-							{
-								Name:  aws.String("Broker ID"),
-								Value: aws.String(strconv.Itoa(brokerID)),
-							},
-						},
-					},
-					Period: aws.Int32(DailyPeriodSeconds),
-					Stat:   aws.String("Average"),
-				},
-				ReturnData: aws.Bool(false),
-			})
-		}
-
-		expressionID := fmt.Sprintf("e%d", metricIndex+1)
-
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id:         aws.String(expressionID),
-			Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(metricIDs, ", "))),
-			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
-			ReturnData: aws.Bool(true),
-		})
-	}
-
-	return queries
-}
-
-func (ms *MetricServiceV2) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
-	input := &cloudwatch.GetMetricDataInput{
-		MetricDataQueries: queries,
-		StartTime:         aws.Time(startTime),
-		EndTime:           aws.Time(endTime),
-	}
-
-	result, err := ms.client.GetMetricData(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get metric data: %w", err)
-	}
-
-	return result, nil
-}
-
 func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startTime time.Time, endTime time.Time) (*types.ClusterMetricsV2, error) {
 	slog.Info("☁️ processing serverless cluster", "cluster", *cluster.ClusterName)
 	authentication, err := utils.StructToMap(cluster.Serverless.ClientAuthentication)
@@ -217,6 +154,69 @@ func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster
 	// clusterMetric.GlobalMetrics = *globalMetrics
 
 	return &clusterMetrics, nil
+}
+
+func (ms *MetricServiceV2) buildMetricQueries(brokers int, clusterName string) []cloudwatchtypes.MetricDataQuery {
+	var queries []cloudwatchtypes.MetricDataQuery
+
+	for metricIndex, metricName := range Metrics {
+		var metricIDs []string
+
+		// brokerIDs are 1-indexed
+		for brokerID := 1; brokerID <= brokers; brokerID++ {
+			metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
+			metricIDs = append(metricIDs, metricID)
+
+			queries = append(queries, cloudwatchtypes.MetricDataQuery{
+				Id: aws.String(metricID),
+				MetricStat: &cloudwatchtypes.MetricStat{
+					Metric: &cloudwatchtypes.Metric{
+						Namespace:  aws.String("AWS/Kafka"),
+						MetricName: aws.String(metricName),
+						Dimensions: []cloudwatchtypes.Dimension{
+							{
+								Name:  aws.String("Cluster Name"),
+								Value: aws.String(clusterName),
+							},
+							{
+								Name:  aws.String("Broker ID"),
+								Value: aws.String(strconv.Itoa(brokerID)),
+							},
+						},
+					},
+					Period: aws.Int32(DailyPeriodSeconds),
+					Stat:   aws.String("Average"),
+				},
+				ReturnData: aws.Bool(false),
+			})
+		}
+
+		expressionID := fmt.Sprintf("e%d", metricIndex+1)
+
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id:         aws.String(expressionID),
+			Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(metricIDs, ", "))),
+			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
+			ReturnData: aws.Bool(true),
+		})
+	}
+
+	return queries
+}
+
+func (ms *MetricServiceV2) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
+	input := &cloudwatch.GetMetricDataInput{
+		MetricDataQueries: queries,
+		StartTime:         aws.Time(startTime),
+		EndTime:           aws.Time(endTime),
+	}
+
+	result, err := ms.client.GetMetricData(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metric data: %w", err)
+	}
+
+	return result, nil
 }
 
 func (ms *MetricServiceV2) processServerlessNode(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.NodeMetrics, error) {
