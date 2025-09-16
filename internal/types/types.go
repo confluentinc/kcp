@@ -328,3 +328,9 @@ type KafkAdminClientInformation struct {
 	Topics    []string `json:"topics"`
 	Acls      []Acls   `json:"acls"`
 }
+
+type CloudWatchTimeWindow struct {
+	StartTime time.Time
+	EndTime   time.Time
+	Period    int32
+}

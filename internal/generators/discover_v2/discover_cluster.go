@@ -28,8 +28,8 @@ type ClusterDiscovererMSKService interface {
 }
 
 type ClusterDiscovererMetricService interface {
-	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, period int32) (*types.ClusterMetricsV2, error)
-	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, startDate time.Time, endDate time.Time, period int32) (*types.ClusterMetricsV2, error)
+	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error)
+	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error)
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -343,20 +343,22 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	var clusterMetric *types.ClusterMetricsV2
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
+		// these time windows can be extracted as parameters in future
 		timeWindow, err := cd.timePeriodCalc.GetTimeWindow("lastWeek")
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate time window for provisioned cluster: %v", err)
 		}
-		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period)
+		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
+		// these time windows can be extracted as parameters in future
 		timeWindow, err := cd.timePeriodCalc.GetTimeWindow("last24Hours")
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate time window for serverless cluster: %v", err)
 		}
-		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period)
+		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
 		}

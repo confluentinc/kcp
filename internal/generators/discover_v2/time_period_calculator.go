@@ -3,6 +3,8 @@ package discover_v2
 import (
 	"fmt"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 const (
@@ -16,12 +18,6 @@ const (
 	WeeklyPeriodInSeconds int32 = 60 * 60 * 24 * 7 // 60 seconds * 60 minutes * 24 hours * 7 days
 )
 
-type TimeWindow struct {
-	StartTime time.Time
-	EndTime   time.Time
-	Period    int32
-}
-
 type TimePeriodCalculator struct {
 	baseTime time.Time
 }
@@ -32,7 +28,7 @@ func NewTimePeriodCalculator(baseTime time.Time) *TimePeriodCalculator {
 	}
 }
 
-func (tpc *TimePeriodCalculator) GetTimeWindow(desiredPeriod string) (TimeWindow, error) {
+func (tpc *TimePeriodCalculator) GetTimeWindow(desiredPeriod string) (types.CloudWatchTimeWindow, error) {
 	switch desiredPeriod {
 	case "last24Hours":
 		return tpc.last24Hours(), nil
@@ -43,18 +39,18 @@ func (tpc *TimePeriodCalculator) GetTimeWindow(desiredPeriod string) (TimeWindow
 	case "lastYear":
 		return tpc.lastYear(), nil
 	default:
-		return TimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear, last24Hours", desiredPeriod)
+		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear, last24Hours", desiredPeriod)
 	}
 }
 
 // last24Hours returns time window for the last 24 COMPLETE hours
 // End: start of current hour, Start: 24 hours before end, Period: 1 hour
-func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
+func (tpc *TimePeriodCalculator) last24Hours() types.CloudWatchTimeWindow {
 	// Get the start of the current hour (e.g., 15:45 -> 15:00)
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), tpc.baseTime.Hour(), 0, 0, 0, time.UTC)
 	// Go back 24 hours from end time
 	startTime := endTime.Add(-24 * time.Hour)
-	return TimeWindow{
+	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
 		Period:    OneHourPeriodInSeconds,
@@ -63,10 +59,10 @@ func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
 
 // lastWeek returns time window for the last FULL 7 days
 // End: start of current day, Start: 7 days before end, Period: 1 day
-func (tpc *TimePeriodCalculator) lastWeek() TimeWindow {
+func (tpc *TimePeriodCalculator) lastWeek() types.CloudWatchTimeWindow {
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(0, 0, -7)
-	return TimeWindow{
+	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
 		Period:    DailyPeriodInSeconds,
@@ -75,10 +71,10 @@ func (tpc *TimePeriodCalculator) lastWeek() TimeWindow {
 
 // lastMonth returns time window for the last FULL month
 // End: start of current month, Start: start of previous month, Period: 1 week
-func (tpc *TimePeriodCalculator) lastMonth() TimeWindow {
+func (tpc *TimePeriodCalculator) lastMonth() types.CloudWatchTimeWindow {
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(0, -1, 0)
-	return TimeWindow{
+	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
 		Period:    WeeklyPeriodInSeconds,
@@ -87,10 +83,10 @@ func (tpc *TimePeriodCalculator) lastMonth() TimeWindow {
 
 // lastYear returns time window for the last 12 months
 // End: start of current month, Start: 12 months before, Period: 1 month
-func (tpc *TimePeriodCalculator) lastYear() TimeWindow {
+func (tpc *TimePeriodCalculator) lastYear() types.CloudWatchTimeWindow {
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(-1, 0, 0)
-	return TimeWindow{
+	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
 		Period:    MonthlyPeriodInSeconds,
