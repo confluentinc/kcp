@@ -233,6 +233,9 @@ func (ms *MetricServiceV2) executeMetricQuery(ctx context.Context, queries []clo
 }
 
 func (ms *MetricServiceV2) processServerlessNode(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.NodeMetrics, error) {
+	serverlessResult := types.ServerlessResult{}
+	_ = serverlessResult
+
 	slog.Info("☁️ processing serverless node", "cluster", clusterName)
 	nodeMetric := types.NodeMetrics{
 		NodeID:       1,

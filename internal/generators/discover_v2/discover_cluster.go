@@ -338,9 +338,6 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
 	}
 
-	// Handle case where followerFetching is nil (cluster doesn't have configuration info)
-	followerFetchingEnabled := aws.ToBool(followerFetching)
-
 	now := time.Now().UTC()
 	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	startDate := endDate.AddDate(0, 0, -7)
@@ -359,7 +356,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		}
 	}
 
-	clusterMetric.MetricMetadata.FollowerFetching = followerFetchingEnabled
+	clusterMetric.MetricMetadata.FollowerFetching = aws.ToBool(followerFetching)
 
 	return clusterMetric, nil
 }
