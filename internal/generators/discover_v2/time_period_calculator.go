@@ -6,13 +6,12 @@ import (
 )
 
 const (
+	// debugging period
+	OneHourPeriodInSeconds int32 = 60 * 60 * 2 // 60 seconds * 60 minutes * 2 hours
 	// testing using daily periond with 7 days of data
 	DailyPeriodInSeconds int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
 	// we will want to use monthly period with 12 months of data
 	MonthlyPeriodInSeconds int32 = 60 * 60 * 24 * 30 // 60 seconds * 60 minutes * 24 hours * 30 days
-	// debugging period
-	TwoHoursPeriodInSeconds int32 = 60 * 60 * 2 // 60 seconds * 60 minutes * 2 hours
-
 	// Period constant for weekly periods (specific to time period calculations)
 	WeeklyPeriodInSeconds int32 = 60 * 60 * 24 * 7 // 60 seconds * 60 minutes * 24 hours * 7 days
 )
@@ -87,7 +86,7 @@ func (tpc *TimePeriodCalculator) lastYear() TimeWindow {
 }
 
 // last24Hours returns time window for the last 24 COMPLETE hours
-// End: start of current hour, Start: 24 hours before end, Period: 2 hours
+// End: start of current hour, Start: 24 hours before end, Period: 1 hour
 func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
 	// Get the start of the current hour (e.g., 15:45 -> 15:00)
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), tpc.baseTime.Hour(), 0, 0, 0, time.UTC)
@@ -96,6 +95,6 @@ func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
 	return TimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
-		Period:    TwoHoursPeriodInSeconds,
+		Period:    OneHourPeriodInSeconds,
 	}
 }

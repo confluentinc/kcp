@@ -18,42 +18,42 @@ func TestTimePeriodCalculator_Last24Hours(t *testing.T) {
 			baseTime:       time.Date(2025, 9, 21, 15, 45, 0, 0, time.UTC),
 			expectedStart:  time.Date(2025, 9, 20, 15, 0, 0, 0, time.UTC), // 15:00 on 20th
 			expectedEnd:    time.Date(2025, 9, 21, 15, 0, 0, 0, time.UTC), // 15:00 on 21st
-			expectedPeriod: TwoHoursPeriodInSeconds,
+			expectedPeriod: OneHourPeriodInSeconds,
 		},
 		{
 			name:           "Start of hour (exactly 10:00)",
 			baseTime:       time.Date(2025, 9, 17, 10, 0, 0, 0, time.UTC),
 			expectedStart:  time.Date(2025, 9, 16, 10, 0, 0, 0, time.UTC), // 10:00 on 16th
 			expectedEnd:    time.Date(2025, 9, 17, 10, 0, 0, 0, time.UTC), // 10:00 on 17th
-			expectedPeriod: TwoHoursPeriodInSeconds,
+			expectedPeriod: OneHourPeriodInSeconds,
 		},
 		{
 			name:           "End of day (23:59)",
 			baseTime:       time.Date(2025, 9, 17, 23, 59, 59, 0, time.UTC),
 			expectedStart:  time.Date(2025, 9, 16, 23, 0, 0, 0, time.UTC), // 23:00 on 16th
 			expectedEnd:    time.Date(2025, 9, 17, 23, 0, 0, 0, time.UTC), // 23:00 on 17th
-			expectedPeriod: TwoHoursPeriodInSeconds,
+			expectedPeriod: OneHourPeriodInSeconds,
 		},
 		{
 			name:           "Cross month boundary",
 			baseTime:       time.Date(2025, 10, 1, 8, 30, 0, 0, time.UTC), // Oct 1
 			expectedStart:  time.Date(2025, 9, 30, 8, 0, 0, 0, time.UTC),  // Sep 30
 			expectedEnd:    time.Date(2025, 10, 1, 8, 0, 0, 0, time.UTC),  // Oct 1
-			expectedPeriod: TwoHoursPeriodInSeconds,
+			expectedPeriod: OneHourPeriodInSeconds,
 		},
 		{
 			name:           "Cross year boundary",
 			baseTime:       time.Date(2025, 1, 1, 2, 15, 0, 0, time.UTC),  // Jan 1, 2025
 			expectedStart:  time.Date(2024, 12, 31, 2, 0, 0, 0, time.UTC), // Dec 31, 2024
 			expectedEnd:    time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),   // Jan 1, 2025
-			expectedPeriod: TwoHoursPeriodInSeconds,
+			expectedPeriod: OneHourPeriodInSeconds,
 		},
 		{
 			name:           "Very early morning (00:30)",
 			baseTime:       time.Date(2025, 9, 17, 0, 30, 0, 0, time.UTC),
 			expectedStart:  time.Date(2025, 9, 16, 0, 0, 0, 0, time.UTC), // 00:00 on 16th
 			expectedEnd:    time.Date(2025, 9, 17, 0, 0, 0, 0, time.UTC), // 00:00 on 17th
-			expectedPeriod: TwoHoursPeriodInSeconds,
+			expectedPeriod: OneHourPeriodInSeconds,
 		},
 	}
 
