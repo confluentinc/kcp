@@ -16,7 +16,6 @@ const (
 	WeeklyPeriodInSeconds int32 = 60 * 60 * 24 * 7 // 60 seconds * 60 minutes * 24 hours * 7 days
 )
 
-// TimeWindow represents a time period with start, end times and the appropriate CloudWatch period
 type TimeWindow struct {
 	StartTime time.Time
 	EndTime   time.Time
@@ -33,19 +32,32 @@ func NewTimePeriodCalculator(baseTime time.Time) *TimePeriodCalculator {
 	}
 }
 
-// GetTimeWindow returns the appropriate time window based on period string
 func (tpc *TimePeriodCalculator) GetTimeWindow(desiredPeriod string) (TimeWindow, error) {
 	switch desiredPeriod {
+	case "last24Hours":
+		return tpc.last24Hours(), nil
 	case "lastWeek":
 		return tpc.lastWeek(), nil
 	case "lastMonth":
 		return tpc.lastMonth(), nil
 	case "lastYear":
 		return tpc.lastYear(), nil
-	case "last24Hours":
-		return tpc.last24Hours(), nil
 	default:
 		return TimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear, last24Hours", desiredPeriod)
+	}
+}
+
+// last24Hours returns time window for the last 24 COMPLETE hours
+// End: start of current hour, Start: 24 hours before end, Period: 1 hour
+func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
+	// Get the start of the current hour (e.g., 15:45 -> 15:00)
+	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), tpc.baseTime.Hour(), 0, 0, 0, time.UTC)
+	// Go back 24 hours from end time
+	startTime := endTime.Add(-24 * time.Hour)
+	return TimeWindow{
+		StartTime: startTime,
+		EndTime:   endTime,
+		Period:    OneHourPeriodInSeconds,
 	}
 }
 
@@ -82,19 +94,5 @@ func (tpc *TimePeriodCalculator) lastYear() TimeWindow {
 		StartTime: startTime,
 		EndTime:   endTime,
 		Period:    MonthlyPeriodInSeconds,
-	}
-}
-
-// last24Hours returns time window for the last 24 COMPLETE hours
-// End: start of current hour, Start: 24 hours before end, Period: 1 hour
-func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
-	// Get the start of the current hour (e.g., 15:45 -> 15:00)
-	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), tpc.baseTime.Hour(), 0, 0, 0, time.UTC)
-	// Go back 24 hours from end time
-	startTime := endTime.Add(-24 * time.Hour)
-	return TimeWindow{
-		StartTime: startTime,
-		EndTime:   endTime,
-		Period:    OneHourPeriodInSeconds,
 	}
 }
