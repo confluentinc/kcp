@@ -24,28 +24,35 @@ type TimeWindow struct {
 	Period    int32
 }
 
-// TimePeriodCalculator handles calculation of time windows for metrics collection
 type TimePeriodCalculator struct {
 	baseTime time.Time
 }
 
-// NewTimePeriodCalculator creates a new TimePeriodCalculator with the current time as base
-func NewTimePeriodCalculator() *TimePeriodCalculator {
-	return &TimePeriodCalculator{
-		baseTime: time.Now().UTC(),
-	}
-}
-
-// NewTimePeriodCalculatorWithBase creates a TimePeriodCalculator with a specific base time (useful for testing)
-func NewTimePeriodCalculatorWithBase(baseTime time.Time) *TimePeriodCalculator {
+func NewTimePeriodCalculator(baseTime time.Time) *TimePeriodCalculator {
 	return &TimePeriodCalculator{
 		baseTime: baseTime.UTC(),
 	}
 }
 
-// LastWeek returns time window for the last FULL 7 days
+// GetTimeWindow returns the appropriate time window based on period string
+func (tpc *TimePeriodCalculator) GetTimeWindow(desiredPeriod string) (TimeWindow, error) {
+	switch desiredPeriod {
+	case "lastWeek":
+		return tpc.lastWeek(), nil
+	case "lastMonth":
+		return tpc.lastMonth(), nil
+	case "lastYear":
+		return tpc.lastYear(), nil
+	case "last24Hours":
+		return tpc.last24Hours(), nil
+	default:
+		return TimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear, last24Hours", desiredPeriod)
+	}
+}
+
+// lastWeek returns time window for the last FULL 7 days
 // End: start of current day, Start: 7 days before end, Period: 1 day
-func (tpc *TimePeriodCalculator) LastWeek() TimeWindow {
+func (tpc *TimePeriodCalculator) lastWeek() TimeWindow {
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(0, 0, -7)
 	return TimeWindow{
@@ -55,9 +62,9 @@ func (tpc *TimePeriodCalculator) LastWeek() TimeWindow {
 	}
 }
 
-// LastMonth returns time window for the last FULL month
+// lastMonth returns time window for the last FULL month
 // End: start of current month, Start: start of previous month, Period: 1 week
-func (tpc *TimePeriodCalculator) LastMonth() TimeWindow {
+func (tpc *TimePeriodCalculator) lastMonth() TimeWindow {
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(0, -1, 0)
 	return TimeWindow{
@@ -67,9 +74,9 @@ func (tpc *TimePeriodCalculator) LastMonth() TimeWindow {
 	}
 }
 
-// LastYear returns time window for the last 12 months
+// lastYear returns time window for the last 12 months
 // End: start of current month, Start: 12 months before, Period: 1 month
-func (tpc *TimePeriodCalculator) LastYear() TimeWindow {
+func (tpc *TimePeriodCalculator) lastYear() TimeWindow {
 	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(-1, 0, 0)
 	return TimeWindow{
@@ -79,16 +86,16 @@ func (tpc *TimePeriodCalculator) LastYear() TimeWindow {
 	}
 }
 
-// GetTimeWindow returns the appropriate time window based on period string
-func (tpc *TimePeriodCalculator) GetTimeWindow(periodStr string) (TimeWindow, error) {
-	switch periodStr {
-	case "lastWeek":
-		return tpc.LastWeek(), nil
-	case "lastMonth":
-		return tpc.LastMonth(), nil
-	case "lastYear":
-		return tpc.LastYear(), nil
-	default:
-		return TimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear", periodStr)
+// last24Hours returns time window for the last 24 COMPLETE hours
+// End: start of current hour, Start: 24 hours before end, Period: 2 hours
+func (tpc *TimePeriodCalculator) last24Hours() TimeWindow {
+	// Get the start of the current hour (e.g., 15:45 -> 15:00)
+	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), tpc.baseTime.Hour(), 0, 0, 0, time.UTC)
+	// Go back 24 hours from end time
+	startTime := endTime.Add(-24 * time.Hour)
+	return TimeWindow{
+		StartTime: startTime,
+		EndTime:   endTime,
+		Period:    TwoHoursPeriodInSeconds,
 	}
 }
