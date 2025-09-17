@@ -1,11 +1,8 @@
 package clusters
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	// "path/filepath"
 	"strings"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -17,18 +14,27 @@ import (
 )
 
 type ClustersScanner struct {
-	StateFile string
+	StateFile   string
 	Credentials types.Credentials
+	Discovery   *types.Discovery
 }
 
 func NewClustersScanner(stateFile string, credentials types.Credentials) *ClustersScanner {
 	return &ClustersScanner{
-		StateFile: stateFile,
+		StateFile:   stateFile,
 		Credentials: credentials,
 	}
 }
 
 func (cs *ClustersScanner) Run() error {
+	if cs.Discovery == nil {
+		cs.Discovery = &types.Discovery{}
+	}
+
+	if err := cs.Discovery.LoadStateFile(cs.StateFile); err != nil {
+		return fmt.Errorf("❌ failed to load discovery state: %v", err)
+	}
+
 	for _, regionEntry := range cs.Credentials.Regions {
 		for _, clusterEntry := range regionEntry.Clusters {
 			if err := cs.scanCluster(regionEntry.Name, clusterEntry); err != nil {
@@ -36,6 +42,10 @@ func (cs *ClustersScanner) Run() error {
 				continue
 			}
 		}
+	}
+
+	if err := cs.Discovery.PersistStateFile(cs.StateFile); err != nil {
+		return fmt.Errorf("❌ failed to save discovery state: %v", err)
 	}
 
 	return nil
@@ -46,10 +56,10 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 	if err != nil {
 		return fmt.Errorf("❌ failed to get cluster name from cluster ARN: %v", err)
 	}
-	
-	discoveredCluster, err :=cs.getClusterFromStateFile(region, clusterName)
+
+	discoveredCluster, err := cs.getClusterFromDiscovery(region, clusterName)
 	if err != nil {
-		return fmt.Errorf("❌ failed to get cluster from %s: %v", cs.StateFile, err)
+		return fmt.Errorf("❌ failed to get cluster from discovery state: %v", err)
 	}
 
 	// clusterInfo.KcpBuildInfo = types.KcpBuildInfo{
@@ -95,14 +105,6 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
 
-	// if err := clusterInfo.WriteAsJsonWithBase(cs.DiscoverDir); err != nil {
-	// 	return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
-	// }
-
-	// if err := clusterInfo.WriteAsMarkdownWithBase(cs.DiscoverDir, true); err != nil {
-	// 	return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
-	// }
-
 	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterName))
 
 	return nil
@@ -123,7 +125,6 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 	if err != nil {
 		return fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
 	}
-
 	discoveredCluster.KafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
 	topics, err := kafkaService.ScanClusterTopics(kafkaAdmin)
@@ -132,7 +133,7 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 	}
 
 	for _, topic := range topics {
-		discoveredCluster.KafkaAdminClientInformation.Topics = append(discoveredCluster.KafkaAdminClientInformation.Topics, topic.Name)
+		discoveredCluster.KafkaAdminClientInformation.Topics.Details = append(discoveredCluster.KafkaAdminClientInformation.Topics.Details, topic)
 	}
 
 	// Use KafkaService's ACL scanning logic instead of duplicating it
@@ -163,22 +164,12 @@ func (cs *ClustersScanner) getClusterName(arn string) (string, error) {
 	return clusterName, nil
 }
 
-func (cs *ClustersScanner) getClusterFromStateFile(region, clusterName string) (*types.DiscoveredCluster, error) {
-	file, err := os.ReadFile(cs.StateFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read state file: %v", err)
-	}
-
-	var discovery types.Discovery
-	if err := json.Unmarshal(file, &discovery); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal discovery: %v", err)
-	}
-
-	for i, discoveredRegion := range discovery.Regions {
-		if discoveredRegion.Name == region {
-			for j, discoveredCluster := range discoveredRegion.Clusters {
-				if discoveredCluster.Name == clusterName {
-					return &discovery.Regions[i].Clusters[j], nil
+func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterName string) (*types.DiscoveredCluster, error) {
+	for i, discoveryRegion := range cs.Discovery.Regions {
+		if discoveryRegion.Name == region {
+			for j, discoveryCluster := range discoveryRegion.Clusters {
+				if discoveryCluster.Name == clusterName {
+					return &cs.Discovery.Regions[i].Clusters[j], nil
 				}
 			}
 		}

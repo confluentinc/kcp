@@ -162,12 +162,25 @@ func (d *Discovery) WriteToJsonFile(filePath string) error {
 	return os.WriteFile(filePath, data, 0644)
 }
 
-func (dc *DiscoveredCluster) WriteToJsonFile(filePath string) error {
-	data, err := json.MarshalIndent(dc, "", "  ")
+func (d *Discovery) LoadStateFile(stateFile string) error {
+	file, err := os.ReadFile(stateFile)
 	if err != nil {
-		return fmt.Errorf("failed to marshal discovered cluster: %v", err)
+		return fmt.Errorf("failed to read state file: %v", err)
 	}
-	return os.WriteFile(filePath, data, 0644)
+
+	if err := json.Unmarshal(file, d); err != nil {
+		return fmt.Errorf("failed to unmarshal discovery: %v", err)
+	}
+
+	return nil
+}
+
+func (d *Discovery) PersistStateFile(stateFile string) error {
+	if d == nil {
+		return fmt.Errorf("discovery state is nil")
+	}
+
+	return d.WriteToJsonFile(stateFile)
 }
 
 type DiscoveredRegion struct {
@@ -223,9 +236,9 @@ type AWSClientInformation struct {
 }
 
 type KafkaAdminClientInformation struct {
-	ClusterID string   `json:"cluster_id"`
-	Topics    []string `json:"topics"`
-	Acls      []Acls   `json:"acls"`
+	ClusterID string `json:"cluster_id"`
+	Topics    Topics `json:"topics"`
+	Acls      []Acls `json:"acls"`
 }
 
 type CloudWatchTimeWindow struct {
