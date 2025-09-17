@@ -5,25 +5,25 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
+	// "path/filepath"
 	"strings"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
-	"github.com/confluentinc/kcp/internal/build_info"
+	// "github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type ClustersScanner struct {
-	DiscoverDir string
+	StateFile string
 	Credentials types.Credentials
 }
 
-func NewClustersScanner(discoverDir string, credentials types.Credentials) *ClustersScanner {
+func NewClustersScanner(stateFile string, credentials types.Credentials) *ClustersScanner {
 	return &ClustersScanner{
-		DiscoverDir: discoverDir,
+		StateFile: stateFile,
 		Credentials: credentials,
 	}
 }
@@ -44,26 +44,19 @@ func (cs *ClustersScanner) Run() error {
 func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.ClusterEntry) error {
 	clusterName, err := cs.getClusterName(clusterEntry.Arn)
 	if err != nil {
-		return fmt.Errorf("❌ failed to get cluster name: %v", err)
+		return fmt.Errorf("❌ failed to get cluster name from cluster ARN: %v", err)
+	}
+	
+	discoveredCluster, err :=cs.getClusterFromStateFile(region, clusterName)
+	if err != nil {
+		return fmt.Errorf("❌ failed to get cluster from %s: %v", cs.StateFile, err)
 	}
 
-	var clusterInfo types.ClusterInformation
-	if cs.DiscoverDir != "" {
-		clusterFile := filepath.Join(cs.DiscoverDir, region, clusterName, fmt.Sprintf("%s.json", clusterName))
-		file, err := os.ReadFile(clusterFile)
-		if err != nil {
-			return fmt.Errorf("❌ failed to read cluster file: %v", err)
-		}
-
-		if err := json.Unmarshal(file, &clusterInfo); err != nil {
-			return fmt.Errorf("❌ failed to unmarshal cluster info: %v", err)
-		}
-	}
-	clusterInfo.KcpBuildInfo = types.KcpBuildInfo{
-		Version: build_info.Version,
-		Commit:  build_info.Commit,
-		Date:    build_info.Date,
-	}
+	// clusterInfo.KcpBuildInfo = types.KcpBuildInfo{
+	// 	Version: build_info.Version,
+	// 	Commit:  build_info.Commit,
+	// 	Date:    build_info.Date,
+	// }
 
 	authType, err := clusterEntry.GetSelectedAuthType()
 	if err != nil {
@@ -72,7 +65,7 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 
 	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
 
-	brokerAddresses, err := clusterInfo.GetBootstrapBrokersForAuthType(authType)
+	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
 		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterName, region, err)
 	}
@@ -98,26 +91,26 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 		ClusterArn:        clusterEntry.Arn,
 	})
 
-	if err := cs.scanKafkaResources(&clusterInfo, kafkaService, brokerAddresses); err != nil {
+	if err := cs.scanKafkaResources(discoveredCluster, kafkaService, brokerAddresses); err != nil {
 		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
 
-	if err := clusterInfo.WriteAsJsonWithBase(cs.DiscoverDir); err != nil {
-		return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
-	}
+	// if err := clusterInfo.WriteAsJsonWithBase(cs.DiscoverDir); err != nil {
+	// 	return fmt.Errorf("❌ Failed to write broker info to file: %v", err)
+	// }
 
-	if err := clusterInfo.WriteAsMarkdownWithBase(cs.DiscoverDir, true); err != nil {
-		return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
-	}
+	// if err := clusterInfo.WriteAsMarkdownWithBase(cs.DiscoverDir, true); err != nil {
+	// 	return fmt.Errorf("❌ Failed to write broker info to markdown file: %v", err)
+	// }
 
 	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterName))
 
 	return nil
 }
 
-func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformation, kafkaService *kafkaservice.KafkaService, brokerAddresses []string) error {
-	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(clusterInfo.Cluster)
-	kafkaVersion := kafkaService.GetKafkaVersion(clusterInfo)
+func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.DiscoveredCluster, kafkaService *kafkaservice.KafkaService, brokerAddresses []string) error {
+	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
+	kafkaVersion := kafkaService.GetKafkaVersion(discoveredCluster.AWSClientInformation)
 
 	kafkaAdmin, err := kafkaService.CreateKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
 	if err != nil {
@@ -131,7 +124,7 @@ func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformat
 		return fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
 	}
 
-	clusterInfo.ClusterID = clusterMetadata.ClusterID
+	discoveredCluster.KafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
 	topics, err := kafkaService.ScanClusterTopics(kafkaAdmin)
 	if err != nil {
@@ -139,16 +132,16 @@ func (cs *ClustersScanner) scanKafkaResources(clusterInfo *types.ClusterInformat
 	}
 
 	for _, topic := range topics {
-		clusterInfo.Topics.Details = append(clusterInfo.Topics.Details, topic)
+		discoveredCluster.KafkaAdminClientInformation.Topics = append(discoveredCluster.KafkaAdminClientInformation.Topics, topic.Name)
 	}
 
 	// Use KafkaService's ACL scanning logic instead of duplicating it
-	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
+	if discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeProvisioned {
 		acls, err := kafkaService.ScanKafkaAcls(kafkaAdmin)
 		if err != nil {
 			return err
 		}
-		clusterInfo.Acls = acls
+		discoveredCluster.KafkaAdminClientInformation.Acls = acls
 	} else {
 		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
@@ -168,4 +161,28 @@ func (cs *ClustersScanner) getClusterName(arn string) (string, error) {
 	}
 
 	return clusterName, nil
+}
+
+func (cs *ClustersScanner) getClusterFromStateFile(region, clusterName string) (*types.DiscoveredCluster, error) {
+	file, err := os.ReadFile(cs.StateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state file: %v", err)
+	}
+
+	var discovery types.Discovery
+	if err := json.Unmarshal(file, &discovery); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal discovery: %v", err)
+	}
+
+	for i, discoveredRegion := range discovery.Regions {
+		if discoveredRegion.Name == region {
+			for j, discoveredCluster := range discoveredRegion.Clusters {
+				if discoveredCluster.Name == clusterName {
+					return &discovery.Regions[i].Clusters[j], nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("cluster %s not found in region %s", clusterName, region)
 }
