@@ -173,7 +173,7 @@ type DiscoveredCluster struct {
 	Name                       string                     `json:"name"`
 	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
 	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
-	ClusterMetricsV2           ClusterMetrics             `json:"metrics"`
+	ClusterMetrics             ClusterMetrics             `json:"metrics"`
 }
 
 type AWSClientInformation struct {
