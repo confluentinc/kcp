@@ -13,7 +13,6 @@ import (
 	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 var Metrics = []string{
@@ -35,14 +34,6 @@ func NewMetricServiceV2(client *cloudwatch.Client) *MetricServiceV2 {
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
 func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
-	authentication, err := utils.StructToMap(cluster.Provisioned.ClientAuthentication)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert provisioned client authentication to map: %w", err)
-	}
-	if authentication == nil {
-		return nil, fmt.Errorf("provisioned client authentication is nil")
-	}
-
 	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
 	// if err != nil {
 	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
@@ -84,15 +75,6 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
 func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
 	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
-
-	authentication, err := utils.StructToMap(cluster.Serverless.ClientAuthentication)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert serverless client authentication to map: %w", err)
-	}
-	if authentication == nil {
-		return nil, fmt.Errorf("serverless client authentication is nil")
-	}
-
 	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
 	// if err != nil {
 	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
