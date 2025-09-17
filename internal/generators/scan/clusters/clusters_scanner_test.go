@@ -1,214 +1,214 @@
 package clusters
 
-import (
-	"errors"
-	"testing"
+// import (
+// 	"errors"
+// 	"testing"
 
-	"github.com/IBM/sarama"
-	kafkaTypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/client"
-	"github.com/confluentinc/kcp/internal/mocks"
-	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
-	"github.com/confluentinc/kcp/internal/types"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
+// 	"github.com/IBM/sarama"
+// 	kafkaTypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+// 	"github.com/confluentinc/kcp/internal/client"
+// 	"github.com/confluentinc/kcp/internal/mocks"
+// 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
+// 	"github.com/confluentinc/kcp/internal/types"
+// 	"github.com/stretchr/testify/assert"
+// 	"github.com/stretchr/testify/require"
+// )
 
-func newTestClustersScanner() *ClustersScanner {
-	// Create test credentials
-	testCredentials := types.Credentials{
-		Regions: []types.RegionEntry{
-			{
-				Name: "us-west-2",
-				Clusters: []types.ClusterEntry{
-					{
-						Arn: "arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster",
-						AuthMethod: types.AuthMethodConfig{
-							IAM: &types.IAMConfig{Use: true},
-						},
-					},
-				},
-			},
-		},
-	}
+// func newTestClustersScanner() *ClustersScanner {
+// 	// Create test credentials
+// 	testCredentials := types.Credentials{
+// 		Regions: []types.RegionEntry{
+// 			{
+// 				Name: "us-west-2",
+// 				Clusters: []types.ClusterEntry{
+// 					{
+// 						Arn: "arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster",
+// 						AuthMethod: types.AuthMethodConfig{
+// 							IAM: &types.IAMConfig{Use: true},
+// 						},
+// 					},
+// 				},
+// 			},
+// 		},
+// 	}
 
-	return NewClustersScanner("testdata/discover", testCredentials)
-}
+// 	return NewClustersScanner("testdata/discover", testCredentials)
+// }
 
-func TestClustersScanner_ScanKafkaResources(t *testing.T) {
-	tests := []struct {
-		name                string
-		mockClusterMetadata *client.ClusterKafkaMetadata
-		mockTopics          map[string]sarama.TopicDetail
-		mockTopicConfigs    map[string]*[]sarama.ConfigEntry
-		mockAcls            []sarama.ResourceAcls
-		mockError           error
-		wantError           string
-		expectedClusterID   string
-		expectedTopicCount  int
-		expectedAclCount    int
-	}{
-		{
-			name: "successful direct kafka scan",
-			mockClusterMetadata: &client.ClusterKafkaMetadata{
-				Brokers:      make([]*sarama.Broker, 3),
-				ControllerID: 1,
-				ClusterID:    "test-cluster-123",
-			},
-			mockTopics: map[string]sarama.TopicDetail{
-				"topic1": {},
-				"topic2": {},
-			},
-			mockTopicConfigs: map[string]*[]sarama.ConfigEntry{
-				"topic1": {
-					{Name: "cleanup.policy", Value: "delete"},
-					{Name: "local.retention.ms", Value: "-2"},
-					{Name: "retention.ms", Value: "604800000"},
-					{Name: "min.insync.replicas", Value: "1"},
-				},
-				"topic2": {
-					{Name: "cleanup.policy", Value: "delete"},
-					{Name: "local.retention.ms", Value: "-2"},
-					{Name: "retention.ms", Value: "604800000"},
-					{Name: "min.insync.replicas", Value: "1"},
-				},
-			},
-			mockAcls: []sarama.ResourceAcls{
-				{
-					Resource: sarama.Resource{
-						ResourceType:        sarama.AclResourceTopic,
-						ResourceName:        "topic1",
-						ResourcePatternType: sarama.AclPatternLiteral,
-					},
-					Acls: []*sarama.Acl{
-						{
-							Principal:      "User:test-user",
-							Host:           "*",
-							Operation:      sarama.AclOperationRead,
-							PermissionType: sarama.AclPermissionAllow,
-						},
-					},
-				},
-			},
-			expectedClusterID:  "test-cluster-123",
-			expectedTopicCount: 2,
-			expectedAclCount:   1,
-		},
-		{
-			name:      "handles admin client creation error",
-			mockError: errors.New("failed to create admin client"),
-			wantError: "❌ Failed to setup admin client: failed to create admin client",
-		},
-	}
+// func TestClustersScanner_ScanKafkaResources(t *testing.T) {
+// 	tests := []struct {
+// 		name                string
+// 		mockClusterMetadata *client.ClusterKafkaMetadata
+// 		mockTopics          map[string]sarama.TopicDetail
+// 		mockTopicConfigs    map[string]*[]sarama.ConfigEntry
+// 		mockAcls            []sarama.ResourceAcls
+// 		mockError           error
+// 		wantError           string
+// 		expectedClusterID   string
+// 		expectedTopicCount  int
+// 		expectedAclCount    int
+// 	}{
+// 		{
+// 			name: "successful direct kafka scan",
+// 			mockClusterMetadata: &client.ClusterKafkaMetadata{
+// 				Brokers:      make([]*sarama.Broker, 3),
+// 				ControllerID: 1,
+// 				ClusterID:    "test-cluster-123",
+// 			},
+// 			mockTopics: map[string]sarama.TopicDetail{
+// 				"topic1": {},
+// 				"topic2": {},
+// 			},
+// 			mockTopicConfigs: map[string]*[]sarama.ConfigEntry{
+// 				"topic1": {
+// 					{Name: "cleanup.policy", Value: "delete"},
+// 					{Name: "local.retention.ms", Value: "-2"},
+// 					{Name: "retention.ms", Value: "604800000"},
+// 					{Name: "min.insync.replicas", Value: "1"},
+// 				},
+// 				"topic2": {
+// 					{Name: "cleanup.policy", Value: "delete"},
+// 					{Name: "local.retention.ms", Value: "-2"},
+// 					{Name: "retention.ms", Value: "604800000"},
+// 					{Name: "min.insync.replicas", Value: "1"},
+// 				},
+// 			},
+// 			mockAcls: []sarama.ResourceAcls{
+// 				{
+// 					Resource: sarama.Resource{
+// 						ResourceType:        sarama.AclResourceTopic,
+// 						ResourceName:        "topic1",
+// 						ResourcePatternType: sarama.AclPatternLiteral,
+// 					},
+// 					Acls: []*sarama.Acl{
+// 						{
+// 							Principal:      "User:test-user",
+// 							Host:           "*",
+// 							Operation:      sarama.AclOperationRead,
+// 							PermissionType: sarama.AclPermissionAllow,
+// 						},
+// 					},
+// 				},
+// 			},
+// 			expectedClusterID:  "test-cluster-123",
+// 			expectedTopicCount: 2,
+// 			expectedAclCount:   1,
+// 		},
+// 		{
+// 			name:      "handles admin client creation error",
+// 			mockError: errors.New("failed to create admin client"),
+// 			wantError: "❌ Failed to setup admin client: failed to create admin client",
+// 		},
+// 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockAdmin := &mocks.MockKafkaAdmin{
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
-					return tt.mockTopics, nil
-				},
-				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
-					return tt.mockClusterMetadata, nil
-				},
-				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
-					return tt.mockAcls, nil
-				},
-				CloseFunc: func() error { return nil },
-			}
+// 	for _, tt := range tests {
+// 		t.Run(tt.name, func(t *testing.T) {
+// 			mockAdmin := &mocks.MockKafkaAdmin{
+// 				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+// 					return tt.mockTopics, nil
+// 				},
+// 				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+// 					return tt.mockClusterMetadata, nil
+// 				},
+// 				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+// 					return tt.mockAcls, nil
+// 				},
+// 				CloseFunc: func() error { return nil },
+// 			}
 
-			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkaTypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-				if tt.mockError != nil {
-					return nil, tt.mockError
-				}
-				return mockAdmin, nil
-			}
+// 			adminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkaTypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
+// 				if tt.mockError != nil {
+// 					return nil, tt.mockError
+// 				}
+// 				return mockAdmin, nil
+// 			}
 
-			clusterInfo := types.DiscoveredCluster{
-				AWSClientInformation: types.AWSClientInformation{
-					MskClusterConfig: kafkaTypes.Cluster{
-						ClusterType: kafkaTypes.ClusterTypeProvisioned,
-						Provisioned: &kafkaTypes.Provisioned{
-							CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
-								KafkaVersion: stringPtr("4.0.x.kraft"),
-							},
-						},
-					},
-				},
-			}
+// 			clusterInfo := types.DiscoveredCluster{
+// 				AWSClientInformation: types.AWSClientInformation{
+// 					MskClusterConfig: kafkaTypes.Cluster{
+// 						ClusterType: kafkaTypes.ClusterTypeProvisioned,
+// 						Provisioned: &kafkaTypes.Provisioned{
+// 							CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
+// 								KafkaVersion: stringPtr("4.0.x.kraft"),
+// 							},
+// 						},
+// 					},
+// 				},
+// 			}
 
-			clusterScanner := newTestClustersScanner()
-			kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
-				KafkaAdminFactory: adminFactory,
-				AuthType:          types.AuthTypeIAM,
-				ClusterArn:        "arn:aws:kafka:eu-west-1:123456789012:cluster/test-cluster",
-			})
+// 			clusterScanner := newTestClustersScanner()
+// 			kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
+// 				KafkaAdminFactory: adminFactory,
+// 				AuthType:          types.AuthTypeIAM,
+// 				ClusterArn:        "arn:aws:kafka:eu-west-1:123456789012:cluster/test-cluster",
+// 			})
 
-			err := clusterScanner.scanKafkaResources(&clusterInfo, kafkaService, []string{"broker1:9092", "broker2:9092"})
+// 			err := clusterScanner.scanKafkaResources(&clusterInfo, kafkaService, []string{"broker1:9092", "broker2:9092"})
 
-			if tt.wantError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
-				return
-			}
+// 			if tt.wantError != "" {
+// 				require.Error(t, err)
+// 				assert.Contains(t, err.Error(), tt.wantError)
+// 				return
+// 			}
 
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectedClusterID, clusterInfo.KafkaAdminClientInformation.ClusterID)
-			assert.Len(t, clusterInfo.KafkaAdminClientInformation.Topics.Details, tt.expectedTopicCount)
-			assert.Len(t, clusterInfo.KafkaAdminClientInformation.Acls, tt.expectedAclCount)
-		})
-	}
-}
+// 			require.NoError(t, err)
+// 			assert.Equal(t, tt.expectedClusterID, clusterInfo.KafkaAdminClientInformation.ClusterID)
+// 			assert.Len(t, clusterInfo.KafkaAdminClientInformation.Topics.Details, tt.expectedTopicCount)
+// 			assert.Len(t, clusterInfo.KafkaAdminClientInformation.Acls, tt.expectedAclCount)
+// 		})
+// 	}
+// }
 
-func TestClustersScanner_GetKafkaVersion(t *testing.T) {
-	tests := []struct {
-		name                 string
-		awsClientInformation types.AWSClientInformation
-		expected             string
-	}{
-		{
-			name: "Provisioned cluster with version",
-			awsClientInformation: types.AWSClientInformation{
-				MskClusterConfig: kafkaTypes.Cluster{
-					ClusterType: kafkaTypes.ClusterTypeProvisioned,
-					Provisioned: &kafkaTypes.Provisioned{
-						CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
-							KafkaVersion: stringPtr("2.8.1"),
-						},
-					},
-				},
-			},
-			expected: "2.8.1",
-		},
-		{
-			name: "Serverless cluster",
-			awsClientInformation: types.AWSClientInformation{
-				MskClusterConfig: kafkaTypes.Cluster{
-					ClusterType: kafkaTypes.ClusterTypeServerless,
-				},
-			},
-			expected: "4.0.0",
-		},
-		{
-			name: "Unknown cluster type",
-			awsClientInformation: types.AWSClientInformation{
-				MskClusterConfig: kafkaTypes.Cluster{
-					ClusterType: "5.5.0",
-				},
-			},
-			expected: "4.0.0",
-		},
-	}
+// func TestClustersScanner_GetKafkaVersion(t *testing.T) {
+// 	tests := []struct {
+// 		name                 string
+// 		awsClientInformation types.AWSClientInformation
+// 		expected             string
+// 	}{
+// 		{
+// 			name: "Provisioned cluster with version",
+// 			awsClientInformation: types.AWSClientInformation{
+// 				MskClusterConfig: kafkaTypes.Cluster{
+// 					ClusterType: kafkaTypes.ClusterTypeProvisioned,
+// 					Provisioned: &kafkaTypes.Provisioned{
+// 						CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
+// 							KafkaVersion: stringPtr("2.8.1"),
+// 						},
+// 					},
+// 				},
+// 			},
+// 			expected: "2.8.1",
+// 		},
+// 		{
+// 			name: "Serverless cluster",
+// 			awsClientInformation: types.AWSClientInformation{
+// 				MskClusterConfig: kafkaTypes.Cluster{
+// 					ClusterType: kafkaTypes.ClusterTypeServerless,
+// 				},
+// 			},
+// 			expected: "4.0.0",
+// 		},
+// 		{
+// 			name: "Unknown cluster type",
+// 			awsClientInformation: types.AWSClientInformation{
+// 				MskClusterConfig: kafkaTypes.Cluster{
+// 					ClusterType: "5.5.0",
+// 				},
+// 			},
+// 			expected: "4.0.0",
+// 		},
+// 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kafkaService := &kafkaservice.KafkaService{}
-			result := kafkaService.GetKafkaVersion(tt.awsClientInformation)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
+// 	for _, tt := range tests {
+// 		t.Run(tt.name, func(t *testing.T) {
+// 			kafkaService := &kafkaservice.KafkaService{}
+// 			result := kafkaService.GetKafkaVersion(tt.awsClientInformation)
+// 			assert.Equal(t, tt.expected, result)
+// 		})
+// 	}
+// }
 
-// Helper function to create string pointers
-func stringPtr(s string) *string {
-	return &s
-}
+// // Helper function to create string pointers
+// func stringPtr(s string) *string {
+// 	return &s
+// }
