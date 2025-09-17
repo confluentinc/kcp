@@ -280,11 +280,6 @@ func (ms *MetricService) getTopicsForCluster(ctx context.Context, clusterName st
 	for topic := range topics {
 		topicList = append(topicList, topic)
 	}
-
-	slog.Info("Found topics for serverless cluster", "cluster", clusterName, "topicCount", len(topicList))
-	for _, topic := range topicList {
-		slog.Info("Topic", "topic", topic)
-	}
 	return topicList, nil
 }
 

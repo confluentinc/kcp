@@ -2,7 +2,12 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"strings"
+
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 func ConvertKafkaVersion(kafkaVersion *string) string {
@@ -29,4 +34,18 @@ func StructToMap(s any) (map[string]any, error) {
 	var result map[string]any
 	err = json.Unmarshal(jsonBytes, &result)
 	return result, err
+}
+
+// getKafkaVersion determines the Kafka version based on cluster type
+func GetKafkaVersion(clusterInfo types.AWSClientInformation) string {
+	switch clusterInfo.MskClusterConfig.ClusterType {
+	case kafkatypes.ClusterTypeProvisioned:
+		return ConvertKafkaVersion(clusterInfo.MskClusterConfig.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	case kafkatypes.ClusterTypeServerless:
+		slog.Warn("⚠️ Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
+		return "4.0.0"
+	default:
+		slog.Warn(fmt.Sprintf("⚠️ Unknown cluster type: %v, defaulting to 4.0.0", clusterInfo.MskClusterConfig.ClusterType))
+		return "4.0.0"
+	}
 }

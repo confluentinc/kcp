@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -195,11 +195,11 @@ type DiscoveredRegion struct {
 
 type DiscoveredCluster struct {
 	Name                        string                      `json:"name"`
-	ClusterMetrics            ClusterMetrics          `json:"metrics"`
+	Arn                         string                      `json:"arn"`
+	ClusterMetrics              ClusterMetrics              `json:"metrics"`
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
 }
-
 
 type AWSClientInformation struct {
 	MskClusterConfig     kafkatypes.Cluster                     `json:"msk_cluster_config"`
@@ -214,9 +214,9 @@ type AWSClientInformation struct {
 }
 
 type KafkaAdminClientInformation struct {
-	ClusterID string `json:"cluster_id"`
-	Topics    Topics `json:"topics"`
-	Acls      []Acls `json:"acls"`
+	ClusterID string  `json:"cluster_id"`
+	Topics    *Topics `json:"topics"`
+	Acls      []Acls  `json:"acls"`
 }
 
 // ----- metrics -----
@@ -362,7 +362,7 @@ func (c *KafkaAdminClientInformation) CalculateTopicSummaryFromDetails(topicDeta
 }
 
 func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
-	c.Topics = Topics{
+	c.Topics = &Topics{
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
 	}

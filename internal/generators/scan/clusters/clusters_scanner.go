@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ClustersScanner struct {
@@ -22,14 +23,11 @@ func NewClustersScanner(stateFile string, credentials types.Credentials) *Cluste
 	return &ClustersScanner{
 		StateFile:   stateFile,
 		Credentials: credentials,
+		Discovery:   &types.Discovery{},
 	}
 }
 
 func (cs *ClustersScanner) Run() error {
-	if cs.Discovery == nil {
-		cs.Discovery = &types.Discovery{}
-	}
-
 	if err := cs.Discovery.LoadStateFile(cs.StateFile); err != nil {
 		return fmt.Errorf("❌ failed to load discovery state: %v", err)
 	}
@@ -51,76 +49,54 @@ func (cs *ClustersScanner) Run() error {
 }
 
 func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.ClusterEntry) error {
-	clusterName, err := cs.getClusterName(clusterEntry.Arn)
-	if err != nil {
-		return fmt.Errorf("❌ failed to get cluster name from cluster ARN: %v", err)
-	}
-
-	discoveredCluster, err := cs.getClusterFromDiscovery(region, clusterName)
+	discoveredCluster, err := cs.getClusterFromDiscovery(region, clusterEntry.Arn)
 	if err != nil {
 		return fmt.Errorf("❌ failed to get cluster from discovery state: %v", err)
 	}
 
 	authType, err := clusterEntry.GetSelectedAuthType()
 	if err != nil {
-		return fmt.Errorf("❌ failed to determine auth type for cluster: %s in region: %s: %v", clusterName, region, err)
+		return fmt.Errorf("❌ failed to determine auth type for cluster: %s in region: %s: %v", clusterEntry.Arn, region, err)
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterName, authType))
+	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterEntry.Arn, authType))
 
 	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
-		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterName, region, err)
+		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterEntry.Arn, region, err)
 	}
 
-	kafkaAdminFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-		switch authType {
-		case types.AuthTypeIAM:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
-		case types.AuthTypeSASLSCRAM:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterEntry.AuthMethod.SASLScram.Username, clusterEntry.AuthMethod.SASLScram.Password))
-		case types.AuthTypeUnauthenticated:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedAuth())
-		case types.AuthTypeTLS:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterEntry.AuthMethod.TLS.CACert, clusterEntry.AuthMethod.TLS.ClientCert, clusterEntry.AuthMethod.TLS.ClientKey))
-		default:
-			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
-		}
+	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
+
+	kafkaVersion := utils.GetKafkaVersion(discoveredCluster.AWSClientInformation)
+
+	kafkaAdmin, err := createKafkaAdmin(authType, brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, clusterEntry)
+	if err != nil {
+		return fmt.Errorf("❌ failed to create Kafka admin: %v", err)
 	}
 
-	kafkaService := kafkaservice.NewKafkaService(kafkaservice.KafkaServiceOpts{
-		KafkaAdminFactory: kafkaAdminFactory,
-		AuthType:          authType,
-		ClusterArn:        clusterEntry.Arn,
+	kafkaService := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
+		AuthType:   authType,
+		ClusterArn: clusterEntry.Arn,
 	})
 
-	if err := cs.scanKafkaResources(discoveredCluster, kafkaService, brokerAddresses); err != nil {
+	if err := cs.scanKafkaResources(discoveredCluster, kafkaService); err != nil {
 		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterName))
+	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterEntry.Arn))
 
 	return nil
 }
 
-func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.DiscoveredCluster, kafkaService *kafkaservice.KafkaService, brokerAddresses []string) error {
-	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
-	kafkaVersion := kafkaService.GetKafkaVersion(discoveredCluster.AWSClientInformation)
-
-	kafkaAdmin, err := kafkaService.CreateKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, kafkaVersion)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to setup admin client: %v", err)
-	}
-
-	defer kafkaAdmin.Close()
-
-	clusterMetadata, err := kafkaService.DescribeKafkaCluster(kafkaAdmin)
+func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.DiscoveredCluster, kafkaService *kafkaservice.KafkaService) error {
+	clusterMetadata, err := kafkaService.DescribeKafkaCluster()
 	if err != nil {
 		return fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
 	}
 	discoveredCluster.KafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := kafkaService.ScanClusterTopics(kafkaAdmin)
+	topics, err := kafkaService.ScanClusterTopics()
 	if err != nil {
 		return fmt.Errorf("❌ Failed to list topics: %v", err)
 	}
@@ -131,7 +107,7 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 
 	// Use KafkaService's ACL scanning logic instead of duplicating it
 	if discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := kafkaService.ScanKafkaAcls(kafkaAdmin)
+		acls, err := kafkaService.ScanKafkaAcls()
 		if err != nil {
 			return err
 		}
@@ -159,16 +135,39 @@ func (cs *ClustersScanner) getClusterName(arn string) (string, error) {
 	return clusterName, nil
 }
 
-func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterName string) (*types.DiscoveredCluster, error) {
+func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterArn string) (*types.DiscoveredCluster, error) {
 	for i, discoveryRegion := range cs.Discovery.Regions {
 		if discoveryRegion.Name == region {
 			for j, discoveryCluster := range discoveryRegion.Clusters {
-				if discoveryCluster.Name == clusterName {
+				if discoveryCluster.Arn == clusterArn {
 					return &cs.Discovery.Regions[i].Clusters[j], nil
 				}
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("cluster %s not found in region %s", clusterName, region)
+	return nil, fmt.Errorf("cluster %s not found in region %s", clusterArn, region)
+}
+
+func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterEntry types.ClusterEntry) (*client.KafkaAdmin, error) {
+	var kafkaAdmin client.KafkaAdmin
+	var adminError error
+	switch authType {
+	case types.AuthTypeIAM:
+		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
+	case types.AuthTypeSASLSCRAM:
+		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterEntry.AuthMethod.SASLScram.Username, clusterEntry.AuthMethod.SASLScram.Password))
+	case types.AuthTypeUnauthenticated:
+		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedAuth())
+	case types.AuthTypeTLS:
+		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterEntry.AuthMethod.TLS.CACert, clusterEntry.AuthMethod.TLS.ClientCert, clusterEntry.AuthMethod.TLS.ClientKey))
+	default:
+		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	}
+
+	if adminError != nil {
+		return nil, fmt.Errorf("❌ failed to create Kafka admin: %v", adminError)
+	}
+
+	return &kafkaAdmin, nil
 }

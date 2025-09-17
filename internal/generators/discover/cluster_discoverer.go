@@ -63,6 +63,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*
 
 	return &types.DiscoveredCluster{
 		Name:                 aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
+		Arn:                  clusterArn,
 		AWSClientInformation: *awsClientInfo,
 		ClusterMetrics:       *clusterMetric,
 	}, nil
