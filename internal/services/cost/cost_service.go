@@ -2,8 +2,10 @@ package cost
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +45,16 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 	if err != nil {
 		return types.RegionCosts{}, fmt.Errorf("failed to get cost and usage: %v", err)
 	}
+
+	filename := fmt.Sprintf("%s-cost-and-usage.json", region)
+	slog.Info("💰 cost and usage", "output", filename)
+	// output
+	jsonOutput, _ := json.MarshalIndent(output, "", "  ")
+
+	if err := os.WriteFile(filename, jsonOutput, 0644); err != nil {
+		return types.RegionCosts{}, fmt.Errorf("failed to write cost and usage: %v", err)
+	}
+	slog.Info("💰 cost and usage", "output", filename)
 
 	costData := cs.processCostExplorerOutput(output)
 	regionCosts := types.NewRegionCosts(region, time.Now())

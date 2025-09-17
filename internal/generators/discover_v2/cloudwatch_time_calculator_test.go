@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestTimePeriodCalculator_Last24Hours(t *testing.T) {
+func TestCloudwatchTimeCalculator_Last24Hours(t *testing.T) {
 	tests := []struct {
 		name           string
 		baseTime       time.Time
@@ -59,8 +59,8 @@ func TestTimePeriodCalculator_Last24Hours(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewTimePeriodCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow("last24Hours")
+			calc := NewCloudwatchTimeCalculator(tt.baseTime)
+			result, err := calc.GetTimeWindow(Last24Hours)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -84,7 +84,7 @@ func TestTimePeriodCalculator_Last24Hours(t *testing.T) {
 	}
 }
 
-func TestTimePeriodCalculator_LastWeek(t *testing.T) {
+func TestCloudwatchTimeCalculator_LastWeek(t *testing.T) {
 	tests := []struct {
 		name           string
 		baseTime       time.Time
@@ -124,8 +124,8 @@ func TestTimePeriodCalculator_LastWeek(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewTimePeriodCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow("lastWeek")
+			calc := NewCloudwatchTimeCalculator(tt.baseTime)
+			result, err := calc.GetTimeWindow(LastWeek)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -143,7 +143,7 @@ func TestTimePeriodCalculator_LastWeek(t *testing.T) {
 	}
 }
 
-func TestTimePeriodCalculator_LastMonth(t *testing.T) {
+func TestCloudwatchTimeCalculator_LastMonth(t *testing.T) {
 	tests := []struct {
 		name           string
 		baseTime       time.Time
@@ -183,8 +183,8 @@ func TestTimePeriodCalculator_LastMonth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewTimePeriodCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow("lastMonth")
+			calc := NewCloudwatchTimeCalculator(tt.baseTime)
+			result, err := calc.GetTimeWindow(LastMonth)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -202,7 +202,7 @@ func TestTimePeriodCalculator_LastMonth(t *testing.T) {
 	}
 }
 
-func TestTimePeriodCalculator_LastYear(t *testing.T) {
+func TestCloudwatchTimeCalculator_LastYear(t *testing.T) {
 	tests := []struct {
 		name           string
 		baseTime       time.Time
@@ -242,8 +242,8 @@ func TestTimePeriodCalculator_LastYear(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewTimePeriodCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow("lastYear")
+			calc := NewCloudwatchTimeCalculator(tt.baseTime)
+			result, err := calc.GetTimeWindow(LastYear)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
