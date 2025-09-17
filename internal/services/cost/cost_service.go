@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,7 +43,6 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 	}
 
 	costInformation := types.CostInformation{
-		CostData: output.ResultsByTime,
 		CostMetadata: types.CostMetadata{
 			StartDate:   startDate,
 			EndDate:     endDate,
@@ -53,6 +50,7 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 			Tags:        tags,
 			Services:    services,
 		},
+		CostResults: output.ResultsByTime,
 	}
 
 	return costInformation, nil
@@ -106,47 +104,5 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 				Key:  aws.String("USAGE_TYPE"),
 			},
 		},
-	}
-}
-
-func (cs *CostService) processCostExplorerOutput(output *costexplorer.GetCostAndUsageOutput) types.CostData {
-	var costs []types.Cost
-
-	for _, result := range output.ResultsByTime {
-		for _, group := range result.Groups {
-			cost, err := strconv.ParseFloat(*group.Metrics["UnblendedCost"].Amount, 64)
-			if err != nil {
-				slog.Error("Failed to parse cost amount", "error", err)
-				continue
-			}
-
-			// Extract service and usage type from group keys
-			// Keys[0] should be SERVICE, Keys[1] should be USAGE_TYPE
-			service := ""
-			usageType := ""
-			if len(group.Keys) >= 2 {
-				service = group.Keys[0]
-				usageType = group.Keys[1]
-			} else if len(group.Keys) == 1 {
-				usageType = group.Keys[0]
-			}
-
-			// Multiply cost by 2 if usage type contains "DataTransfer-Regional-Bytes"
-			if strings.Contains(usageType, "DataTransfer-Regional-Bytes") {
-				usageType = usageType + " (cross AZ data transfer)"
-			}
-
-			costs = append(costs, types.Cost{
-				TimePeriodStart: *result.TimePeriod.Start,
-				TimePeriodEnd:   *result.TimePeriod.End,
-				Service:         service,
-				UsageType:       usageType,
-				Cost:            cost,
-			})
-		}
-	}
-
-	return types.CostData{
-		Costs: costs,
 	}
 }

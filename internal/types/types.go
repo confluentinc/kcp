@@ -10,6 +10,7 @@ import (
 	"time"
 
 	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -136,7 +137,6 @@ type KcpBuildInfo struct {
 	Date    string `json:"date"`
 }
 
-// -- new stuff --
 type Discovery struct {
 	Regions      []DiscoveredRegion `json:"regions"`
 	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
@@ -195,26 +195,11 @@ type DiscoveredRegion struct {
 
 type DiscoveredCluster struct {
 	Name                        string                      `json:"name"`
-	ClusterMetricsV2            ClusterMetrics          `json:"metrics"`
+	ClusterMetrics            ClusterMetrics          `json:"metrics"`
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
 }
 
-type ClusterMetrics struct {
-	MetricMetadata MetricMetadata                     `json:"metadata"`
-	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
-}
-
-type MetricMetadata struct {
-	ClusterType          string `json:"cluster_type"`
-	FollowerFetching     bool   `json:"follower_fetching"`
-	BrokerAzDistribution string `json:"broker_az_distribution"`
-	KafkaVersion         string `json:"kafka_version"`
-	EnhancedMonitoring   string `json:"enhanced_monitoring"`
-	StartWindowDate      string `json:"start_window_date"`
-	EndWindowDate        string `json:"end_window_date"`
-	Period               int32  `json:"period"`
-}
 
 type AWSClientInformation struct {
 	MskClusterConfig     kafkatypes.Cluster                     `json:"msk_cluster_config"`
@@ -234,10 +219,47 @@ type KafkaAdminClientInformation struct {
 	Acls      []Acls `json:"acls"`
 }
 
+// ----- metrics -----
+type ClusterMetrics struct {
+	MetricMetadata MetricMetadata                     `json:"metadata"`
+	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
+}
+
+type MetricMetadata struct {
+	ClusterType          string `json:"cluster_type"`
+	FollowerFetching     bool   `json:"follower_fetching"`
+	BrokerAzDistribution string `json:"broker_az_distribution"`
+	KafkaVersion         string `json:"kafka_version"`
+	EnhancedMonitoring   string `json:"enhanced_monitoring"`
+	StartWindowDate      string `json:"start_window_date"`
+	EndWindowDate        string `json:"end_window_date"`
+	Period               int32  `json:"period"`
+}
+
 type CloudWatchTimeWindow struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Period    int32
+}
+
+// ----- costs -----
+type CostInformation struct {
+	CostMetadata CostMetadata                     `json:"metadata"`
+	CostResults  []costexplorertypes.ResultByTime `json:"results"`
+}
+
+type CostMetadata struct {
+	StartDate   time.Time           `json:"start_date"`
+	EndDate     time.Time           `json:"end_date"`
+	Granularity string              `json:"granularity"`
+	Tags        map[string][]string `json:"tags"`
+	Services    []string            `json:"services"`
+}
+
+// / todo review if we need
+type GlobalMetrics struct {
+	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
+	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }
 
 func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
