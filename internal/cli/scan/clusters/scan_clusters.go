@@ -2,6 +2,7 @@ package clusters
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/confluentinc/kcp/internal/generators/scan/clusters"
 	"github.com/confluentinc/kcp/internal/types"
@@ -12,7 +13,7 @@ import (
 )
 
 var (
-	discoverDir     string
+	stateFile     string
 	credentialsYaml string
 )
 
@@ -30,7 +31,7 @@ func NewScanClustersCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&discoverDir, "discover-dir", "", "The path to the directory where the MSK cluster discovery reports have been written to.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&credentialsYaml, "credentials-yaml", "", "The credentials YAML file used for authenticating to the MSK cluster(s).")
 	clustersCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -53,7 +54,7 @@ func NewScanClustersCmd() *cobra.Command {
 		return nil
 	})
 
-	clustersCmd.MarkFlagRequired("discover-dir")
+	clustersCmd.MarkFlagRequired("state-file")
 	clustersCmd.MarkFlagRequired("credentials-yaml")
 
 	return clustersCmd
@@ -77,7 +78,11 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	clustersScanner := clusters.NewClustersScanner(discoverDir, *credsFile)
+	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+		return fmt.Errorf("❌ state file does not exist: %s", stateFile)
+	}
+
+	clustersScanner := clusters.NewClustersScanner(stateFile, *credsFile)
 	if err := clustersScanner.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}

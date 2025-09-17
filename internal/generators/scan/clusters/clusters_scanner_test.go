@@ -123,12 +123,14 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 				return mockAdmin, nil
 			}
 
-			clusterInfo := types.ClusterInformation{
-				Cluster: kafkaTypes.Cluster{
-					ClusterType: kafkaTypes.ClusterTypeProvisioned,
-					Provisioned: &kafkaTypes.Provisioned{
-						CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
-							KafkaVersion: stringPtr("4.0.x.kraft"),
+			clusterInfo := types.DiscoveredCluster{
+				AWSClientInformation: types.AWSClientInformation{
+					MskClusterConfig: kafkaTypes.Cluster{
+						ClusterType: kafkaTypes.ClusterTypeProvisioned,
+						Provisioned: &kafkaTypes.Provisioned{
+							CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
+								KafkaVersion: stringPtr("4.0.x.kraft"),
+							},
 						},
 					},
 				},
@@ -150,23 +152,23 @@ func TestClustersScanner_ScanKafkaResources(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedClusterID, clusterInfo.ClusterID)
-			assert.Len(t, clusterInfo.Topics.Details, tt.expectedTopicCount)
-			assert.Len(t, clusterInfo.Acls, tt.expectedAclCount)
+			assert.Equal(t, tt.expectedClusterID, clusterInfo.KafkaAdminClientInformation.ClusterID)
+			assert.Len(t, clusterInfo.KafkaAdminClientInformation.Topics.Details, tt.expectedTopicCount)
+			assert.Len(t, clusterInfo.KafkaAdminClientInformation.Acls, tt.expectedAclCount)
 		})
 	}
 }
 
 func TestClustersScanner_GetKafkaVersion(t *testing.T) {
 	tests := []struct {
-		name        string
-		clusterInfo types.ClusterInformation
-		expected    string
+		name                 string
+		awsClientInformation types.AWSClientInformation
+		expected             string
 	}{
 		{
 			name: "Provisioned cluster with version",
-			clusterInfo: types.ClusterInformation{
-				Cluster: kafkaTypes.Cluster{
+			awsClientInformation: types.AWSClientInformation{
+				MskClusterConfig: kafkaTypes.Cluster{
 					ClusterType: kafkaTypes.ClusterTypeProvisioned,
 					Provisioned: &kafkaTypes.Provisioned{
 						CurrentBrokerSoftwareInfo: &kafkaTypes.BrokerSoftwareInfo{
@@ -179,8 +181,8 @@ func TestClustersScanner_GetKafkaVersion(t *testing.T) {
 		},
 		{
 			name: "Serverless cluster",
-			clusterInfo: types.ClusterInformation{
-				Cluster: kafkaTypes.Cluster{
+			awsClientInformation: types.AWSClientInformation{
+				MskClusterConfig: kafkaTypes.Cluster{
 					ClusterType: kafkaTypes.ClusterTypeServerless,
 				},
 			},
@@ -188,9 +190,9 @@ func TestClustersScanner_GetKafkaVersion(t *testing.T) {
 		},
 		{
 			name: "Unknown cluster type",
-			clusterInfo: types.ClusterInformation{
-				Cluster: kafkaTypes.Cluster{
-					ClusterType: "unknown",
+			awsClientInformation: types.AWSClientInformation{
+				MskClusterConfig: kafkaTypes.Cluster{
+					ClusterType: "5.5.0",
 				},
 			},
 			expected: "4.0.0",
@@ -200,7 +202,7 @@ func TestClustersScanner_GetKafkaVersion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			kafkaService := &kafkaservice.KafkaService{}
-			result := kafkaService.GetKafkaVersion(&tt.clusterInfo)
+			result := kafkaService.GetKafkaVersion(tt.awsClientInformation)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
