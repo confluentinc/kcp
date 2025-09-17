@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
@@ -133,7 +133,7 @@ type KcpBuildInfo struct {
 	Date    string `json:"date"`
 }
 
-// new types for discover v2
+// -- new stuff --
 type Discovery struct {
 	Regions      []DiscoveredRegion `json:"regions"`
 	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
@@ -171,33 +171,25 @@ type DiscoveredRegion struct {
 
 type DiscoveredCluster struct {
 	Name                       string                     `json:"name"`
-	ClusterMetricsV2           ClusterMetricsV2           `json:"metrics"`
+	ClusterMetricsV2           ClusterMetrics         `json:"metrics"`
 	AWSClientInformation       AWSClientInformation       `json:"aws_client_information"`
 	KafkAdminClientInformation KafkAdminClientInformation `json:"kafk_admin_client_information"`
 }
 
-type MetricInformation struct {
-	BrokerAZDistribution  *string               `json:"broker_az_distribution"`
-	KafkaVersion          *string               `json:"kafka_version"`
-	EnhancedMonitoring    *string               `json:"enhanced_monitoring"`
-	StartDate             time.Time             `json:"start_date"`
-	EndDate               time.Time             `json:"end_date"`
-	NodesMetrics          []NodeMetrics         `json:"nodes"`
-	GlobalMetrics         GlobalMetrics         `json:"global_metrics"`
-	ClusterMetricsSummary ClusterMetricsSummary `json:"cluster_metrics_summary"`
+type ClusterMetrics struct {
+	MetricMetadata MetricMetadata                     `json:"metadata"`
+	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
 }
 
-type CostInformation struct {
-	CostData     []costexplorertypes.ResultByTime `json:"data"`
-	CostMetadata CostMetadata                     `json:"metadata"`
-}
-
-type CostMetadata struct {
-	StartDate   time.Time           `json:"start_date"`
-	EndDate     time.Time           `json:"end_date"`
-	Granularity string              `json:"granularity"`
-	Tags        map[string][]string `json:"tags"`
-	Services    []string            `json:"services"`
+type MetricMetadata struct {
+	ClusterType          string `json:"cluster_type"`
+	FollowerFetching     bool   `json:"follower_fetching"`
+	BrokerAzDistribution string `json:"broker_az_distribution"`
+	KafkaVersion         string `json:"kafka_version"`
+	EnhancedMonitoring   string `json:"enhanced_monitoring"`
+	StartWindowDate      string `json:"start_window_date"`
+	EndWindowDate        string `json:"end_window_date"`
+	Period               int32  `json:"period"`
 }
 
 type AWSClientInformation struct {

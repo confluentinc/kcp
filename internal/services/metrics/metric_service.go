@@ -32,7 +32,7 @@ func NewMetricService(client *cloudwatch.Client) *MetricService {
 }
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
-func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
+func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
 	// if err != nil {
@@ -64,7 +64,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		return nil, err
 	}
 
-	clusterMetrics := types.ClusterMetricsV2{
+	clusterMetrics := types.ClusterMetrics{
 		MetricMetadata: metricsMetadata,
 		Results:        queryResult.MetricDataResults,
 	}
@@ -73,7 +73,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 }
 
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
-func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
+func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
 	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
 	// if err != nil {
@@ -98,7 +98,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 
 	if len(topics) == 0 {
 		slog.Info("No topics found for serverless cluster", "cluster", *cluster.ClusterName)
-		return &types.ClusterMetricsV2{
+		return &types.ClusterMetrics{
 			MetricMetadata: metricsMetadata,
 			Results:        []cloudwatchtypes.MetricDataResult{},
 		}, nil
@@ -113,7 +113,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 		return nil, fmt.Errorf("failed to execute serverless metric queries: %w", err)
 	}
 
-	clusterMetrics := types.ClusterMetricsV2{
+	clusterMetrics := types.ClusterMetrics{
 		MetricMetadata: metricsMetadata,
 		Results:        queryResult.MetricDataResults,
 	}

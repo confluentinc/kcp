@@ -28,8 +28,8 @@ type ClusterDiscovererMSKService interface {
 }
 
 type ClusterDiscovererMetricService interface {
-	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error)
-	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error)
+	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error)
+	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error)
 }
 
 type ClusterDiscovererEC2Service interface {
@@ -45,9 +45,9 @@ type ClusterDiscoverer struct {
 
 func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service ClusterDiscovererEC2Service, metricService ClusterDiscovererMetricService) ClusterDiscoverer {
 	return ClusterDiscoverer{
-		mskService:     mskService,
-		ec2Service:     ec2Service,
-		metricService:  metricService,
+		mskService:    mskService,
+		ec2Service:    ec2Service,
+		metricService: metricService,
 		// todo should we inject this?
 		timePeriodCalc: NewCloudwatchTimeCalculator(time.Now()),
 	}
@@ -330,7 +330,7 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 	return subnetInfo
 }
 
-func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetricsV2, error) {
+func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
@@ -341,7 +341,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
 	}
 
-	var clusterMetric *types.ClusterMetricsV2
+	var clusterMetric *types.ClusterMetrics
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
 		// these time windows can be extracted as parameters in future
