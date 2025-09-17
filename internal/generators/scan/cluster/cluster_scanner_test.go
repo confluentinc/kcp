@@ -233,12 +233,12 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 					return &kafka.GetBootstrapBrokersOutput{
 						BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
 					}, nil
 				},
-				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+				DescribeClusterV2Func: func(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 					if tt.mockDescribeClusterError != nil {
 						return nil, tt.mockDescribeClusterError
 					}
@@ -272,7 +272,7 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 						},
 					}, nil
 				},
-				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 					if tt.mockVpcConnectionsError != nil {
 						return nil, tt.mockVpcConnectionsError
 					}
@@ -280,7 +280,7 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 						{VpcConnectionArn: aws.String("vpc-conn-1")},
 					}, nil
 				},
-				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 					if tt.mockOperationsError != nil {
 						return nil, tt.mockOperationsError
 					}
@@ -288,7 +288,7 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 						{OperationArn: aws.String("operation-1")},
 					}, nil
 				},
-				ListNodesFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+				ListNodesFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 					if tt.mockNodesError != nil {
 						return nil, tt.mockNodesError
 					}
@@ -296,13 +296,13 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 						{NodeARN: aws.String("node-1")},
 					}, nil
 				},
-				ListScramSecretsFunc: func(ctx context.Context, clusterArn *string) ([]string, error) {
+				ListScramSecretsFunc: func(ctx context.Context, clusterArn string) ([]string, error) {
 					if tt.mockScramSecretsError != nil {
 						return nil, tt.mockScramSecretsError
 					}
 					return []string{"secret-1"}, nil
 				},
-				GetClusterPolicyFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+				GetClusterPolicyFunc: func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 					if tt.mockPolicyError != nil {
 						// Check if it's a NotFoundException
 						var notFoundErr *kafkatypes.NotFoundException
@@ -321,7 +321,7 @@ func TestClusterScanner_ScanAWSResources(t *testing.T) {
 						Policy:         aws.String("test-policy"),
 					}, nil
 				},
-				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 					if tt.mockCompatibleVersionsError != nil {
 						return nil, tt.mockCompatibleVersionsError
 					}
@@ -464,7 +464,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		{
 			name: "handles large number of topics",
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1":  {
+				"topic1": {
 					NumPartitions:     1,
 					ReplicationFactor: 1,
 					ConfigEntries: map[string]*string{
@@ -474,7 +474,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("1"),
 					},
 				},
-				"topic2":  {
+				"topic2": {
 					NumPartitions:     2,
 					ReplicationFactor: 2,
 					ConfigEntries: map[string]*string{
@@ -484,7 +484,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("2"),
 					},
 				},
-				"topic3":  {
+				"topic3": {
 					NumPartitions:     3,
 					ReplicationFactor: 3,
 					ConfigEntries: map[string]*string{
@@ -494,7 +494,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("3"),
 					},
 				},
-				"topic4":  {
+				"topic4": {
 					NumPartitions:     4,
 					ReplicationFactor: 4,
 					ConfigEntries: map[string]*string{
@@ -504,7 +504,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("4"),
 					},
 				},
-				"topic5":  {
+				"topic5": {
 					NumPartitions:     5,
 					ReplicationFactor: 5,
 					ConfigEntries: map[string]*string{
@@ -514,7 +514,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("5"),
 					},
 				},
-				"topic6":  {
+				"topic6": {
 					NumPartitions:     6,
 					ReplicationFactor: 6,
 					ConfigEntries: map[string]*string{
@@ -524,7 +524,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("6"),
 					},
 				},
-				"topic7":  {
+				"topic7": {
 					NumPartitions:     7,
 					ReplicationFactor: 7,
 					ConfigEntries: map[string]*string{
@@ -534,7 +534,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("7"),
 					},
 				},
-				"topic8":  {
+				"topic8": {
 					NumPartitions:     8,
 					ReplicationFactor: 8,
 					ConfigEntries: map[string]*string{
@@ -544,7 +544,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("8"),
 					},
 				},
-				"topic9":  {
+				"topic9": {
 					NumPartitions:     9,
 					ReplicationFactor: 9,
 					ConfigEntries: map[string]*string{
@@ -961,25 +961,25 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 			}
 
 			mockMSKService := &mocks.MockMSKService{
-				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 					return tt.mockBootstrapBrokersOutput, tt.mockBootstrapBrokersError
 				},
-				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+				DescribeClusterV2Func: func(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 					return tt.mockDescribeClusterOutput, tt.mockDescribeClusterError
 				},
-				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 					return []kafkatypes.ClientVpcConnection{}, nil
 				},
-				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 					return []kafkatypes.ClusterOperationV2Summary{}, nil
 				},
-				ListNodesFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+				ListNodesFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 					return []kafkatypes.NodeInfo{}, nil
 				},
-				ListScramSecretsFunc: func(ctx context.Context, clusterArn *string) ([]string, error) {
+				ListScramSecretsFunc: func(ctx context.Context, clusterArn string) ([]string, error) {
 					return []string{}, nil
 				},
-				GetClusterPolicyFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+				GetClusterPolicyFunc: func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 					if tt.mockPolicyError != nil {
 						// Check if it's a NotFoundException
 						var notFoundErr *kafkatypes.NotFoundException
@@ -995,7 +995,7 @@ func TestClusterScanner_ScanCluster(t *testing.T) {
 					}
 					return &kafka.GetClusterPolicyOutput{}, nil
 				},
-				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 					if tt.mockCompatibleVersionsError != nil {
 						return nil, tt.mockCompatibleVersionsError
 					}
@@ -1190,7 +1190,7 @@ func TestClusterScanner_Run(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 					if tt.mockMSKError != nil {
 						return nil, tt.mockMSKError
 					}
@@ -1198,7 +1198,7 @@ func TestClusterScanner_Run(t *testing.T) {
 						BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
 					}, nil
 				},
-				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+				DescribeClusterV2Func: func(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 					if tt.mockMSKOutput == nil || len(tt.mockMSKOutput.ClusterInfoList) == 0 {
 						return &kafka.DescribeClusterV2Output{
 							ClusterInfo: &kafkatypes.Cluster{
@@ -1260,22 +1260,22 @@ func TestClusterScanner_Run(t *testing.T) {
 						},
 					}, nil
 				},
-				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 					return []kafkatypes.ClientVpcConnection{}, nil
 				},
-				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 					return []kafkatypes.ClusterOperationV2Summary{}, nil
 				},
-				ListNodesFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+				ListNodesFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 					return []kafkatypes.NodeInfo{}, nil
 				},
-				ListScramSecretsFunc: func(ctx context.Context, clusterArn *string) ([]string, error) {
+				ListScramSecretsFunc: func(ctx context.Context, clusterArn string) ([]string, error) {
 					return []string{}, nil
 				},
-				GetClusterPolicyFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+				GetClusterPolicyFunc: func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 					return &kafka.GetClusterPolicyOutput{}, nil
 				},
-				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 					return &kafka.GetCompatibleKafkaVersionsOutput{}, nil
 				},
 			}
@@ -1395,7 +1395,7 @@ func TestClusterScanner_ScanClusterVpcConnections(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 					if tt.mockError != nil {
 						return nil, tt.mockError
 					}
@@ -1410,7 +1410,7 @@ func TestClusterScanner_ScanClusterVpcConnections(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.scanClusterVpcConnections(context.Background(), aws.String("test-cluster-arn"))
+			result, err := clusterScanner.scanClusterVpcConnections(context.Background(), "test-cluster-arn")
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -1487,7 +1487,7 @@ func TestClusterScanner_ScanClusterOperations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 					if tt.mockError != nil {
 						return nil, tt.mockError
 					}
@@ -1502,7 +1502,7 @@ func TestClusterScanner_ScanClusterOperations(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.scanClusterOperations(context.Background(), aws.String("test-cluster-arn"))
+			result, err := clusterScanner.scanClusterOperations(context.Background(), "test-cluster-arn")
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -1588,7 +1588,7 @@ func TestClusterScanner_ScanClusterNodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				ListNodesFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+				ListNodesFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 					if tt.mockError != nil {
 						return nil, tt.mockError
 					}
@@ -1603,7 +1603,7 @@ func TestClusterScanner_ScanClusterNodes(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.scanClusterNodes(context.Background(), aws.String("test-cluster-arn"))
+			result, err := clusterScanner.scanClusterNodes(context.Background(), "test-cluster-arn")
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -1680,7 +1680,7 @@ func TestClusterScanner_ScanClusterScramSecrets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				ListScramSecretsFunc: func(ctx context.Context, clusterArn *string) ([]string, error) {
+				ListScramSecretsFunc: func(ctx context.Context, clusterArn string) ([]string, error) {
 					if tt.mockError != nil {
 						return nil, tt.mockError
 					}
@@ -1695,7 +1695,7 @@ func TestClusterScanner_ScanClusterScramSecrets(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.scanClusterScramSecrets(context.Background(), aws.String("test-cluster-arn"))
+			result, err := clusterScanner.scanClusterScramSecrets(context.Background(), "test-cluster-arn")
 
 			if tt.wantError != "" {
 				require.Error(t, err)
@@ -1920,7 +1920,7 @@ func TestClusterScanner_GetClusterPolicy_ErrorHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				GetClusterPolicyFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+				GetClusterPolicyFunc: func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 					if tt.mockError != nil {
 						return nil, tt.mockError
 					}
@@ -1932,7 +1932,7 @@ func TestClusterScanner_GetClusterPolicy_ErrorHandling(t *testing.T) {
 			}
 
 			clusterScanner := newTestClusterScanner("test-cluster-arn", defaultRegion, mockMSKService, newMockEC2Service(), nil, false)
-			result, err := clusterScanner.getClusterPolicy(context.Background(), aws.String("test-cluster-arn"))
+			result, err := clusterScanner.getClusterPolicy(context.Background(), "test-cluster-arn")
 
 			if tt.wantError {
 				assert.Error(t, err)
@@ -2053,12 +2053,12 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockMSKService := &mocks.MockMSKService{
-				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 					return &kafka.GetBootstrapBrokersOutput{
 						BootstrapBrokerStringSaslIam: aws.String("broker1:9098"),
 					}, nil
 				},
-				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+				DescribeClusterV2Func: func(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 					return &kafka.DescribeClusterV2Output{
 						ClusterInfo: &kafkatypes.Cluster{
 							ClusterName: aws.String("test-cluster"),
@@ -2089,19 +2089,19 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 						},
 					}, nil
 				},
-				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 					return []kafkatypes.ClientVpcConnection{}, nil
 				},
-				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 					return []kafkatypes.ClusterOperationV2Summary{}, nil
 				},
-				ListNodesFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+				ListNodesFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 					return []kafkatypes.NodeInfo{}, nil
 				},
-				ListScramSecretsFunc: func(ctx context.Context, clusterArn *string) ([]string, error) {
+				ListScramSecretsFunc: func(ctx context.Context, clusterArn string) ([]string, error) {
 					return []string{}, nil
 				},
-				GetClusterPolicyFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+				GetClusterPolicyFunc: func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 					if tt.policyError != nil {
 						return nil, tt.policyError
 					}
@@ -2110,7 +2110,7 @@ func TestClusterScanner_GetClusterPolicy_FixIntegration(t *testing.T) {
 						Policy:         aws.String("test-policy"),
 					}, nil
 				},
-				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 					return &kafka.GetCompatibleKafkaVersionsOutput{}, nil
 				},
 			}
@@ -2165,12 +2165,12 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 			adminCreated := false
 
 			mockMSKService := &mocks.MockMSKService{
-				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+				GetBootstrapBrokersFunc: func(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 					return &kafka.GetBootstrapBrokersOutput{
 						BootstrapBrokerStringSaslIam: aws.String("broker1:9098,broker2:9098"),
 					}, nil
 				},
-				DescribeClusterV2Func: func(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+				DescribeClusterV2Func: func(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 					return &kafka.DescribeClusterV2Output{
 						ClusterInfo: &kafkatypes.Cluster{
 							ClusterName: aws.String("test-cluster"),
@@ -2201,31 +2201,31 @@ func TestClusterScanner_SkipKafka(t *testing.T) {
 						},
 					}, nil
 				},
-				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+				ListClientVpcConnectionsFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 					return []kafkatypes.ClientVpcConnection{
 						{VpcConnectionArn: aws.String("vpc-conn-1")},
 					}, nil
 				},
-				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+				ListClusterOperationsV2Func: func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 					return []kafkatypes.ClusterOperationV2Summary{
 						{OperationArn: aws.String("operation-1")},
 					}, nil
 				},
-				ListNodesFunc: func(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+				ListNodesFunc: func(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 					return []kafkatypes.NodeInfo{
 						{NodeARN: aws.String("node-1")},
 					}, nil
 				},
-				ListScramSecretsFunc: func(ctx context.Context, clusterArn *string) ([]string, error) {
+				ListScramSecretsFunc: func(ctx context.Context, clusterArn string) ([]string, error) {
 					return []string{"secret-1"}, nil
 				},
-				GetClusterPolicyFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+				GetClusterPolicyFunc: func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 					return &kafka.GetClusterPolicyOutput{
 						CurrentVersion: aws.String("v1"),
 						Policy:         aws.String("test-policy"),
 					}, nil
 				},
-				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+				GetCompatibleKafkaVersionsFunc: func(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 					return &kafka.GetCompatibleKafkaVersionsOutput{
 						CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{
 							{

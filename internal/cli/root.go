@@ -11,7 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/cli/create_asset"
-	"github.com/confluentinc/kcp/internal/cli/discover_v2"
+	"github.com/confluentinc/kcp/internal/cli/discover"
 	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
 	"github.com/confluentinc/kcp/internal/cli/scan"
@@ -55,8 +55,7 @@ func init() {
 		create_asset.NewCreateAssetCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
-		// discover.NewDiscoverCmd(),
-		discover_v2.NewDiscoverV2Cmd(),
+		discover.NewDiscoverCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
 	)
@@ -82,7 +81,7 @@ func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
 		return true
 	})
 
-	h.l.Printf("%s %s %s %s", time, level, message, strings.Join(values, " "))	
+	h.l.Printf("%s %s %s %s", time, level, message, strings.Join(values, " "))
 
 	return nil
 }
