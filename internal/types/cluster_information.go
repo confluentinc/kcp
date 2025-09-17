@@ -46,7 +46,7 @@ type ClusterInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
-	Topics               []string                               `json:"topics"`
+	Topics               Topics                                 `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
 }
 
@@ -123,6 +123,49 @@ func (c *ClusterInformation) GetBootstrapBrokersForAuthType(authType AuthType) (
 		}
 	}
 	return addresses, nil
+}
+
+func (c *ClusterInformation) CalculateTopicSummary() TopicSummary {
+	return CalculateTopicSummaryFromDetails(c.Topics.Details)
+}
+
+func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
+	summary := TopicSummary{}
+
+	for _, topic := range topicDetails {
+		isInternal := strings.HasPrefix(topic.Name, "__")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
+
+		if isInternal {
+			summary.InternalTopics++
+			summary.TotalInternalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactInternalTopics++
+				summary.CompactInternalPartitions += topic.Partitions
+			}
+		} else {
+			summary.Topics++
+			summary.TotalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactTopics++
+				summary.CompactPartitions += topic.Partitions
+			}
+		}
+	}
+
+	return summary
+}
+
+func (c *ClusterInformation) SetTopics(topicDetails []TopicDetails) {
+	c.Topics = Topics{
+		Details: topicDetails,
+		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
 }
 
 func (c *ClusterInformation) GetJsonPath() string {
@@ -255,7 +298,7 @@ func (c *ClusterInformation) AsMarkdown() *markdown.Markdown {
 	}
 
 	// Topics section
-	if len(c.Topics) > 0 {
+	if len(c.Topics.Details) > 0 {
 		md.AddHeading("Kafka Topics", 2)
 		c.addTopicsSection(md)
 	}
@@ -285,7 +328,7 @@ func (c *ClusterInformation) addSummarySection(md *markdown.Markdown) {
 		fmt.Sprintf("**Cluster Type:** %s", string(c.Cluster.ClusterType)),
 		fmt.Sprintf("**Status:** %s", string(c.Cluster.State)),
 		fmt.Sprintf("**Region:** %s", c.Region),
-		fmt.Sprintf("**Topics:** %d", len(c.Topics)),
+		fmt.Sprintf("**Topics:** %d", len(c.Topics.Details)),
 		fmt.Sprintf("**ACLs:** %d", len(c.Acls)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(c.ClientVpcConnections)),
 		fmt.Sprintf("**VPC ID:** %s", aws.ToString(&c.ClusterNetworking.VpcId)),
@@ -559,9 +602,52 @@ func (c *ClusterInformation) addCompatibleVersionsSection(md *markdown.Markdown)
 	md.AddTable(headers, tableData)
 }
 
-// addTopicsSection adds Kafka topics list
+// addTopicsSection adds Kafka topics table
 func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
-	md.AddList(c.Topics)
+	if len(c.Topics.Details) == 0 {
+		md.AddParagraph("No topics found.")
+		return
+	}
+
+	topicSummaryHeaders := []string{"Topics", "Partitions", "Internal Topics", "Internal Partitions", "Compact Topics", "Compact Partitions", "Compact Internal Topics", "Compact Internal Partitions"}
+	topicSummaryData := [][]string{
+		{
+			fmt.Sprintf("%d", c.Topics.Summary.Topics),
+			fmt.Sprintf("%d", c.Topics.Summary.TotalPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.InternalTopics),
+			fmt.Sprintf("%d", c.Topics.Summary.TotalInternalPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactTopics),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalTopics),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalPartitions),
+		},
+	}
+
+	md.AddTable(topicSummaryHeaders, topicSummaryData)
+
+	if c.Topics.Summary.InternalTopics > 0 {
+		md.AddParagraph(fmt.Sprintf("**Note:** %d internal topics, starting with the '__' prefix, are hidden from this table.", c.Topics.Summary.InternalTopics))
+	}
+
+	headers := []string{"Topic Name", "Partitions", "Replication Factor", "Cleanup Policy", "Local Retention (ms)", "Retention (ms)", "Min Insync Replicas"}
+
+	var tableData [][]string
+	for _, topic := range c.Topics.Details {
+		if !strings.HasPrefix(topic.Name, "__") {
+			row := []string{
+				topic.Name,
+				fmt.Sprintf("%d", topic.Partitions),
+				fmt.Sprintf("%d", topic.ReplicationFactor),
+				aws.ToString(topic.Configurations["cleanup.policy"]),
+				aws.ToString(topic.Configurations["local.retention.ms"]),
+				aws.ToString(topic.Configurations["retention.ms"]),
+				aws.ToString(topic.Configurations["min.insync.replicas"]),
+			}
+			tableData = append(tableData, row)
+		}
+	}
+
+	md.AddTable(headers, tableData)
 }
 
 // addAclsSection adds Kafka ACLs in a table format

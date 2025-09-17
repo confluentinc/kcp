@@ -38,7 +38,6 @@ type ClusterMetrics struct {
 	ClusterName           string                `json:"cluster_name"`
 	ClusterType           string                `json:"cluster_type"`
 	BrokerAZDistribution  *string               `json:"broker_az_distribution"`
-	Authentication        map[string]any        `json:"authentication"`
 	KafkaVersion          *string               `json:"kafka_version"`
 	EnhancedMonitoring    *string               `json:"enhanced_monitoring"`
 	StartDate             time.Time             `json:"start_date"`

@@ -58,3 +58,6 @@ kcp-scan*
 dist/
 
 local/
+
+*.log
+*.log.gz

@@ -72,7 +72,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 	if err != nil {
 		return err
 	}
-	clusterInfo.Topics = topics
+	clusterInfo.SetTopics(topics)
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
@@ -89,17 +89,29 @@ func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation
 }
 
 // scanClusterTopics scans for topics in the Kafka cluster
-func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]string, error) {
+func (ks *KafkaService) ScanClusterTopics(admin client.KafkaAdmin) ([]types.TopicDetails, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
-	topics, err := admin.ListTopics()
+	topics, err := admin.ListTopicsWithConfigs()
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list topics: %v", err)
+		return nil, fmt.Errorf("❌ Failed to list topics with configs: %v", err)
 	}
 
-	topicList := make([]string, 0, len(topics))
-	for topic := range topics {
-		topicList = append(topicList, topic)
+	var topicList []types.TopicDetails
+	for topicName, topic := range topics {
+		configurations := make(map[string]*string)
+		for key, valuePtr := range topic.ConfigEntries {
+			if valuePtr != nil {
+				configurations[key] = valuePtr
+			}
+		}
+
+		topicList = append(topicList, types.TopicDetails{
+			Name:              topicName,
+			Partitions:        int(topic.NumPartitions),
+			ReplicationFactor: int(topic.ReplicationFactor),
+			Configurations:    configurations,
+		})
 	}
 
 	return topicList, nil
