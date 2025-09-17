@@ -254,55 +254,54 @@ func TestKafkaService_ScanKafkaResources_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "No SASL/IAM brokers found in the cluster")
 }
 
-// func TestKafkaService_getKafkaVersion(t *testing.T) {
-// 	service := &KafkaService{}
+func TestClustersScanner_GetKafkaVersion(t *testing.T) {
+	tests := []struct {
+		name                 string
+		awsClientInformation types.AWSClientInformation
+		expected             string
+	}{
+		{
+			name: "Provisioned cluster with version",
+			awsClientInformation: types.AWSClientInformation{
+				MskClusterConfig: kafkatypes.Cluster{
+					ClusterType: kafkatypes.ClusterTypeProvisioned,
+					Provisioned: &kafkatypes.Provisioned{
+						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+							KafkaVersion: stringPtr("2.8.1"),
+						},
+					},
+				},
+			},
+			expected: "2.8.1",
+		},
+		{
+			name: "Serverless cluster",
+			awsClientInformation: types.AWSClientInformation{
+				MskClusterConfig: kafkatypes.Cluster{
+					ClusterType: kafkatypes.ClusterTypeServerless,
+				},
+			},
+			expected: "4.0.0",
+		},
+		{
+			name: "Unknown cluster type",
+			awsClientInformation: types.AWSClientInformation{
+				MskClusterConfig: kafkatypes.Cluster{
+					ClusterType: "5.5.0",
+				},
+			},
+			expected: "4.0.0",
+		},
+	}
 
-// 	tests := []struct {
-// 		name        string
-// 		clusterInfo *types.ClusterInformation
-// 		expected    string
-// 	}{
-// 		{
-// 			name: "Provisioned cluster with version",
-// 			clusterInfo: &types.ClusterInformation{
-// 				Cluster: kafkatypes.Cluster{
-// 					ClusterType: kafkatypes.ClusterTypeProvisioned,
-// 					Provisioned: &kafkatypes.Provisioned{
-// 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-// 							KafkaVersion: stringPtr("2.8.1"),
-// 						},
-// 					},
-// 				},
-// 			},
-// 			expected: "2.8.1", // Assuming utils.ConvertKafkaVersion returns the same value
-// 		},
-// 		{
-// 			name: "Serverless cluster",
-// 			clusterInfo: &types.ClusterInformation{
-// 				Cluster: kafkatypes.Cluster{
-// 					ClusterType: kafkatypes.ClusterTypeServerless,
-// 				},
-// 			},
-// 			expected: "4.0.0",
-// 		},
-// 		{
-// 			name: "Unknown cluster type",
-// 			clusterInfo: &types.ClusterInformation{
-// 				Cluster: kafkatypes.Cluster{
-// 					ClusterType: "unknown",
-// 				},
-// 			},
-// 			expected: "4.0.0",
-// 		},
-// 	}
-
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			result := service.GetKafkaVersion(tt.clusterInfo)
-// 			assert.Equal(t, tt.expected, result)
-// 		})
-// 	}
-// }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kafkaService := &KafkaService{}
+			result := kafkaService.GetKafkaVersion(tt.awsClientInformation)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
 
 // Helper function to create string pointers
 func stringPtr(s string) *string {
