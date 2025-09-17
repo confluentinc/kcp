@@ -224,6 +224,8 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string) (
 	return secrets, nil
 }
 
+
+// definitely used
 func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
 	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
 
@@ -253,36 +255,7 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 	return clusterInfoList, nil
 }
 
-func (ms *MSKService) ListClustersNEW(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
-	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
-
-	var nextToken *string
-
-	var clusterInfoList []kafkatypes.Cluster
-
-	for {
-		listClustersOutput, err := ms.client.ListClustersV2(ctx, &kafka.ListClustersV2Input{
-			MaxResults: &maxResults,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("❌ Failed to list clusters: %v", err)
-		}
-
-		clusterInfoList = append(clusterInfoList, listClustersOutput.ClusterInfoList...)
-
-		if listClustersOutput.NextToken == nil {
-			break
-		}
-		nextToken = listClustersOutput.NextToken
-	}
-
-	slog.Info("✨ found clusters", "count", len(clusterInfoList))
-
-	return clusterInfoList, nil
-}
-
-func (ms *MSKService) GetConfigurationsNEW(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
+func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
 	var configurations []kafka.DescribeConfigurationRevisionOutput
 	var nextToken *string
 	maxResults = int32(100)

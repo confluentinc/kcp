@@ -10,8 +10,8 @@ import (
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
-	"github.com/confluentinc/kcp/internal/services/metrics_v2"
-	"github.com/confluentinc/kcp/internal/services/msk_v2"
+	"github.com/confluentinc/kcp/internal/services/metrics"
+	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -50,7 +50,7 @@ func (d *Discoverer) discoverRegions() error {
 			slog.Error("failed to create msk client", "region", region, "error", err)
 			continue
 		}
-		mskService := msk_v2.NewMSKServiceV2(mskClient)
+		mskService := msk.NewMSKService(mskClient)
 
 		costExplorerClient, err := client.NewCostExplorerClient(region)
 		if err != nil {
@@ -64,7 +64,7 @@ func (d *Discoverer) discoverRegions() error {
 			slog.Error("failed to create cloudwatch client", "region", region, "error", err)
 			continue
 		}
-		metricService := metrics_v2.NewMetricServiceV2(cloudWatchClient)
+		metricService := metrics.NewMetricService(cloudWatchClient)
 
 		ec2Service, err := ec2.NewEC2Service(region)
 		if err != nil {
@@ -135,7 +135,7 @@ func (d *Discoverer) discoverRegions() error {
 	return nil
 }
 
-func (d *Discoverer) captureCredentialOptions(mskService *msk_v2.MSKServiceV2, region string) (*types.RegionEntry, error) {
+func (d *Discoverer) captureCredentialOptions(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
 	// Get basic cluster info for credential generation
 	clusters, err := mskService.ListClusters(context.Background(), 100)
 	if err != nil {

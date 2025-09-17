@@ -1,4 +1,4 @@
-package metrics_v2
+package metrics
 
 import (
 	"context"
@@ -23,16 +23,16 @@ var Metrics = []string{
 	"RemoteLogSizeBytes",
 }
 
-type MetricServiceV2 struct {
+type MetricService struct {
 	client *cloudwatch.Client
 }
 
-func NewMetricServiceV2(client *cloudwatch.Client) *MetricServiceV2 {
-	return &MetricServiceV2{client: client}
+func NewMetricService(client *cloudwatch.Client) *MetricService {
+	return &MetricService{client: client}
 }
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
-func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
+func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
 	// if err != nil {
@@ -73,7 +73,7 @@ func (ms *MetricServiceV2) ProcessProvisionedCluster(ctx context.Context, cluste
 }
 
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
-func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
+func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetricsV2, error) {
 	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
 	// if err != nil {
@@ -123,7 +123,7 @@ func (ms *MetricServiceV2) ProcessServerlessCluster(ctx context.Context, cluster
 
 // Private Helper Functions - Query Building
 
-func (ms *MetricServiceV2) buildMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+func (ms *MetricService) buildMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for metricIndex, metricName := range Metrics {
@@ -171,7 +171,7 @@ func (ms *MetricServiceV2) buildMetricQueries(brokers int, clusterName string, p
 	return queries
 }
 
-func (ms *MetricServiceV2) buildServerlessMetricQueries(topics []string, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+func (ms *MetricService) buildServerlessMetricQueries(topics []string, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for metricIndex, metricName := range Metrics {
@@ -221,7 +221,7 @@ func (ms *MetricServiceV2) buildServerlessMetricQueries(topics []string, cluster
 
 // Private Helper Functions - Query Execution
 
-func (ms *MetricServiceV2) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
+func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
 	input := &cloudwatch.GetMetricDataInput{
 		MetricDataQueries: queries,
 		StartTime:         aws.Time(startTime),
@@ -238,7 +238,7 @@ func (ms *MetricServiceV2) executeMetricQuery(ctx context.Context, queries []clo
 
 // Private Helper Functions - Topic Discovery
 
-func (ms *MetricServiceV2) getTopicsForCluster(ctx context.Context, clusterName string) ([]string, error) {
+func (ms *MetricService) getTopicsForCluster(ctx context.Context, clusterName string) ([]string, error) {
 	topics := make(map[string]struct{})
 
 	// Use BytesInPerSec as a representative metric to find all topics
