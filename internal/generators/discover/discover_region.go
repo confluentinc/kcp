@@ -1,4 +1,4 @@
-package discover_v2
+package discover
 
 import (
 	"context"
@@ -21,7 +21,7 @@ type RegionDiscovererMSKService interface {
 }
 
 type RegionDiscovererCostService interface {
-	GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error)
+	GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.CostInformation, error)
 }
 
 type RegionDiscoverer struct {
@@ -83,22 +83,11 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 	endDate := time.Now()
 	granularity := costexplorertypes.GranularityMonthly
 
-	regionCosts, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, granularity, tagsMap)
+	costInformation, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, granularity, tagsMap)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get AWS costs: %v", err)
 	}
 
-	costMetadata := types.CostMetadata{
-		StartDate:   startDate,
-		EndDate:     endDate,
-		Granularity: string(granularity),
-		Tags:        tagsMap,
-		Services:    regionCosts.Services,
-	}
-	costInformation := types.CostInformation{
-		CostData:     regionCosts.CostData.Costs,
-		CostMetadata: costMetadata,
-	}
 	return &costInformation, nil
 }
 

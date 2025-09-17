@@ -3,13 +3,7 @@ package scan
 import (
 	"github.com/confluentinc/kcp/internal/cli/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/cli/scan/clusters"
-	"github.com/confluentinc/kcp/internal/cli/scan/region"
 	"github.com/spf13/cobra"
-)
-
-var (
-	clusterCmd *cobra.Command
-	regionCmd  *cobra.Command
 )
 
 func NewScanCmd() *cobra.Command {
@@ -21,11 +15,7 @@ func NewScanCmd() *cobra.Command {
 		Args:          cobra.NoArgs,
 	}
 
-	// clusterCmd = cluster.NewScanClusterCmd()
-	regionCmd = region.NewScanRegionCmd()
 	scanCmd.AddCommand(
-		// cluster.NewScanClusterCmd(),
-		region.NewScanRegionCmd(),
 		client_inventory.NewScanClientInventoryCmd(),
 		clusters.NewScanClustersCmd(),
 	)

@@ -21,16 +21,6 @@ func NewMSKService(client *kafka.Client) *MSKService {
 	return &MSKService{client: client}
 }
 
-func (ms *MSKService) DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error) {
-	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
-		ClusterArn: clusterArn,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
-	}
-	return cluster.ClusterInfo, nil
-}
-
 func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 	brokers, err := ms.client.GetBootstrapBrokers(ctx, &kafka.GetBootstrapBrokersInput{
 		ClusterArn: &clusterArn,
@@ -42,7 +32,6 @@ func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string
 }
 
 func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {
-
 	if cluster.Provisioned == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn == nil ||
@@ -224,6 +213,7 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string) (
 	return secrets, nil
 }
 
+
 func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
 	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
 
@@ -253,36 +243,7 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 	return clusterInfoList, nil
 }
 
-func (ms *MSKService) ListClustersNEW(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
-	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
-
-	var nextToken *string
-
-	var clusterInfoList []kafkatypes.Cluster
-
-	for {
-		listClustersOutput, err := ms.client.ListClustersV2(ctx, &kafka.ListClustersV2Input{
-			MaxResults: &maxResults,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("❌ Failed to list clusters: %v", err)
-		}
-
-		clusterInfoList = append(clusterInfoList, listClustersOutput.ClusterInfoList...)
-
-		if listClustersOutput.NextToken == nil {
-			break
-		}
-		nextToken = listClustersOutput.NextToken
-	}
-
-	slog.Info("✨ found clusters", "count", len(clusterInfoList))
-
-	return clusterInfoList, nil
-}
-
-func (ms *MSKService) GetConfigurationsNEW(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
+func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
 	var configurations []kafka.DescribeConfigurationRevisionOutput
 	var nextToken *string
 	maxResults = int32(100)

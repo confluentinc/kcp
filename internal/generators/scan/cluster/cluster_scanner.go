@@ -38,14 +38,14 @@ type ClusterScanner struct {
 }
 
 type MSKService interface {
-	GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error)
-	GetCompatibleKafkaVersions(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
-	GetClusterPolicy(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error)
-	DescribeClusterV2(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error)
-	ListClientVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error)
-	ListClusterOperationsV2(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error)
-	ListNodes(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error)
-	ListScramSecrets(ctx context.Context, clusterArn *string) ([]string, error)
+	GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error)
+	GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
+	GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error)
+	DescribeClusterV2(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error)
+	ListClientVpcConnections(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error)
+	ListClusterOperationsV2(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error)
+	ListNodes(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error)
+	ListScramSecrets(ctx context.Context, clusterArn string) ([]string, error)
 }
 
 type EC2Service interface {
@@ -121,49 +121,49 @@ func (cs *ClusterScanner) ScanCluster(ctx context.Context) (*types.ClusterInform
 
 func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *types.ClusterInformation) error {
 
-	cluster, err := cs.describeCluster(ctx, &cs.clusterArn)
+	cluster, err := cs.describeCluster(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.Cluster = *cluster.ClusterInfo
 
-	brokers, err := cs.getBootstrapBrokers(ctx, &cs.clusterArn)
+	brokers, err := cs.getBootstrapBrokers(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.BootstrapBrokers = *brokers
 
-	connections, err := cs.scanClusterVpcConnections(ctx, &cs.clusterArn)
+	connections, err := cs.scanClusterVpcConnections(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.ClientVpcConnections = connections
 
-	operations, err := cs.scanClusterOperations(ctx, &cs.clusterArn)
+	operations, err := cs.scanClusterOperations(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.ClusterOperations = operations
 
-	nodes, err := cs.scanClusterNodes(ctx, &cs.clusterArn)
+	nodes, err := cs.scanClusterNodes(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.Nodes = nodes
 
-	scramSecrets, err := cs.scanClusterScramSecrets(ctx, &cs.clusterArn)
+	scramSecrets, err := cs.scanClusterScramSecrets(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.ScramSecrets = scramSecrets
 
-	policy, err := cs.getClusterPolicy(ctx, &cs.clusterArn)
+	policy, err := cs.getClusterPolicy(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
 	clusterInfo.Policy = *policy
 
-	versions, err := cs.getCompatibleKafkaVersions(ctx, &cs.clusterArn)
+	versions, err := cs.getCompatibleKafkaVersions(ctx, cs.clusterArn)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (cs *ClusterScanner) scanAWSResources(ctx context.Context, clusterInfo *typ
 	return nil
 }
 
-func (cs *ClusterScanner) getCompatibleKafkaVersions(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+func (cs *ClusterScanner) getCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 	slog.Info("🔍 scanning for compatible kafka versions", "clusterArn", cs.clusterArn)
 
 	versions, err := cs.mskService.GetCompatibleKafkaVersions(ctx, clusterArn)
@@ -199,7 +199,7 @@ func (cs *ClusterScanner) getCompatibleKafkaVersions(ctx context.Context, cluste
 	return versions, nil
 }
 
-func (cs *ClusterScanner) getClusterPolicy(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+func (cs *ClusterScanner) getClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 	slog.Info("🔍 scanning for cluster policy", "clusterArn", cs.clusterArn)
 
 	policy, err := cs.mskService.GetClusterPolicy(ctx, clusterArn)
@@ -215,7 +215,7 @@ func (cs *ClusterScanner) getClusterPolicy(ctx context.Context, clusterArn *stri
 	return policy, nil
 }
 
-func (cs *ClusterScanner) getBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+func (cs *ClusterScanner) getBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 	slog.Info("🔍 scanning for bootstrap brokers", "clusterArn", cs.clusterArn)
 
 	brokers, err := cs.mskService.GetBootstrapBrokers(ctx, clusterArn)
@@ -225,7 +225,7 @@ func (cs *ClusterScanner) getBootstrapBrokers(ctx context.Context, clusterArn *s
 	return brokers, nil
 }
 
-func (cs *ClusterScanner) describeCluster(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+func (cs *ClusterScanner) describeCluster(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 	slog.Info("🔍 describing cluster", "clusterArn", cs.clusterArn)
 
 	cluster, err := cs.mskService.DescribeClusterV2(ctx, clusterArn)
@@ -320,7 +320,7 @@ func (cs *ClusterScanner) createCombinedSubnetBrokerInfo(nodes []kafkatypes.Node
 	return subnetInfo
 }
 
-func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
+func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 	slog.Info("🔍 scanning for client vpc connections", "clusterArn", cs.clusterArn)
 
 	connections, err := cs.mskService.ListClientVpcConnections(ctx, clusterArn)
@@ -335,7 +335,7 @@ func (cs *ClusterScanner) scanClusterVpcConnections(ctx context.Context, cluster
 	return connections, nil
 }
 
-func (cs *ClusterScanner) scanClusterOperations(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+func (cs *ClusterScanner) scanClusterOperations(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 	slog.Info("🔍 scanning for cluster operations", "clusterArn", cs.clusterArn)
 
 	operations, err := cs.mskService.ListClusterOperationsV2(ctx, clusterArn)
@@ -345,7 +345,7 @@ func (cs *ClusterScanner) scanClusterOperations(ctx context.Context, clusterArn 
 	return operations, nil
 }
 
-func (cs *ClusterScanner) scanClusterNodes(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+func (cs *ClusterScanner) scanClusterNodes(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 	slog.Info("🔍 scanning for cluster nodes", "clusterArn", cs.clusterArn)
 
 	nodes, err := cs.mskService.ListNodes(ctx, clusterArn)
@@ -361,7 +361,7 @@ func (cs *ClusterScanner) scanClusterNodes(ctx context.Context, clusterArn *stri
 	return nodes, nil
 }
 
-func (cs *ClusterScanner) scanClusterScramSecrets(ctx context.Context, clusterArn *string) ([]string, error) {
+func (cs *ClusterScanner) scanClusterScramSecrets(ctx context.Context, clusterArn string) ([]string, error) {
 	slog.Info("🔍 scanning for cluster scram secrets", "clusterArn", cs.clusterArn)
 
 	secrets, err := cs.mskService.ListScramSecrets(ctx, clusterArn)

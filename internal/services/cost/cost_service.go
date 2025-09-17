@@ -2,10 +2,8 @@ package cost
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +24,7 @@ func NewCostService(client *costexplorer.Client) *CostService {
 	}
 }
 
-func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
+func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.CostInformation, error) {
 	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
 
 	startStr := aws.String(startDate.Format("2006-01-02"))
@@ -43,28 +41,21 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 
 	output, err := cs.client.GetCostAndUsage(ctx, input)
 	if err != nil {
-		return types.RegionCosts{}, fmt.Errorf("failed to get cost and usage: %v", err)
+		return types.CostInformation{}, fmt.Errorf("failed to get cost and usage: %v", err)
 	}
 
-	filename := fmt.Sprintf("%s-cost-and-usage.json", region)
-	slog.Info("💰 cost and usage", "output", filename)
-	// output
-	jsonOutput, _ := json.MarshalIndent(output, "", "  ")
-
-	if err := os.WriteFile(filename, jsonOutput, 0644); err != nil {
-		return types.RegionCosts{}, fmt.Errorf("failed to write cost and usage: %v", err)
+	costInformation := types.CostInformation{
+		CostData: output.ResultsByTime,
+		CostMetadata: types.CostMetadata{
+			StartDate:   startDate,
+			EndDate:     endDate,
+			Granularity: string(granularity),
+			Tags:        tags,
+			Services:    services,
+		},
 	}
-	slog.Info("💰 cost and usage", "output", filename)
 
-	costData := cs.processCostExplorerOutput(output)
-	regionCosts := types.NewRegionCosts(region, time.Now())
-	regionCosts.CostData = costData
-	regionCosts.StartDate = startDate
-	regionCosts.EndDate = endDate
-	regionCosts.Granularity = string(granularity)
-	regionCosts.Tags = tags
-	regionCosts.Services = services
-	return *regionCosts, nil
+	return costInformation, nil
 }
 
 func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string) *costexplorer.GetCostAndUsageInput {

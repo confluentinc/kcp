@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
@@ -340,4 +341,18 @@ func (c *RegionCosts) WriteAsCSVWithBase(baseDir string) error {
 		}
 	}
 	return nil
+}
+
+// ------ new stuff -----
+type CostInformation struct {
+	CostData     []costexplorertypes.ResultByTime `json:"data"`
+	CostMetadata CostMetadata                     `json:"metadata"`
+}
+
+type CostMetadata struct {
+	StartDate   time.Time           `json:"start_date"`
+	EndDate     time.Time           `json:"end_date"`
+	Granularity string              `json:"granularity"`
+	Tags        map[string][]string `json:"tags"`
+	Services    []string            `json:"services"`
 }

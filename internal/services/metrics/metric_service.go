@@ -11,100 +11,240 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
+
+var Metrics = []string{
+	"BytesInPerSec",
+	"BytesOutPerSec",
+	"MessagesInPerSec",
+	"KafkaDataLogsDiskUsed",
+	"RemoteLogSizeBytes",
+}
 
 type MetricService struct {
 	client *cloudwatch.Client
 }
 
 func NewMetricService(client *cloudwatch.Client) *MetricService {
-	return &MetricService{
-		client: client,
-	}
+	return &MetricService{client: client}
 }
 
-func (ms *MetricService) GetGlobalMetricForTimeRange(clusterName string, metricName string, startTime time.Time, endTime time.Time) (float64, error) {
-	slog.Info("📊 getting global metric", "cluster", clusterName, "metric", metricName)
-	metricRequest := ms.buildCloudWatchInputGlobalMetrics(clusterName, metricName, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticMaximum}, startTime, endTime)
-	response, err := ms.client.GetMetricStatistics(context.Background(), metricRequest)
+// ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
+func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
+	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	// }
+
+	// // todo how to use this?
+	// _ = globalMetrics
+
+	brokerAZDistribution := aws.String(string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution))
+	kafkaVersion := aws.ToString(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	enhancedMonitoring := string(cluster.Provisioned.EnhancedMonitoring)
+	numberOfBrokerNodes := int(*cluster.Provisioned.NumberOfBrokerNodes)
+
+	metricsMetadata := types.MetricMetadata{
+		ClusterType:          string(cluster.ClusterType),
+		BrokerAzDistribution: *brokerAZDistribution,
+		KafkaVersion:         kafkaVersion,
+		EnhancedMonitoring:   enhancedMonitoring,
+		StartWindowDate:      timeWindow.StartTime.Format(time.RFC3339),
+		EndWindowDate:        timeWindow.EndTime.Format(time.RFC3339),
+		Period:               timeWindow.Period,
+	}
+
+	queries := ms.buildMetricQueries(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
+
+	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
+		return nil, err
 	}
-	if len(response.Datapoints) == 0 {
-		slog.Info("🔍 No data points found for global metric", "cluster", clusterName, "metric", metricName)
-		return 0, nil
+
+	clusterMetrics := types.ClusterMetrics{
+		MetricMetadata: metricsMetadata,
+		Results:        queryResult.MetricDataResults,
 	}
-	slog.Info("🔍 got global metric", "cluster", clusterName, "metric", metricName, "data", response.Datapoints[0].Maximum)
-	return *response.Datapoints[0].Maximum, nil
+
+	return &clusterMetrics, nil
 }
 
-func (ms *MetricService) GetAverageBytesInPerSecForTimeRange(clusterName string, numNodes int, topic string, startTime time.Time, endTime time.Time) ([]float64, error) {
-	slog.Info("📊 getting cloudwatch bytes in per sec", "cluster", clusterName, "numNodes", numNodes, "topics", topic)
-	var results []float64
-	for i := 1; i <= numNodes; i++ {
-		metricRequest := ms.buildCloudWatchInputClusterBrokerTopic(clusterName, i, topic, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage}, startTime, endTime)
-		response, err := ms.client.GetMetricStatistics(context.Background(), metricRequest)
-		if err != nil {
-			return []float64{}, fmt.Errorf("failed to get metric statistics: %v", err)
+// ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
+func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
+	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
+	// }
+
+	// // TODO: do we want this?
+	// _ = globalMetrics
+
+	metricsMetadata := types.MetricMetadata{
+		ClusterType:     string(cluster.ClusterType),
+		StartWindowDate: timeWindow.StartTime.Format(time.RFC3339),
+		EndWindowDate:   timeWindow.EndTime.Format(time.RFC3339),
+		Period:          timeWindow.Period,
+	}
+
+	// Get all topics for this cluster
+	topics, err := ms.getTopicsForCluster(ctx, *cluster.ClusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get topics for cluster: %w", err)
+	}
+
+	if len(topics) == 0 {
+		slog.Info("No topics found for serverless cluster", "cluster", *cluster.ClusterName)
+		return &types.ClusterMetrics{
+			MetricMetadata: metricsMetadata,
+			Results:        []cloudwatchtypes.MetricDataResult{},
+		}, nil
+	}
+
+	// Build metric queries for all topics with aggregation
+	queries := ms.buildServerlessMetricQueries(topics, *cluster.ClusterName, timeWindow.Period)
+
+	// Execute the metric query
+	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute serverless metric queries: %w", err)
+	}
+
+	clusterMetrics := types.ClusterMetrics{
+		MetricMetadata: metricsMetadata,
+		Results:        queryResult.MetricDataResults,
+	}
+
+	return &clusterMetrics, nil
+}
+
+// Private Helper Functions - Query Building
+
+func (ms *MetricService) buildMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+	var queries []cloudwatchtypes.MetricDataQuery
+
+	for metricIndex, metricName := range Metrics {
+		var metricIDs []string
+
+		// brokerIDs are 1-indexed
+		for brokerID := 1; brokerID <= brokers; brokerID++ {
+			metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
+			metricIDs = append(metricIDs, metricID)
+
+			queries = append(queries, cloudwatchtypes.MetricDataQuery{
+				Id: aws.String(metricID),
+				MetricStat: &cloudwatchtypes.MetricStat{
+					Metric: &cloudwatchtypes.Metric{
+						Namespace:  aws.String("AWS/Kafka"),
+						MetricName: aws.String(metricName),
+						Dimensions: []cloudwatchtypes.Dimension{
+							{
+								Name:  aws.String("Cluster Name"),
+								Value: aws.String(clusterName),
+							},
+							{
+								Name:  aws.String("Broker ID"),
+								Value: aws.String(strconv.Itoa(brokerID)),
+							},
+						},
+					},
+					Period: aws.Int32(period),
+					Stat:   aws.String("Average"),
+				},
+				ReturnData: aws.Bool(false),
+			})
 		}
-		if len(response.Datapoints) == 0 {
-			slog.Info("🔍 No data points found for node", "node", i, "topic", topic)
-			continue
+
+		expressionID := fmt.Sprintf("e%d", metricIndex+1)
+
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id:         aws.String(expressionID),
+			Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(metricIDs, ", "))),
+			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
+			ReturnData: aws.Bool(true),
+		})
+	}
+
+	return queries
+}
+
+func (ms *MetricService) buildServerlessMetricQueries(topics []string, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+	var queries []cloudwatchtypes.MetricDataQuery
+
+	for metricIndex, metricName := range Metrics {
+		var metricIDs []string
+
+		// Create individual queries for each topic
+		for topicIndex, topic := range topics {
+			metricID := fmt.Sprintf("m_%s_topic_%d", strings.ToLower(metricName), topicIndex)
+			metricIDs = append(metricIDs, metricID)
+
+			queries = append(queries, cloudwatchtypes.MetricDataQuery{
+				Id: aws.String(metricID),
+				MetricStat: &cloudwatchtypes.MetricStat{
+					Metric: &cloudwatchtypes.Metric{
+						Namespace:  aws.String("AWS/Kafka"),
+						MetricName: aws.String(metricName),
+						Dimensions: []cloudwatchtypes.Dimension{
+							{
+								Name:  aws.String("Cluster Name"),
+								Value: aws.String(clusterName),
+							},
+							{
+								Name:  aws.String("Topic"),
+								Value: aws.String(topic),
+							},
+						},
+					},
+					Period: aws.Int32(period),
+					Stat:   aws.String("Average"),
+				},
+				ReturnData: aws.Bool(false),
+			})
 		}
-		slog.Info("🔍 got cloudwatch bytes in per sec", "node", i, "topic", topic, "data", response.Datapoints[0].Average)
-		results = append(results, *response.Datapoints[0].Average)
+
+		// Create aggregation expression that sums all topic metrics for this metric type
+		expressionID := fmt.Sprintf("e%d", metricIndex+1)
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id:         aws.String(expressionID),
+			Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(metricIDs, ", "))),
+			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
+			ReturnData: aws.Bool(true),
+		})
 	}
-	return results, nil
+
+	return queries
 }
 
-func (ms *MetricService) GetAverageMetricForTimeRange(clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) (float64, error) {
-	slog.Info("📊 getting cloudwatch average metric", "cluster", clusterName, "metric", metricName, "node", *node)
-	metricRequest := ms.buildCloudWatchInput(clusterName, metricName, node, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticAverage}, startTime, endTime)
+// Private Helper Functions - Query Execution
 
-	response, err := ms.client.GetMetricStatistics(context.Background(), metricRequest)
+func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
+	input := &cloudwatch.GetMetricDataInput{
+		MetricDataQueries: queries,
+		StartTime:         aws.Time(startTime),
+		EndTime:           aws.Time(endTime),
+	}
+
+	result, err := ms.client.GetMetricData(ctx, input)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
+		return nil, fmt.Errorf("failed to get metric data: %w", err)
 	}
-	if len(response.Datapoints) == 0 {
-		return 0, nil
-	}
-	return *response.Datapoints[0].Average, nil
+
+	return result, nil
 }
 
-func (ms *MetricService) GetPeakMetricForTimeRange(clusterName string, metricName string, node *int, startTime time.Time, endTime time.Time) (float64, error) {
-	slog.Info("📈 getting cloudwatch peak metric", "cluster", clusterName, "metric", metricName, "node", *node)
-	metricRequest := ms.buildCloudWatchInput(clusterName, metricName, node, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticMaximum}, startTime, endTime)
+// Private Helper Functions - Topic Discovery
 
-	response, err := ms.client.GetMetricStatistics(context.Background(), metricRequest)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
-	}
-	if len(response.Datapoints) == 0 {
-		return 0, nil
-	}
-	return *response.Datapoints[0].Maximum, nil
-}
-
-func (ms *MetricService) GetServerlessAverageMetric(clusterName string, metricName string, startTime time.Time, endTime time.Time) (float64, error) {
-	slog.Info("🔍 getting cloudwatch serverless average metric", "cluster", clusterName, "metric", metricName)
-	return ms.getServerlessMetric(clusterName, metricName, cloudwatchtypes.StatisticAverage, startTime, endTime)
-}
-
-func (ms *MetricService) GetServerlessPeakMetric(clusterName string, metricName string, startTime time.Time, endTime time.Time) (float64, error) {
-	slog.Info("🔍 getting cloudwatch serverless peak metric", "cluster", clusterName, "metric", metricName)
-	return ms.getServerlessMetric(clusterName, metricName, cloudwatchtypes.StatisticMaximum, startTime, endTime)
-}
-
-func (ms *MetricService) getServerlessMetric(clusterName string, metricName string, statistic cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) (float64, error) {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
-
+func (ms *MetricService) getTopicsForCluster(ctx context.Context, clusterName string) ([]string, error) {
 	topics := make(map[string]struct{})
 
+	// Use BytesInPerSec as a representative metric to find all topics
 	listMetricsInput := &cloudwatch.ListMetricsInput{
 		Namespace:  aws.String("AWS/Kafka"),
-		MetricName: aws.String(metricName),
+		MetricName: aws.String("BytesInPerSec"),
 		Dimensions: []cloudwatchtypes.DimensionFilter{
 			{
 				Name:  aws.String("Cluster Name"),
@@ -116,9 +256,9 @@ func (ms *MetricService) getServerlessMetric(clusterName string, metricName stri
 	var nextToken *string
 	for {
 		listMetricsInput.NextToken = nextToken
-		output, err := ms.client.ListMetrics(context.Background(), listMetricsInput)
+		output, err := ms.client.ListMetrics(ctx, listMetricsInput)
 		if err != nil {
-			return 0, fmt.Errorf("failed to list metrics: %v", err)
+			return nil, fmt.Errorf("failed to list metrics: %w", err)
 		}
 
 		for _, metric := range output.Metrics {
@@ -136,151 +276,97 @@ func (ms *MetricService) getServerlessMetric(clusterName string, metricName stri
 		nextToken = output.NextToken
 	}
 
-	if len(topics) == 0 {
-		slog.Info("No topics found for cluster and metric with a 'Topic' dimension", "cluster", clusterName, "metric", metricName)
-
-		return 0, nil
-	}
-
 	topicList := make([]string, 0, len(topics))
 	for topic := range topics {
 		topicList = append(topicList, topic)
 	}
 
-	aggregatedSum := 0.0
-	maxQueriesPerCall := 500
-
-	for i := 0; i < len(topicList); i += maxQueriesPerCall {
-		end := min(i+maxQueriesPerCall, len(topicList))
-
-		metricDataQueries := make([]cloudwatchtypes.MetricDataQuery, 0, end-i)
-		for j, topic := range topicList[i:end] {
-			queryID := fmt.Sprintf("query_%s_%d", strings.ToLower(strings.ReplaceAll(metricName, "-", "_")), j)
-
-			metricDataQueries = append(metricDataQueries, cloudwatchtypes.MetricDataQuery{
-				Id: aws.String(queryID),
-				MetricStat: &cloudwatchtypes.MetricStat{
-					Metric: &cloudwatchtypes.Metric{
-						Namespace:  aws.String("AWS/Kafka"),
-						MetricName: aws.String(metricName),
-						Dimensions: []cloudwatchtypes.Dimension{
-							{
-								Name:  aws.String("Cluster Name"),
-								Value: aws.String(clusterName),
-							},
-							{
-								Name:  aws.String("Topic"),
-								Value: aws.String(topic),
-							},
-						},
-					},
-					Period: aws.Int32(period),
-					Stat:   aws.String(string(statistic)),
-				},
-				ReturnData: aws.Bool(true),
-			})
-		}
-
-		input := &cloudwatch.GetMetricDataInput{
-			MetricDataQueries: metricDataQueries,
-			StartTime:         aws.Time(startTime),
-			EndTime:           aws.Time(endTime),
-			ScanBy:            cloudwatchtypes.ScanByTimestampAscending,
-		}
-
-		output, err := ms.client.GetMetricData(context.Background(), input)
-		if err != nil {
-			slog.Error("Error during get_metric_data call", "error", err)
-			continue
-		}
-
-		for _, result := range output.MetricDataResults {
-			if len(result.Values) > 0 {
-				aggregatedSum += result.Values[0]
-			}
-		}
+	slog.Info("Found topics for serverless cluster", "cluster", clusterName, "topicCount", len(topicList))
+	for _, topic := range topicList {
+		slog.Info("Topic", "topic", topic)
 	}
-
-	return aggregatedSum, nil
+	return topicList, nil
 }
 
-func (ms *MetricService) buildCloudWatchInputGlobalMetrics(clusterName, metricName string, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
+// Private Helper Functions - Global Metrics
 
-	dimensions := []cloudwatchtypes.Dimension{
-		{
-			Name:  aws.String("Cluster Name"),
-			Value: aws.String(clusterName),
-		},
-	}
+// func (ms *MetricServiceV2) getGlobalMetrics(ctx context.Context, clusterName string, startTime time.Time, endTime time.Time) (*types.GlobalMetrics, error) {
+// 	globalMetrics := types.GlobalMetrics{}
 
-	return &cloudwatch.GetMetricStatisticsInput{
-		Namespace:  aws.String("AWS/Kafka"),
-		MetricName: aws.String(metricName),
-		Dimensions: dimensions,
-		StartTime:  aws.Time(startTime),
-		EndTime:    aws.Time(endTime),
-		Period:     aws.Int32(period),
-		Statistics: statistics,
-	}
-}
+// 	globalMetricAssignments := []struct {
+// 		metricName  string
+// 		targetField *float64
+// 	}{
+// 		{"GlobalPartitionCount", &globalMetrics.GlobalPartitionCountMax},
+// 		{"GlobalTopicCount", &globalMetrics.GlobalTopicCountMax},
+// 	}
 
-func (ms *MetricService) buildCloudWatchInput(clusterName, metricName string, node *int, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
+// 	var wg sync.WaitGroup
+// 	errChan := make(chan error, len(globalMetricAssignments))
 
-	dimensions := []cloudwatchtypes.Dimension{
-		{
-			Name:  aws.String("Cluster Name"),
-			Value: aws.String(clusterName),
-		},
-		{
-			Name:  aws.String("Broker ID"),
-			Value: aws.String(strconv.Itoa(*node)),
-		},
-	}
+// 	for _, assignment := range globalMetricAssignments {
+// 		wg.Add(1)
+// 		go func(assignment struct {
+// 			metricName  string
+// 			targetField *float64
+// 		}) {
+// 			defer wg.Done()
+// 			metricValue, err := ms.getGlobalMetric(ctx, clusterName, assignment.metricName, startTime, endTime)
+// 			if err != nil {
+// 				errChan <- fmt.Errorf("failed to get metric %s: %v", assignment.metricName, err)
+// 				return
+// 			}
+// 			*assignment.targetField = metricValue
+// 		}(assignment)
+// 	}
 
-	return &cloudwatch.GetMetricStatisticsInput{
-		Namespace:  aws.String("AWS/Kafka"),
-		MetricName: aws.String(metricName),
-		Dimensions: dimensions,
-		StartTime:  aws.Time(startTime),
-		EndTime:    aws.Time(endTime),
-		Period:     aws.Int32(period),
-		Statistics: statistics,
-	}
-}
+// 	wg.Wait()
+// 	close(errChan)
 
-func (ms *MetricService) buildCloudWatchInputClusterBrokerTopic(clusterName string, node int, topic string, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
-	// Calculate period in seconds based on the time range
-	duration := endTime.Sub(startTime)
-	period := int32(duration.Seconds())
+// 	for err := range errChan {
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
 
-	dimensions := []cloudwatchtypes.Dimension{
-		{
-			Name:  aws.String("Cluster Name"),
-			Value: aws.String(clusterName),
-		},
-		{
-			Name:  aws.String("Broker ID"),
-			Value: aws.String(strconv.Itoa(node)),
-		},
-		{
-			Name:  aws.String("Topic"),
-			Value: aws.String(topic),
-		},
-	}
+// 	return &globalMetrics, nil
+// }
 
-	return &cloudwatch.GetMetricStatisticsInput{
-		Namespace:  aws.String("AWS/Kafka"),
-		MetricName: aws.String("BytesInPerSec"),
-		Dimensions: dimensions,
-		StartTime:  aws.Time(startTime),
-		EndTime:    aws.Time(endTime),
-		Period:     aws.Int32(period),
-		Statistics: statistics,
-	}
-}
+// func (ms *MetricServiceV2) getGlobalMetric(ctx context.Context, clusterName string, metricName string, startTime time.Time, endTime time.Time) (float64, error) {
+// 	slog.Info("📊 getting global metric", "cluster", clusterName, "metric", metricName)
+// 	metricRequest := ms.buildCloudWatchInputGlobalMetrics(clusterName, metricName, []cloudwatchtypes.Statistic{cloudwatchtypes.StatisticMaximum}, startTime, endTime)
+// 	response, err := ms.client.GetMetricStatistics(ctx, metricRequest)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("failed to get metric statistics: %v", err)
+// 	}
+// 	if len(response.Datapoints) == 0 {
+// 		slog.Info("🔍 No data points found for global metric", "cluster", clusterName, "metric", metricName)
+// 		return 0, nil
+// 	}
+// 	slog.Info("🔍 got global metric", "cluster", clusterName, "metric", metricName, "data", response.Datapoints[0].Maximum)
+// 	return *response.Datapoints[0].Maximum, nil
+// }
+
+// Private Helper Functions - CloudWatch Helpers
+
+// func (ms *MetricServiceV2) buildCloudWatchInputGlobalMetrics(clusterName, metricName string, statistics []cloudwatchtypes.Statistic, startTime time.Time, endTime time.Time) *cloudwatch.GetMetricStatisticsInput {
+// 	// Use monthly period for consistent monthly data points
+// 	period := int32(DailyPeriodSeconds)
+
+// 	dimensions := []cloudwatchtypes.Dimension{
+// 		{
+// 			Name:  aws.String("Cluster Name"),
+// 			Value: aws.String(clusterName),
+// 		},
+// 	}
+
+// 	return &cloudwatch.GetMetricStatisticsInput{
+// 		Namespace:  aws.String("AWS/Kafka"),
+// 		MetricName: aws.String(metricName),
+// 		Dimensions: dimensions,
+// 		StartTime:  aws.Time(startTime),
+// 		EndTime:    aws.Time(endTime),
+// 		Period:     aws.Int32(period),
+// 		Statistics: statistics,
+// 	}
+// }
