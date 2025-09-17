@@ -88,31 +88,13 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 }
 
 func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.DiscoveredCluster, kafkaService *kafkaservice.KafkaService) error {
-	clusterMetadata, err := kafkaService.DescribeKafkaCluster()
+	clusterType := discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType
+
+	kafkaAdminClientInformation, err := kafkaService.ScanKafkaResources(clusterType)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
+		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
 	}
-	discoveredCluster.KafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
-
-	topics, err := kafkaService.ScanClusterTopics()
-	if err != nil {
-		return fmt.Errorf("❌ Failed to list topics: %v", err)
-	}
-
-	discoveredCluster.KafkaAdminClientInformation.SetTopics(topics)
-
-	// Use KafkaService's ACL scanning logic instead of duplicating it
-	if discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := kafkaService.ScanKafkaAcls()
-		if err != nil {
-			return err
-		}
-		discoveredCluster.KafkaAdminClientInformation.Acls = acls
-	} else {
-		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
-	}
-
-	discoveredCluster.KafkaAdminClientInformation.Topics.Summary = discoveredCluster.KafkaAdminClientInformation.CalculateTopicSummary()
+	discoveredCluster.KafkaAdminClientInformation = *kafkaAdminClientInformation
 
 	return nil
 }

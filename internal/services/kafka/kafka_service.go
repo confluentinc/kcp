@@ -9,20 +9,17 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// KafkaService handles all Kafka-related operations for cluster scanning
 type KafkaService struct {
 	client     client.KafkaAdmin
 	authType   types.AuthType
 	clusterArn string
 }
 
-// KafkaServiceOpts contains options for creating a new KafkaService
 type KafkaServiceOpts struct {
 	AuthType   types.AuthType
 	ClusterArn string
 }
 
-// NewKafkaService creates a new KafkaService instance
 func NewKafkaService(kafkaAdmin client.KafkaAdmin, opts KafkaServiceOpts) *KafkaService {
 	return &KafkaService{
 		client:     kafkaAdmin,
@@ -32,37 +29,38 @@ func NewKafkaService(kafkaAdmin client.KafkaAdmin, opts KafkaServiceOpts) *Kafka
 }
 
 // ScanKafkaResources scans all Kafka-related resources and populates the cluster information
-func (ks *KafkaService) ScanKafkaResources(clusterInfo *types.ClusterInformation) error {
+func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (*types.KafkaAdminClientInformation, error) {
+	kafkaAdminClientInformation := &types.KafkaAdminClientInformation{}
 	// Get cluster metadata including broker information and ClusterID
-	clusterMetadata, err := ks.DescribeKafkaCluster()
+	clusterMetadata, err := ks.describeKafkaCluster()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	clusterInfo.ClusterID = clusterMetadata.ClusterID
+	kafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := ks.ScanClusterTopics()
+	topics, err := ks.scanClusterTopics()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	clusterInfo.SetTopics(topics)
+	kafkaAdminClientInformation.SetTopics(topics)
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
-	if clusterInfo.Cluster.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		acls, err := ks.ScanKafkaAcls()
+	if clusterType == kafkatypes.ClusterTypeProvisioned {
+		acls, err := ks.scanKafkaAcls()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		clusterInfo.Acls = acls
+		kafkaAdminClientInformation.Acls = acls
 	} else {
 		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
 
-	return nil
+	return kafkaAdminClientInformation, nil
 }
 
 // scanClusterTopics scans for topics in the Kafka cluster
-func (ks *KafkaService) ScanClusterTopics() ([]types.TopicDetails, error) {
+func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
 	topics, err := ks.client.ListTopicsWithConfigs()
@@ -91,7 +89,7 @@ func (ks *KafkaService) ScanClusterTopics() ([]types.TopicDetails, error) {
 }
 
 // describeKafkaCluster gets cluster metadata and returns the cluster ID along with logging information
-func (ks *KafkaService) DescribeKafkaCluster() (*client.ClusterKafkaMetadata, error) {
+func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, error) {
 	slog.Info("🔍 describing kafka cluster", "clusterArn", ks.clusterArn)
 
 	clusterMetadata, err := ks.client.GetClusterKafkaMetadata()
@@ -101,8 +99,8 @@ func (ks *KafkaService) DescribeKafkaCluster() (*client.ClusterKafkaMetadata, er
 	return clusterMetadata, nil
 }
 
-// ScanKafkaAcls scans for Kafka ACLs in the cluster
-func (ks *KafkaService) ScanKafkaAcls() ([]types.Acls, error) {
+// scanKafkaAcls scans for Kafka ACLs in the cluster
+func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 	slog.Info("🔍 scanning for kafka acls", "clusterArn", ks.clusterArn)
 
 	acls, err := ks.client.ListAcls()
