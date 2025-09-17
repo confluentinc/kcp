@@ -464,7 +464,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 		{
 			name: "handles large number of topics",
 			mockTopics: map[string]sarama.TopicDetail{
-				"topic1":  {
+				"topic1": {
 					NumPartitions:     1,
 					ReplicationFactor: 1,
 					ConfigEntries: map[string]*string{
@@ -474,7 +474,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("1"),
 					},
 				},
-				"topic2":  {
+				"topic2": {
 					NumPartitions:     2,
 					ReplicationFactor: 2,
 					ConfigEntries: map[string]*string{
@@ -484,7 +484,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("2"),
 					},
 				},
-				"topic3":  {
+				"topic3": {
 					NumPartitions:     3,
 					ReplicationFactor: 3,
 					ConfigEntries: map[string]*string{
@@ -494,7 +494,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("3"),
 					},
 				},
-				"topic4":  {
+				"topic4": {
 					NumPartitions:     4,
 					ReplicationFactor: 4,
 					ConfigEntries: map[string]*string{
@@ -504,7 +504,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("4"),
 					},
 				},
-				"topic5":  {
+				"topic5": {
 					NumPartitions:     5,
 					ReplicationFactor: 5,
 					ConfigEntries: map[string]*string{
@@ -514,7 +514,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("5"),
 					},
 				},
-				"topic6":  {
+				"topic6": {
 					NumPartitions:     6,
 					ReplicationFactor: 6,
 					ConfigEntries: map[string]*string{
@@ -524,7 +524,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("6"),
 					},
 				},
-				"topic7":  {
+				"topic7": {
 					NumPartitions:     7,
 					ReplicationFactor: 7,
 					ConfigEntries: map[string]*string{
@@ -534,7 +534,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("7"),
 					},
 				},
-				"topic8":  {
+				"topic8": {
 					NumPartitions:     8,
 					ReplicationFactor: 8,
 					ConfigEntries: map[string]*string{
@@ -544,7 +544,7 @@ func TestClusterScanner_ScanKafkaResources(t *testing.T) {
 						"min.insync.replicas": aws.String("8"),
 					},
 				},
-				"topic9":  {
+				"topic9": {
 					NumPartitions:     9,
 					ReplicationFactor: 9,
 					ConfigEntries: map[string]*string{

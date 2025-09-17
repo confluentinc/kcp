@@ -605,32 +605,40 @@ func TestClusterInformation_GetBootstrapBrokersForAuthType(t *testing.T) {
 			expectedError: "❌ No TLS brokers found in the cluster",
 		},
 		{
-			name: "AuthTypeUnauthenticated with TLS brokers",
+			name: "AuthTypeUnauthenticatedTLS with TLS brokers",
 			clusterInfo: &ClusterInformation{
 				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
 					BootstrapBrokerStringTls: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"),
 				},
 			},
-			authType:        AuthTypeUnauthenticated,
+			authType:        AuthTypeUnauthenticatedTLS,
 			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9094"},
 		},
 		{
-			name: "AuthTypeUnauthenticated with plaintext brokers only",
+			name: "AuthTypeUnauthenticatedPlaintext with plaintext brokers only",
 			clusterInfo: &ClusterInformation{
 				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
 					BootstrapBrokerString: aws.String("b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092,b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092"),
 				},
 			},
-			authType:        AuthTypeUnauthenticated,
+			authType:        AuthTypeUnauthenticatedPlaintext,
 			expectedBrokers: []string{"b-1.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092", "b-2.test-cluster.abc123.c2.kafka.us-east-1.amazonaws.com:9092"},
 		},
 		{
-			name: "AuthTypeUnauthenticated with no brokers",
+			name: "AuthTypeUnauthenticatedTLS with no brokers",
 			clusterInfo: &ClusterInformation{
 				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
 			},
-			authType:      AuthTypeUnauthenticated,
-			expectedError: "❌ No Unauthenticated brokers found in the cluster",
+			authType:      AuthTypeUnauthenticatedTLS,
+			expectedError: "❌ No Unauthenticated (TLS Encryption) brokers found in the cluster",
+		},
+		{
+			name: "AuthTypeUnauthenticatedPlaintext with no brokers",
+			clusterInfo: &ClusterInformation{
+				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
+			},
+			authType:      AuthTypeUnauthenticatedPlaintext,
+			expectedError: "❌ No Unauthenticated (Plaintext) brokers found in the cluster",
 		},
 		{
 			name: "Invalid auth type",

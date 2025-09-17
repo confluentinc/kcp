@@ -88,14 +88,17 @@ func (c *ClusterInformation) GetBootstrapBrokersForAuthType(authType AuthType) (
 		if brokerList == "" {
 			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
 		}
-	case AuthTypeUnauthenticated:
+	case AuthTypeUnauthenticatedTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
 		visibility = "PRIVATE"
 		if brokerList == "" {
-			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
+			return nil, fmt.Errorf("❌ No Unauthenticated (TLS Encryption) brokers found in the cluster")
 		}
+	case AuthTypeUnauthenticatedPlaintext:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
+		visibility = "PRIVATE"
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
+			return nil, fmt.Errorf("❌ No Unauthenticated (Plaintext) brokers found in the cluster")
 		}
 	case AuthTypeTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
