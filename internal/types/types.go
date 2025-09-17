@@ -302,3 +302,46 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 	}
 	return addresses, nil
 }
+
+func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
+	return c.CalculateTopicSummaryFromDetails(c.Topics.Details)
+}
+
+func (c *KafkaAdminClientInformation) CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
+	summary := TopicSummary{}
+
+	for _, topic := range topicDetails {
+		isInternal := strings.HasPrefix(topic.Name, "__")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
+
+		if isInternal {
+			summary.InternalTopics++
+			summary.TotalInternalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactInternalTopics++
+				summary.CompactInternalPartitions += topic.Partitions
+			}
+		} else {
+			summary.Topics++
+			summary.TotalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactTopics++
+				summary.CompactPartitions += topic.Partitions
+			}
+		}
+	}
+
+	return summary
+}
+
+func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
+	c.Topics = Topics{
+		Details: topicDetails,
+		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
+}

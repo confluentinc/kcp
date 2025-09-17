@@ -147,6 +147,8 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
 	}
 
+	discoveredCluster.KafkaAdminClientInformation.Topics.Summary = discoveredCluster.KafkaAdminClientInformation.CalculateTopicSummary()
+
 	return nil
 }
 
