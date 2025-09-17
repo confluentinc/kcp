@@ -92,13 +92,15 @@ func (ms *TestMSKService) ParseBrokerAddresses(brokers kafka.GetBootstrapBrokers
 		if brokerList == "" {
 			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
 		}
-	case internaltypes.AuthTypeUnauthenticated:
+	case internaltypes.AuthTypeUnauthenticatedTLS:
 		brokerList = aws.ToString(brokers.BootstrapBrokerStringTls)
 		if brokerList == "" {
-			brokerList = aws.ToString(brokers.BootstrapBrokerString)
+			return nil, fmt.Errorf("❌ No Unauthenticated (TLS Encryption) brokers found in the cluster")
 		}
+	case internaltypes.AuthTypeUnauthenticatedPlaintext:
+		brokerList = aws.ToString(brokers.BootstrapBrokerString)
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
+			return nil, fmt.Errorf("❌ No Unauthenticated (Plaintext) brokers found in the cluster")
 		}
 	case internaltypes.AuthTypeTLS:
 		brokerList = aws.ToString(brokers.BootstrapBrokerStringPublicTls)
@@ -993,11 +995,20 @@ func TestMSKService_ParseBrokerAddresses(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name: "Unauthenticated with TLS brokers",
+			name: "Unauthenticated TLS with TLS brokers",
 			brokers: kafka.GetBootstrapBrokersOutput{
 				BootstrapBrokerStringTls: aws.String("broker1:9092,broker2:9092"),
 			},
-			authType:  internaltypes.AuthTypeUnauthenticated,
+			authType:  internaltypes.AuthTypeUnauthenticatedTLS,
+			wantAddrs: []string{"broker1:9092", "broker2:9092"},
+			wantError: false,
+		},
+		{
+			name: "Unauthenticated Plaintext with plaintext brokers",
+			brokers: kafka.GetBootstrapBrokersOutput{
+				BootstrapBrokerString: aws.String("broker1:9092,broker2:9092"),
+			},
+			authType:  internaltypes.AuthTypeUnauthenticatedPlaintext,
 			wantAddrs: []string{"broker1:9092", "broker2:9092"},
 			wantError: false,
 		},
@@ -1457,11 +1468,11 @@ func TestMSKService_ParseBrokerAddresses_EdgeCases(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name: "Unauthenticated with plain brokers only",
+			name: "Unauthenticated Plaintext with plain brokers only",
 			brokers: kafka.GetBootstrapBrokersOutput{
 				BootstrapBrokerString: aws.String("broker1:9092,broker2:9092"),
 			},
-			authType:  internaltypes.AuthTypeUnauthenticated,
+			authType:  internaltypes.AuthTypeUnauthenticatedPlaintext,
 			wantAddrs: []string{"broker1:9092", "broker2:9092"},
 			wantError: false,
 		},

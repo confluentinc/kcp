@@ -19,7 +19,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 		expected types.ClusterEntry
 	}{
 		{
-			name: "Provisioned cluster with all authentication methods enabled - unauthentication selected",
+			name: "Provisioned cluster with all authentication methods enabled - unauthenticated TLS selected",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-all-auth"),
 				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-all-auth/12345678-1234-1234-1234-123456789012-1"),
@@ -41,16 +41,21 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 							Enabled: aws.Bool(true),
 						},
 					},
+					EncryptionInfo: &kafkatypes.EncryptionInfo{
+						EncryptionInTransit: &kafkatypes.EncryptionInTransit{
+							ClientBroker: kafkatypes.ClientBrokerTls,
+						},
+					},
 				},
 			},
 			expected: types.ClusterEntry{
 				Name: "test-cluster-all-auth",
 				Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-all-auth/12345678-1234-1234-1234-123456789012-1",
 				AuthMethod: types.AuthMethodConfig{
-					Unauthenticated: &types.UnauthenticatedConfig{Use: true},                                 // highest priority, selected
-					IAM:             &types.IAMConfig{Use: false},                                            // not selected due to priority
-					SASLScram:       &types.SASLScramConfig{Use: false, Username: "", Password: ""},          // not selected due to priority
-					TLS:             &types.TLSConfig{Use: false, CACert: "", ClientCert: "", ClientKey: ""}, // not selected due to priority
+					UnauthenticatedTLS: &types.UnauthenticatedTLSConfig{Use: true},                              // highest priority, selected
+					IAM:                &types.IAMConfig{Use: false},                                            // not selected due to priority
+					SASLScram:          &types.SASLScramConfig{Use: false, Username: "", Password: ""},          // not selected due to priority
+					TLS:                &types.TLSConfig{Use: false, CACert: "", ClientCert: "", ClientKey: ""}, // not selected due to priority
 				},
 			},
 		},
@@ -196,10 +201,37 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			},
 		},
 		{
+			name: "Provisioned cluster with unauthenticated plaintext enabled",
+			cluster: kafkatypes.Cluster{
+				ClusterName: aws.String("test-cluster-unauthenticated-plaintext"),
+				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-unauthenticated-plaintext/12345678-1234-1234-1234-123456789012-8"),
+				ClusterType: kafkatypes.ClusterTypeProvisioned,
+				Provisioned: &kafkatypes.Provisioned{
+					ClientAuthentication: &kafkatypes.ClientAuthentication{
+						Unauthenticated: &kafkatypes.Unauthenticated{
+							Enabled: aws.Bool(true),
+						},
+					},
+					EncryptionInfo: &kafkatypes.EncryptionInfo{
+						EncryptionInTransit: &kafkatypes.EncryptionInTransit{
+							ClientBroker: kafkatypes.ClientBrokerPlaintext,
+						},
+					},
+				},
+			},
+			expected: types.ClusterEntry{
+				Name: "test-cluster-unauthenticated-plaintext",
+				Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-unauthenticated-plaintext/12345678-1234-1234-1234-123456789012-8",
+				AuthMethod: types.AuthMethodConfig{
+					UnauthenticatedPlaintext: &types.UnauthenticatedPlaintextConfig{Use: true}, // selected
+				},
+			},
+		},
+		{
 			name: "Provisioned cluster with disabled authentication methods",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-disabled"),
-				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-disabled/12345678-1234-1234-1234-123456789012-8"),
+				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-disabled/12345678-1234-1234-1234-123456789012-9"),
 				ClusterType: kafkatypes.ClusterTypeProvisioned,
 				Provisioned: &kafkatypes.Provisioned{
 					ClientAuthentication: &kafkatypes.ClientAuthentication{
@@ -222,7 +254,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			},
 			expected: types.ClusterEntry{
 				Name:       "test-cluster-disabled",
-				Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-disabled/12345678-1234-1234-1234-123456789012-8",
+				Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-disabled/12345678-1234-1234-1234-123456789012-9",
 				AuthMethod: types.AuthMethodConfig{
 					// no auth methods should be configured since all are disabled
 				},
@@ -232,7 +264,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			name: "Provisioned cluster with nil client authentication",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-nil-auth"),
-				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-auth/12345678-1234-1234-1234-123456789012-9"),
+				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-auth/12345678-1234-1234-1234-123456789012-10"),
 				ClusterType: kafkatypes.ClusterTypeProvisioned,
 				Provisioned: &kafkatypes.Provisioned{
 					ClientAuthentication: nil,
@@ -240,7 +272,7 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			},
 			expected: types.ClusterEntry{
 				Name:       "test-cluster-nil-auth",
-				Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-auth/12345678-1234-1234-1234-123456789012-9",
+				Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-auth/12345678-1234-1234-1234-123456789012-10",
 				AuthMethod: types.AuthMethodConfig{
 					// no auth methods should be configured
 				},
@@ -250,13 +282,13 @@ func TestDiscoverer_getClusterEntry(t *testing.T) {
 			name: "Provisioned cluster with nil provisioned section",
 			cluster: kafkatypes.Cluster{
 				ClusterName: aws.String("test-cluster-nil-provisioned"),
-				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-provisioned/12345678-1234-1234-1234-123456789012-10"),
+				ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-provisioned/12345678-1234-1234-1234-123456789012-11"),
 				ClusterType: kafkatypes.ClusterTypeProvisioned,
 				Provisioned: nil,
 			},
 			expected: types.ClusterEntry{
 				Name:       "test-cluster-nil-provisioned",
-				Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-provisioned/12345678-1234-1234-1234-123456789012-10",
+				Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster-nil-provisioned/12345678-1234-1234-1234-123456789012-11",
 				AuthMethod: types.AuthMethodConfig{
 					// no auth methods should be configured
 				},

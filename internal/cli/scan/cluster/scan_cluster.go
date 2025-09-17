@@ -21,11 +21,12 @@ import (
 var (
 	clusterArn string
 
-	useSaslIam         bool
-	useSaslScram       bool
-	useTls             bool
-	useUnauthenticated bool
-	skipKafka          bool
+	useSaslIam                  bool
+	useSaslScram                bool
+	useTls                      bool
+	useUnauthenticatedPlaintext bool
+	useUnauthenticatedTLS       bool
+	skipKafka                   bool
 
 	saslScramUsername string
 	saslScramPassword string
@@ -61,7 +62,8 @@ func NewScanClusterCmd() *cobra.Command {
 	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication")
 	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication")
 	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication")
-	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use unauthenticated authentication")
+	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated authentication with plaintext")
+	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated authentication with TLS encryption")
 	authFlags.BoolVar(&skipKafka, "skip-kafka", false, "Skip kafka level cluster scan, use when brokers are not reachable")
 	clusterCmd.Flags().AddFlagSet(authFlags)
 	groups[authFlags] = "Authentication Flags"
@@ -102,8 +104,8 @@ func NewScanClusterCmd() *cobra.Command {
 	})
 
 	clusterCmd.MarkFlagRequired("cluster-arn")
-	clusterCmd.MarkFlagsMutuallyExclusive("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
-	clusterCmd.MarkFlagsOneRequired("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated", "use-tls")
+	clusterCmd.MarkFlagsMutuallyExclusive("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated-plaintext", "use-unauthenticated-tls", "use-tls")
+	clusterCmd.MarkFlagsOneRequired("skip-kafka", "use-sasl-iam", "use-sasl-scram", "use-unauthenticated-plaintext", "use-unauthenticated-tls", "use-tls")
 
 	return clusterCmd
 }
@@ -145,8 +147,10 @@ func runScanCluster(cmd *cobra.Command, args []string) error {
 			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithIAMAuth())
 		case types.AuthTypeSASLSCRAM:
 			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithSASLSCRAMAuth(opts.SASLScramUsername, opts.SASLScramPassword))
-		case types.AuthTypeUnauthenticated:
-			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithUnauthenticatedAuth())
+		case types.AuthTypeUnauthenticatedTLS:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithUnauthenticatedTlsAuth())
+		case types.AuthTypeUnauthenticatedPlaintext:
+			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithUnauthenticatedPlaintextAuth())
 		case types.AuthTypeTLS:
 			return client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, opts.Region, kafkaVersion, client.WithTLSAuth(opts.TLSCACert, opts.TLSClientCert, opts.TLSClientKey))
 		default:
@@ -193,8 +197,10 @@ func parseScanClusterOpts() (*cluster.ClusterScannerOpts, error) {
 		authType = types.AuthTypeIAM
 	case useSaslScram:
 		authType = types.AuthTypeSASLSCRAM
-	case useUnauthenticated:
-		authType = types.AuthTypeUnauthenticated
+	case useUnauthenticatedPlaintext:
+		authType = types.AuthTypeUnauthenticatedPlaintext
+	case useUnauthenticatedTLS:
+		authType = types.AuthTypeUnauthenticatedTLS
 	case useTls:
 		authType = types.AuthTypeTLS
 	}
