@@ -26,7 +26,41 @@ func NewCostService(client *costexplorer.Client) *CostService {
 	}
 }
 
-func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
+func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.CostInformation, error) {
+	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
+
+	startStr := aws.String(startDate.Format("2006-01-02"))
+	endStr := aws.String(endDate.Format("2006-01-02"))
+
+	if granularity == costexplorertypes.GranularityHourly {
+		startStr = aws.String(startDate.Format("2006-01-02T00:00:00Z"))
+		endStr = aws.String(endDate.Format("2006-01-02T00:00:00Z"))
+	}
+
+	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
+
+	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags)
+
+	output, err := cs.client.GetCostAndUsage(ctx, input)
+	if err != nil {
+		return types.CostInformation{}, fmt.Errorf("failed to get cost and usage: %v", err)
+	}
+
+	costInformation := types.CostInformation{
+		CostData: output.ResultsByTime,
+		CostMetadata: types.CostMetadata{
+			StartDate:   startDate,
+			EndDate:     endDate,
+			Granularity: string(granularity),
+			Tags:        tags,
+			Services:    services,
+		},
+	}
+
+	return costInformation, nil
+}
+
+func (cs *CostService) GetCostsForTimeRangeOLD(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
 	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
 
 	startStr := aws.String(startDate.Format("2006-01-02"))

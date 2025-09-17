@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
@@ -187,8 +188,8 @@ type MetricInformation struct {
 }
 
 type CostInformation struct {
-	CostData     []Cost       `json:"data"`
-	CostMetadata CostMetadata `json:"metadata"`
+	CostData     []costexplorertypes.ResultByTime `json:"data"`
+	CostMetadata CostMetadata                     `json:"metadata"`
 }
 
 type CostMetadata struct {
