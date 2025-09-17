@@ -3,7 +3,6 @@ package clusters
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
@@ -66,8 +65,7 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterEntry.Arn, region, err)
 	}
 
-	clientBrokerEncryptionInTransit := types.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
-
+	clientBrokerEncryptionInTransit := utils.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
 	kafkaVersion := utils.GetKafkaVersion(discoveredCluster.AWSClientInformation)
 
 	kafkaAdmin, err := createKafkaAdmin(authType, brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, clusterEntry)
@@ -101,9 +99,7 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 		return fmt.Errorf("❌ Failed to list topics: %v", err)
 	}
 
-	for _, topic := range topics {
-		discoveredCluster.KafkaAdminClientInformation.Topics.Details = append(discoveredCluster.KafkaAdminClientInformation.Topics.Details, topic)
-	}
+	discoveredCluster.KafkaAdminClientInformation.SetTopics(topics)
 
 	// Use KafkaService's ACL scanning logic instead of duplicating it
 	if discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeProvisioned {
@@ -119,20 +115,6 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 	discoveredCluster.KafkaAdminClientInformation.Topics.Summary = discoveredCluster.KafkaAdminClientInformation.CalculateTopicSummary()
 
 	return nil
-}
-
-func (cs *ClustersScanner) getClusterName(arn string) (string, error) {
-	arnParts := strings.Split(arn, "/")
-	if len(arnParts) < 2 {
-		return "", fmt.Errorf("invalid cluster ARN format: %s", arn)
-	}
-
-	clusterName := arnParts[1]
-	if clusterName == "" {
-		return "", fmt.Errorf("cluster name not found in cluster ARN: %s", arn)
-	}
-
-	return clusterName, nil
 }
 
 func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterArn string) (*types.DiscoveredCluster, error) {

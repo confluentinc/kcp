@@ -17,20 +17,7 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
-// DefaultClientBrokerEncryptionInTransit is the fallback encryption type when cluster encryption info is not available
-const DefaultClientBrokerEncryptionInTransit = kafkatypes.ClientBrokerTls
 
-// GetClientBrokerEncryptionInTransit determines the client broker encryption in transit value for a cluster
-// with proper fallback logic when encryption info is not available
-func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.ClientBroker {
-	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned &&
-		cluster.Provisioned != nil &&
-		cluster.Provisioned.EncryptionInfo != nil &&
-		cluster.Provisioned.EncryptionInfo.EncryptionInTransit != nil {
-		return cluster.Provisioned.EncryptionInfo.EncryptionInTransit.ClientBroker
-	}
-	return DefaultClientBrokerEncryptionInTransit
-}
 
 // ClusterSummary contains summary information about an MSK cluster
 type ClusterSummary struct {

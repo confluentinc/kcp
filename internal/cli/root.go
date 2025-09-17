@@ -31,7 +31,6 @@ var RootCmd = &cobra.Command{
 }
 
 func init() {
-
 	cobra.EnableTraverseRunHooks = true
 
 	lumberjackLogger := &lumberjack.Logger{
@@ -39,7 +38,6 @@ func init() {
 		MaxSize:  25,
 		Compress: true,
 	}
-
 	opts := PrettyHandlerOptions{
 		SlogOpts: slog.HandlerOptions{
 			Level: slog.LevelDebug,
