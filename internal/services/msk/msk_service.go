@@ -21,15 +21,15 @@ func NewMSKService(client *kafka.Client) *MSKService {
 	return &MSKService{client: client}
 }
 
-func (ms *MSKService) DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error) {
-	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
-		ClusterArn: clusterArn,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
-	}
-	return cluster.ClusterInfo, nil
-}
+// func (ms *MSKService) DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error) {
+// 	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
+// 		ClusterArn: clusterArn,
+// 	})
+// 	if err != nil {
+// 		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
+// 	}
+// 	return cluster.ClusterInfo, nil
+// }
 
 func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 	brokers, err := ms.client.GetBootstrapBrokers(ctx, &kafka.GetBootstrapBrokersInput{
