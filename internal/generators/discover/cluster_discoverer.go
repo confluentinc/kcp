@@ -37,10 +37,9 @@ type ClusterDiscovererEC2Service interface {
 }
 
 type ClusterDiscoverer struct {
-	mskService     ClusterDiscovererMSKService
-	ec2Service     ClusterDiscovererEC2Service
-	metricService  ClusterDiscovererMetricService
-	timePeriodCalc *CloudwatchTimeCalculator
+	mskService    ClusterDiscovererMSKService
+	ec2Service    ClusterDiscovererEC2Service
+	metricService ClusterDiscovererMetricService
 }
 
 func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service ClusterDiscovererEC2Service, metricService ClusterDiscovererMetricService) ClusterDiscoverer {
@@ -48,8 +47,6 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 		mskService:    mskService,
 		ec2Service:    ec2Service,
 		metricService: metricService,
-		// todo should we inject this?
-		timePeriodCalc: NewCloudwatchTimeCalculator(time.Now()),
 	}
 }
 
@@ -345,7 +342,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
 		// these time windows can be extracted as parameters in future
-		timeWindow, err := cd.timePeriodCalc.GetTimeWindow(LastWeek)
+		timeWindow, err := GetTimeWindow(time.Now().UTC(), LastWeek)
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate time window for provisioned cluster: %v", err)
 		}
@@ -355,7 +352,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		}
 	} else {
 		// these time windows can be extracted as parameters in future
-		timeWindow, err := cd.timePeriodCalc.GetTimeWindow(Last24Hours)
+		timeWindow, err := GetTimeWindow(time.Now().UTC(), Last24Hours)
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate time window for serverless cluster: %v", err)
 		}

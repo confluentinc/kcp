@@ -23,36 +23,27 @@ const (
 	LastYear    TimePeriod = "lastYear"
 )
 
-type CloudwatchTimeCalculator struct {
-	baseTime time.Time
-}
-
-func NewCloudwatchTimeCalculator(baseTime time.Time) *CloudwatchTimeCalculator {
-	return &CloudwatchTimeCalculator{
-		baseTime: baseTime.UTC(),
-	}
-}
-
-func (tpc *CloudwatchTimeCalculator) GetTimeWindow(desiredPeriod TimePeriod) (types.CloudWatchTimeWindow, error) {
+// GetTimeWindow calculates CloudWatch time windows for different periods based on a base time
+func GetTimeWindow(baseTime time.Time, desiredPeriod TimePeriod) (types.CloudWatchTimeWindow, error) {
 	switch desiredPeriod {
 	case Last24Hours:
-		return tpc.last24Hours(), nil
+		return calculateLast24Hours(baseTime), nil
 	case LastWeek:
-		return tpc.lastWeek(), nil
+		return calculateLastWeek(baseTime), nil
 	case LastMonth:
-		return tpc.lastMonth(), nil
+		return calculateLastMonth(baseTime), nil
 	case LastYear:
-		return tpc.lastYear(), nil
+		return calculateLastYear(baseTime), nil
 	default:
 		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear, last24Hours", desiredPeriod)
 	}
 }
 
-// last24Hours returns time window for the last 24 COMPLETE hours
+// calculateLast24Hours returns time window for the last 24 COMPLETE hours
 // End: start of current hour, Start: 24 hours before end, Period: 1 hour
-func (tpc *CloudwatchTimeCalculator) last24Hours() types.CloudWatchTimeWindow {
+func calculateLast24Hours(baseTime time.Time) types.CloudWatchTimeWindow {
 	// Get the start of the current hour (e.g., 15:45 -> 15:00)
-	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), tpc.baseTime.Hour(), 0, 0, 0, time.UTC)
+	endTime := time.Date(baseTime.Year(), baseTime.Month(), baseTime.Day(), baseTime.Hour(), 0, 0, 0, time.UTC)
 	// Go back 24 hours from end time
 	startTime := endTime.Add(-24 * time.Hour)
 	return types.CloudWatchTimeWindow{
@@ -62,10 +53,10 @@ func (tpc *CloudwatchTimeCalculator) last24Hours() types.CloudWatchTimeWindow {
 	}
 }
 
-// lastWeek returns time window for the last FULL 7 days
+// calculateLastWeek returns time window for the last FULL 7 days
 // End: start of current day, Start: 7 days before end, Period: 1 day
-func (tpc *CloudwatchTimeCalculator) lastWeek() types.CloudWatchTimeWindow {
-	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), tpc.baseTime.Day(), 0, 0, 0, 0, time.UTC)
+func calculateLastWeek(baseTime time.Time) types.CloudWatchTimeWindow {
+	endTime := time.Date(baseTime.Year(), baseTime.Month(), baseTime.Day(), 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(0, 0, -7)
 	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
@@ -74,10 +65,10 @@ func (tpc *CloudwatchTimeCalculator) lastWeek() types.CloudWatchTimeWindow {
 	}
 }
 
-// lastMonth returns time window for the last FULL month
+// calculateLastMonth returns time window for the last FULL month
 // End: start of current month, Start: start of previous month, Period: 1 week
-func (tpc *CloudwatchTimeCalculator) lastMonth() types.CloudWatchTimeWindow {
-	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
+func calculateLastMonth(baseTime time.Time) types.CloudWatchTimeWindow {
+	endTime := time.Date(baseTime.Year(), baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(0, -1, 0)
 	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
@@ -86,10 +77,10 @@ func (tpc *CloudwatchTimeCalculator) lastMonth() types.CloudWatchTimeWindow {
 	}
 }
 
-// lastYear returns time window for the last 12 months
+// calculateLastYear returns time window for the last 12 months
 // End: start of current month, Start: 12 months before, Period: 1 month
-func (tpc *CloudwatchTimeCalculator) lastYear() types.CloudWatchTimeWindow {
-	endTime := time.Date(tpc.baseTime.Year(), tpc.baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
+func calculateLastYear(baseTime time.Time) types.CloudWatchTimeWindow {
+	endTime := time.Date(baseTime.Year(), baseTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	startTime := endTime.AddDate(-1, 0, 0)
 	return types.CloudWatchTimeWindow{
 		StartTime: startTime,

@@ -59,8 +59,7 @@ func TestCloudwatchTimeCalculator_Last24Hours(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewCloudwatchTimeCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow(Last24Hours)
+			result, err := GetTimeWindow(tt.baseTime, Last24Hours)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -124,8 +123,7 @@ func TestCloudwatchTimeCalculator_LastWeek(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewCloudwatchTimeCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow(LastWeek)
+			result, err := GetTimeWindow(tt.baseTime, LastWeek)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -183,8 +181,7 @@ func TestCloudwatchTimeCalculator_LastMonth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewCloudwatchTimeCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow(LastMonth)
+			result, err := GetTimeWindow(tt.baseTime, LastMonth)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -242,8 +239,7 @@ func TestCloudwatchTimeCalculator_LastYear(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calc := NewCloudwatchTimeCalculator(tt.baseTime)
-			result, err := calc.GetTimeWindow(LastYear)
+			result, err := GetTimeWindow(tt.baseTime, LastYear)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
