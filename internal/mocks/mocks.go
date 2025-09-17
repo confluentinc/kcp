@@ -46,7 +46,6 @@ type MockMSKService struct {
 	ParseBrokerAddressesFunc       func(brokers kafka.GetBootstrapBrokersOutput, authType types.AuthType) ([]string, error)
 	GetCompatibleKafkaVersionsFunc func(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
 	GetClusterPolicyFunc           func(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error)
-	DescribeClusterFunc            func(ctx context.Context, clusterArn string) (*kafkatypes.Cluster, error)
 	DescribeClusterV2Func          func(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error)
 	ListClientVpcConnectionsFunc   func(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error)
 	ListClusterOperationsV2Func    func(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error)
@@ -68,10 +67,6 @@ func (m *MockMSKService) GetCompatibleKafkaVersions(ctx context.Context, cluster
 
 func (m *MockMSKService) GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 	return m.GetClusterPolicyFunc(ctx, clusterArn)
-}
-
-func (m *MockMSKService) DescribeCluster(ctx context.Context, clusterArn string) (*kafkatypes.Cluster, error) {
-	return m.DescribeClusterFunc(ctx, clusterArn)
 }
 
 func (m *MockMSKService) DescribeClusterV2(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {

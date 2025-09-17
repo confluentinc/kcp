@@ -21,16 +21,6 @@ func NewMSKService(client *kafka.Client) *MSKService {
 	return &MSKService{client: client}
 }
 
-// func (ms *MSKService) DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error) {
-// 	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
-// 		ClusterArn: clusterArn,
-// 	})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
-// 	}
-// 	return cluster.ClusterInfo, nil
-// }
-
 func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 	brokers, err := ms.client.GetBootstrapBrokers(ctx, &kafka.GetBootstrapBrokersInput{
 		ClusterArn: &clusterArn,
@@ -42,7 +32,6 @@ func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string
 }
 
 func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {
-
 	if cluster.Provisioned == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn == nil ||
@@ -225,7 +214,6 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string) (
 }
 
 
-// definitely used
 func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
 	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
 
