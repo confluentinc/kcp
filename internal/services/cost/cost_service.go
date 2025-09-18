@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -24,7 +22,7 @@ func NewCostService(client *costexplorer.Client) *CostService {
 	}
 }
 
-func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.RegionCosts, error) {
+func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.CostInformation, error) {
 	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
 
 	startStr := aws.String(startDate.Format("2006-01-02"))
@@ -35,26 +33,30 @@ func (cs *CostService) GetCostsForTimeRange(region string, startDate time.Time, 
 		endStr = aws.String(endDate.Format("2006-01-02T00:00:00Z"))
 	}
 
-	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, tags)
+	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
 
-	output, err := cs.client.GetCostAndUsage(context.Background(), input)
+	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags)
+
+	output, err := cs.client.GetCostAndUsage(ctx, input)
 	if err != nil {
-		return types.RegionCosts{}, fmt.Errorf("failed to get cost and usage: %v", err)
+		return types.CostInformation{}, fmt.Errorf("failed to get cost and usage: %v", err)
 	}
 
-	costData := cs.processCostExplorerOutput(output)
-	regionCosts := types.RegionCosts{
-		Region:      region,
-		CostData:    costData,
-		StartDate:   startDate,
-		EndDate:     endDate,
-		Granularity: string(granularity),
-		Tags:        tags,
+	costInformation := types.CostInformation{
+		CostMetadata: types.CostMetadata{
+			StartDate:   startDate,
+			EndDate:     endDate,
+			Granularity: string(granularity),
+			Tags:        tags,
+			Services:    services,
+		},
+		CostResults: output.ResultsByTime,
 	}
-	return regionCosts, nil
+
+	return costInformation, nil
 }
 
-func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
+func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
 	filter := &costexplorertypes.Expression{
 		And: []costexplorertypes.Expression{
 			{
@@ -66,7 +68,7 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 			{
 				Dimensions: &costexplorertypes.DimensionValues{
 					Key:    costexplorertypes.DimensionService,
-					Values: []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"},
+					Values: services,
 				},
 			},
 		},
@@ -102,50 +104,5 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 				Key:  aws.String("USAGE_TYPE"),
 			},
 		},
-	}
-}
-
-func (cs *CostService) processCostExplorerOutput(output *costexplorer.GetCostAndUsageOutput) types.CostData {
-	var costs []types.Cost
-	var totalCost float64
-
-	for _, result := range output.ResultsByTime {
-		for _, group := range result.Groups {
-			cost, err := strconv.ParseFloat(*group.Metrics["UnblendedCost"].Amount, 64)
-			if err != nil {
-				slog.Error("Failed to parse cost amount", "error", err)
-				continue
-			}
-
-			// Extract service and usage type from group keys
-			// Keys[0] should be SERVICE, Keys[1] should be USAGE_TYPE
-			service := ""
-			usageType := ""
-			if len(group.Keys) >= 2 {
-				service = group.Keys[0]
-				usageType = group.Keys[1]
-			} else if len(group.Keys) == 1 {
-				usageType = group.Keys[0]
-			}
-
-			// Multiply cost by 2 if usage type contains "DataTransfer-Regional-Bytes"
-			if strings.Contains(usageType, "DataTransfer-Regional-Bytes") {
-				usageType = usageType + " (cross AZ data transfer)"
-			}
-
-			costs = append(costs, types.Cost{
-				TimePeriodStart: *result.TimePeriod.Start,
-				TimePeriodEnd:   *result.TimePeriod.End,
-				Service:         service,
-				UsageType:       usageType,
-				Cost:            cost,
-			})
-			totalCost += cost
-		}
-	}
-
-	return types.CostData{
-		Costs: costs,
-		Total: totalCost,
 	}
 }

@@ -4,21 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	rrm "github.com/confluentinc/kcp/internal/generators/report/cluster/metrics"
-	cs "github.com/confluentinc/kcp/internal/generators/scan/cluster"
-	sr "github.com/confluentinc/kcp/internal/generators/scan/region"
-
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
-	"github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/types"
@@ -39,22 +30,19 @@ func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 }
 
 func (d *Discoverer) Run() error {
-	outputDir := "kcp-scan"
+	slog.Info("🚀 starting discover")
 
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create kcp discover output folder: %w", err)
-	}
-
-	if err := d.processRegions(outputDir); err != nil {
-		slog.Error("failed to discover region", "error", err)
+	if err := d.discoverRegions(); err != nil {
+		slog.Error("failed to discover regions", "error", err)
 	}
 
 	return nil
 }
 
-func (d *Discoverer) processRegions(outputDir string) error {
+func (d *Discoverer) discoverRegions() error {
 	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
+	discoveredRegions := []types.DiscoveredRegion{}
 
 	for _, region := range d.regions {
 		mskClient, err := client.NewMSKClient(region)
@@ -64,124 +52,58 @@ func (d *Discoverer) processRegions(outputDir string) error {
 		}
 		mskService := msk.NewMSKService(mskClient)
 
-		// region scanning
-		regionScanOpts := sr.ScanRegionOpts{
-			Region: region,
-		}
-
-		regionScanner := sr.NewRegionScanner(mskClient, regionScanOpts)
-		regionScanResult, err := regionScanner.ScanRegion(context.Background())
-		if err != nil {
-			slog.Error("failed to scan region", "region", region, "error", err)
-		} else {
-			if err := regionScanResult.WriteAsJson(); err != nil {
-				slog.Error("failed to write region scan result", "region", region, "error", err)
-			}
-
-			if err := regionScanResult.WriteAsMarkdown(true); err != nil {
-				slog.Error("failed to write region scan result", "region", region, "error", err)
-			}
-		}
-
-		// get region costs
 		costExplorerClient, err := client.NewCostExplorerClient(region)
 		if err != nil {
 			slog.Error("failed to create cost explorer client", "region", region, "error", err)
+			continue
 		}
-
 		costService := cost.NewCostService(costExplorerClient)
 
-		// default the time period
-		now := time.Now()
-		startDate := now.AddDate(0, 0, -31).UTC().Truncate(24 * time.Hour)
-		endDate := now.UTC().Truncate(24 * time.Hour)
-
-		costs, err := costService.GetCostsForTimeRange(region, startDate, endDate, costexplorertypes.GranularityDaily, map[string][]string{})
+		cloudWatchClient, err := client.NewCloudWatchClient(region)
 		if err != nil {
-			slog.Error("failed to get region costs", "region", region, "error", err)
-		} else {
+			slog.Error("failed to create cloudwatch client", "region", region, "error", err)
+			continue
+		}
+		metricService := metrics.NewMetricService(cloudWatchClient)
 
-			if err := costs.WriteAsJson(); err != nil {
-				slog.Error("failed to write region costs", "region", region, "error", err)
-			}
-
-			if err := costs.WriteAsMarkdown(true); err != nil {
-				slog.Error("failed to write region costs", "region", region, "error", err)
-			}
+		ec2Service, err := ec2.NewEC2Service(region)
+		if err != nil {
+			slog.Error("failed to create ec2 service", "region", region, "error", err)
+			continue
 		}
 
-		// scan clusters within the region
-		if regionScanResult != nil {
-			ec2Service, err := ec2.NewEC2Service(region)
+		// Discover region-level resources (costs, configurations, cluster ARNs)
+		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
+		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
+		if err != nil {
+			slog.Error("failed to discover region", "region", region, "error", err)
+			continue
+		}
+
+		// Discover detailed cluster information for each cluster in the region
+		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService)
+		discoveredClusters := []types.DiscoveredCluster{}
+
+		for _, clusterArn := range discoveredRegion.ClusterArns {
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn)
 			if err != nil {
-				slog.Error("failed to create ec2 service", "region", region, "error", err)
+				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
 			}
-
-			for _, cluster := range regionScanResult.Clusters {
-				// scan the cluster
-				clusterScannerOpts := cs.ClusterScannerOpts{
-					Region:     region,
-					ClusterArn: cluster.ClusterARN,
-					// never want to attempt to connect to brokers in this discovery phase
-					SkipKafka: true,
-				}
-
-				kafkaService := kafka.NewKafkaService(kafka.KafkaServiceOpts{})
-
-				clusterScanner := cs.NewClusterScanner(mskService, ec2Service, kafkaService, clusterScannerOpts)
-				clusterScanResult, err := clusterScanner.ScanCluster(context.Background())
-				if err != nil {
-					slog.Error("failed to scan cluster", "cluster", cluster.ClusterARN, "error", err)
-				} else {
-					if err := clusterScanResult.WriteAsJson(); err != nil {
-						slog.Error("failed to write cluster scan result", "cluster", cluster.ClusterARN, "error", err)
-					}
-
-					if err := clusterScanResult.WriteAsMarkdown(true); err != nil {
-						slog.Error("failed to write cluster scan result", "cluster", cluster.ClusterARN, "error", err)
-					}
-				}
-
-				// get the cluster metrics
-				metricsOpts := rrm.ClusterMetricsOpts{
-					Region:     region,
-					StartDate:  startDate,
-					EndDate:    endDate,
-					ClusterArn: cluster.ClusterARN,
-				}
-
-				cloudWatchClient, err := client.NewCloudWatchClient(metricsOpts.Region)
-				if err != nil {
-					slog.Error("failed to create cloudWatch client", "region", region, "error", err)
-					continue
-				}
-
-				metricService := metrics.NewMetricService(cloudWatchClient, metricsOpts.StartDate, metricsOpts.EndDate)
-
-				clusterMetrics := rrm.NewClusterMetrics(mskService, metricService, metricsOpts)
-				clusterMetricsResult, err := clusterMetrics.ProcessCluster()
-
-				if err != nil {
-					slog.Error("failed to scan cluster metrics", "cluster", cluster.ClusterARN, "error", err)
-				} else {
-					if err := clusterMetricsResult.WriteAsJson(); err != nil {
-						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
-					}
-
-					if err := clusterMetricsResult.WriteAsMarkdown(true); err != nil {
-						slog.Error("failed to write cluster metrics result", "cluster", cluster.ClusterARN, "error", err)
-					}
-				}
-			}
+			discoveredClusters = append(discoveredClusters, *discoveredCluster)
 		}
+		discoveredRegion.Clusters = discoveredClusters
 
-		regionEntry, err := d.getRegionEntry(mskService, region)
+		discoveredRegions = append(discoveredRegions, *discoveredRegion)
+
+		// Generate credential configurations for connecting to clusters
+		regionEntry, err := d.captureCredentialOptions(mskService, region)
 		if err != nil {
 			slog.Error("failed to get region entry", "region", region, "error", err)
 			continue
 		}
 
+		// Track regions with/without clusters for reporting
 		if len(regionEntry.Clusters) == 0 {
 			regionsWithoutClusters = append(regionsWithoutClusters, region)
 		} else {
@@ -189,15 +111,21 @@ func (d *Discoverer) processRegions(outputDir string) error {
 		}
 	}
 
-	credsFilePath := filepath.Join(outputDir, "creds.yaml")
+	// Write discovery results to JSON file
+	discovery := types.NewDiscovery(discoveredRegions)
+	if err := discovery.WriteToJsonFile("kcp-state.json"); err != nil {
+		return fmt.Errorf("failed to write discovery to file: %w", err)
+	}
+
+	// Write credential configurations to YAML file
 	credentials := types.Credentials{
 		Regions: regionEntries,
 	}
-
-	if err := credentials.WriteToFile(credsFilePath); err != nil {
+	if err := credentials.WriteToFile("cluster-credentials.yaml"); err != nil {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
+	// Report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {
 			slog.Info("no clusters found in region", "region", region)
@@ -207,7 +135,8 @@ func (d *Discoverer) processRegions(outputDir string) error {
 	return nil
 }
 
-func (d *Discoverer) getRegionEntry(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
+func (d *Discoverer) captureCredentialOptions(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
+	// Get basic cluster info for credential generation
 	clusters, err := mskService.ListClusters(context.Background(), 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clusters: %v", err)
@@ -215,8 +144,9 @@ func (d *Discoverer) getRegionEntry(mskService *msk.MSKService, region string) (
 
 	clusterEntries := []types.ClusterEntry{}
 
+	// Parse authentication options for each cluster
 	for _, cluster := range clusters {
-		clusterEntry, err := d.getClusterEntry(cluster)
+		clusterEntry, err := d.getAvailableClusterAuthOptions(cluster)
 		if err != nil {
 			slog.Error("failed to get cluster entry", "cluster", cluster.ClusterName, "error", err)
 			continue
@@ -231,16 +161,18 @@ func (d *Discoverer) getRegionEntry(mskService *msk.MSKService, region string) (
 
 }
 
-func (d *Discoverer) getClusterEntry(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
+func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
 	clusterEntry := types.ClusterEntry{
 		Name: aws.ToString(cluster.ClusterName),
 		Arn:  aws.ToString(cluster.ClusterArn),
 	}
 
+	// Check which authentication methods are enabled on the cluster
 	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
 
 	switch cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
+		// Parse authentication settings from provisioned cluster config
 		if cluster.Provisioned != nil && cluster.Provisioned.ClientAuthentication != nil {
 			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
 				cluster.Provisioned.ClientAuthentication.Sasl.Iam != nil {
@@ -262,12 +194,12 @@ func (d *Discoverer) getClusterEntry(cluster kafkatypes.Cluster) (types.ClusterE
 		}
 
 	case kafkatypes.ClusterTypeServerless:
-		// For serverless clusters, typically only IAM is supported
+		// Serverless clusters only support IAM authentication
 		isSaslIamEnabled = true
 	}
 
-	// we want a SINGLE auth mech to be enabled by default
-	// priority is unauthenticated > iam > sasl_scram > tls
+	// Configure auth methods with priority: unauthenticated > iam > sasl_scram > tls
+	// Only one method is set as default to avoid conflicts
 	defaultAuthSelected := false
 	if isUnauthenticatedEnabled {
 		clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{

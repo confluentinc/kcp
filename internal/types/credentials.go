@@ -55,7 +55,7 @@ func (c Credentials) Validate() (bool, []error) {
 		for _, cluster := range clusters.Clusters {
 			enabledMethods := cluster.GetAuthMethods()
 			if len(enabledMethods) > 1 {
-				errs = append(errs, fmt.Errorf("More than one authentication method enabled for %s", cluster.Arn))
+				errs = append(errs, fmt.Errorf("more than one authentication method enabled for %s", cluster.Arn))
 				continue
 			}
 		}

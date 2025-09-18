@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
@@ -32,6 +33,7 @@ type SubnetInfo struct {
 }
 
 type ClusterInformation struct {
+	KcpBuildInfo         KcpBuildInfo                           `json:"kcp_build_info"`
 	ClusterID            string                                 `json:"cluster_id"`
 	Region               string                                 `json:"region"`
 	Timestamp            time.Time                              `json:"timestamp"`
@@ -44,8 +46,20 @@ type ClusterInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatibleVersions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
-	Topics               []string                               `json:"topics"`
+	Topics               Topics                                 `json:"topics"`
 	Acls                 []Acls                                 `json:"acls"`
+}
+
+func NewClusterInformation(region string, timestamp time.Time) *ClusterInformation {
+	return &ClusterInformation{
+		Region:    region,
+		Timestamp: timestamp,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
 }
 
 func (c *ClusterInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
@@ -111,6 +125,49 @@ func (c *ClusterInformation) GetBootstrapBrokersForAuthType(authType AuthType) (
 	return addresses, nil
 }
 
+func (c *ClusterInformation) CalculateTopicSummary() TopicSummary {
+	return CalculateTopicSummaryFromDetails(c.Topics.Details)
+}
+
+func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
+	summary := TopicSummary{}
+
+	for _, topic := range topicDetails {
+		isInternal := strings.HasPrefix(topic.Name, "__")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
+
+		if isInternal {
+			summary.InternalTopics++
+			summary.TotalInternalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactInternalTopics++
+				summary.CompactInternalPartitions += topic.Partitions
+			}
+		} else {
+			summary.Topics++
+			summary.TotalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactTopics++
+				summary.CompactPartitions += topic.Partitions
+			}
+		}
+	}
+
+	return summary
+}
+
+func (c *ClusterInformation) SetTopics(topicDetails []TopicDetails) {
+	c.Topics = Topics{
+		Details: topicDetails,
+		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
+}
+
 func (c *ClusterInformation) GetJsonPath() string {
 	return filepath.Join(c.GetDirPath(), fmt.Sprintf("%s.json", aws.ToString(c.Cluster.ClusterName)))
 }
@@ -120,17 +177,24 @@ func (c *ClusterInformation) GetMarkdownPath() string {
 }
 
 func (c *ClusterInformation) GetDirPath() string {
-	return filepath.Join("kcp-scan", c.Region, aws.ToString(c.Cluster.ClusterName))
+	return c.GetDirPathWithBase("kcp-scan")
+}
+
+func (c *ClusterInformation) GetDirPathWithBase(baseDir string) string {
+	return filepath.Join(baseDir, c.Region, aws.ToString(c.Cluster.ClusterName))
 }
 
 func (c *ClusterInformation) WriteAsJson() error {
+	return c.WriteAsJsonWithBase("kcp-scan")
+}
 
-	dirPath := c.GetDirPath()
+func (c *ClusterInformation) WriteAsJsonWithBase(baseDir string) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetJsonPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.json", aws.ToString(c.Cluster.ClusterName)))
 
 	data, err := c.AsJson()
 	if err != nil {
@@ -153,12 +217,16 @@ func (c *ClusterInformation) AsJson() ([]byte, error) {
 }
 
 func (c *ClusterInformation) WriteAsMarkdown(suppressToTerminal bool) error {
-	dirPath := c.GetDirPath()
+	return c.WriteAsMarkdownWithBase("kcp-scan", suppressToTerminal)
+}
+
+func (c *ClusterInformation) WriteAsMarkdownWithBase(baseDir string, suppressToTerminal bool) error {
+	dirPath := c.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := c.GetMarkdownPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s.md", aws.ToString(c.Cluster.ClusterName)))
 
 	md := c.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
@@ -230,7 +298,7 @@ func (c *ClusterInformation) AsMarkdown() *markdown.Markdown {
 	}
 
 	// Topics section
-	if len(c.Topics) > 0 {
+	if len(c.Topics.Details) > 0 {
 		md.AddHeading("Kafka Topics", 2)
 		c.addTopicsSection(md)
 	}
@@ -240,7 +308,18 @@ func (c *ClusterInformation) AsMarkdown() *markdown.Markdown {
 		c.addAclsSection(md)
 	}
 
+	// build info section
+	md.AddHeading("KCP Build Info", 2)
+	c.addBuildInfoSection(md)
+
+	// Save to file
 	return md
+}
+
+func (c *ClusterInformation) addBuildInfoSection(md *markdown.Markdown) {
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", c.KcpBuildInfo.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", c.KcpBuildInfo.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", c.KcpBuildInfo.Date))
 }
 
 func (c *ClusterInformation) addSummarySection(md *markdown.Markdown) {
@@ -249,7 +328,7 @@ func (c *ClusterInformation) addSummarySection(md *markdown.Markdown) {
 		fmt.Sprintf("**Cluster Type:** %s", string(c.Cluster.ClusterType)),
 		fmt.Sprintf("**Status:** %s", string(c.Cluster.State)),
 		fmt.Sprintf("**Region:** %s", c.Region),
-		fmt.Sprintf("**Topics:** %d", len(c.Topics)),
+		fmt.Sprintf("**Topics:** %d", len(c.Topics.Details)),
 		fmt.Sprintf("**ACLs:** %d", len(c.Acls)),
 		fmt.Sprintf("**Client VPC Connections:** %d", len(c.ClientVpcConnections)),
 		fmt.Sprintf("**VPC ID:** %s", aws.ToString(&c.ClusterNetworking.VpcId)),
@@ -523,9 +602,52 @@ func (c *ClusterInformation) addCompatibleVersionsSection(md *markdown.Markdown)
 	md.AddTable(headers, tableData)
 }
 
-// addTopicsSection adds Kafka topics list
+// addTopicsSection adds Kafka topics table
 func (c *ClusterInformation) addTopicsSection(md *markdown.Markdown) {
-	md.AddList(c.Topics)
+	if len(c.Topics.Details) == 0 {
+		md.AddParagraph("No topics found.")
+		return
+	}
+
+	topicSummaryHeaders := []string{"Topics", "Partitions", "Internal Topics", "Internal Partitions", "Compact Topics", "Compact Partitions", "Compact Internal Topics", "Compact Internal Partitions"}
+	topicSummaryData := [][]string{
+		{
+			fmt.Sprintf("%d", c.Topics.Summary.Topics),
+			fmt.Sprintf("%d", c.Topics.Summary.TotalPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.InternalTopics),
+			fmt.Sprintf("%d", c.Topics.Summary.TotalInternalPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactTopics),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactPartitions),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalTopics),
+			fmt.Sprintf("%d", c.Topics.Summary.CompactInternalPartitions),
+		},
+	}
+
+	md.AddTable(topicSummaryHeaders, topicSummaryData)
+
+	if c.Topics.Summary.InternalTopics > 0 {
+		md.AddParagraph(fmt.Sprintf("**Note:** %d internal topics, starting with the '__' prefix, are hidden from this table.", c.Topics.Summary.InternalTopics))
+	}
+
+	headers := []string{"Topic Name", "Partitions", "Replication Factor", "Cleanup Policy", "Local Retention (ms)", "Retention (ms)", "Min Insync Replicas"}
+
+	var tableData [][]string
+	for _, topic := range c.Topics.Details {
+		if !strings.HasPrefix(topic.Name, "__") {
+			row := []string{
+				topic.Name,
+				fmt.Sprintf("%d", topic.Partitions),
+				fmt.Sprintf("%d", topic.ReplicationFactor),
+				aws.ToString(topic.Configurations["cleanup.policy"]),
+				aws.ToString(topic.Configurations["local.retention.ms"]),
+				aws.ToString(topic.Configurations["retention.ms"]),
+				aws.ToString(topic.Configurations["min.insync.replicas"]),
+			}
+			tableData = append(tableData, row)
+		}
+	}
+
+	md.AddTable(headers, tableData)
 }
 
 // addAclsSection adds Kafka ACLs in a table format

@@ -3,23 +3,38 @@ package types
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/kafka"
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/services/markdown"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/kafka"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
 // RegionScanResult contains the results of scanning an AWS region for MSK resources
 type RegionScanResult struct {
 	Timestamp      time.Time                                   `json:"timestamp"`
+	KcpBuildInfo   KcpBuildInfo                                `json:"kcp_build_info"`
 	Clusters       []ClusterSummary                            `json:"clusters"`
 	VpcConnections []kafkatypes.VpcConnection                  `json:"vpc_connections"`
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
 	KafkaVersions  []kafkatypes.KafkaVersion                   `json:"kafka_versions"`
 	Replicators    []kafka.DescribeReplicatorOutput            `json:"replicators"`
 	Region         string                                      `json:"region"`
+}
+
+func NewRegionScanResult(region string, timestamp time.Time) *RegionScanResult {
+	return &RegionScanResult{
+		Region:    region,
+		Timestamp: timestamp,
+		KcpBuildInfo: KcpBuildInfo{
+			Version: build_info.Version,
+			Commit:  build_info.Commit,
+			Date:    build_info.Date,
+		},
+	}
 }
 
 func (rs *RegionScanResult) GetJsonPath() string {
@@ -31,17 +46,24 @@ func (rs *RegionScanResult) GetMarkdownPath() string {
 }
 
 func (rs *RegionScanResult) GetDirPath() string {
-	return filepath.Join("kcp-scan", rs.Region)
+	return rs.GetDirPathWithBase("kcp-scan")
+}
+
+func (rs *RegionScanResult) GetDirPathWithBase(baseDir string) string {
+	return filepath.Join(baseDir, rs.Region)
 }
 
 func (rs *RegionScanResult) WriteAsJson() error {
+	return rs.WriteAsJsonWithBase("kcp-scan")
+}
 
-	dirPath := rs.GetDirPath()
+func (rs *RegionScanResult) WriteAsJsonWithBase(baseDir string) error {
+	dirPath := rs.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := rs.GetJsonPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.json", rs.Region))
 
 	data, err := rs.AsJson()
 	if err != nil {
@@ -64,12 +86,16 @@ func (rs *RegionScanResult) AsJson() ([]byte, error) {
 }
 
 func (rs *RegionScanResult) WriteAsMarkdown(suppressToTerminal bool) error {
-	dirPath := rs.GetDirPath()
+	return rs.WriteAsMarkdownWithBase("kcp-scan", suppressToTerminal)
+}
+
+func (rs *RegionScanResult) WriteAsMarkdownWithBase(baseDir string, suppressToTerminal bool) error {
+	dirPath := rs.GetDirPathWithBase(baseDir)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("❌ Failed to create directory structure: %v", err)
 	}
 
-	filePath := rs.GetMarkdownPath()
+	filePath := filepath.Join(dirPath, fmt.Sprintf("%s-region-scan.md", rs.Region))
 	md := rs.AsMarkdown()
 	return md.Print(markdown.PrintOptions{ToTerminal: !suppressToTerminal, ToFile: filePath})
 }
@@ -96,8 +122,18 @@ func (rs *RegionScanResult) AsMarkdown() *markdown.Markdown {
 	md.AddHeading("Cluster ARNs", 2)
 	rs.addClusterArnsSection(md)
 
+	// build info section
+	md.AddHeading("KCP Build Info", 2)
+	rs.addBuildInfoSection(md)
+
 	// Save to file
 	return md
+}
+
+func (rs *RegionScanResult) addBuildInfoSection(md *markdown.Markdown) {
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", rs.KcpBuildInfo.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", rs.KcpBuildInfo.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", rs.KcpBuildInfo.Date))
 }
 
 // addSummarySection adds a summary of the scan results

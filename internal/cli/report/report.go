@@ -1,8 +1,8 @@
 package report
 
 import (
-	rc "github.com/confluentinc/kcp/internal/cli/report/cluster"
-	rr "github.com/confluentinc/kcp/internal/cli/report/region"
+	"log/slog"
+
 	"github.com/spf13/cobra"
 )
 
@@ -11,12 +11,21 @@ func NewReportCmd() *cobra.Command {
 		Use:   "report",
 		Short: "Generate reports on migration planning",
 		Long:  "Generate reports on migration planning",
+
+		SilenceErrors: true,
+		PreRunE:       preRunReport,
+		RunE:          runReport,
 	}
 
-	reportCmd.AddCommand(
-		rc.NewReportClusterCmd(),
-		rr.NewReportRegionCmd(),
-	)
-
 	return reportCmd
+}
+
+func preRunReport(cmd *cobra.Command, args []string) error {
+	slog.Info("🔍 pre-running report")
+	return nil
+}
+
+func runReport(cmd *cobra.Command, args []string) error {
+	slog.Info("🔍 running report")
+	return nil
 }

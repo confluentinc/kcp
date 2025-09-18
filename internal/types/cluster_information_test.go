@@ -118,7 +118,60 @@ func TestClusterInformation_AsJson(t *testing.T) {
 				BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
 					BootstrapBrokerStringTls: aws.String("b-1.test-cluster-3.abc123.c2.kafka.eu-west-1.amazonaws.com:9094"),
 				},
-				Topics: []string{"topic1", "topic2", "topic3"},
+				Topics: Topics{
+					Details: []TopicDetails{
+						{
+							Name:              "topic1",
+							Partitions:        1,
+							ReplicationFactor: 1,
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("1111111111"),
+								"min.insync.replicas": aws.String("1"),
+							},
+						},
+						{
+							Name:              "topic2",
+							Partitions:        2,
+							ReplicationFactor: 2,
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("delete"),
+								"retention.ms":        aws.String("2222222222"),
+								"min.insync.replicas": aws.String("2"),
+							},
+						},
+						{
+							Name:              "topic3",
+							Partitions:        3,
+							ReplicationFactor: 3,
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("3333333333"),
+								"min.insync.replicas": aws.String("3"),
+							},
+						},
+						{
+							Name:              "__internal_topic",
+							Partitions:        2,
+							ReplicationFactor: 1,
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("4444444444"),
+								"min.insync.replicas": aws.String("1"),
+							},
+						},
+					},
+					Summary: TopicSummary{
+						Topics:                    3,
+						InternalTopics:            1,
+						TotalPartitions:           6,
+						TotalInternalPartitions:   2,
+						CompactTopics:             2,
+						CompactInternalTopics:     1,
+						CompactPartitions:         4,
+						CompactInternalPartitions: 2,
+					},
+				},
 				Acls: []Acls{
 					{
 						ResourceType:        "TOPIC",
@@ -141,8 +194,18 @@ func TestClusterInformation_AsJson(t *testing.T) {
 				assert.Len(t, unmarshaled.ClusterOperations, 1)
 				assert.Len(t, unmarshaled.Nodes, 1)
 				assert.Len(t, unmarshaled.ScramSecrets, 2)
-				assert.Len(t, unmarshaled.Topics, 3)
+				assert.Len(t, unmarshaled.Topics.Details, 4)
 				assert.Len(t, unmarshaled.Acls, 1)
+
+				// Validate TopicSummary
+				assert.Equal(t, 3, unmarshaled.Topics.Summary.Topics)
+				assert.Equal(t, 1, unmarshaled.Topics.Summary.InternalTopics)
+				assert.Equal(t, 6, unmarshaled.Topics.Summary.TotalPartitions)
+				assert.Equal(t, 2, unmarshaled.Topics.Summary.TotalInternalPartitions)
+				assert.Equal(t, 2, unmarshaled.Topics.Summary.CompactTopics)
+				assert.Equal(t, 1, unmarshaled.Topics.Summary.CompactInternalTopics)
+				assert.Equal(t, 4, unmarshaled.Topics.Summary.CompactPartitions)
+				assert.Equal(t, 2, unmarshaled.Topics.Summary.CompactInternalPartitions)
 			},
 		},
 	}
@@ -272,7 +335,7 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 						NumberOfBrokerNodes: aws.Int32(3),
 					},
 				},
-				Topics: []string{},
+				Topics: Topics{Details: []TopicDetails{}, Summary: TopicSummary{}},
 				Acls:   []Acls{},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
@@ -295,8 +358,60 @@ func TestClusterInformation_AsMarkdown(t *testing.T) {
 						NumberOfBrokerNodes: aws.Int32(3),
 					},
 				},
-				Topics: []string{"topic1", "topic2"},
-				Acls:   []Acls{},
+				Topics: Topics{
+					Details: []TopicDetails{
+						{
+							Name:              "topic1",
+							Partitions:        1,
+							ReplicationFactor: 1,
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("compact"),
+								"retention.ms":        aws.String("1111111111"),
+								"min.insync.replicas": aws.String("1"),
+							},
+						},
+						{
+							Name:              "topic2",
+							Partitions:        2,
+							ReplicationFactor: 2,
+							Configurations: map[string]*string{
+								"cleanup.policy":      aws.String("delete"),
+								"retention.ms":        aws.String("2222222222"),
+								"min.insync.replicas": aws.String("2"),
+							},
+						},
+					},
+					Summary: TopicSummary{
+						Topics:                    2,
+						InternalTopics:            0,
+						TotalPartitions:           3,
+						TotalInternalPartitions:   0,
+						CompactTopics:             1,
+						CompactInternalTopics:     0,
+						CompactPartitions:         1,
+						CompactInternalPartitions: 0,
+					},
+				},
+				Acls: []Acls{
+					{
+						ResourceType:        "TOPIC",
+						ResourceName:        "topic1",
+						ResourcePatternType: "LITERAL",
+						Principal:           "User:test-user",
+						Host:                "*",
+						Operation:           "READ",
+						PermissionType:      "ALLOW",
+					},
+					{
+						ResourceType:        "TOPIC",
+						ResourceName:        "topic2",
+						ResourcePatternType: "LITERAL",
+						Principal:           "User:test-user",
+						Host:                "*",
+						Operation:           "WRITE",
+						PermissionType:      "ALLOW",
+					},
+				},
 			},
 			validate: func(t *testing.T, md *markdown.Markdown) {
 				assert.NotNil(t, md)
@@ -579,6 +694,178 @@ func TestClusterInformation_GetBootstrapBrokersForAuthType(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedBrokers, brokers)
 			}
+		})
+	}
+}
+
+func TestClusterInformation_CalculateTopicSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		topics   []TopicDetails
+		expected TopicSummary
+	}{
+		{
+			name:   "empty topics",
+			topics: []TopicDetails{},
+			expected: TopicSummary{
+				Topics:                    0,
+				InternalTopics:            0,
+				TotalPartitions:           0,
+				TotalInternalPartitions:   0,
+				CompactTopics:             0,
+				CompactInternalTopics:     0,
+				CompactPartitions:         0,
+				CompactInternalPartitions: 0,
+			},
+		},
+		{
+			name: "mixed topics with internal and compact",
+			topics: []TopicDetails{
+				{
+					Name:       "user-topic-1",
+					Partitions: 3,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("delete"),
+					},
+				},
+				{
+					Name:       "user-topic-2",
+					Partitions: 5,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
+					},
+				},
+				{
+					Name:       "__internal-topic-1",
+					Partitions: 2,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
+					},
+				},
+				{
+					Name:       "__internal-topic-2",
+					Partitions: 1,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("delete"),
+					},
+				},
+			},
+			expected: TopicSummary{
+				Topics:                    2,
+				InternalTopics:            2,
+				TotalPartitions:           8,
+				TotalInternalPartitions:   3,
+				CompactTopics:             1,
+				CompactInternalTopics:     1,
+				CompactPartitions:         5,
+				CompactInternalPartitions: 2,
+			},
+		},
+		{
+			name: "only user topics",
+			topics: []TopicDetails{
+				{
+					Name:       "topic-1",
+					Partitions: 1,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
+					},
+				},
+				{
+					Name:       "topic-2",
+					Partitions: 2,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("delete"),
+					},
+				},
+			},
+			expected: TopicSummary{
+				Topics:                    2,
+				InternalTopics:            0,
+				TotalPartitions:           3,
+				TotalInternalPartitions:   0,
+				CompactTopics:             1,
+				CompactInternalTopics:     0,
+				CompactPartitions:         1,
+				CompactInternalPartitions: 0,
+			},
+		},
+		{
+			name: "only internal topics",
+			topics: []TopicDetails{
+				{
+					Name:       "__consumer_offsets",
+					Partitions: 50,
+					Configurations: map[string]*string{
+						"cleanup.policy": aws.String("compact"),
+					},
+				},
+			},
+			expected: TopicSummary{
+				Topics:                    0,
+				InternalTopics:            1,
+				TotalPartitions:           0,
+				TotalInternalPartitions:   50,
+				CompactTopics:             0,
+				CompactInternalTopics:     1,
+				CompactPartitions:         0,
+				CompactInternalPartitions: 50,
+			},
+		},
+		{
+			name: "topics with missing cleanup.policy (serverless scenario)",
+			topics: []TopicDetails{
+				{
+					Name:           "serverless-topic",
+					Partitions:     1,
+					Configurations: map[string]*string{}, // Empty configurations
+				},
+				{
+					Name:       "topic-with-nil-policy",
+					Partitions: 2,
+					Configurations: map[string]*string{
+						"cleanup.policy": nil, // Nil cleanup.policy
+					},
+				},
+			},
+			expected: TopicSummary{
+				Topics:                    2,
+				InternalTopics:            0,
+				TotalPartitions:           3,
+				TotalInternalPartitions:   0,
+				CompactTopics:             0, // Should be 0 since cleanup.policy is missing/nil
+				CompactInternalTopics:     0,
+				CompactPartitions:         0,
+				CompactInternalPartitions: 0,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clusterInfo := &ClusterInformation{}
+			clusterInfo.SetTopics(tt.topics)
+
+			result := clusterInfo.CalculateTopicSummary()
+
+			assert.Equal(t, tt.expected.Topics, result.Topics)
+			assert.Equal(t, tt.expected.InternalTopics, result.InternalTopics)
+			assert.Equal(t, tt.expected.TotalPartitions, result.TotalPartitions)
+			assert.Equal(t, tt.expected.TotalInternalPartitions, result.TotalInternalPartitions)
+			assert.Equal(t, tt.expected.CompactTopics, result.CompactTopics)
+			assert.Equal(t, tt.expected.CompactInternalTopics, result.CompactInternalTopics)
+			assert.Equal(t, tt.expected.CompactPartitions, result.CompactPartitions)
+			assert.Equal(t, tt.expected.CompactInternalPartitions, result.CompactInternalPartitions)
+
+			// Also verify that the Topics struct has the correct summary
+			assert.Equal(t, tt.expected.Topics, clusterInfo.Topics.Summary.Topics)
+			assert.Equal(t, tt.expected.InternalTopics, clusterInfo.Topics.Summary.InternalTopics)
+			assert.Equal(t, tt.expected.TotalPartitions, clusterInfo.Topics.Summary.TotalPartitions)
+			assert.Equal(t, tt.expected.TotalInternalPartitions, clusterInfo.Topics.Summary.TotalInternalPartitions)
+			assert.Equal(t, tt.expected.CompactTopics, clusterInfo.Topics.Summary.CompactTopics)
+			assert.Equal(t, tt.expected.CompactInternalTopics, clusterInfo.Topics.Summary.CompactInternalTopics)
+			assert.Equal(t, tt.expected.CompactPartitions, clusterInfo.Topics.Summary.CompactPartitions)
+			assert.Equal(t, tt.expected.CompactInternalPartitions, clusterInfo.Topics.Summary.CompactInternalPartitions)
 		})
 	}
 }
