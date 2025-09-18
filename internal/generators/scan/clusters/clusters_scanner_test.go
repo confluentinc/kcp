@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
@@ -302,6 +303,50 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			},
 			wantErr:    true,
 			wantErrMsg: "❌ failed to get broker addresses for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: ❌ No SASL/IAM brokers found in the cluster",
+		},
+		{
+			name: "createKafkaAdmin returns error",
+			scanner: &ClustersScanner{
+				Discovery: &types.Discovery{
+					Regions: []types.DiscoveredRegion{
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Name: "test-cluster",
+									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+									AWSClientInformation: types.AWSClientInformation{
+										BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+											BootstrapBrokerStringSaslScram: aws.String("broker1:9092,broker2:9092"),
+										},
+										MskClusterConfig: kafkatypes.Cluster{
+											ClusterType: kafkatypes.ClusterTypeProvisioned,
+											Provisioned: &kafkatypes.Provisioned{
+												CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+													KafkaVersion: aws.String("2.8.1"),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			region: "us-east-1",
+			clusterEntry: types.ClusterEntry{
+				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+				AuthMethod: types.AuthMethodConfig{
+					SASLScram: &types.SASLScramConfig{
+						Use:      true,
+						Username: "", // Empty username will cause NewKafkaAdmin to fail
+						Password: "",
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "❌ failed to create Kafka admin: ❌ failed to create Kafka admin: ❌ Failed to create admin client: authType=SASL/SCRAM brokerAddresses=[broker1:9092 broker2:9092] error=kafka: invalid configuration (Net.SASL.User must not be empty when SASL is enabled)",
 		},
 	}
 

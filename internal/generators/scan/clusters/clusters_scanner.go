@@ -120,22 +120,22 @@ func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterArn string) (*
 // todo can this be moved?
 func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterEntry types.ClusterEntry) (*client.KafkaAdmin, error) {
 	var kafkaAdmin client.KafkaAdmin
-	var adminError error
+	var err error
 	switch authType {
 	case types.AuthTypeIAM:
-		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
 	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterEntry.AuthMethod.SASLScram.Username, clusterEntry.AuthMethod.SASLScram.Password))
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterEntry.AuthMethod.SASLScram.Username, clusterEntry.AuthMethod.SASLScram.Password))
 	case types.AuthTypeUnauthenticated:
-		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedAuth())
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedAuth())
 	case types.AuthTypeTLS:
-		kafkaAdmin, adminError = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterEntry.AuthMethod.TLS.CACert, clusterEntry.AuthMethod.TLS.ClientCert, clusterEntry.AuthMethod.TLS.ClientKey))
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterEntry.AuthMethod.TLS.CACert, clusterEntry.AuthMethod.TLS.ClientCert, clusterEntry.AuthMethod.TLS.ClientKey))
 	default:
 		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
 	}
 
-	if adminError != nil {
-		return nil, fmt.Errorf("❌ failed to create Kafka admin: %v", adminError)
+	if err != nil {
+		return nil, fmt.Errorf("❌ failed to create Kafka admin: %v", err)
 	}
 
 	return &kafkaAdmin, nil
