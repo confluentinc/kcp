@@ -1,309 +1,454 @@
 package kafka
 
-// import (
-// 	"testing"
+import (
+	"errors"
+	"testing"
 
-// 	"github.com/IBM/sarama"
-// 	"github.com/aws/aws-sdk-go-v2/aws"
-// 	"github.com/aws/aws-sdk-go-v2/service/kafka"
-// 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-// 	"github.com/confluentinc/kcp/internal/client"
-// 	"github.com/confluentinc/kcp/internal/types"
-// 	"github.com/stretchr/testify/assert"
-// 	"github.com/stretchr/testify/mock"
-// 	"github.com/stretchr/testify/require"
-// )
+	"github.com/IBM/sarama"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/mocks"
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/assert"
+)
 
-// // MockKafkaAdmin is a mock implementation of KafkaAdmin
-// type MockKafkaAdmin struct {
-// 	mock.Mock
-// }
+func TestKafkaService_ScanKafkaResources(t *testing.T) {
+	tests := []struct {
+		name          string
+		mockClient    *mocks.MockKafkaAdmin
+		clusterType   kafkatypes.ClusterType
+		wantErr       bool
+		wantErrMsg    string
+		wantClusterID bool
+		wantTopics    bool
+		wantAcls      bool
+		wantAclsNil   bool
+	}{
+		{
+			name: "describeKafkaCluster returns error",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return nil, errors.New("cluster connection failed")
+				},
+			},
+			clusterType: kafkatypes.ClusterTypeProvisioned,
+			wantErr:     true,
+			wantErrMsg:  "❌ Failed to describe kafka cluster: cluster connection failed",
+		},
+		{
+			name: "scanClusterTopics returns error",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return &client.ClusterKafkaMetadata{
+						ClusterID: "test-cluster-123",
+					}, nil
+				},
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					return nil, errors.New("failed to connect to brokers")
+				},
+			},
+			clusterType: kafkatypes.ClusterTypeProvisioned,
+			wantErr:     true,
+			wantErrMsg:  "❌ Failed to list topics with configs: failed to connect to brokers",
+		},
+		{
+			name: "serverless cluster skips ACL scan successfully",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return &client.ClusterKafkaMetadata{
+						ClusterID: "serverless-cluster-456",
+					}, nil
+				},
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					return map[string]sarama.TopicDetail{
+						"serverless-topic": {
+							NumPartitions:     int32(1),
+							ReplicationFactor: int16(1),
+							ConfigEntries:     map[string]*string{},
+						},
+					}, nil
+				},
+				// Note: No ListAclsFunc needed since ACL scan should be skipped
+			},
+			clusterType:   kafkatypes.ClusterTypeServerless,
+			wantErr:       false,
+			wantClusterID: true,
+			wantTopics:    true,
+			wantAclsNil:   true,
+		},
+		{
+			name: "scanKafkaAcls returns error for provisioned cluster",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return &client.ClusterKafkaMetadata{
+						ClusterID: "provisioned-cluster-789",
+					}, nil
+				},
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					return map[string]sarama.TopicDetail{
+						"provisioned-topic": {
+							NumPartitions:     int32(3),
+							ReplicationFactor: int16(2),
+							ConfigEntries:     map[string]*string{},
+						},
+					}, nil
+				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return nil, errors.New("ACL authorization failed")
+				},
+			},
+			clusterType: kafkatypes.ClusterTypeProvisioned,
+			wantErr:     true,
+			wantErrMsg:  "❌ Failed to list acls: ACL authorization failed",
+		},
+		{
+			name: "successful full scan for provisioned cluster",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return &client.ClusterKafkaMetadata{
+						ClusterID: "success-cluster-999",
+					}, nil
+				},
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					retentionMs := "604800000"
+					return map[string]sarama.TopicDetail{
+						"orders": {
+							NumPartitions:     int32(6),
+							ReplicationFactor: int16(3),
+							ConfigEntries: map[string]*string{
+								"retention.ms": &retentionMs,
+							},
+						},
+						"users": {
+							NumPartitions:     int32(3),
+							ReplicationFactor: int16(2),
+							ConfigEntries:     map[string]*string{},
+						},
+					}, nil
+				},
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{
+						{
+							Resource: sarama.Resource{
+								ResourceType:        sarama.AclResourceTopic,
+								ResourceName:        "orders",
+								ResourcePatternType: sarama.AclPatternLiteral,
+							},
+							Acls: []*sarama.Acl{
+								{
+									Principal:      "User:orders-service",
+									Host:           "*",
+									Operation:      sarama.AclOperationWrite,
+									PermissionType: sarama.AclPermissionAllow,
+								},
+							},
+						},
+					}, nil
+				},
+			},
+			clusterType:   kafkatypes.ClusterTypeProvisioned,
+			wantErr:       false,
+			wantClusterID: true,
+			wantTopics:    true,
+			wantAcls:      true,
+		},
+	}
 
-// func (m *MockKafkaAdmin) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
-// 	args := m.Called()
-// 	return args.Get(0).(map[string]sarama.TopicDetail), args.Error(1)
-// }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := &KafkaService{
+				client:     tt.mockClient,
+				authType:   types.AuthTypeIAM,
+				clusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc-123",
+			}
 
-// func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error) {
-// 	args := m.Called()
-// 	return args.Get(0).(*client.ClusterKafkaMetadata), args.Error(1)
-// }
+			result, err := ks.ScanKafkaResources(tt.clusterType)
 
-// func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
-// 	args := m.Called()
-// 	return args.Get(0).([]sarama.ConfigEntry), args.Error(1)
-// }
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, tt.wantErrMsg, err.Error())
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
 
-// func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
-// 	args := m.Called()
-// 	return args.Get(0).([]sarama.ResourceAcls), args.Error(1)
-// }
+				// Verify cluster ID is populated
+				if tt.wantClusterID {
+					assert.NotEmpty(t, result.ClusterID)
+				}
 
-// func (m *MockKafkaAdmin) Close() error {
-// 	args := m.Called()
-// 	return args.Error(0)
-// }
+				// Verify topics are populated if expected
+				if tt.wantTopics {
+					assert.NotNil(t, result.Topics)
+					assert.NotEmpty(t, result.Topics.Details)
+				}
 
-// func TestNewKafkaService(t *testing.T) {
-// 	mockFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-// 		return &MockKafkaAdmin{}, nil
-// 	}
+				// Verify ACLs based on expectations
+				if tt.wantAclsNil {
+					assert.Nil(t, result.Acls)
+				} else if tt.wantAcls {
+					assert.NotNil(t, result.Acls)
+					assert.NotEmpty(t, result.Acls)
+				}
+			}
+		})
+	}
+}
 
-// 	opts := KafkaServiceOpts{
-// 		KafkaAdminFactory: mockFactory,
-// 		AuthType:          types.AuthTypeIAM,
-// 		ClusterArn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
-// 	}
+func TestKafkaService_scanClusterTopics(t *testing.T) {
+	tests := []struct {
+		name       string
+		mockClient *mocks.MockKafkaAdmin
+		wantErr    bool
+		wantErrMsg string
+		wantTopics []types.TopicDetails
+	}{
+		{
+			name: "ListTopicsWithConfigs returns error",
+			mockClient: &mocks.MockKafkaAdmin{
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					return nil, errors.New("network timeout")
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "❌ Failed to list topics with configs: network timeout",
+			wantTopics: nil,
+		},
+		{
+			name: "successful topic scan and processing",
+			mockClient: &mocks.MockKafkaAdmin{
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					retentionMs := "86400000"
+					cleanupPolicy := "delete"
+					return map[string]sarama.TopicDetail{
+						"test-topic-1": {
+							NumPartitions:     int32(3),
+							ReplicationFactor: int16(2),
+							ConfigEntries: map[string]*string{
+								"retention.ms":   &retentionMs,
+								"cleanup.policy": &cleanupPolicy,
+								"empty.config":   nil, // Test nil value handling
+							},
+						},
+						"test-topic-2": {
+							NumPartitions:     int32(6),
+							ReplicationFactor: int16(3),
+							ConfigEntries: map[string]*string{
+								"retention.ms": &retentionMs,
+							},
+						},
+					}, nil
+				},
+			},
+			wantErr: false,
+			wantTopics: func() []types.TopicDetails {
+				retentionMs := "86400000"
+				cleanupPolicy := "delete"
+				return []types.TopicDetails{
+					{
+						Name:              "test-topic-1",
+						Partitions:        3,
+						ReplicationFactor: 2,
+						Configurations: map[string]*string{
+							"retention.ms":   &retentionMs,
+							"cleanup.policy": &cleanupPolicy,
+						},
+					},
+					{
+						Name:              "test-topic-2",
+						Partitions:        6,
+						ReplicationFactor: 3,
+						Configurations: map[string]*string{
+							"retention.ms": &retentionMs,
+						},
+					},
+				}
+			}(),
+		},
+	}
 
-// 	service := NewKafkaService(opts)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := &KafkaService{
+				client:     tt.mockClient,
+				authType:   types.AuthTypeIAM,
+				clusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc-123",
+			}
 
-// 	assert.NotNil(t, service)
-// 	assert.Equal(t, types.AuthTypeIAM, service.authType)
-// 	assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster", service.clusterArn)
-// }
+			result, err := ks.scanClusterTopics()
 
-// func TestKafkaService_ScanKafkaResources_Provisioned(t *testing.T) {
-// 	mockAdmin := &MockKafkaAdmin{}
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, tt.wantErrMsg, err.Error())
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, result, len(tt.wantTopics))
 
-// 	mockFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-// 		return mockAdmin, nil
-// 	}
+				// Since map iteration order is not guaranteed, we need to check each topic individually
+				for _, expectedTopic := range tt.wantTopics {
+					found := false
+					for _, actualTopic := range result {
+						if actualTopic.Name == expectedTopic.Name {
+							assert.Equal(t, expectedTopic.Partitions, actualTopic.Partitions)
+							assert.Equal(t, expectedTopic.ReplicationFactor, actualTopic.ReplicationFactor)
+							assert.Equal(t, expectedTopic.Configurations, actualTopic.Configurations)
+							found = true
+							break
+						}
+					}
+					assert.True(t, found, "Expected topic %s not found in result", expectedTopic.Name)
+				}
+			}
+		})
+	}
+}
 
-// 	service := NewKafkaService(KafkaServiceOpts{
-// 		KafkaAdminFactory: mockFactory,
-// 		AuthType:          types.AuthTypeIAM,
-// 		ClusterArn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
-// 	})
+func TestKafkaService_describeKafkaCluster(t *testing.T) {
+	tests := []struct {
+		name         string
+		mockClient   *mocks.MockKafkaAdmin
+		wantErr      bool
+		wantErrMsg   string
+		wantMetadata *client.ClusterKafkaMetadata
+	}{
+		{
+			name: "GetClusterKafkaMetadata returns error",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return nil, errors.New("cluster unreachable")
+				},
+			},
+			wantErr:      true,
+			wantErrMsg:   "❌ Failed to describe kafka cluster: cluster unreachable",
+			wantMetadata: nil,
+		},
+		{
+			name: "successful cluster description",
+			mockClient: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return &client.ClusterKafkaMetadata{
+						ClusterID: "test-cluster-456",
+					}, nil
+				},
+			},
+			wantErr: false,
+			wantMetadata: &client.ClusterKafkaMetadata{
+				ClusterID: "test-cluster-456",
+			},
+		},
+	}
 
-// 	// Create test cluster info
-// 	clusterInfo := &types.ClusterInformation{
-// 		Cluster: kafkatypes.Cluster{
-// 			ClusterType: kafkatypes.ClusterTypeProvisioned,
-// 			Provisioned: &kafkatypes.Provisioned{
-// 				CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-// 					KafkaVersion: stringPtr("2.8.1"),
-// 				},
-// 			},
-// 		},
-// 		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
-// 			BootstrapBrokerStringPublicSaslIam: stringPtr("broker1:9092,broker2:9092"),
-// 		},
-// 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := &KafkaService{
+				client:     tt.mockClient,
+				authType:   types.AuthTypeIAM,
+				clusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc-123",
+			}
 
-// 	mockAdmin.On("GetClusterKafkaMetadata").Return(&client.ClusterKafkaMetadata{
-// 		ClusterID: "test-cluster-id",
-// 	}, nil)
+			result, err := ks.describeKafkaCluster()
 
-// 	mockAdmin.On("ListTopicsWithConfigs").Return(map[string]sarama.TopicDetail{
-// 		"topic1": {
-// 			NumPartitions:     3,
-// 			ReplicationFactor: 3,
-// 			ConfigEntries: map[string]*string{
-// 				"cleanup.policy":      aws.String("compact"),
-// 				"local.retention.ms":  aws.String("11111111"),
-// 				"retention.ms":        aws.String("111111111"),
-// 				"min.insync.replicas": aws.String("1"),
-// 			},
-// 		},
-// 		"topic2": {
-// 			NumPartitions:     1,
-// 			ReplicationFactor: 1,
-// 			ConfigEntries: map[string]*string{
-// 				"cleanup.policy":      aws.String("delete"),
-// 				"local.retention.ms":  aws.String("22222222"),
-// 				"retention.ms":        aws.String("222222222"),
-// 				"min.insync.replicas": aws.String("2"),
-// 			},
-// 		},
-// 	}, nil)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, tt.wantErrMsg, err.Error())
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantMetadata, result)
+			}
+		})
+	}
+}
 
-// 	mockAdmin.On("ListAcls").Return([]sarama.ResourceAcls{
-// 		{
-// 			Resource: sarama.Resource{
-// 				ResourceType:        sarama.AclResourceTopic,
-// 				ResourceName:        "topic1",
-// 				ResourcePatternType: sarama.AclPatternLiteral,
-// 			},
-// 			Acls: []*sarama.Acl{
-// 				{
-// 					Principal:      "User:test-user",
-// 					Host:           "*",
-// 					Operation:      sarama.AclOperationRead,
-// 					PermissionType: sarama.AclPermissionAllow,
-// 				},
-// 			},
-// 		},
-// 	}, nil)
+func TestKafkaService_scanKafkaAcls(t *testing.T) {
+	tests := []struct {
+		name       string
+		mockClient *mocks.MockKafkaAdmin
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "ListAcls returns error",
+			mockClient: &mocks.MockKafkaAdmin{
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return nil, errors.New("connection failed")
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "❌ Failed to list acls: connection failed",
+		},
+		{
+			name: "successful ACL scan and flattening",
+			mockClient: &mocks.MockKafkaAdmin{
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{
+						{
+							Resource: sarama.Resource{
+								ResourceType:        sarama.AclResourceTopic,
+								ResourceName:        "test-topic",
+								ResourcePatternType: sarama.AclPatternLiteral,
+							},
+							Acls: []*sarama.Acl{
+								{
+									Principal:      "User:test-user",
+									Host:           "*",
+									Operation:      sarama.AclOperationRead,
+									PermissionType: sarama.AclPermissionAllow,
+								},
+								{
+									Principal:      "User:another-user",
+									Host:           "192.168.1.1",
+									Operation:      sarama.AclOperationWrite,
+									PermissionType: sarama.AclPermissionDeny,
+								},
+							},
+						},
+					}, nil
+				},
+			},
+			wantErr: false,
+		},
+	}
 
-// 	mockAdmin.On("Close").Return(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := &KafkaService{
+				client:     tt.mockClient,
+				authType:   types.AuthTypeIAM,
+				clusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc-123",
+			}
 
-// 	// Execute the test
-// 	err := service.ScanKafkaResources(clusterInfo)
+			result, err := ks.scanKafkaAcls()
 
-// 	// Verify results
-// 	require.NoError(t, err)
-// 	assert.Equal(t, "test-cluster-id", clusterInfo.ClusterID)
-// 	assert.Len(t, clusterInfo.Topics.Details, 2)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, tt.wantErrMsg, err.Error())
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
 
-// 	// Verify topic1 with ConfigEntries
-// 	topic1Found := false
-// 	topic2Found := false
-// 	for _, topic := range clusterInfo.Topics.Details {
-// 		switch topic.Name {
-// 		case "topic1":
-// 			topic1Found = true
-// 			assert.Equal(t, 3, topic.Partitions)
-// 			assert.Equal(t, 3, topic.ReplicationFactor)
-// 			assert.Equal(t, aws.String("compact"), topic.Configurations["cleanup.policy"])
-// 			assert.Equal(t, aws.String("11111111"), topic.Configurations["local.retention.ms"])
-// 			assert.Equal(t, aws.String("111111111"), topic.Configurations["retention.ms"])
-// 			assert.Equal(t, aws.String("1"), topic.Configurations["min.insync.replicas"])
-// 		case "topic2":
-// 			topic2Found = true
-// 			assert.Equal(t, 1, topic.Partitions)
-// 			assert.Equal(t, 1, topic.ReplicationFactor)
-// 			assert.Equal(t, aws.String("delete"), topic.Configurations["cleanup.policy"])
-// 			assert.Equal(t, aws.String("22222222"), topic.Configurations["local.retention.ms"])
-// 			assert.Equal(t, aws.String("222222222"), topic.Configurations["retention.ms"])
-// 			assert.Equal(t, aws.String("2"), topic.Configurations["min.insync.replicas"])
-// 		}
-// 	}
-// 	assert.True(t, topic1Found, "topic1 should be found")
-// 	assert.True(t, topic2Found, "topic2 should be found")
+				// Verify ACL flattening: should have 2 flattened ACLs from the single resource
+				assert.Len(t, result, 2)
 
-// 	assert.Len(t, clusterInfo.Acls, 1)
-// 	assert.Equal(t, "Topic", clusterInfo.Acls[0].ResourceType)
-// 	assert.Equal(t, "topic1", clusterInfo.Acls[0].ResourceName)
+				// Check first flattened ACL
+				assert.Equal(t, "Topic", result[0].ResourceType)
+				assert.Equal(t, "test-topic", result[0].ResourceName)
+				assert.Equal(t, "Literal", result[0].ResourcePatternType)
+				assert.Equal(t, "User:test-user", result[0].Principal)
+				assert.Equal(t, "*", result[0].Host)
+				assert.Equal(t, "Read", result[0].Operation)
+				assert.Equal(t, "Allow", result[0].PermissionType)
 
-// 	// Verify all mocks were called
-// 	mockAdmin.AssertExpectations(t)
-// }
-
-// func TestKafkaService_ScanKafkaResources_Serverless(t *testing.T) {
-// 	mockAdmin := &MockKafkaAdmin{}
-
-// 	mockFactory := func(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, kafkaVersion string) (client.KafkaAdmin, error) {
-// 		return mockAdmin, nil
-// 	}
-
-// 	service := NewKafkaService(KafkaServiceOpts{
-// 		KafkaAdminFactory: mockFactory,
-// 		AuthType:          types.AuthTypeIAM,
-// 		ClusterArn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
-// 	})
-
-// 	// Create test cluster info for serverless
-// 	clusterInfo := &types.ClusterInformation{
-// 		Cluster: kafkatypes.Cluster{
-// 			ClusterType: kafkatypes.ClusterTypeServerless,
-// 		},
-// 		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
-// 			BootstrapBrokerStringPublicSaslIam: stringPtr("broker1:9092"),
-// 		},
-// 	}
-
-// 	mockAdmin.On("GetClusterKafkaMetadata").Return(&client.ClusterKafkaMetadata{
-// 		ClusterID: "test-serverless-cluster-id",
-// 	}, nil)
-
-// 	// Mock ListTopicsWithConfigs for serverless topic (returns empty configs)
-// 	mockAdmin.On("ListTopicsWithConfigs").Return(map[string]sarama.TopicDetail{
-// 		"serverless-topic": {
-// 			NumPartitions:     1,
-// 			ReplicationFactor: 1,
-// 			ConfigEntries:     map[string]*string{}, // Empty config entries for serverless
-// 		},
-// 	}, nil)
-
-// 	mockAdmin.On("Close").Return(nil)
-
-// 	// Execute the test
-// 	err := service.ScanKafkaResources(clusterInfo)
-
-// 	// Verify results
-// 	require.NoError(t, err)
-// 	assert.Equal(t, "test-serverless-cluster-id", clusterInfo.ClusterID)
-// 	assert.Len(t, clusterInfo.Topics.Details, 1)
-// 	assert.Equal(t, "serverless-topic", clusterInfo.Topics.Details[0].Name)
-// 	assert.Equal(t, 1, clusterInfo.Topics.Details[0].Partitions)
-// 	assert.Equal(t, 1, clusterInfo.Topics.Details[0].ReplicationFactor)
-// 	// Verify that configurations map is empty since DescribeTopicConfigs returned empty configs
-// 	// and ConfigEntries is nil
-// 	assert.Empty(t, clusterInfo.Topics.Details[0].Configurations)
-// 	assert.Empty(t, clusterInfo.Acls) // ACLs should be empty for serverless
-
-// 	// Verify mocks were called (note: ListAcls should NOT be called for serverless)
-// 	mockAdmin.AssertExpectations(t)
-// }
-
-// func TestKafkaService_ScanKafkaResources_Error(t *testing.T) {
-// 	service := NewKafkaService(KafkaServiceOpts{
-// 		AuthType:   types.AuthTypeIAM,
-// 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster",
-// 	})
-
-// 	clusterInfo := &types.ClusterInformation{
-// 		BootstrapBrokers: kafka.GetBootstrapBrokersOutput{},
-// 	}
-
-// 	// Execute the test - should fail because no broker addresses are available
-// 	err := service.ScanKafkaResources(clusterInfo)
-
-// 	// Verify error is returned
-// 	require.Error(t, err)
-// 	assert.Contains(t, err.Error(), "No SASL/IAM brokers found in the cluster")
-// }
-
-// func TestClustersScanner_GetKafkaVersion(t *testing.T) {
-// 	tests := []struct {
-// 		name                 string
-// 		awsClientInformation types.AWSClientInformation
-// 		expected             string
-// 	}{
-// 		{
-// 			name: "Provisioned cluster with version",
-// 			awsClientInformation: types.AWSClientInformation{
-// 				MskClusterConfig: kafkatypes.Cluster{
-// 					ClusterType: kafkatypes.ClusterTypeProvisioned,
-// 					Provisioned: &kafkatypes.Provisioned{
-// 						CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-// 							KafkaVersion: stringPtr("2.8.1"),
-// 						},
-// 					},
-// 				},
-// 			},
-// 			expected: "2.8.1",
-// 		},
-// 		{
-// 			name: "Serverless cluster",
-// 			awsClientInformation: types.AWSClientInformation{
-// 				MskClusterConfig: kafkatypes.Cluster{
-// 					ClusterType: kafkatypes.ClusterTypeServerless,
-// 				},
-// 			},
-// 			expected: "4.0.0",
-// 		},
-// 		{
-// 			name: "Unknown cluster type",
-// 			awsClientInformation: types.AWSClientInformation{
-// 				MskClusterConfig: kafkatypes.Cluster{
-// 					ClusterType: "5.5.0",
-// 				},
-// 			},
-// 			expected: "4.0.0",
-// 		},
-// 	}
-
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			kafkaService := &KafkaService{}
-// 			result := kafkaService.GetKafkaVersion(tt.awsClientInformation)
-// 			assert.Equal(t, tt.expected, result)
-// 		})
-// 	}
-// }
-
-// // Helper function to create string pointers
-// func stringPtr(s string) *string {
-// 	return &s
-// }
+				// Check second flattened ACL
+				assert.Equal(t, "Topic", result[1].ResourceType)
+				assert.Equal(t, "test-topic", result[1].ResourceName)
+				assert.Equal(t, "User:another-user", result[1].Principal)
+				assert.Equal(t, "192.168.1.1", result[1].Host)
+				assert.Equal(t, "Write", result[1].Operation)
+				assert.Equal(t, "Deny", result[1].PermissionType)
+			}
+		})
+	}
+}
