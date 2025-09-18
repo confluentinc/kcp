@@ -15,9 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/services/markdown"
 )
-
-
 
 // ClusterSummary contains summary information about an MSK cluster
 type ClusterSummary struct {
@@ -353,4 +352,189 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
 	}
+}
+
+// report type
+
+// ParsedCost represents a flattened cost entry
+type ParsedCost struct {
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	Service  string `json:"service"`
+	LineItem string `json:"line_item"`
+	Cost     string `json:"cost"`
+}
+
+// ServiceTotal represents the total cost for a service
+type ServiceTotal struct {
+	Service string `json:"service"`
+	Total   string `json:"total"`
+}
+
+// ParsedCostResponse represents the response structure with parsed costs and totals
+type ParsedRegionCostResponse struct {
+	Region   string         `json:"region"`
+	Costs    []ParsedCost   `json:"costs"`
+	Totals   []ServiceTotal `json:"totals"`
+	Metadata CostMetadata   `json:"metadata"`
+}
+
+type ParseCostWrapper struct {
+	ParsedRegionCosts []ParsedRegionCostResponse `json:"parsed_region_costs"`
+}
+
+func (c *ParseCostWrapper) AsMarkdown() *markdown.Markdown {
+	md := markdown.New()
+	md.AddHeading("AWS Service Cost Report", 1)
+
+	md.AddParagraph("This report presents cost analysis for AWS services across multiple regions.")
+
+	// Process each region
+	for _, regionCost := range c.ParsedRegionCosts {
+		md.AddHeading(fmt.Sprintf("Region: %s", regionCost.Region), 2)
+		md.AddParagraph(fmt.Sprintf("This section presents cost analysis for the region **%s**.", regionCost.Region))
+
+		// Add metadata section
+		md.AddHeading("Cost Analysis Dimensions", 3)
+		services := make([]string, 0, len(regionCost.Totals))
+		for _, total := range regionCost.Totals {
+			services = append(services, total.Service)
+		}
+
+		md.AddParagraph(fmt.Sprintf("**Region:** %s", regionCost.Region))
+		md.AddParagraph(fmt.Sprintf("**Services:** %s", strings.Join(services, ", ")))
+		md.AddParagraph(fmt.Sprintf("**Aggregation Period:** %s to %s", regionCost.Metadata.StartDate.Format("2006-01-02"), regionCost.Metadata.EndDate.Format("2006-01-02")))
+		md.AddParagraph(fmt.Sprintf("**Aggregation Granularity:** %s", regionCost.Metadata.Granularity))
+
+		if len(regionCost.Metadata.Tags) > 0 {
+			md.AddParagraph("**Resource Filter Tags:**")
+			for k, v := range regionCost.Metadata.Tags {
+				md.AddParagraph(fmt.Sprintf("- %s=%s", k, strings.Join(v, ",")))
+			}
+		}
+
+		// Build usage type summary
+		usageTypeSummary := make(map[string]map[string]float64) // service -> lineItem -> cost
+		serviceTotalsFromCosts := make(map[string]float64)      // service -> total cost
+
+		for _, cost := range regionCost.Costs {
+			if usageTypeSummary[cost.Service] == nil {
+				usageTypeSummary[cost.Service] = make(map[string]float64)
+			}
+
+			// Parse cost string to float
+			if costFloat, err := strconv.ParseFloat(cost.Cost, 64); err == nil {
+				usageTypeSummary[cost.Service][cost.LineItem] += costFloat
+				serviceTotalsFromCosts[cost.Service] += costFloat
+			}
+		}
+
+		// Separate MSK and other services
+		mskUsageData := [][]string{}
+		otherUsageData := [][]string{}
+		var mskDataTransferCost, ec2DataTransferCost float64
+
+		// Sort services for consistent output
+		sortedServices := make([]string, 0, len(usageTypeSummary))
+		for service := range usageTypeSummary {
+			sortedServices = append(sortedServices, service)
+		}
+		// Simple sort
+		for i := 0; i < len(sortedServices)-1; i++ {
+			for j := i + 1; j < len(sortedServices); j++ {
+				if sortedServices[i] > sortedServices[j] {
+					sortedServices[i], sortedServices[j] = sortedServices[j], sortedServices[i]
+				}
+			}
+		}
+
+		for _, service := range sortedServices {
+			// Sort line items within each service
+			lineItems := make([]string, 0, len(usageTypeSummary[service]))
+			for lineItem := range usageTypeSummary[service] {
+				lineItems = append(lineItems, lineItem)
+			}
+			for i := 0; i < len(lineItems)-1; i++ {
+				for j := i + 1; j < len(lineItems); j++ {
+					if lineItems[i] > lineItems[j] {
+						lineItems[i], lineItems[j] = lineItems[j], lineItems[i]
+					}
+				}
+			}
+
+			for _, lineItem := range lineItems {
+				totalCost := usageTypeSummary[service][lineItem]
+				totalCostFormatted := fmt.Sprintf("$%.2f", totalCost)
+				if totalCostFormatted == "$0.00" {
+					continue
+				}
+
+				if service == "Amazon Managed Streaming for Apache Kafka" {
+					if strings.Contains(lineItem, "DataTransfer-Regional-Bytes") {
+						mskDataTransferCost = totalCost
+					}
+					mskUsageData = append(mskUsageData, []string{lineItem, totalCostFormatted})
+				} else {
+					if strings.Contains(lineItem, "DataTransfer-Regional-Bytes") && service == "EC2 - Other" {
+						ec2DataTransferCost = totalCost
+					}
+					otherUsageData = append(otherUsageData, []string{service, lineItem, totalCostFormatted})
+				}
+			}
+
+			// Add service total row
+			if service == "Amazon Managed Streaming for Apache Kafka" {
+				mskUsageData = append(mskUsageData, []string{"**TOTAL**", fmt.Sprintf("$%.2f", serviceTotalsFromCosts[service])})
+			} else {
+				otherUsageData = append(otherUsageData, []string{service, "**TOTAL**", fmt.Sprintf("$%.2f", serviceTotalsFromCosts[service])})
+			}
+		}
+
+		// Add MSK section
+		if len(mskUsageData) > 0 {
+			mskUsageHeaders := []string{"Usage Type", "Total Cost (USD)"}
+			md.AddHeading("Amazon Managed Streaming for Apache Kafka (MSK) Service Costs Summary", 3)
+			md.AddParagraph("This section presents a summary of directly attributable costs for the Amazon Managed Streaming for Apache Kafka (MSK) service.")
+			md.AddTable(mskUsageHeaders, mskUsageData)
+		}
+
+		// Add other services section
+		if len(otherUsageData) > 0 {
+			otherUsageHeaders := []string{"Service", "Usage Type", "Total Cost (USD)"}
+			md.AddHeading("Other Services Costs Summary", 3)
+			md.AddParagraph("This section details costs for additional AWS services. " +
+				"Some portions of some costs may be indirectly attributable to Amazon MSK operations, while others may arise from unrelated service activities. " +
+				"These *hidden* costs are not identifiable through AWS Cost APIs without comprehensive resource tagging across all resources used by MSK operations.")
+			md.AddTable(otherUsageHeaders, otherUsageData)
+		}
+
+		// Add hidden costs section if we have data transfer costs
+		if mskDataTransferCost > 0 && ec2DataTransferCost > 0 {
+			md.AddHeading("Estimated Amazon MSK Hidden Costs", 3)
+			md.AddParagraph("This section details potential *hidden* costs of Amazon MSK operations. " +
+				"These are costs attributed to other AWS services, which may be caused by the operations of Amazon MSK, but are not directly attributable to the service itself.")
+
+			hiddenHeaders := []string{"Hidden Cost Type", "Description", "Service", "Hidden Cost (USD)"}
+			hiddenCosts := [][]string{
+				{
+					"Cross AZ Data Transfer costs",
+					fmt.Sprintf("$%.2f of the $%.2f **EC2 - Other:DataTransfer-Regional-Bytes** cost is MSK-attributable (equivalent to **MSK:DataTransfer-Regional-Bytes** cost).", mskDataTransferCost, ec2DataTransferCost),
+					"EC2 - Other",
+					fmt.Sprintf("$%.2f", mskDataTransferCost),
+				},
+			}
+			md.AddTable(hiddenHeaders, hiddenCosts)
+		}
+
+		md.AddHorizontalRule()
+	}
+
+	// Add build info section at the end
+	md.AddHeading("KCP Build Info", 2)
+	// We'll need to get build info from somewhere - let's add a simple version for now
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", build_info.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", build_info.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", build_info.Date))
+
+	return md
 }

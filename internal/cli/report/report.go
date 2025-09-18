@@ -1,31 +1,97 @@
 package report
 
 import (
-	"log/slog"
+	"encoding/json"
+	"fmt"
+	"os"
 
+	"github.com/confluentinc/kcp/internal/generators/report"
+	"github.com/confluentinc/kcp/internal/services/markdown"
+	rservic "github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+var (
+	stateFile string
 )
 
 func NewReportCmd() *cobra.Command {
 	reportCmd := &cobra.Command{
-		Use:   "report",
-		Short: "Generate reports on migration planning",
-		Long:  "Generate reports on migration planning",
-
+		Use:           "report",
+		Short:         "Generate a report of the data collected by `kcp discover`",
+		Long:          "Generate a report of the data collected by `kcp discover`",
 		SilenceErrors: true,
 		PreRunE:       preRunReport,
 		RunE:          runReport,
 	}
 
+	groups := map[*pflag.FlagSet]string{}
+
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
+	reportCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	reportCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
+
+	reportCmd.MarkFlagRequired("state-file")
+
 	return reportCmd
 }
 
 func preRunReport(cmd *cobra.Command, args []string) error {
-	slog.Info("🔍 pre-running report")
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
 	return nil
 }
 
 func runReport(cmd *cobra.Command, args []string) error {
-	slog.Info("🔍 running report")
+	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+		return fmt.Errorf("❌ state file does not exist: %s", stateFile)
+	}
+
+	file, err := os.ReadFile(stateFile)
+	if err != nil {
+		return fmt.Errorf("failed to read state file: %v", err)
+	}
+
+	var discovery types.Discovery
+	if err := json.Unmarshal(file, &discovery); err != nil {
+		return fmt.Errorf("failed to unmarshal discovery: %v", err)
+	}
+
+	opts := report.ReporterOpts{
+		Discovery: discovery,
+	}
+
+	reportService := rservic.NewReportService()
+
+	markdownService := markdown.New()
+
+	reporter := report.NewReporter(*reportService, *markdownService, opts)
+	if err := reporter.Run(); err != nil {
+		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+	}
 	return nil
 }
