@@ -12,6 +12,10 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
+type ClustersScannerKafkaService interface {
+	ScanKafkaResources(clusterType kafkatypes.ClusterType) (*types.KafkaAdminClientInformation, error)
+}
+
 type ClustersScanner struct {
 	StateFile   string
 	Credentials types.Credentials
@@ -87,7 +91,7 @@ func (cs *ClustersScanner) scanCluster(region string, clusterEntry types.Cluster
 	return nil
 }
 
-func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.DiscoveredCluster, kafkaService *kafkaservice.KafkaService) error {
+func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.DiscoveredCluster, kafkaService ClustersScannerKafkaService) error {
 	clusterType := discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType
 
 	kafkaAdminClientInformation, err := kafkaService.ScanKafkaResources(clusterType)
