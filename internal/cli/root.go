@@ -24,7 +24,6 @@ func init() {
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
 		ui.NewUICmd(),
-		NewVersionCmd(),
 		discover.NewDiscoverCmd(),
 		version.NewVersionCmd(),
 	)

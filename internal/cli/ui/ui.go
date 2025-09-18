@@ -3,7 +3,7 @@ package ui
 import (
 	"fmt"
 
-	ui "github.com/confluentinc/kcp/internal/generators/ui"
+	"github.com/confluentinc/kcp/internal/generators/ui/api"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,7 @@ func NewUICmd() *cobra.Command {
 func startUI(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetString("port")
 
-	ui := ui.StartUI(port)
+	ui := api.StartAPI(port)
 
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
