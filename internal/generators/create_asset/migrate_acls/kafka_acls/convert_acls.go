@@ -2,7 +2,6 @@ package kafka_acls
 
 import (
 	"embed"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +16,8 @@ import (
 var assetsFS embed.FS
 
 var (
-	clusterFile     string
+	clusterName     string
+	kafkaAcls       []types.Acls
 	outputDir       string
 	skipAuditReport bool
 )
@@ -27,23 +27,14 @@ type TemplateData struct {
 	Acls      []types.Acls
 }
 
-func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userSkipAuditReport bool) error {
-	clusterFile = userClusterFile
+func RunConvertKafkaAcls(userClusterName string, userKafkaAcls []types.Acls, userOutputDir string, userSkipAuditReport bool) error {
+	clusterName = userClusterName
+	kafkaAcls = userKafkaAcls
 	outputDir = userOutputDir
 	skipAuditReport = userSkipAuditReport
 
-	data, err := os.ReadFile(clusterFile)
-	if err != nil {
-		return fmt.Errorf("failed to read cluster file: %w", err)
-	}
-
-	var clusterData types.ClusterInformation
-	if err := json.Unmarshal(data, &clusterData); err != nil {
-		return fmt.Errorf("failed to parse cluster JSON: %w", err)
-	}
-
 	if outputDir == "" {
-		outputDir = fmt.Sprintf("%s_acls", *clusterData.Cluster.ClusterName)
+		outputDir = fmt.Sprintf("%s_acls", clusterName)
 	}
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -51,7 +42,7 @@ func RunConvertKafkaAcls(userClusterFile, userOutputDir string, userSkipAuditRep
 	}
 
 	aclsByPrincipal := make(map[string][]types.Acls)
-	for _, acl := range clusterData.Acls {
+	for _, acl := range kafkaAcls {
 		principal := cleanPrincipalName(acl.Principal)
 
 		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)

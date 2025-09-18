@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_scripts"
 	"github.com/confluentinc/kcp/internal/types"
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	clusterFile          string
+	stateFile            string
 	migrationInfraFolder string
+	clusterArn           string
 )
 
 func NewMigrationCmd() *cobra.Command {
@@ -33,8 +35,9 @@ func NewMigrationCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&clusterFile, "cluster-file", "", "The cluster scan JSON file produced from 'kcp scan cluster' command")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration-infra folder produced from 'kcp create-asset migration-infra' command after applying the Terraform")
+	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration scripts for.")
 	migrationCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -56,9 +59,10 @@ func NewMigrationCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationCmd.MarkFlagRequired("cluster-file")
+	migrationCmd.MarkFlagRequired("state-file")
 	migrationCmd.MarkFlagRequired("migration-infra-folder")
-
+	migrationCmd.MarkFlagRequired("cluster-arn")
+	
 	return migrationCmd
 }
 
@@ -85,15 +89,26 @@ func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrationScriptsOpts() (*migration_scripts.MigrationScriptsOpts, error) {
-	// Parse cluster information from JSON file
-	file, err := os.ReadFile(clusterFile)
+	file, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cluster file: %v", err)
 	}
 
-	var clusterInfo types.ClusterInformation
-	if err := json.Unmarshal(file, &clusterInfo); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
+	var discoveryData types.Discovery
+	if err := json.Unmarshal(file, &discoveryData); err != nil {
+		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+	}
+
+	cluster, err := utils.GetClusterByArn(&discoveryData, clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	}
+
+	var mirrorTopics []string
+	for _, topic := range cluster.KafkaAdminClientInformation.Topics.Details {
+		if !strings.HasPrefix(topic.Name, "__") {
+			mirrorTopics = append(mirrorTopics, topic.Name)
+		}
 	}
 
 	manifestPath := filepath.Join(migrationInfraFolder, "manifest.json")
@@ -118,9 +133,9 @@ func parseMigrationScriptsOpts() (*migration_scripts.MigrationScriptsOpts, error
 	}
 
 	opts := migration_scripts.MigrationScriptsOpts{
-		ClusterInformation: clusterInfo,
-		TerraformOutput:    terraformState.Outputs,
-		Manifest:           manifest,
+		MirrorTopics:    mirrorTopics,
+		TerraformOutput: terraformState.Outputs,
+		Manifest:        manifest,
 	}
 
 	return &opts, nil

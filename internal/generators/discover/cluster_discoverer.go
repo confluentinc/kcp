@@ -50,7 +50,7 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*types.DiscoveredCluster, error) {
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string) (*types.DiscoveredCluster, error) {
 	awsClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn)
 	if err != nil {
 		return nil, err
@@ -64,6 +64,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn string) (*
 	return &types.DiscoveredCluster{
 		Name:                 aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
 		Arn:                  clusterArn,
+		Region:               region,
 		AWSClientInformation: *awsClientInfo,
 		ClusterMetrics:       *clusterMetric,
 	}, nil

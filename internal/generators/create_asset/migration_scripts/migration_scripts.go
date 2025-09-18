@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"text/template"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -18,20 +17,20 @@ import (
 var assetsFS embed.FS
 
 type MigrationScriptsOpts struct {
-	ClusterInformation types.ClusterInformation
+	MirrorTopics       []string
 	TerraformOutput    types.TerraformOutput
 	Manifest           types.Manifest
 }
 
 type MigrationScriptsAssetGenerator struct {
-	clusterInfo     types.ClusterInformation
+	mirrorTopics    []string
 	terraformOutput types.TerraformOutput
 	manifest        types.Manifest
 }
 
 func NewMigrationAssetGenerator(opts MigrationScriptsOpts) *MigrationScriptsAssetGenerator {
 	return &MigrationScriptsAssetGenerator{
-		clusterInfo:     opts.ClusterInformation,
+		mirrorTopics:    opts.MirrorTopics,
 		terraformOutput: opts.TerraformOutput,
 		manifest:        opts.Manifest,
 	}
@@ -45,20 +44,13 @@ func (ms *MigrationScriptsAssetGenerator) Run() error {
 		return fmt.Errorf("failed to create migration-plan directory: %w", err)
 	}
 
-	mirrorTopics := []string{}
-	for _, topic := range ms.clusterInfo.Topics.Details {
-		if !strings.HasPrefix(topic.Name, "__") {
-			mirrorTopics = append(mirrorTopics, topic.Name)
-		}
-	}
-
 	switch ms.manifest.MigrationInfraType {
 	case types.MskCpCcPrivateSaslIam, types.MskCpCcPrivateSaslScram:
-		if err := ms.generateJumpClusterMigrationScripts(outputDir, mirrorTopics); err != nil {
+		if err := ms.generateJumpClusterMigrationScripts(outputDir, ms.mirrorTopics); err != nil {
 			return fmt.Errorf("failed to generate jump cluster migration scripts: %w", err)
 		}
 	case types.MskCcPublic:
-		if err := ms.generateMskToCCMigrationScripts(outputDir, mirrorTopics); err != nil {
+		if err := ms.generateMskToCCMigrationScripts(outputDir, ms.mirrorTopics); err != nil {
 			return fmt.Errorf("failed to generate msk to cc migration scripts: %w", err)
 		}
 	default:
