@@ -161,26 +161,25 @@ func (m *MSKAccessTokenProvider) Token() (*sarama.AccessToken, error) {
 
 // KafkaAdminClient wraps sarama.ClusterAdmin to implement our KafkaAdmin interface
 type KafkaAdminClient struct {
-	admin        sarama.ClusterAdmin
-	region       string
-	config       AdminConfig
-	saramaConfig *sarama.Config
-	resourceAcls map[string]sarama.ResourceAcls
+	admin           sarama.ClusterAdmin
+	region          string
+	config          AdminConfig
+	saramaConfig    *sarama.Config
+	resourceAcls    map[string]sarama.ResourceAcls
 	brokerAddresses []string
 }
 
 /*
-	A custom implementation of the ListTopics() function in Sarama that returns all topic configs
-	instead of just overridden configs. This was done to reduce the number of requests to the broker.
-	https://github.com/IBM/sarama/blob/main/admin.go#L349
+A custom implementation of the ListTopics() function in Sarama that returns all topic configs
+instead of just overridden configs. This was done to reduce the number of requests to the broker.
+https://github.com/IBM/sarama/blob/main/admin.go#L349
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
-
 	// Get controller to use as a connection broker to avoid opening a new broker connection
 	controller, err := k.admin.Controller()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get controller: %w", err)
-	}	
+	}
 
 	// Send the all-topic MetadataRequest
 	metadataReq := sarama.NewMetadataRequest(k.saramaConfig.Version, nil)
@@ -247,7 +246,6 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 }
 
 func (k *KafkaAdminClient) DescribeConfig() ([]sarama.ConfigEntry, error) {
-
 	return k.admin.DescribeConfig(sarama.ConfigResource{
 		Type: sarama.ConfigResourceType(sarama.ConfigResourceType(sarama.BrokerResource)),
 		Name: "1",
@@ -367,11 +365,11 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	}
 
 	return &KafkaAdminClient{
-		admin:        admin,
-		region:       region,
-		config:       config,
-		saramaConfig: saramaConfig,
-		resourceAcls: make(map[string]sarama.ResourceAcls),
+		admin:           admin,
+		region:          region,
+		config:          config,
+		saramaConfig:    saramaConfig,
+		resourceAcls:    make(map[string]sarama.ResourceAcls),
 		brokerAddresses: brokerAddresses,
 	}, nil
 }

@@ -113,6 +113,7 @@ func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterArn string) (*
 	return nil, fmt.Errorf("cluster %s not found in region %s", clusterArn, region)
 }
 
+// todo can this be moved?
 func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterEntry types.ClusterEntry) (*client.KafkaAdmin, error) {
 	var kafkaAdmin client.KafkaAdmin
 	var adminError error
