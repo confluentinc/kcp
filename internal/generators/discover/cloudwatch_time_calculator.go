@@ -35,7 +35,7 @@ func GetTimeWindow(baseTime time.Time, desiredPeriod TimePeriod) (types.CloudWat
 	case LastYear:
 		return calculateLastYear(baseTime), nil
 	default:
-		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported period: %s. Supported periods: lastWeek, lastMonth, lastYear, last24Hours", desiredPeriod)
+		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported time period: %s", desiredPeriod)
 	}
 }
 

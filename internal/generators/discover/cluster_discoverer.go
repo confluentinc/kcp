@@ -339,24 +339,19 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
 	}
 
-	var clusterMetric *types.ClusterMetrics
+	// this time window can be extracted as a parameter in future
+	timeWindow, err := GetTimeWindow(time.Now().UTC(), LastWeek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate time window: %v", err)
+	}
 
+	var clusterMetric *types.ClusterMetrics
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		// these time windows can be extracted as parameters in future
-		timeWindow, err := GetTimeWindow(time.Now().UTC(), LastWeek)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate time window for provisioned cluster: %v", err)
-		}
 		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
-		// these time windows can be extracted as parameters in future
-		timeWindow, err := GetTimeWindow(time.Now().UTC(), Last24Hours)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate time window for serverless cluster: %v", err)
-		}
 		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
