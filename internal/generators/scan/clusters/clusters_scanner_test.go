@@ -245,6 +245,31 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "❌ failed to get cluster from discovery state: cluster arn:aws:kafka:us-east-1:123456789012:cluster/nonexistent/abc-123 not found in region us-east-1",
 		},
+		{
+			name: "GetSelectedAuthType returns error",
+			scanner: &ClustersScanner{
+				Discovery: &types.Discovery{
+					Regions: []types.DiscoveredRegion{
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Name: "test-cluster",
+									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+								},
+							},
+						},
+					},
+				},
+			},
+			region: "us-east-1",
+			clusterEntry: types.ClusterEntry{
+				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+				// No auth method configured - will cause GetSelectedAuthType to fail
+			},
+			wantErr:    true,
+			wantErrMsg: "❌ failed to determine auth type for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: no authentication method enabled for cluster",
+		},
 	}
 
 	for _, tt := range tests {
