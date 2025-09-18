@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -269,6 +270,38 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			},
 			wantErr:    true,
 			wantErrMsg: "❌ failed to determine auth type for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: no authentication method enabled for cluster",
+		},
+		{
+			name: "GetBootstrapBrokersForAuthType returns error",
+			scanner: &ClustersScanner{
+				Discovery: &types.Discovery{
+					Regions: []types.DiscoveredRegion{
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Name: "test-cluster",
+									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+									AWSClientInformation: types.AWSClientInformation{
+										BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+											// Empty bootstrap brokers - will cause GetBootstrapBrokersForAuthType to fail
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			region: "us-east-1",
+			clusterEntry: types.ClusterEntry{
+				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+				AuthMethod: types.AuthMethodConfig{
+					IAM: &types.IAMConfig{Use: true}, // Valid auth method so GetSelectedAuthType succeeds
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "❌ failed to get broker addresses for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: ❌ No SASL/IAM brokers found in the cluster",
 		},
 	}
 
