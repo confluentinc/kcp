@@ -12,7 +12,6 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/cli/create_asset"
 	"github.com/confluentinc/kcp/internal/cli/discover"
-	i "github.com/confluentinc/kcp/internal/cli/init"
 	"github.com/confluentinc/kcp/internal/cli/report"
 	"github.com/confluentinc/kcp/internal/cli/scan"
 	"github.com/confluentinc/kcp/internal/cli/ui"
@@ -50,7 +49,6 @@ func init() {
 	slog.SetDefault(logger)
 
 	RootCmd.AddCommand(
-		i.NewInitCmd(),
 		create_asset.NewCreateAssetCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
