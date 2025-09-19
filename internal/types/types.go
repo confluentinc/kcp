@@ -261,6 +261,7 @@ type GlobalMetrics struct {
 	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }
 
+// Returns only one bootstrap broker per authentication type.
 func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
 	var brokerList string
 	var visibility string
@@ -314,6 +315,41 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 
 	// Split by comma and trim whitespace from each address, filter out empty strings
 	rawAddresses := strings.Split(brokerList, ",")
+	addresses := make([]string, 0, len(rawAddresses))
+	for _, addr := range rawAddresses {
+		trimmedAddr := strings.TrimSpace(addr)
+		if trimmedAddr != "" {
+			addresses = append(addresses, trimmedAddr)
+		}
+	}
+	return addresses, nil
+}
+
+// Returns all bootstrap brokers for a given auth type.
+func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
+	var brokerList []string
+	slog.Info("🔍 parsing broker addresses", "authType", authType)
+
+	switch authType {
+		case AuthTypeIAM:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
+		case AuthTypeSASLSCRAM:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
+		case AuthTypeUnauthenticated:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
+		case AuthTypeTLS:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+		default:
+			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	}
+
+	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
+
+	rawAddresses := strings.Split(strings.Join(brokerList, ","), ",")
 	addresses := make([]string, 0, len(rawAddresses))
 	for _, addr := range rawAddresses {
 		trimmedAddr := strings.TrimSpace(addr)

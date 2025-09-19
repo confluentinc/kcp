@@ -138,7 +138,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo.BootstrapBrokers)
+	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -377,19 +377,13 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	return clusterMetric, nil
 }
 
-func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, bootstrapBrokers *kafka.GetBootstrapBrokersOutput) ([]types.ConnectorSummary, error) {
-	slog.Info("🔍 discovering connectors for cluster")
+func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
+	slog.Info("🔍 scanning for matching connectors", "clusterArn", aws.ToString(awsClientInfo.MskClusterConfig.ClusterArn))
 	var matchingConnectors []types.ConnectorSummary
 
 	mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &kafkaconnect.ListConnectorsInput{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list connectors: %v", err)
-	}
-
-	brokerAddresses := cd.getAllBootstrapAddresses(bootstrapBrokers)
-	if len(brokerAddresses) == 0 {
-		slog.Warn("⚠️ No bootstrap broker addresses found for cluster")
-		return matchingConnectors, nil
 	}
 
 	for _, connector := range mskConnectResult.Connectors {
@@ -398,6 +392,26 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, boo
 		})
 		if err != nil {
 			slog.Error("failed to describe connector", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
+			continue
+		}
+
+		authType := types.AuthType(connector.KafkaClusterClientAuthentication.AuthenticationType)
+		switch connector.KafkaClusterClientAuthentication.AuthenticationType {
+		case "IAM":
+			authType = types.AuthTypeIAM
+		case "SASL_SCRAM":
+			authType = types.AuthTypeSASLSCRAM
+		case "TLS":
+			authType = types.AuthTypeTLS
+		case "NONE":
+			authType = types.AuthTypeUnauthenticated
+		default:
+			return nil, fmt.Errorf("❌ Unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
+		}
+
+		brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
+		if err != nil {
+			slog.Error("failed to get bootstrap brokers for auth type", "authType", authType, "error", err)
 			continue
 		}
 
@@ -424,57 +438,4 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, boo
 	}
 
 	return matchingConnectors, nil
-}
-
-func (cd *ClusterDiscoverer) getAllBootstrapAddresses(bootstrapBrokers *kafka.GetBootstrapBrokersOutput) []string {
-	var addresses []string
-
-	if bootstrapBrokers.BootstrapBrokerString != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerString))...)
-	}
-	if bootstrapBrokers.BootstrapBrokerStringTls != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerStringTls))...)
-	}
-	if bootstrapBrokers.BootstrapBrokerStringSaslScram != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerStringSaslScram))...)
-	}
-	if bootstrapBrokers.BootstrapBrokerStringSaslIam != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerStringSaslIam))...)
-	}
-	if bootstrapBrokers.BootstrapBrokerStringPublicTls != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerStringPublicTls))...)
-	}
-	if bootstrapBrokers.BootstrapBrokerStringPublicSaslScram != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerStringPublicSaslScram))...)
-	}
-	if bootstrapBrokers.BootstrapBrokerStringPublicSaslIam != nil {
-		addresses = append(addresses, cd.parseBootstrapAddresses(aws.ToString(bootstrapBrokers.BootstrapBrokerStringPublicSaslIam))...)
-	}
-
-	uniqueAddresses := make([]string, 0, len(addresses))
-	seen := make(map[string]bool)
-	for _, addr := range addresses {
-		if !seen[addr] {
-			uniqueAddresses = append(uniqueAddresses, addr)
-			seen[addr] = true
-		}
-	}
-
-	return uniqueAddresses
-}
-
-func (cd *ClusterDiscoverer) parseBootstrapAddresses(brokerList string) []string {
-	if brokerList == "" {
-		return nil
-	}
-
-	rawAddresses := strings.Split(brokerList, ",")
-	addresses := make([]string, 0, len(rawAddresses))
-	for _, addr := range rawAddresses {
-		trimmedAddr := strings.TrimSpace(addr)
-		if trimmedAddr != "" {
-			addresses = append(addresses, trimmedAddr)
-		}
-	}
-	return addresses
 }
