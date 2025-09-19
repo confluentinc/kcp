@@ -189,21 +189,17 @@ This command requires the following permissions:
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ScanAllPermissions",
+      "Sid": "MSKScanPermissions",
       "Effect": "Allow",
       "Action": [
         "kafka:ListClustersV2",
         "kafka:ListReplicators",
         "kafka:ListVpcConnections",
         "kafka:GetCompatibleKafkaVersions",
-        "cloudwatch:GetMetricData",
-        "kafka:ListKafkaVersions",
-        "ce:GetCostAndUsage",
         "kafka:GetBootstrapBrokers",
         "kafka:ListConfigurations",
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics",
         "kafka:DescribeClusterV2",
+        "kafka:ListKafkaVersions",
         "kafka:ListNodes",
         "kafka:ListClusterOperationsV2",
         "kafka:ListScramSecrets",
@@ -212,6 +208,23 @@ This command requires the following permissions:
         "kafka:DescribeConfigurationRevision",
         "kafka:DescribeReplicator"
       ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CostMetricsScanPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData",
+        "ce:GetCostAndUsage",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "MSKNetworkingScanPermission",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeSubnets"],
       "Resource": "*"
     }
   ]
@@ -1332,7 +1345,7 @@ kcp update
 - `--force`: Force update without user confirmation
 - `--check-only`: Only check for updates, don't install
 
->[!NOTE]
+> [!NOTE]
 > This will require sudo to update the binary.
 
 ---
