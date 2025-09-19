@@ -52,7 +52,6 @@ func (r *Reporter) generateReport(discovery types.Discovery) error {
 		}
 	}
 
-
 	// prob want one report with both costs per region and metrics per cluster in the region
 	metricsReport := types.MetricsReport{
 		ProcessedClusterMetrics: allClusterMetrics,
