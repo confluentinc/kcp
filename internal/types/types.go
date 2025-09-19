@@ -357,12 +357,12 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 // report type
 
 // ParsedCost represents a flattened cost entry
-type ParsedCost struct {
-	Start    string `json:"start"`
-	End      string `json:"end"`
-	Service  string `json:"service"`
-	LineItem string `json:"line_item"`
-	Cost     string `json:"cost"`
+type ProcessedCost struct {
+	Start     string `json:"start"`
+	End       string `json:"end"`
+	Service   string `json:"service"`
+	UsageType string `json:"usage_type"`
+	Value     string `json:"value"`
 }
 
 // ServiceTotal represents the total cost for a service
@@ -373,10 +373,16 @@ type ServiceTotal struct {
 
 // ParsedCostResponse represents the response structure with parsed costs and totals
 type ProcessedRegionCosts struct {
-	Region   string         `json:"region"`
-	Costs    []ParsedCost   `json:"costs"`
-	Totals   []ServiceTotal `json:"totals"`
-	Metadata CostMetadata   `json:"metadata"`
+	Region   string          `json:"region"`
+	Costs    []ProcessedCost `json:"costs"`
+	Totals   []ServiceTotal  `json:"totals"`
+	Metadata CostMetadata    `json:"metadata"`
+}
+
+// todo this could be use for a single report with both costs and metrics - with its own markdown func
+type Report struct {
+	Costs   []ProcessedRegionCosts    `json:"costs"`
+	Metrics []ProcessedClusterMetrics `json:"metrics"`
 }
 
 type CostReport struct {
@@ -423,8 +429,8 @@ func (c *CostReport) AsMarkdown() *markdown.Markdown {
 			}
 
 			// Parse cost string to float
-			if costFloat, err := strconv.ParseFloat(cost.Cost, 64); err == nil {
-				usageTypeSummary[cost.Service][cost.LineItem] += costFloat
+			if costFloat, err := strconv.ParseFloat(cost.Value, 64); err == nil {
+				usageTypeSummary[cost.Service][cost.UsageType] += costFloat
 				serviceTotalsFromCosts[cost.Service] += costFloat
 			}
 		}
@@ -541,9 +547,10 @@ func (c *CostReport) AsMarkdown() *markdown.Markdown {
 
 // ProcessedMetric represents a single metric data point
 type ProcessedMetric struct {
-	Label     string   `json:"label"`
-	Timestamp *string  `json:"timestamp"`
-	Value     *float64 `json:"value"`
+	Start string   `json:"start"`
+	End   string   `json:"end"`
+	Label string   `json:"label"`
+	Value *float64 `json:"value"`
 }
 
 // ProcessedClusterMetrics represents the flattened metrics response
@@ -607,7 +614,7 @@ func (m *MetricsReport) AsMarkdown() *markdown.Markdown {
 			md.AddParagraph("This section presents a summary of all collected metrics for this cluster.")
 
 			// Create table data
-			headers := []string{"Metric Name", "Latest Value", "Latest Timestamp", "Data Points"}
+			headers := []string{"Metric Name", "Latest Value", "Latest Period Start", "Latest Period End", "Data Points"}
 			tableData := [][]string{}
 
 			for _, metricName := range sortedMetricNames {
@@ -616,27 +623,30 @@ func (m *MetricsReport) AsMarkdown() *markdown.Markdown {
 				// Find the latest non-null metric
 				var latestMetric *ProcessedMetric
 				for i := len(metrics) - 1; i >= 0; i-- {
-					if metrics[i].Value != nil && metrics[i].Timestamp != nil {
+					if metrics[i].Value != nil && metrics[i].Start != "" && metrics[i].End != "" {
 						latestMetric = &metrics[i]
 						break
 					}
 				}
 
-				var latestValue, latestTimestamp, dataPoints string
+				var latestValue, latestStart, latestEnd, dataPoints string
 				dataPoints = fmt.Sprintf("%d", len(metrics))
 
 				if latestMetric != nil {
 					latestValue = fmt.Sprintf("%.6f", *latestMetric.Value)
-					latestTimestamp = *latestMetric.Timestamp
+					latestStart = latestMetric.Start
+					latestEnd = latestMetric.End
 				} else {
 					latestValue = "No data"
-					latestTimestamp = "No data"
+					latestStart = "No data"
+					latestEnd = "No data"
 				}
 
 				tableData = append(tableData, []string{
 					metricName,
 					latestValue,
-					latestTimestamp,
+					latestStart,
+					latestEnd,
 					dataPoints,
 				})
 			}
@@ -658,18 +668,19 @@ func (m *MetricsReport) AsMarkdown() *markdown.Markdown {
 				// Filter out null values for the detailed view
 				validMetrics := []ProcessedMetric{}
 				for _, metric := range metrics {
-					if metric.Value != nil && metric.Timestamp != nil {
+					if metric.Value != nil && metric.Start != "" && metric.End != "" {
 						validMetrics = append(validMetrics, metric)
 					}
 				}
 
 				if len(validMetrics) > 0 {
-					detailHeaders := []string{"Timestamp", "Value"}
+					detailHeaders := []string{"Period Start", "Period End", "Value"}
 					detailData := [][]string{}
 
 					for _, metric := range validMetrics {
 						detailData = append(detailData, []string{
-							*metric.Timestamp,
+							metric.Start,
+							metric.End,
 							fmt.Sprintf("%.6f", *metric.Value),
 						})
 					}

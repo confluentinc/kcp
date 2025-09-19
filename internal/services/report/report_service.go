@@ -2,6 +2,7 @@ package report
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/types"
@@ -14,7 +15,7 @@ func NewReportService() *ReportService {
 }
 
 func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
-	var processedCosts []types.ParsedCost
+	var processedCosts []types.ProcessedCost
 	serviceTotals := make(map[string]float64)
 
 	for _, result := range region.Costs.CostResults {
@@ -37,12 +38,12 @@ func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.Proce
 			if unblendedCost, exists := group.Metrics["UnblendedCost"]; exists && unblendedCost.Amount != nil {
 				cost := aws.ToString(unblendedCost.Amount)
 
-				processedCosts = append(processedCosts, types.ParsedCost{
-					Start:    start,
-					End:      end,
-					Service:  service,
-					LineItem: lineItem,
-					Cost:     cost,
+				processedCosts = append(processedCosts, types.ProcessedCost{
+					Start:     start,
+					End:       end,
+					Service:   service,
+					UsageType: lineItem,
+					Value:     cost,
 				})
 
 				// Parse the cost as float64 and add to service total
@@ -73,6 +74,7 @@ func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.Proce
 func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics {
 	var processedMetrics []types.ProcessedMetric
 
+	period := cluster.ClusterMetrics.MetricMetadata.Period
 	// Iterate through each metric result
 	for _, result := range cluster.ClusterMetrics.Results {
 		label := result.Label
@@ -82,11 +84,12 @@ func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.P
 
 		// Handle case where there are no timestamps/values (empty arrays)
 		if len(result.Timestamps) == 0 || len(result.Values) == 0 {
-			// Add a single entry with null timestamp and value
+			// Add a single entry with empty start/end and null value
 			processedMetrics = append(processedMetrics, types.ProcessedMetric{
-				Label:     *label,
-				Timestamp: nil,
-				Value:     nil,
+				Start: "",
+				End:   "",
+				Label: *label,
+				Value: nil,
 			})
 			continue
 		}
@@ -98,14 +101,22 @@ func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.P
 				break
 			}
 
-			// Convert timestamp to string
-			timestampStr := timestamp.Format("2006-01-02T15:04:05Z")
+			// Calculate start and end times
+			// start == timestamp
+			// end == timestamp + (period - 1 second)
+			startTime := timestamp
+			endTime := timestamp.Add(time.Duration(period-1) * time.Second)
+
+			// Convert to strings
+			startStr := startTime.Format("2006-01-02T15:04:05Z")
+			endStr := endTime.Format("2006-01-02T15:04:05Z")
 			value := result.Values[i]
 
 			processedMetrics = append(processedMetrics, types.ProcessedMetric{
-				Label:     *label,
-				Timestamp: &timestampStr,
-				Value:     &value,
+				Start: startStr,
+				End:   endStr,
+				Label: *label,
+				Value: &value,
 			})
 		}
 	}

@@ -1,8 +1,10 @@
 package report
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/report"
@@ -66,6 +68,21 @@ func (r *Reporter) generateReport(discovery types.Discovery) error {
 
 	costMarkdown := costReport.AsMarkdown()
 	costMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "cost_report.md"})
+
+	report := types.Report{
+		Costs:   processedRegionsCosts,
+		Metrics: allClusterMetrics,
+	}
+
+	// outputting whole thing for testing
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal report: %v", err)
+	}
+
+	if err := os.WriteFile("report.json", data, 0644); err != nil {
+		return fmt.Errorf("failed to write report: %v", err)
+	}
 
 	return nil
 }
