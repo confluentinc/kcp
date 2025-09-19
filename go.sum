@@ -44,6 +44,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.7 h1:u3VbDKUCWarWiU
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.7/go.mod h1:/OuMQwhSyRapYxq6ZNpPer8juGNrB4P5Oz8bZ2cgjQE=
 github.com/aws/aws-sdk-go-v2/service/kafka v1.43.4 h1:SbVDfvwIpB3c3FWTDw8VnGatPxVEn3HjOiR6y3iUY9M=
 github.com/aws/aws-sdk-go-v2/service/kafka v1.43.4/go.mod h1:nQ7kmni4yUHB1Ax8GCjeQ2myyBOBxmh1XuElflbI0tA=
+github.com/aws/aws-sdk-go-v2/service/kafkaconnect v1.27.3 h1:CF89p3rDUgZy4wI+1l2naDAwjae62ZkF98Q5gy3FZ80=
+github.com/aws/aws-sdk-go-v2/service/kafkaconnect v1.27.3/go.mod h1:bmMKA1Y2O17TwKGE/R3dWejg/V2phqFdJPlpLCQ60k8=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.88.1 h1:+RpGuaQ72qnU83qBKVwxkznewEdAGhIWo/PQCmkhhog=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.88.1/go.mod h1:xajPTguLoeQMAOE44AAP2RQoUhF8ey1g5IFHARv71po=
 github.com/aws/aws-sdk-go-v2/service/sso v1.29.3 h1:7PKX3VYsZ8LUWceVRuv0+PU+E7OtQb1lgmi5vmUE9CM=
