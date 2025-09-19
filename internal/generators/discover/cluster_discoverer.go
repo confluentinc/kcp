@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -36,17 +37,24 @@ type ClusterDiscovererEC2Service interface {
 	DescribeSubnets(ctx context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error)
 }
 
-type ClusterDiscoverer struct {
-	mskService    ClusterDiscovererMSKService
-	ec2Service    ClusterDiscovererEC2Service
-	metricService ClusterDiscovererMetricService
+type ClusterDiscovererMSKConnectService interface {
+	ListConnectors(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error)
+	DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error)
 }
 
-func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service ClusterDiscovererEC2Service, metricService ClusterDiscovererMetricService) ClusterDiscoverer {
+type ClusterDiscoverer struct {
+	mskService        ClusterDiscovererMSKService
+	ec2Service        ClusterDiscovererEC2Service
+	metricService     ClusterDiscovererMetricService
+	mskConnectService ClusterDiscovererMSKConnectService
+}
+
+func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service ClusterDiscovererEC2Service, metricService ClusterDiscovererMetricService, mskConnectService ClusterDiscovererMSKConnectService) ClusterDiscoverer {
 	return ClusterDiscoverer{
-		mskService:    mskService,
-		ec2Service:    ec2Service,
-		metricService: metricService,
+		mskService:        mskService,
+		ec2Service:        ec2Service,
+		metricService:     metricService,
+		mskConnectService: mskConnectService,
 	}
 }
 
@@ -130,6 +138,12 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		}
 		awsClientInfo.ClusterNetworking = networking
 	}
+
+	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
+	if err != nil {
+		return nil, err
+	}
+	awsClientInfo.Connectors = connectors
 
 	return &awsClientInfo, nil
 }
@@ -362,4 +376,67 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	clusterMetric.MetricMetadata.FollowerFetching = aws.ToBool(followerFetching)
 
 	return clusterMetric, nil
+}
+
+func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
+	slog.Info("🔍 scanning for matching connectors", "clusterArn", aws.ToString(awsClientInfo.MskClusterConfig.ClusterArn))
+	var matchingConnectors []types.ConnectorSummary
+
+	mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &kafkaconnect.ListConnectorsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list connectors: %v", err)
+	}
+
+	for _, connector := range mskConnectResult.Connectors {
+		describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
+			ConnectorArn: connector.ConnectorArn,
+		})
+		if err != nil {
+			slog.Error("failed to describe connector", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
+			continue
+		}
+
+		authType := types.AuthType(connector.KafkaClusterClientAuthentication.AuthenticationType)
+		switch connector.KafkaClusterClientAuthentication.AuthenticationType {
+		case "IAM":
+			authType = types.AuthTypeIAM
+		case "SASL_SCRAM":
+			authType = types.AuthTypeSASLSCRAM
+		case "TLS":
+			authType = types.AuthTypeTLS
+		case "NONE":
+			authType = types.AuthTypeUnauthenticated
+		default:
+			return nil, fmt.Errorf("❌ Unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
+		}
+
+		brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
+		if err != nil {
+			slog.Error("failed to get bootstrap brokers for auth type", "authType", authType, "error", err)
+			continue
+		}
+
+		// Only way to confirm if a connector belongs to a cluster is to compare the bootstrap servers and look for a match between connector and cluster.
+		connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
+		for _, brokerAddress := range brokerAddresses {
+			if strings.Contains(connectorBootstrap, brokerAddress) {
+				slog.Info("🔍 found connector for cluster", "connectorName", aws.ToString(connector.ConnectorName))
+
+				matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
+					ConnectorArn:                     aws.ToString(connector.ConnectorArn),
+					ConnectorName:                    aws.ToString(connector.ConnectorName),
+					ConnectorState:                   string(connector.ConnectorState),
+					CreationTime:                     connector.CreationTime.Format(time.RFC3339),
+					KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
+					KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
+					Capacity:                         *connector.Capacity,
+					Plugins:                          describeConnector.Plugins,
+					ConnectorConfiguration:           describeConnector.ConnectorConfiguration,
+				})
+				break
+			}
+		}
+	}
+
+	return matchingConnectors, nil
 }

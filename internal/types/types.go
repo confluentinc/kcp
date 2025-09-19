@@ -14,6 +14,7 @@ import (
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
@@ -198,6 +199,19 @@ type AWSClientInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatible_versions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
+	Connectors           []ConnectorSummary                     `json:"connectors"`
+}
+
+type ConnectorSummary struct {
+	ConnectorArn                     string                                                        `json:"connector_arn"`
+	ConnectorName                    string                                                        `json:"connector_name"`
+	ConnectorState                   string                                                        `json:"connector_state"`
+	CreationTime                     string                                                        `json:"creation_time"`
+	KafkaCluster                     kafkaconnecttypes.ApacheKafkaClusterDescription               `json:"kafka_cluster"`
+	KafkaClusterClientAuthentication kafkaconnecttypes.KafkaClusterClientAuthenticationDescription `json:"kafka_cluster_client_authentication"`
+	Capacity                         kafkaconnecttypes.CapacityDescription                         `json:"capacity"`
+	Plugins                          []kafkaconnecttypes.PluginDescription                         `json:"plugins"`
+	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
 type KafkaAdminClientInformation struct {
@@ -249,6 +263,7 @@ type GlobalMetrics struct {
 	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }
 
+// Returns only one bootstrap broker per authentication type.
 func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
 	var brokerList string
 	var visibility string
@@ -302,6 +317,41 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 
 	// Split by comma and trim whitespace from each address, filter out empty strings
 	rawAddresses := strings.Split(brokerList, ",")
+	addresses := make([]string, 0, len(rawAddresses))
+	for _, addr := range rawAddresses {
+		trimmedAddr := strings.TrimSpace(addr)
+		if trimmedAddr != "" {
+			addresses = append(addresses, trimmedAddr)
+		}
+	}
+	return addresses, nil
+}
+
+// Returns all bootstrap brokers for a given auth type.
+func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
+	var brokerList []string
+	slog.Info("🔍 parsing broker addresses", "authType", authType)
+
+	switch authType {
+		case AuthTypeIAM:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
+		case AuthTypeSASLSCRAM:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
+		case AuthTypeUnauthenticated:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
+		case AuthTypeTLS:
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
+			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+		default:
+			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	}
+
+	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
+
+	rawAddresses := strings.Split(strings.Join(brokerList, ","), ",")
 	addresses := make([]string, 0, len(rawAddresses))
 	for _, addr := range rawAddresses {
 		trimmedAddr := strings.TrimSpace(addr)
