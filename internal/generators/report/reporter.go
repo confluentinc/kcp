@@ -1,9 +1,7 @@
 package report
 
 import (
-	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/report"
@@ -41,19 +39,12 @@ func (r *Reporter) generateReport(discovery types.Discovery) error {
 		parsedRegionsCost = append(parsedRegionsCost, parsedRegionCost)
 	}
 
-	parsedCostWrapper := types.ParseCostWrapper{
+	parsedCostWrapper := types.CostReport{
 		ParsedRegionCosts: parsedRegionsCost,
 	}
 
-	markdown := parsedCostWrapper.AsMarkdown()
-	// write to file
-	filePath := fmt.Sprintf("report-%s.md", discovery.Timestamp.Format("2006-01-02"))
-	file, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to create file: %v", err)
-	}
-	defer file.Close()
-	markdown.WriteTo(file)
+	costMarkdown := parsedCostWrapper.AsMarkdown()
+	costMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "report.md"})
 
 	return nil
 }

@@ -379,11 +379,11 @@ type ParsedRegionCostResponse struct {
 	Metadata CostMetadata   `json:"metadata"`
 }
 
-type ParseCostWrapper struct {
+type CostReport struct {
 	ParsedRegionCosts []ParsedRegionCostResponse `json:"parsed_region_costs"`
 }
 
-func (c *ParseCostWrapper) AsMarkdown() *markdown.Markdown {
+func (c *CostReport) AsMarkdown() *markdown.Markdown {
 	md := markdown.New()
 	md.AddHeading("AWS Service Cost Report", 1)
 
