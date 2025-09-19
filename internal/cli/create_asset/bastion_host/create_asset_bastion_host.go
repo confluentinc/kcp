@@ -1,21 +1,16 @@
 package bastion_host
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/generators/create_asset/bastion_host"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 var (
-	clusterFile      string
 	region           string
 	vpcId            string
 	bastionHostCidr  net.IPNet
@@ -39,16 +34,10 @@ func NewBastionHostCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.IPNetVar(&bastionHostCidr, "bastion-host-cidr", net.IPNet{}, "The bastion host CIDR (e.g. 10.0.255.0/24)")
+	requiredFlags.StringVar(&region, "region", "", "AWS region the bastion host is provisioned in")
+	requiredFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
 	bastionHostCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
-
-	conditionalFlags := pflag.NewFlagSet("conditional", pflag.ExitOnError)
-	conditionalFlags.SortFlags = false
-	conditionalFlags.StringVar(&clusterFile, "cluster-file", "", "Cluster scan JSON file produced from 'kcp scan cluster' command")
-	conditionalFlags.StringVar(&region, "region", "", "AWS region the bastion host is provisioned in")
-	conditionalFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
-	bastionHostCmd.Flags().AddFlagSet(conditionalFlags)
-	groups[conditionalFlags] = "Conditional Flags"
 
 	// Optional flags.
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
@@ -61,16 +50,13 @@ func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, conditionalFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Conditional Flags", "Optional Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
 				fmt.Printf("%s:\n", groupNames[i])
-				if groupNames[i] == "Conditional Flags" {
-					fmt.Printf("  (Provide either --cluster-file OR both --region and --vpc-id)\n")
-				}
 				fmt.Printf("%s\n", usage)
 			}
 		}
@@ -80,8 +66,6 @@ func NewBastionHostCmd() *cobra.Command {
 		return nil
 	})
 
-	bastionHostCmd.MarkFlagsMutuallyExclusive("cluster-file", "region")
-	bastionHostCmd.MarkFlagsMutuallyExclusive("cluster-file", "vpc-id")
 	bastionHostCmd.MarkFlagsRequiredTogether("region", "vpc-id")
 
 	bastionHostCmd.MarkFlagRequired("bastion-host-cidr")
@@ -113,27 +97,6 @@ func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 }
 
 func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
-	if clusterFile != "" {
-		// Parse cluster information from JSON file
-		file, err := os.ReadFile(clusterFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read cluster file: %v", err)
-		}
-
-		var clusterInfo types.ClusterInformation
-		if err := json.Unmarshal(file, &clusterInfo); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
-		}
-
-		if region == "" {
-			region = aws.ToString(&clusterInfo.Region)
-		}
-
-		if vpcId == "" {
-			vpcId = aws.ToString(&clusterInfo.ClusterNetworking.VpcId)
-		}
-	}
-
 	opts := bastion_host.BastionHostOpts{
 		Region:           region,
 		VPCId:            vpcId,

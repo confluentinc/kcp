@@ -58,10 +58,6 @@ variable "msk_cluster_bootstrap_brokers" {
   type        = string
 }
 
-variable "msk_cluster_arn" {
-  description = "The ARN of the MSK cluster"
-}
-
 variable "ansible_control_node_subnet_cidr" {
   description = "The CIDR block of the ansible instance subnet"
   type        = string

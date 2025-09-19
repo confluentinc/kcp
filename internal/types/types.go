@@ -182,6 +182,7 @@ type DiscoveredRegion struct {
 type DiscoveredCluster struct {
 	Name                        string                      `json:"name"`
 	Arn                         string                      `json:"arn"`
+	Region                      string                      `json:"region"`
 	ClusterMetrics              ClusterMetrics              `json:"metrics"`
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`

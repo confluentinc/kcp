@@ -66,7 +66,6 @@ module "confluent_platform_broker_instances" {
   confluent_cloud_cluster_bootstrap_endpoint = module.confluent_cloud.confluent_cloud_cluster_bootstrap_endpoint
   msk_cluster_id                             = var.msk_cluster_id
   msk_cluster_bootstrap_brokers              = var.msk_cluster_bootstrap_brokers
-  msk_cluster_arn                            = var.msk_cluster_arn
   confluent_platform_broker_iam_role_name    = var.confluent_platform_broker_iam_role_name
 }
 

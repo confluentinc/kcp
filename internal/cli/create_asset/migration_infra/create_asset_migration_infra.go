@@ -16,12 +16,13 @@ import (
 )
 
 var (
-	region             string
-	vpcId              string
+	stateFile          string
+	clusterArn         string
+	migrationInfraType string
+
 	ccEnvName          string
 	ccClusterName      string
-	clusterFile        string
-	migrationInfraType string
+	
 	securityGroupIds   []string
 
 	ccClusterType                 string
@@ -46,7 +47,8 @@ func NewMigrationInfraCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&clusterFile, "cluster-file", "", "Cluster scan JSON file produced from 'kcp scan cluster' command")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
+	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration infrastructure for.")
 	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options")
 	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -54,8 +56,6 @@ func NewMigrationInfraCmd() *cobra.Command {
 	// Optional flags.
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&region, "region", "", "AWS region the jump migration infrastructure is provisioned in")
-	optionalFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
 	optionalFlags.StringVar(&ccEnvName, "cc-env-name", "", "Confluent Cloud environment name")
 	optionalFlags.StringVar(&ccClusterName, "cc-cluster-name", "", "Confluent Cloud cluster name")
 	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
@@ -98,7 +98,8 @@ func NewMigrationInfraCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationInfraCmd.MarkFlagRequired("cluster-file")
+	migrationInfraCmd.MarkFlagRequired("state-file")
+	migrationInfraCmd.MarkFlagRequired("cluster-arn")
 	migrationInfraCmd.MarkFlagRequired("type")
 
 	return migrationInfraCmd
@@ -149,46 +150,65 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 	// ignoring error as already validated in preRunCreateMigrationInfra
 	migrationInfraType, _ := types.ToMigrationInfraType(migrationInfraType)
 
-	// Parse cluster information from JSON file
-	file, err := os.ReadFile(clusterFile)
+	file, err := os.ReadFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read cluster file: %v", err)
+		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
 	}
 
-	var clusterInfo types.ClusterInformation
-	if err := json.Unmarshal(file, &clusterInfo); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cluster info: %v", err)
+	var discoveryData types.Discovery
+	if err := json.Unmarshal(file, &discoveryData); err != nil {
+		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	if region == "" {
-		region = aws.ToString(&clusterInfo.Region)
+	cluster, err := utils.GetClusterByArn(&discoveryData, clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if vpcId == "" {
-		vpcId = aws.ToString(&clusterInfo.ClusterNetworking.VpcId)
-	}
+	region := aws.ToString(&cluster.Region)
+	vpcId := aws.ToString(&cluster.AWSClientInformation.ClusterNetworking.VpcId)
 
 	if ccEnvName == "" {
-		ccEnvName = aws.ToString(clusterInfo.Cluster.ClusterName)
+		ccEnvName = aws.ToString(&cluster.Name)
 	}
 
 	if ccClusterName == "" {
-		ccClusterName = aws.ToString(clusterInfo.Cluster.ClusterName)
+		ccClusterName = aws.ToString(&cluster.Name)
+	}
+
+	bootstrapBrokers, err := getBootstrapBrokers(cluster, migrationInfraType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bootstrap brokers: %v", err)
 	}
 
 	opts := migration_infra.MigrationInfraOpts{
 		Region:                        region,
 		VPCId:                         vpcId,
 		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig,
-		CCEnvName:                     ccEnvName,
-		CCClusterName:                 ccClusterName,
-		CCClusterType:                 strings.ToLower(ccClusterType),
+		CcEnvName:                     ccEnvName,
+		CcClusterName:                 ccClusterName,
+		CcClusterType:                 strings.ToLower(ccClusterType),
 		AnsibleControlNodeSubnetCIDR:  ansibleControlNodeSubnetCIDR.String(),
 		JumpClusterBrokerIAMRoleName:  jumpClusterBrokerIAMRoleName,
-		ClusterInfo:                   clusterInfo,
 		MigrationInfraType:            migrationInfraType,
 		SecurityGroupIds:              securityGroupIds,
+		BootstrapBrokers:              bootstrapBrokers,
+		MskClusterId:                  aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID),
+		MskClusterArn:                 aws.ToString(&cluster.Arn),
 	}
 
 	return &opts, nil
+}
+
+func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationInfraType types.MigrationInfraType) (string, error) {
+	switch migrationInfraType {
+	case types.MskCpCcPrivateSaslIam:
+		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslIam), nil
+	case types.MskCpCcPrivateSaslScram:
+		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram), nil
+	case types.MskCcPublic:
+		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram), nil
+	default:
+		return "", fmt.Errorf("invalid target type: %d", migrationInfraType)
+	}
 }

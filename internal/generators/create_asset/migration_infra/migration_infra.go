@@ -11,7 +11,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -23,14 +22,17 @@ type MigrationInfraOpts struct {
 	Region                        string
 	VPCId                         string
 	JumpClusterBrokerSubnetConfig string
-	CCEnvName                     string
-	CCClusterName                 string
-	CCClusterType                 string
+	CcEnvName                     string
+	CcClusterName                 string
+	CcClusterType                 string
 	AnsibleControlNodeSubnetCIDR  string
 	JumpClusterBrokerIAMRoleName  string
 	SecurityGroupIds              []string
 
-	ClusterInfo        types.ClusterInformation
+	BootstrapBrokers string
+	MskClusterId     string
+	MskClusterArn    string
+
 	MigrationInfraType types.MigrationInfraType
 }
 
@@ -45,7 +47,9 @@ type MigrationInfraAssetGenerator struct {
 	jumpClusterBrokerIAMRoleName  string
 	securityGroupIds              []string
 
-	clusterInfo        types.ClusterInformation
+	bootstrapBrokers string
+	mskClusterId     string
+
 	migrationInfraType types.MigrationInfraType
 }
 
@@ -54,14 +58,15 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 		region:                        opts.Region,
 		vpcId:                         opts.VPCId,
 		jumpClusterBrokerSubnetConfig: opts.JumpClusterBrokerSubnetConfig,
-		ccEnvName:                     opts.CCEnvName,
-		ccClusterName:                 opts.CCClusterName,
-		ccClusterType:                 opts.CCClusterType,
+		ccEnvName:                     opts.CcEnvName,
+		ccClusterName:                 opts.CcClusterName,
+		ccClusterType:                 opts.CcClusterType,
 		ansibleControlNodeSubnetCIDR:  opts.AnsibleControlNodeSubnetCIDR,
 		jumpClusterBrokerIAMRoleName:  opts.JumpClusterBrokerIAMRoleName,
-		clusterInfo:                   opts.ClusterInfo,
 		migrationInfraType:            opts.MigrationInfraType,
 		securityGroupIds:              opts.SecurityGroupIds,
+		bootstrapBrokers:              opts.BootstrapBrokers,
+		mskClusterId:                  opts.MskClusterId,
 	}
 }
 
@@ -180,19 +185,6 @@ func (mi *MigrationInfraAssetGenerator) generateInputsTfvars(outputDir string) e
 		}
 	}
 
-	// Get bootstrap brokers based on auth type
-	var bootstrapBrokers string
-	switch mi.migrationInfraType {
-	case types.MskCpCcPrivateSaslIam:
-		bootstrapBrokers = aws.ToString(mi.clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslIam)
-	case types.MskCpCcPrivateSaslScram:
-		bootstrapBrokers = aws.ToString(mi.clusterInfo.BootstrapBrokers.BootstrapBrokerStringSaslScram)
-	case types.MskCcPublic:
-		bootstrapBrokers = aws.ToString(mi.clusterInfo.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
-	default:
-		return fmt.Errorf("invalid target type: %d", mi.migrationInfraType)
-	}
-
 	// Prepare template data
 	templateData := struct {
 		ConfluentCloudProvider             string
@@ -203,7 +195,6 @@ func (mi *MigrationInfraAssetGenerator) generateInputsTfvars(outputDir string) e
 		AnsibleControlNodeSubnetCIDR       string
 		MSKClusterID                       string
 		MSKClusterBootstrapBrokers         string
-		MSKClusterARN                      string
 		ConfluentPlatformBrokerIAMRoleName string
 		CustomerVPCID                      string
 		AWSZones                           []utils.AWSZone
@@ -211,14 +202,13 @@ func (mi *MigrationInfraAssetGenerator) generateInputsTfvars(outputDir string) e
 		SecurityGroupIds                   []string
 	}{
 		ConfluentCloudProvider:             "AWS",
-		ConfluentCloudRegion:               mi.clusterInfo.Region,
+		ConfluentCloudRegion:               mi.region,
 		ConfluentCloudEnvironmentName:      mi.ccEnvName,
 		ConfluentCloudClusterName:          mi.ccClusterName,
 		ConfluentCloudClusterType:          mi.ccClusterType,
 		AnsibleControlNodeSubnetCIDR:       mi.ansibleControlNodeSubnetCIDR,
-		MSKClusterID:                       mi.clusterInfo.ClusterID,
-		MSKClusterBootstrapBrokers:         bootstrapBrokers,
-		MSKClusterARN:                      aws.ToString(mi.clusterInfo.Cluster.ClusterArn),
+		MSKClusterID:                       mi.mskClusterId,
+		MSKClusterBootstrapBrokers:         mi.bootstrapBrokers,
 		ConfluentPlatformBrokerIAMRoleName: mi.jumpClusterBrokerIAMRoleName,
 		CustomerVPCID:                      mi.vpcId,
 		AWSZones:                           awsZones,

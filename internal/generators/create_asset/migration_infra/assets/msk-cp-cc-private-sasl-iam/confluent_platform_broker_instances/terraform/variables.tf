@@ -66,11 +66,6 @@ variable "msk_cluster_bootstrap_brokers" {
   type        = string
 }
 
-variable "msk_cluster_arn" {
-  description = "The ARN of the MSK cluster"
-  type        = string
-}
-
 variable "aws_region" {
   description = "The AWS region"
   type        = string
