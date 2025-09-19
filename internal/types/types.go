@@ -372,7 +372,7 @@ type ServiceTotal struct {
 }
 
 // ParsedCostResponse represents the response structure with parsed costs and totals
-type ParsedRegionCostResponse struct {
+type ProcessedRegionCosts struct {
 	Region   string         `json:"region"`
 	Costs    []ParsedCost   `json:"costs"`
 	Totals   []ServiceTotal `json:"totals"`
@@ -380,7 +380,7 @@ type ParsedRegionCostResponse struct {
 }
 
 type CostReport struct {
-	ParsedRegionCosts []ParsedRegionCostResponse `json:"parsed_region_costs"`
+	ProcessedRegionCosts []ProcessedRegionCosts `json:"processed_region_costs"`
 }
 
 func (c *CostReport) AsMarkdown() *markdown.Markdown {
@@ -390,7 +390,7 @@ func (c *CostReport) AsMarkdown() *markdown.Markdown {
 	md.AddParagraph("This report presents cost analysis for AWS services across multiple regions.")
 
 	// Process each region
-	for _, regionCost := range c.ParsedRegionCosts {
+	for _, regionCost := range c.ProcessedRegionCosts {
 		md.AddHeading(fmt.Sprintf("Region: %s", regionCost.Region), 2)
 		md.AddParagraph(fmt.Sprintf("This section presents cost analysis for the region **%s**.", regionCost.Region))
 
@@ -532,6 +532,160 @@ func (c *CostReport) AsMarkdown() *markdown.Markdown {
 	// Add build info section at the end
 	md.AddHeading("KCP Build Info", 2)
 	// We'll need to get build info from somewhere - let's add a simple version for now
+	md.AddParagraph(fmt.Sprintf("**Version:** %s", build_info.Version))
+	md.AddParagraph(fmt.Sprintf("**Commit:** %s", build_info.Commit))
+	md.AddParagraph(fmt.Sprintf("**Date:** %s", build_info.Date))
+
+	return md
+}
+
+// ProcessedMetric represents a single metric data point
+type ProcessedMetric struct {
+	Label     string   `json:"label"`
+	Timestamp *string  `json:"timestamp"`
+	Value     *float64 `json:"value"`
+}
+
+// ProcessedClusterMetrics represents the flattened metrics response
+type ProcessedClusterMetrics struct {
+	ClusterName string            `json:"cluster_name"`
+	ClusterArn  string            `json:"cluster_arn"`
+	Metrics     []ProcessedMetric `json:"metrics"`
+	Metadata    MetricMetadata    `json:"metadata"`
+}
+
+type MetricsReport struct {
+	ProcessedClusterMetrics []ProcessedClusterMetrics `json:"processed_cluster_metrics"`
+}
+
+func (m *MetricsReport) AsMarkdown() *markdown.Markdown {
+	md := markdown.New()
+	md.AddHeading("Amazon MSK Cluster Metrics Report", 1)
+
+	md.AddParagraph("This report presents metrics analysis for Amazon MSK clusters across multiple regions.")
+
+	// Process each cluster
+	for _, clusterMetrics := range m.ProcessedClusterMetrics {
+		md.AddHeading(fmt.Sprintf("Cluster: %s", clusterMetrics.ClusterName), 2)
+		md.AddParagraph(fmt.Sprintf("This section presents metrics analysis for the cluster **%s**.", clusterMetrics.ClusterName))
+
+		// Add metadata section
+		md.AddHeading("Metrics Analysis Dimensions", 3)
+		md.AddParagraph(fmt.Sprintf("**Cluster Name:** %s", clusterMetrics.ClusterName))
+		md.AddParagraph(fmt.Sprintf("**Cluster ARN:** %s", clusterMetrics.ClusterArn))
+		md.AddParagraph(fmt.Sprintf("**Cluster Type:** %s", clusterMetrics.Metadata.ClusterType))
+		md.AddParagraph(fmt.Sprintf("**Kafka Version:** %s", clusterMetrics.Metadata.KafkaVersion))
+		md.AddParagraph(fmt.Sprintf("**Enhanced Monitoring:** %s", clusterMetrics.Metadata.EnhancedMonitoring))
+		md.AddParagraph(fmt.Sprintf("**Broker AZ Distribution:** %s", clusterMetrics.Metadata.BrokerAzDistribution))
+		md.AddParagraph(fmt.Sprintf("**Follower Fetching:** %t", clusterMetrics.Metadata.FollowerFetching))
+		md.AddParagraph(fmt.Sprintf("**Metrics Period:** %s to %s", clusterMetrics.Metadata.StartWindowDate, clusterMetrics.Metadata.EndWindowDate))
+		md.AddParagraph(fmt.Sprintf("**Aggregation Period:** %d seconds", clusterMetrics.Metadata.Period))
+
+		// Group metrics by label
+		metricGroups := make(map[string][]ProcessedMetric)
+		for _, metric := range clusterMetrics.Metrics {
+			metricGroups[metric.Label] = append(metricGroups[metric.Label], metric)
+		}
+
+		// Sort metric names for consistent output across all sections
+		sortedMetricNames := make([]string, 0, len(metricGroups))
+		for metricName := range metricGroups {
+			sortedMetricNames = append(sortedMetricNames, metricName)
+		}
+		// Simple sort
+		for i := 0; i < len(sortedMetricNames)-1; i++ {
+			for j := i + 1; j < len(sortedMetricNames); j++ {
+				if sortedMetricNames[i] > sortedMetricNames[j] {
+					sortedMetricNames[i], sortedMetricNames[j] = sortedMetricNames[j], sortedMetricNames[i]
+				}
+			}
+		}
+
+		// Create metrics summary table
+		if len(metricGroups) > 0 {
+			md.AddHeading("Metrics Summary", 3)
+			md.AddParagraph("This section presents a summary of all collected metrics for this cluster.")
+
+			// Create table data
+			headers := []string{"Metric Name", "Latest Value", "Latest Timestamp", "Data Points"}
+			tableData := [][]string{}
+
+			for _, metricName := range sortedMetricNames {
+				metrics := metricGroups[metricName]
+
+				// Find the latest non-null metric
+				var latestMetric *ProcessedMetric
+				for i := len(metrics) - 1; i >= 0; i-- {
+					if metrics[i].Value != nil && metrics[i].Timestamp != nil {
+						latestMetric = &metrics[i]
+						break
+					}
+				}
+
+				var latestValue, latestTimestamp, dataPoints string
+				dataPoints = fmt.Sprintf("%d", len(metrics))
+
+				if latestMetric != nil {
+					latestValue = fmt.Sprintf("%.6f", *latestMetric.Value)
+					latestTimestamp = *latestMetric.Timestamp
+				} else {
+					latestValue = "No data"
+					latestTimestamp = "No data"
+				}
+
+				tableData = append(tableData, []string{
+					metricName,
+					latestValue,
+					latestTimestamp,
+					dataPoints,
+				})
+			}
+
+			md.AddTable(headers, tableData)
+		}
+
+		// Add detailed metrics section
+		if len(metricGroups) > 0 {
+			md.AddHeading("Detailed Metrics", 3)
+			md.AddParagraph("This section presents detailed time-series data for each metric.")
+
+			// Use the same sorted metric names from above
+			for _, metricName := range sortedMetricNames {
+				metrics := metricGroups[metricName]
+
+				md.AddHeading(fmt.Sprintf("Metric: %s", metricName), 4)
+
+				// Filter out null values for the detailed view
+				validMetrics := []ProcessedMetric{}
+				for _, metric := range metrics {
+					if metric.Value != nil && metric.Timestamp != nil {
+						validMetrics = append(validMetrics, metric)
+					}
+				}
+
+				if len(validMetrics) > 0 {
+					detailHeaders := []string{"Timestamp", "Value"}
+					detailData := [][]string{}
+
+					for _, metric := range validMetrics {
+						detailData = append(detailData, []string{
+							*metric.Timestamp,
+							fmt.Sprintf("%.6f", *metric.Value),
+						})
+					}
+
+					md.AddTable(detailHeaders, detailData)
+				} else {
+					md.AddParagraph("*No data available for this metric.*")
+				}
+			}
+		}
+
+		md.AddHorizontalRule()
+	}
+
+	// Add build info section at the end
+	md.AddHeading("KCP Build Info", 2)
 	md.AddParagraph(fmt.Sprintf("**Version:** %s", build_info.Version))
 	md.AddParagraph(fmt.Sprintf("**Commit:** %s", build_info.Commit))
 	md.AddParagraph(fmt.Sprintf("**Date:** %s", build_info.Date))

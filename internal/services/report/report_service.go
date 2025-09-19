@@ -13,12 +13,11 @@ func NewReportService() *ReportService {
 	return &ReportService{}
 }
 
-// ParseCostResults transforms AWS cost explorer results into a flattened structure
-func (rs *ReportService) ParseCostResults(region string, costs types.CostInformation) types.ParsedRegionCostResponse {
-	var parsedCosts []types.ParsedCost
+func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
+	var processedCosts []types.ParsedCost
 	serviceTotals := make(map[string]float64)
 
-	for _, result := range costs.CostResults {
+	for _, result := range region.Costs.CostResults {
 		if result.TimePeriod == nil {
 			continue
 		}
@@ -38,7 +37,7 @@ func (rs *ReportService) ParseCostResults(region string, costs types.CostInforma
 			if unblendedCost, exists := group.Metrics["UnblendedCost"]; exists && unblendedCost.Amount != nil {
 				cost := aws.ToString(unblendedCost.Amount)
 
-				parsedCosts = append(parsedCosts, types.ParsedCost{
+				processedCosts = append(processedCosts, types.ParsedCost{
 					Start:    start,
 					End:      end,
 					Service:  service,
@@ -63,18 +62,58 @@ func (rs *ReportService) ParseCostResults(region string, costs types.CostInforma
 		})
 	}
 
-	// metadata := costs.CostMetadata
-	// metadata.StartDate = costs.StartDate
-	// metadata.EndDate = costs.EndDate
-	// metadata.Granularity = costs.Granularity
-	// metadata.Tags = costs.Tags
-	// metadata.Services = costs.Services
-
-	return types.ParsedRegionCostResponse{
-
-		Region:   region,
-		Costs:    parsedCosts,
+	return types.ProcessedRegionCosts{
+		Region:   region.Name,
+		Costs:    processedCosts,
 		Totals:   totals,
-		Metadata: costs.CostMetadata,
+		Metadata: region.Costs.CostMetadata,
+	}
+}
+
+func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics {
+	var processedMetrics []types.ProcessedMetric
+
+	// Iterate through each metric result
+	for _, result := range cluster.ClusterMetrics.Results {
+		label := result.Label
+		if label == nil {
+			continue
+		}
+
+		// Handle case where there are no timestamps/values (empty arrays)
+		if len(result.Timestamps) == 0 || len(result.Values) == 0 {
+			// Add a single entry with null timestamp and value
+			processedMetrics = append(processedMetrics, types.ProcessedMetric{
+				Label:     *label,
+				Timestamp: nil,
+				Value:     nil,
+			})
+			continue
+		}
+
+		// Iterate through timestamps and values (they should be paired)
+		for i, timestamp := range result.Timestamps {
+			// Ensure we don't go out of bounds for values
+			if i >= len(result.Values) {
+				break
+			}
+
+			// Convert timestamp to string
+			timestampStr := timestamp.Format("2006-01-02T15:04:05Z")
+			value := result.Values[i]
+
+			processedMetrics = append(processedMetrics, types.ProcessedMetric{
+				Label:     *label,
+				Timestamp: &timestampStr,
+				Value:     &value,
+			})
+		}
+	}
+
+	return types.ProcessedClusterMetrics{
+		ClusterName: cluster.Name,
+		ClusterArn:  cluster.Arn,
+		Metrics:     processedMetrics,
+		Metadata:    cluster.ClusterMetrics.MetricMetadata,
 	}
 }
