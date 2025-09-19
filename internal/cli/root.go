@@ -81,7 +81,7 @@ func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
 		return true
 	})
 
-	h.l.Printf("%s %s %s %s", time, level, message, strings.Join(values, " "))	
+	h.l.Printf("%s %s %s %s", time, level, message, strings.Join(values, " "))
 
 	return nil
 }

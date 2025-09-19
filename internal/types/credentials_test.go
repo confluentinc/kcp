@@ -208,23 +208,32 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 	tests := []struct {
 		name            string
 		clusterEntry    ClusterEntry
-		expectedMethods []string
+		expectedMethods []AuthType
 	}{
 		{
 			name: "no auth methods enabled",
 			clusterEntry: ClusterEntry{
 				AuthMethod: AuthMethodConfig{},
 			},
-			expectedMethods: []string{},
+			expectedMethods: []AuthType{},
 		},
 		{
-			name: "unauthenticated enabled",
+			name: "unauthenticated TLS enabled",
 			clusterEntry: ClusterEntry{
 				AuthMethod: AuthMethodConfig{
-					Unauthenticated: &UnauthenticatedConfig{Use: true},
+					UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: true},
 				},
 			},
-			expectedMethods: []string{"unauthenticated"},
+			expectedMethods: []AuthType{AuthTypeUnauthenticatedTLS},
+		},
+		{
+			name: "unauthenticated plaintext enabled",
+			clusterEntry: ClusterEntry{
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+			},
+			expectedMethods: []AuthType{AuthTypeUnauthenticatedPlaintext},
 		},
 		{
 			name: "IAM enabled",
@@ -233,7 +242,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 					IAM: &IAMConfig{Use: true},
 				},
 			},
-			expectedMethods: []string{"iam"},
+			expectedMethods: []AuthType{AuthTypeIAM},
 		},
 		{
 			name: "SASL/SCRAM enabled",
@@ -242,7 +251,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 					SASLScram: &SASLScramConfig{Use: true},
 				},
 			},
-			expectedMethods: []string{"sasl_scram"},
+			expectedMethods: []AuthType{AuthTypeSASLSCRAM},
 		},
 		{
 			name: "TLS enabled",
@@ -251,7 +260,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 					TLS: &TLSConfig{Use: true},
 				},
 			},
-			expectedMethods: []string{"tls"},
+			expectedMethods: []AuthType{AuthTypeTLS},
 		},
 		{
 			name: "multiple methods enabled",
@@ -261,7 +270,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 					TLS: &TLSConfig{Use: true},
 				},
 			},
-			expectedMethods: []string{"iam", "tls"},
+			expectedMethods: []AuthType{AuthTypeIAM, AuthTypeTLS},
 		},
 		{
 			name: "auth method configured but not enabled",
@@ -270,7 +279,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 					IAM: &IAMConfig{Use: false},
 				},
 			},
-			expectedMethods: []string{},
+			expectedMethods: []AuthType{},
 		},
 	}
 
@@ -290,13 +299,23 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		expectedError bool
 	}{
 		{
-			name: "unauthenticated auth type",
+			name: "unauthenticated TLS auth type",
 			clusterEntry: ClusterEntry{
 				AuthMethod: AuthMethodConfig{
-					Unauthenticated: &UnauthenticatedConfig{Use: true},
+					UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: true},
 				},
 			},
-			expectedType:  AuthTypeUnauthenticated,
+			expectedType:  AuthTypeUnauthenticatedTLS,
+			expectedError: false,
+		},
+		{
+			name: "unauthenticated plaintext auth type",
+			clusterEntry: ClusterEntry{
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+			},
+			expectedType:  AuthTypeUnauthenticatedPlaintext,
 			expectedError: false,
 		},
 		{
@@ -441,8 +460,13 @@ func TestCredentials_WriteToFile_InvalidPath(t *testing.T) {
 }
 
 func TestAuthMethodConfigs(t *testing.T) {
-	t.Run("UnauthenticatedConfig", func(t *testing.T) {
-		config := &UnauthenticatedConfig{Use: true}
+	t.Run("UnauthenticatedTLSConfig", func(t *testing.T) {
+		config := &UnauthenticatedTLSConfig{Use: true}
+		assert.True(t, config.Use)
+	})
+
+	t.Run("UnauthenticatedPlaintextConfig", func(t *testing.T) {
+		config := &UnauthenticatedPlaintextConfig{Use: true}
 		assert.True(t, config.Use)
 	})
 
