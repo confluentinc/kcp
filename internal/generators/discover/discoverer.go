@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/ec2"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
+	"github.com/confluentinc/kcp/internal/services/msk_connect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -72,6 +73,13 @@ func (d *Discoverer) discoverRegions() error {
 			continue
 		}
 
+		mskConnectClient, err := client.NewMSKConnectClient(region)
+		if err != nil {
+			slog.Error("failed to create msk connect client", "region", region, "error", err)
+			continue
+		}
+		mskConnectService := msk_connect.NewMSKConnectService(mskConnectClient)
+
 		// Discover region-level resources (costs, configurations, cluster ARNs)
 		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
 		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
@@ -81,7 +89,7 @@ func (d *Discoverer) discoverRegions() error {
 		}
 
 		// Discover detailed cluster information for each cluster in the region
-		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService)
+		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService, mskConnectService)
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		for _, clusterArn := range discoveredRegion.ClusterArns {

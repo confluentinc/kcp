@@ -14,10 +14,9 @@ import (
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
-
-
 
 // ClusterSummary contains summary information about an MSK cluster
 type ClusterSummary struct {
@@ -198,6 +197,19 @@ type AWSClientInformation struct {
 	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatible_versions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
+	Connectors           []ConnectorSummary                     `json:"connectors"`
+}
+
+type ConnectorSummary struct {
+	ConnectorArn                     string                                                        `json:"connector_arn"`
+	ConnectorName                    string                                                        `json:"connector_name"`
+	ConnectorState                   string                                                        `json:"connector_state"`
+	CreationTime                     string                                                        `json:"creation_time"`
+	KafkaCluster                     kafkaconnecttypes.ApacheKafkaClusterDescription               `json:"kafka_cluster"`
+	KafkaClusterClientAuthentication kafkaconnecttypes.KafkaClusterClientAuthenticationDescription `json:"kafka_cluster_client_authentication"`
+	Capacity                         kafkaconnecttypes.CapacityDescription                         `json:"capacity"`
+	Plugins                          []kafkaconnecttypes.PluginDescription                         `json:"plugins"`
+	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
 type KafkaAdminClientInformation struct {

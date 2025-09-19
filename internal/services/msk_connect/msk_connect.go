@@ -14,16 +14,10 @@ func NewMSKConnectService(client *kafkaconnect.Client) *MSKConnectService {
 	return &MSKConnectService{client: client}
 }
 
-func (ms *MSKConnectService) ListConnectors(ctx context.Context, clusterArn *string) (*kafkaconnect.ListConnectorsOutput, error) {
-	input := &kafkaconnect.ListConnectorsInput{}
-
-	return ms.client.ListConnectors(ctx, input)
+func (ms *MSKConnectService) ListConnectors(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+	return ms.client.ListConnectors(ctx, params, optFns...)
 }
 
-func (ms *MSKConnectService) DescribeConnector(ctx context.Context, connectorArn *string) (*kafkaconnect.DescribeConnectorOutput, error) {
-	input := &kafkaconnect.DescribeConnectorInput{
-		ConnectorArn: connectorArn,
-	}
-
-	return ms.client.DescribeConnector(ctx, input)
+func (ms *MSKConnectService) DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+	return ms.client.DescribeConnector(ctx, params, optFns...)
 }
