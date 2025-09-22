@@ -12,9 +12,9 @@ type TopicSummary struct {
 }
 
 type TopicDetails struct {
-	Name              string            `json:"name"`
-	Partitions        int               `json:"partitions"`
-	ReplicationFactor int               `json:"replication_factor"`
+	Name              string             `json:"name"`
+	Partitions        int                `json:"partitions"`
+	ReplicationFactor int                `json:"replication_factor"`
 	Configurations    map[string]*string `json:"configurations"`
 }
 

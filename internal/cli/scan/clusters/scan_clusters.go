@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	stateFile     string
+	stateFile       string
 	credentialsYaml string
 )
 

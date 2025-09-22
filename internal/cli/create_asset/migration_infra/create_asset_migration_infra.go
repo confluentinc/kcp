@@ -20,10 +20,10 @@ var (
 	clusterArn         string
 	migrationInfraType string
 
-	ccEnvName          string
-	ccClusterName      string
-	
-	securityGroupIds   []string
+	ccEnvName     string
+	ccClusterName string
+
+	securityGroupIds []string
 
 	ccClusterType                 string
 	jumpClusterBrokerSubnetConfig string
