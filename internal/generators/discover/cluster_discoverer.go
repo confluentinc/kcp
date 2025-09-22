@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
+	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -396,16 +397,19 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			continue
 		}
 
-		authType := types.AuthType(connector.KafkaClusterClientAuthentication.AuthenticationType)
+		var authType types.AuthType
 		switch connector.KafkaClusterClientAuthentication.AuthenticationType {
-		case "IAM":
+		case kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam:
 			authType = types.AuthTypeIAM
-		case "SASL_SCRAM":
-			authType = types.AuthTypeSASLSCRAM
-		case "TLS":
-			authType = types.AuthTypeTLS
-		case "NONE":
-			authType = types.AuthTypeUnauthenticated
+		case kafkaconnecttypes.KafkaClusterClientAuthenticationTypeNone:
+			switch connector.KafkaClusterEncryptionInTransit.EncryptionType {
+			case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypeTls:
+				authType = types.AuthTypeUnauthenticatedTLS
+			case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypePlaintext:
+				authType = types.AuthTypeUnauthenticatedPlaintext
+			default:
+				return nil, fmt.Errorf("❌ Unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
+			}
 		default:
 			return nil, fmt.Errorf("❌ Unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
 		}

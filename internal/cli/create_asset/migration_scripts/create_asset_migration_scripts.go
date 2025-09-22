@@ -62,7 +62,7 @@ func NewMigrationCmd() *cobra.Command {
 	migrationCmd.MarkFlagRequired("state-file")
 	migrationCmd.MarkFlagRequired("migration-infra-folder")
 	migrationCmd.MarkFlagRequired("cluster-arn")
-	
+
 	return migrationCmd
 }
 

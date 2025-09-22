@@ -73,6 +73,6 @@ func GetClusterByArn(discovery *types.Discovery, clusterArn string) (*types.Disc
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("cluster with ARN %s not found in discovery data", clusterArn)
 }
