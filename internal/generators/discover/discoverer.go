@@ -176,7 +176,7 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	}
 
 	// Check which authentication methods are enabled on the cluster
-	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedEnabled bool
+	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedTLSEnabled, isUnauthenticatedPlaintextEnabled bool
 
 	switch cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
@@ -196,8 +196,18 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 				isTlsEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
 			}
 
-			if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil {
-				isUnauthenticatedEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled)
+			if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil &&
+				cluster.Provisioned.EncryptionInfo != nil &&
+				*cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled {
+
+				encryptionInTransit := cluster.Provisioned.EncryptionInfo.EncryptionInTransit.ClientBroker
+				if encryptionInTransit == kafkatypes.ClientBrokerTls || encryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext {
+					isUnauthenticatedTLSEnabled = true
+				}
+				if encryptionInTransit == kafkatypes.ClientBrokerPlaintext || encryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext {
+					isUnauthenticatedPlaintextEnabled = true
+				}
+
 			}
 		}
 
@@ -206,11 +216,17 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		isSaslIamEnabled = true
 	}
 
-	// Configure auth methods with priority: unauthenticated > iam > sasl_scram > tls
+	// Configure auth methods with priority: unauthenticated_tls > unauthenticated_plaintext > iam > sasl_scram > tls
 	// Only one method is set as default to avoid conflicts
 	defaultAuthSelected := false
-	if isUnauthenticatedEnabled {
-		clusterEntry.AuthMethod.Unauthenticated = &types.UnauthenticatedConfig{
+	if isUnauthenticatedTLSEnabled {
+		clusterEntry.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
+			Use: !defaultAuthSelected,
+		}
+		defaultAuthSelected = true
+	}
+	if isUnauthenticatedPlaintextEnabled {
+		clusterEntry.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true

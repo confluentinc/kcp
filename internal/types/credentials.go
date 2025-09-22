@@ -79,50 +79,46 @@ func (ce ClusterEntry) GetSelectedAuthType() (AuthType, error) {
 	if len(enabledMethods) == 0 {
 		return "", fmt.Errorf("no authentication method enabled for cluster")
 	}
+	return enabledMethods[0], nil
 
-	authMethod := enabledMethods[0]
-	switch authMethod {
-	case "unauthenticated":
-		return AuthTypeUnauthenticated, nil
-	case "iam":
-		return AuthTypeIAM, nil
-	case "sasl_scram":
-		return AuthTypeSASLSCRAM, nil
-	case "tls":
-		return AuthTypeTLS, nil
-	default:
-		return "", fmt.Errorf("unsupported authentication method: %s", authMethod)
-	}
 }
 
 // Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
-func (ce ClusterEntry) GetAuthMethods() []string {
-	enabledMethods := []string{}
+func (ce ClusterEntry) GetAuthMethods() []AuthType {
+	enabledMethods := []AuthType{}
 
-	if ce.AuthMethod.Unauthenticated != nil && ce.AuthMethod.Unauthenticated.Use {
-		enabledMethods = append(enabledMethods, "unauthenticated")
+	if ce.AuthMethod.UnauthenticatedPlaintext != nil && ce.AuthMethod.UnauthenticatedPlaintext.Use {
+		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedPlaintext)
+	}
+	if ce.AuthMethod.UnauthenticatedTLS != nil && ce.AuthMethod.UnauthenticatedTLS.Use {
+		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedTLS)
 	}
 	if ce.AuthMethod.IAM != nil && ce.AuthMethod.IAM.Use {
-		enabledMethods = append(enabledMethods, "iam")
+		enabledMethods = append(enabledMethods, AuthTypeIAM)
 	}
 	if ce.AuthMethod.SASLScram != nil && ce.AuthMethod.SASLScram.Use {
-		enabledMethods = append(enabledMethods, "sasl_scram")
+		enabledMethods = append(enabledMethods, AuthTypeSASLSCRAM)
 	}
 	if ce.AuthMethod.TLS != nil && ce.AuthMethod.TLS.Use {
-		enabledMethods = append(enabledMethods, "tls")
+		enabledMethods = append(enabledMethods, AuthTypeTLS)
 	}
 
 	return enabledMethods
 }
 
 type AuthMethodConfig struct {
-	Unauthenticated *UnauthenticatedConfig `yaml:"unauthenticated,omitempty"`
-	IAM             *IAMConfig             `yaml:"iam,omitempty"`
-	TLS             *TLSConfig             `yaml:"tls,omitempty"`
-	SASLScram       *SASLScramConfig       `yaml:"sasl_scram,omitempty"`
+	UnauthenticatedTLS       *UnauthenticatedTLSConfig       `yaml:"unauthenticated_tls,omitempty"`
+	UnauthenticatedPlaintext *UnauthenticatedPlaintextConfig `yaml:"unauthenticated_plaintext,omitempty"`
+	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
+	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
+	SASLScram                *SASLScramConfig                `yaml:"sasl_scram,omitempty"`
 }
 
-type UnauthenticatedConfig struct {
+type UnauthenticatedPlaintextConfig struct {
+	Use bool `yaml:"use"`
+}
+
+type UnauthenticatedTLSConfig struct {
 	Use bool `yaml:"use"`
 }
 

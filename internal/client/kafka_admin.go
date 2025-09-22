@@ -46,9 +46,15 @@ func WithSASLSCRAMAuth(username, password string) AdminOption {
 	}
 }
 
-func WithUnauthenticatedAuth() AdminOption {
+func WithUnauthenticatedTlsAuth() AdminOption {
 	return func(config *AdminConfig) {
-		config.authType = types.AuthTypeUnauthenticated
+		config.authType = types.AuthTypeUnauthenticatedTLS
+	}
+}
+
+func WithUnauthenticatedPlaintextAuth() AdminOption {
+	return func(config *AdminConfig) {
+		config.authType = types.AuthTypeUnauthenticatedPlaintext
 	}
 }
 
@@ -82,11 +88,9 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
 }
 
-func configureUnauthenticatedAuthentication(config *sarama.Config, clientBrokerEncryptionInTransit kafkatypes.ClientBroker) {
-	slog.Info("🔍 configuring client broker encryption in transit", "clientBrokerEncryptionInTransit", clientBrokerEncryptionInTransit)
-	enableTlsEncryption := clientBrokerEncryptionInTransit == kafkatypes.ClientBrokerTls || clientBrokerEncryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext
-	config.Net.TLS.Enable = enableTlsEncryption
-	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", enableTlsEncryption)
+func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
+	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
+	config.Net.TLS.Enable = withTLSEncryption
 	config.Net.TLS.Config = &tls.Config{}
 }
 
@@ -348,8 +352,10 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		configureSASLTypeOAuthAuthentication(saramaConfig, region)
 	case types.AuthTypeSASLSCRAM:
 		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
-	case types.AuthTypeUnauthenticated:
-		configureUnauthenticatedAuthentication(saramaConfig, clientBrokerEncryptionInTransit)
+	case types.AuthTypeUnauthenticatedTLS:
+		configureUnauthenticatedAuthentication(saramaConfig, true)
+	case types.AuthTypeUnauthenticatedPlaintext:
+		configureUnauthenticatedAuthentication(saramaConfig, false)
 	case types.AuthTypeTLS:
 		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
 		if err != nil {

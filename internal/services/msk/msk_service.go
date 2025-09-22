@@ -213,7 +213,6 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string) (
 	return secrets, nil
 }
 
-
 func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
 	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
 

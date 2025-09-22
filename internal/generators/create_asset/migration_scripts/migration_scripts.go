@@ -17,9 +17,9 @@ import (
 var assetsFS embed.FS
 
 type MigrationScriptsOpts struct {
-	MirrorTopics       []string
-	TerraformOutput    types.TerraformOutput
-	Manifest           types.Manifest
+	MirrorTopics    []string
+	TerraformOutput types.TerraformOutput
+	Manifest        types.Manifest
 }
 
 type MigrationScriptsAssetGenerator struct {

@@ -54,15 +54,16 @@ type TerraformOutputValue struct {
 type AuthType string
 
 const (
-	AuthTypeSASLSCRAM       AuthType = "SASL/SCRAM"
-	AuthTypeIAM             AuthType = "SASL/IAM"
-	AuthTypeTLS             AuthType = "TLS"
-	AuthTypeUnauthenticated AuthType = "Unauthenticated"
+	AuthTypeSASLSCRAM                AuthType = "SASL/SCRAM"
+	AuthTypeIAM                      AuthType = "SASL/IAM"
+	AuthTypeTLS                      AuthType = "TLS"
+	AuthTypeUnauthenticatedPlaintext AuthType = "Unauthenticated (Plaintext)"
+	AuthTypeUnauthenticatedTLS       AuthType = "Unauthenticated (TLS Encryption)"
 )
 
 func (a AuthType) IsValid() bool {
 	switch a {
-	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticated:
+	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS:
 		return true
 	default:
 		return false
@@ -81,7 +82,8 @@ func AllAuthTypes() []string {
 		string(AuthTypeSASLSCRAM),
 		string(AuthTypeIAM),
 		string(AuthTypeTLS),
-		string(AuthTypeUnauthenticated),
+		string(AuthTypeUnauthenticatedPlaintext),
+		string(AuthTypeUnauthenticatedTLS),
 	}
 }
 
@@ -189,6 +191,21 @@ type DiscoveredCluster struct {
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
 }
 
+type ClusterNetworking struct {
+	VpcId          string       `json:"vpc_id"`
+	SubnetIds      []string     `json:"subnet_ids"`
+	SecurityGroups []string     `json:"security_groups"`
+	Subnets        []SubnetInfo `json:"subnets"`
+}
+
+type SubnetInfo struct {
+	SubnetMskBrokerId int    `json:"subnet_msk_broker_id"`
+	SubnetId          string `json:"subnet_id"`
+	AvailabilityZone  string `json:"availability_zone"`
+	PrivateIpAddress  string `json:"private_ip_address"`
+	CidrBlock         string `json:"cidr_block"`
+}
+
 type AWSClientInformation struct {
 	MskClusterConfig     kafkatypes.Cluster                     `json:"msk_cluster_config"`
 	ClientVpcConnections []kafkatypes.ClientVpcConnection       `json:"client_vpc_connections"`
@@ -290,14 +307,17 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 		if brokerList == "" {
 			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
 		}
-	case AuthTypeUnauthenticated:
+	case AuthTypeUnauthenticatedTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
 		visibility = "PRIVATE"
 		if brokerList == "" {
-			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
+			return nil, fmt.Errorf("❌ No Unauthenticated (TLS Encryption) brokers found in the cluster")
 		}
+	case AuthTypeUnauthenticatedPlaintext:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
+		visibility = "PRIVATE"
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
+			return nil, fmt.Errorf("❌ No Unauthenticated (Plaintext) brokers found in the cluster")
 		}
 	case AuthTypeTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
@@ -333,20 +353,21 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 	slog.Info("🔍 parsing broker addresses", "authType", authType)
 
 	switch authType {
-		case AuthTypeIAM:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
-		case AuthTypeSASLSCRAM:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
-		case AuthTypeUnauthenticated:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
-		case AuthTypeTLS:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
-		default:
-			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	case AuthTypeIAM:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
+	case AuthTypeSASLSCRAM:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
+	case AuthTypeUnauthenticatedTLS:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+	case AuthTypeUnauthenticatedPlaintext:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
+	case AuthTypeTLS:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+	default:
+		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
 	}
 
 	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
@@ -403,6 +424,38 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
 	}
+}
+
+func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
+	summary := TopicSummary{}
+
+	for _, topic := range topicDetails {
+		isInternal := strings.HasPrefix(topic.Name, "__")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
+
+		if isInternal {
+			summary.InternalTopics++
+			summary.TotalInternalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactInternalTopics++
+				summary.CompactInternalPartitions += topic.Partitions
+			}
+		} else {
+			summary.Topics++
+			summary.TotalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactTopics++
+				summary.CompactPartitions += topic.Partitions
+			}
+		}
+	}
+
+	return summary
 }
 
 // report type
