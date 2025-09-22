@@ -6,18 +6,25 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/generators/ui/frontend"
-	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/labstack/echo/v4"
 )
 
-type UI struct {
-	port string
+type ReportService interface {
+	ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts
+	ProcessMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics
 }
 
-func StartAPI(port string) *UI {
-	fmt.Println("Starting UI...")
-	return &UI{port: port}
+type UI struct {
+	port          string
+	reportService ReportService
+}
+
+func NewUI(port string, reportService ReportService) *UI {
+	return &UI{
+		port:          port,
+		reportService: reportService,
+	}
 }
 
 func (ui *UI) Run() error {
@@ -30,7 +37,7 @@ func (ui *UI) Run() error {
 
 	// Health check endpoint
 	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]interface{}{
+		return c.JSON(http.StatusOK, map[string]any{
 			"status":    "healthy",
 			"service":   "kcp-ui",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -56,66 +63,42 @@ func (ui *UI) handleState(c echo.Context) error {
 		})
 	}
 
-	reportService := report.NewReportService()
-
-	// Initialize slice to hold the processed regions with transformed cost and metrics data
 	processedRegions := []types.ProcessedRegion{}
 
-	// Process each region in the state data
+	// Process each region: flatten costs and metrics for frontend consumption
 	for _, region := range state.Regions {
-		// Transform the raw AWS Cost Explorer results into flattened ProcessedRegionCosts
-		// This converts complex nested AWS cost data into simple, flat structures
-		processedCosts := reportService.ProcessCosts(region)
+		// Flatten cost data from nested AWS Cost Explorer format
+		processedCosts := ui.reportService.ProcessCosts(region)
 
-		// Create the processed cost information structure that combines:
-		// - Original cost metadata (time ranges, granularity, etc.)
-		// - Newly processed/flattened cost data
-
-		processedCostInformation := types.ProcessedRegionCosts{
-			Metadata: processedCosts.Metadata,
-			Results:  processedCosts.Results,
-			Totals:   processedCosts.Totals,
-		}
-
-		// Process each cluster's metrics data
+		// Process each cluster's metrics
 		processedClusters := []types.ProcessedCluster{}
 		for _, cluster := range region.Clusters {
-			// Transform the raw CloudWatch metrics into flattened ProcessedClusterMetrics
-			// This converts complex nested AWS metrics data into simple, flat structures
-			processedMetrics := reportService.ProcessMetrics(cluster)
+			// Flatten metrics data from nested CloudWatch format
+			processedMetrics := ui.reportService.ProcessMetrics(cluster)
 
-			// Build the processed cluster with the simplified structure
 			processedClusters = append(processedClusters, types.ProcessedCluster{
-				Name:                        cluster.Name, // Use cluster name
-				Arn:                         cluster.Arn,  // Use cluster ARN
+				Name:                        cluster.Name,
+				Arn:                         cluster.Arn,
 				ClusterMetrics:              processedMetrics,
-				Region:                      cluster.Region,
 				AWSClientInformation:        cluster.AWSClientInformation,
 				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
-				// Use processed metrics data
 			})
 		}
 
-		// Build the processed region with the same structure as the original,
-		// but with transformed cost and metrics data that's easier to consume
 		processedRegions = append(processedRegions, types.ProcessedRegion{
-			Name:           region.Name,              // Keep original region name
-			Configurations: region.Configurations,    // Keep original MSK configurations
-			Costs:          processedCostInformation, // Use processed cost data
-			Clusters:       processedClusters,        // Use processed cluster information with flattened metrics
+			Name:           region.Name,
+			Configurations: region.Configurations,
+			Costs:          processedCosts,
+			Clusters:       processedClusters,
 		})
 	}
 
-	// Create the final processed discovery response with:
-	// - Processed regions (with flattened cost and metrics data)
-	// - Original build info and timestamp from the input
+	// Return the processed state with flattened data for frontend consumption
 	processedState := types.ProcessedState{
 		Regions:      processedRegions,
-		KcpBuildInfo: state.KcpBuildInfo, // Preserve original build information
-		Timestamp:    state.Timestamp,    // Preserve original timestamp
+		KcpBuildInfo: state.KcpBuildInfo,
+		Timestamp:    state.Timestamp,
 	}
 
-	// Return successful response with the processed discovery data
-	// The frontend can now easily consume the flattened cost and metrics information
 	return c.JSON(http.StatusOK, processedState)
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/generators/ui/api"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/spf13/cobra"
 )
 
@@ -11,13 +12,10 @@ func NewUICmd() *cobra.Command {
 	var port string
 
 	cmd := &cobra.Command{
-		Use:   "ui",
-		Short: "Start the UI",
-		Long: `Starts the kcp UI.
-		`,
-		Example: `
-		kcp ui --port 8080
-		`,
+		Use:           "ui",
+		Short:         "Start the UI",
+		Long:          `Starts the kcp UI.`,
+		Example:       `kcp ui --port 8080`,
 		SilenceErrors: true,
 		RunE:          startUI,
 	}
@@ -30,7 +28,7 @@ func NewUICmd() *cobra.Command {
 func startUI(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetString("port")
 
-	ui := api.StartAPI(port)
+	ui := api.NewUI(port, report.NewReportService())
 
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
