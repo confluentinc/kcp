@@ -1,34 +1,28 @@
 package types
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
-	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 )
 
-// ClusterSummary contains summary information about an MSK cluster
-type ClusterSummary struct {
-	ClusterName                     string                  `json:"cluster_name"`
-	ClusterARN                      string                  `json:"cluster_arn"`
-	Status                          string                  `json:"status"`
-	Type                            string                  `json:"type"`
-	Authentication                  string                  `json:"authentication"`
-	PublicAccess                    bool                    `json:"public_access"`
-	ClientBrokerEncryptionInTransit kafkatypes.ClientBroker `json:"client_broker_encryption_in_transit"`
-}
+// // ClusterSummary contains summary information about an MSK cluster
+// type ClusterSummary struct {
+// 	ClusterName                     string                  `json:"cluster_name"`
+// 	ClusterARN                      string                  `json:"cluster_arn"`
+// 	Status                          string                  `json:"status"`
+// 	Type                            string                  `json:"type"`
+// 	Authentication                  string                  `json:"authentication"`
+// 	PublicAccess                    bool                    `json:"public_access"`
+// 	ClientBrokerEncryptionInTransit kafkatypes.ClientBroker `json:"client_broker_encryption_in_transit"`
+// }
 
 type TerraformState struct {
 	Outputs TerraformOutput `json:"outputs"`
@@ -118,145 +112,6 @@ type Manifest struct {
 	MigrationInfraType MigrationInfraType `json:"migration_infra_type"`
 }
 
-type KcpBuildInfo struct {
-	Version string `json:"version"`
-	Commit  string `json:"commit"`
-	Date    string `json:"date"`
-}
-
-type Discovery struct {
-	Regions      []DiscoveredRegion `json:"regions"`
-	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
-	Timestamp    time.Time          `json:"timestamp"`
-}
-
-func NewDiscovery(discoveredRegions []DiscoveredRegion) Discovery {
-	return Discovery{
-		Regions: discoveredRegions,
-		KcpBuildInfo: KcpBuildInfo{
-			Version: build_info.Version,
-			Commit:  build_info.Commit,
-			Date:    build_info.Date,
-		},
-		Timestamp: time.Now(),
-	}
-}
-
-func (d *Discovery) WriteToJsonFile(filePath string) error {
-	data, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal discovery: %v", err)
-	}
-	return os.WriteFile(filePath, data, 0644)
-}
-
-func (d *Discovery) LoadStateFile(stateFile string) error {
-	file, err := os.ReadFile(stateFile)
-	if err != nil {
-		return fmt.Errorf("failed to read state file: %v", err)
-	}
-
-	if err := json.Unmarshal(file, d); err != nil {
-		return fmt.Errorf("failed to unmarshal discovery: %v", err)
-	}
-
-	return nil
-}
-
-func (d *Discovery) PersistStateFile(stateFile string) error {
-	if d == nil {
-		return fmt.Errorf("discovery state is nil")
-	}
-
-	return d.WriteToJsonFile(stateFile)
-}
-
-type DiscoveredRegion struct {
-	Name           string                                      `json:"name"`
-	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
-	Costs          CostInformation                             `json:"costs"`
-	Clusters       []DiscoveredCluster                         `json:"clusters"`
-	// internal only - exclude from JSON output
-	ClusterArns []string `json:"-"`
-}
-
-type DiscoveredCluster struct {
-	Name                        string                      `json:"name"`
-	Arn                         string                      `json:"arn"`
-	Region                      string                      `json:"region"`
-	ClusterMetrics              ClusterMetrics              `json:"metrics"`
-	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
-	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
-}
-
-type AWSClientInformation struct {
-	MskClusterConfig     kafkatypes.Cluster                     `json:"msk_cluster_config"`
-	ClientVpcConnections []kafkatypes.ClientVpcConnection       `json:"client_vpc_connections"`
-	ClusterOperations    []kafkatypes.ClusterOperationV2Summary `json:"cluster_operations"`
-	Nodes                []kafkatypes.NodeInfo                  `json:"nodes"`
-	ScramSecrets         []string                               `json:"ScramSecrets"`
-	BootstrapBrokers     kafka.GetBootstrapBrokersOutput        `json:"bootstrap_brokers"`
-	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
-	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatible_versions"`
-	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
-	Connectors           []ConnectorSummary                     `json:"connectors"`
-}
-
-type ConnectorSummary struct {
-	ConnectorArn                     string                                                        `json:"connector_arn"`
-	ConnectorName                    string                                                        `json:"connector_name"`
-	ConnectorState                   string                                                        `json:"connector_state"`
-	CreationTime                     string                                                        `json:"creation_time"`
-	KafkaCluster                     kafkaconnecttypes.ApacheKafkaClusterDescription               `json:"kafka_cluster"`
-	KafkaClusterClientAuthentication kafkaconnecttypes.KafkaClusterClientAuthenticationDescription `json:"kafka_cluster_client_authentication"`
-	Capacity                         kafkaconnecttypes.CapacityDescription                         `json:"capacity"`
-	Plugins                          []kafkaconnecttypes.PluginDescription                         `json:"plugins"`
-	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
-}
-
-type KafkaAdminClientInformation struct {
-	ClusterID string  `json:"cluster_id"`
-	Topics    *Topics `json:"topics"`
-	Acls      []Acls  `json:"acls"`
-}
-
-// ----- metrics -----
-type ClusterMetrics struct {
-	MetricMetadata MetricMetadata                     `json:"metadata"`
-	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
-}
-
-type MetricMetadata struct {
-	ClusterType          string `json:"cluster_type"`
-	FollowerFetching     bool   `json:"follower_fetching"`
-	BrokerAzDistribution string `json:"broker_az_distribution"`
-	KafkaVersion         string `json:"kafka_version"`
-	EnhancedMonitoring   string `json:"enhanced_monitoring"`
-	StartWindowDate      string `json:"start_window_date"`
-	EndWindowDate        string `json:"end_window_date"`
-	Period               int32  `json:"period"`
-}
-
-type CloudWatchTimeWindow struct {
-	StartTime time.Time
-	EndTime   time.Time
-	Period    int32
-}
-
-// ----- costs -----
-type CostInformation struct {
-	CostMetadata CostMetadata                     `json:"metadata"`
-	CostResults  []costexplorertypes.ResultByTime `json:"results"`
-}
-
-type CostMetadata struct {
-	StartDate   time.Time           `json:"start_date"`
-	EndDate     time.Time           `json:"end_date"`
-	Granularity string              `json:"granularity"`
-	Tags        map[string][]string `json:"tags"`
-	Services    []string            `json:"services"`
-}
-
 // / todo review if we need
 type GlobalMetrics struct {
 	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
@@ -333,20 +188,20 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 	slog.Info("🔍 parsing broker addresses", "authType", authType)
 
 	switch authType {
-		case AuthTypeIAM:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
-		case AuthTypeSASLSCRAM:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
-		case AuthTypeUnauthenticated:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
-		case AuthTypeTLS:
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
-			brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
-		default:
-			return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	case AuthTypeIAM:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
+	case AuthTypeSASLSCRAM:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
+	case AuthTypeUnauthenticated:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
+	case AuthTypeTLS:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+	default:
+		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
 	}
 
 	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
@@ -441,6 +296,7 @@ type CostReport struct {
 }
 
 func (c *CostReport) AsMarkdown() *markdown.Markdown {
+
 	md := markdown.New()
 	md.AddHeading("AWS Service Cost Report", 1)
 
@@ -608,8 +464,8 @@ type ProcessedMetric struct {
 type ProcessedClusterMetrics struct {
 	ClusterName string            `json:"cluster_name"`
 	ClusterArn  string            `json:"cluster_arn"`
-	Metrics     []ProcessedMetric `json:"metrics"`
 	Metadata    MetricMetadata    `json:"metadata"`
+	Metrics     []ProcessedMetric `json:"results"`
 }
 
 type MetricsReport struct {
@@ -754,3 +610,34 @@ func (m *MetricsReport) AsMarkdown() *markdown.Markdown {
 
 	return md
 }
+
+type ProcessedDiscovery struct {
+	Regions      []ProcessedDiscoveredRegion `json:"regions"`
+	KcpBuildInfo KcpBuildInfo                `json:"kcp_build_info"`
+	Timestamp    time.Time                   `json:"timestamp"`
+}
+
+type ProcessedDiscoveredRegion struct {
+	Name           string                                      `json:"name"`
+	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
+	Costs          ProcessedCostInformation                    `json:"costs"`
+	Clusters       []ProcessDiscoveredCluster                  `json:"clusters"`
+	// internal only - exclude from JSON output
+	ClusterArns []string `json:"-"`
+}
+
+type ProcessedCostInformation struct {
+	CostMetadata         CostMetadata         `json:"metadata"`
+	ProcessedRegionCosts ProcessedRegionCosts `json:"results"`
+}
+
+type ProcessDiscoveredCluster struct {
+	ClusterName string                  `json:"cluster_name"`
+	ClusterArn  string                  `json:"cluster_arn"`
+	Metrics     ProcessedClusterMetrics `json:"metrics"`
+}
+
+// type ProcessedClusterMetrics struct {
+// 	MetricMetadata MetricMetadata                     `json:"metadata"`
+// 	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
+// }

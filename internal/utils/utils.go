@@ -65,14 +65,14 @@ func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.C
 	return DefaultClientBrokerEncryptionInTransit
 }
 
-func GetClusterByArn(discovery *types.Discovery, clusterArn string) (*types.DiscoveredCluster, error) {
-	for _, region := range discovery.Regions {
+func GetClusterByArn(state *types.State, clusterArn string) (*types.DiscoveredCluster, error) {
+	for _, region := range state.Regions {
 		for _, cluster := range region.Clusters {
 			if cluster.Arn == clusterArn {
 				return &cluster, nil
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("cluster with ARN %s not found in discovery data", clusterArn)
 }
