@@ -14,6 +14,47 @@ func NewReportService() *ReportService {
 	return &ReportService{}
 }
 
+func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
+	processedRegions := []types.ProcessedRegion{}
+
+	// Process each region: flatten costs and metrics for frontend consumption
+	for _, region := range state.Regions {
+		// Flatten cost data from nested AWS Cost Explorer format
+		processedCosts := rs.ProcessCosts(region)
+
+		// Process each cluster's metrics
+		processedClusters := []types.ProcessedCluster{}
+		for _, cluster := range region.Clusters {
+			// Flatten metrics data from nested CloudWatch format
+			processedMetrics := rs.ProcessMetrics(cluster)
+
+			processedClusters = append(processedClusters, types.ProcessedCluster{
+				Name:                        cluster.Name,
+				Arn:                         cluster.Arn,
+				ClusterMetrics:              processedMetrics,
+				AWSClientInformation:        cluster.AWSClientInformation,
+				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+			})
+		}
+
+		processedRegions = append(processedRegions, types.ProcessedRegion{
+			Name:           region.Name,
+			Configurations: region.Configurations,
+			Costs:          processedCosts,
+			Clusters:       processedClusters,
+		})
+	}
+
+	// Return the processed state with flattened data for frontend consumption
+	processedState := types.ProcessedState{
+		Regions:      processedRegions,
+		KcpBuildInfo: state.KcpBuildInfo,
+		Timestamp:    state.Timestamp,
+	}
+
+	return processedState
+}
+
 func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
 	var processedCosts []types.ProcessedCost
 	serviceTotals := make(map[string]float64)

@@ -11,8 +11,7 @@ import (
 )
 
 type ReportService interface {
-	ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts
-	ProcessMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics
+	ProcessState(state types.State) types.ProcessedState
 }
 
 type UI struct {
@@ -63,42 +62,7 @@ func (ui *UI) handleState(c echo.Context) error {
 		})
 	}
 
-	processedRegions := []types.ProcessedRegion{}
-
-	// Process each region: flatten costs and metrics for frontend consumption
-	for _, region := range state.Regions {
-		// Flatten cost data from nested AWS Cost Explorer format
-		processedCosts := ui.reportService.ProcessCosts(region)
-
-		// Process each cluster's metrics
-		processedClusters := []types.ProcessedCluster{}
-		for _, cluster := range region.Clusters {
-			// Flatten metrics data from nested CloudWatch format
-			processedMetrics := ui.reportService.ProcessMetrics(cluster)
-
-			processedClusters = append(processedClusters, types.ProcessedCluster{
-				Name:                        cluster.Name,
-				Arn:                         cluster.Arn,
-				ClusterMetrics:              processedMetrics,
-				AWSClientInformation:        cluster.AWSClientInformation,
-				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
-			})
-		}
-
-		processedRegions = append(processedRegions, types.ProcessedRegion{
-			Name:           region.Name,
-			Configurations: region.Configurations,
-			Costs:          processedCosts,
-			Clusters:       processedClusters,
-		})
-	}
-
-	// Return the processed state with flattened data for frontend consumption
-	processedState := types.ProcessedState{
-		Regions:      processedRegions,
-		KcpBuildInfo: state.KcpBuildInfo,
-		Timestamp:    state.Timestamp,
-	}
+	processedState := ui.reportService.ProcessState(state)
 
 	return c.JSON(http.StatusOK, processedState)
 }

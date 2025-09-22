@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
-	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -15,13 +14,17 @@ type ReporterOpts struct {
 	State types.State
 }
 
+type ReportService interface {
+	ProcessState(state types.State) types.ProcessedState
+}
+
 type Reporter struct {
-	ReportService   report.ReportService
+	ReportService   ReportService
 	MarkdownService markdown.Markdown
 	State           types.State
 }
 
-func NewReporter(reportService report.ReportService, markdownService markdown.Markdown, opts ReporterOpts) *Reporter {
+func NewReporter(reportService ReportService, markdownService markdown.Markdown, opts ReporterOpts) *Reporter {
 	return &Reporter{
 		ReportService:   reportService,
 		MarkdownService: markdownService,
@@ -39,45 +42,48 @@ func (r *Reporter) Run() error {
 }
 
 func (r *Reporter) generateReport(state types.State) error {
-	processedRegionsCosts := []types.ProcessedRegionCosts{}
-	for _, region := range state.Regions {
-		parsedRegionCost := r.ReportService.ProcessCosts(region)
-		processedRegionsCosts = append(processedRegionsCosts, parsedRegionCost)
-	}
+	processedState := r.ReportService.ProcessState(state)
+	_ = processedState
 
-	// do stuff with metrics now
-	allClusterMetrics := []types.ProcessedClusterMetrics{}
-	for _, region := range state.Regions {
-		for _, cluster := range region.Clusters {
-			clusterMetrics := r.ReportService.ProcessMetrics(cluster)
-			allClusterMetrics = append(allClusterMetrics, clusterMetrics)
-		}
-	}
+	// processedRegionsCosts := []types.ProcessedRegionCosts{}
+	// for _, region := range state.Regions {
+	// 	parsedRegionCost := r.ReportService.ProcessCosts(region)
+	// 	processedRegionsCosts = append(processedRegionsCosts, parsedRegionCost)
+	// }
 
-	// prob want one report with both costs per region and metrics per cluster in the region
-	metricsReport := types.MetricsReport{
-		ProcessedClusterMetrics: allClusterMetrics,
-	}
+	// // do stuff with metrics now
+	// allClusterMetrics := []types.ProcessedClusterMetrics{}
+	// for _, region := range state.Regions {
+	// 	for _, cluster := range region.Clusters {
+	// 		clusterMetrics := r.ReportService.ProcessMetrics(cluster)
+	// 		allClusterMetrics = append(allClusterMetrics, clusterMetrics)
+	// 	}
+	// }
 
-	_ = metricsReport
-	// metricsMarkdown := metricsReport.AsMarkdown()
-	// metricsMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "metrics_report.md"})
+	// // prob want one report with both costs per region and metrics per cluster in the region
+	// metricsReport := types.MetricsReport{
+	// 	ProcessedClusterMetrics: allClusterMetrics,
+	// }
 
-	costReport := types.CostReport{
-		ProcessedRegionCosts: processedRegionsCosts,
-	}
-	_ = costReport
+	// _ = metricsReport
+	// // metricsMarkdown := metricsReport.AsMarkdown()
+	// // metricsMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "metrics_report.md"})
 
-	// costMarkdown := costReport.AsMarkdown()
-	// costMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "cost_report.md"})
+	// costReport := types.CostReport{
+	// 	ProcessedRegionCosts: processedRegionsCosts,
+	// }
+	// _ = costReport
 
-	report := types.Report{
-		Costs:   processedRegionsCosts,
-		Metrics: allClusterMetrics,
-	}
+	// // costMarkdown := costReport.AsMarkdown()
+	// // costMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "cost_report.md"})
+
+	// report := types.Report{
+	// 	Costs:   processedRegionsCosts,
+	// 	Metrics: allClusterMetrics,
+	// }
 
 	// outputting whole thing for testing
-	data, err := json.MarshalIndent(report, "", "  ")
+	data, err := json.MarshalIndent(processedState, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal report: %v", err)
 	}
