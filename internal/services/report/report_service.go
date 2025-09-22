@@ -20,13 +20,13 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 	// Process each region: flatten costs and metrics for frontend consumption
 	for _, region := range state.Regions {
 		// Flatten cost data from nested AWS Cost Explorer format
-		processedCosts := rs.ProcessCosts(region)
+		processedCosts := rs.FlattenCosts(region)
 
 		// Process each cluster's metrics
 		processedClusters := []types.ProcessedCluster{}
 		for _, cluster := range region.Clusters {
 			// Flatten metrics data from nested CloudWatch format
-			processedMetrics := rs.ProcessMetrics(cluster)
+			processedMetrics := rs.FlattenMetrics(cluster)
 
 			processedClusters = append(processedClusters, types.ProcessedCluster{
 				Name:                        cluster.Name,
@@ -55,7 +55,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 	return processedState
 }
 
-func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
+func (rs *ReportService) FlattenCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
 	var processedCosts []types.ProcessedCost
 	serviceTotals := make(map[string]float64)
 
@@ -111,7 +111,7 @@ func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.Proce
 	}
 }
 
-func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics {
+func (rs *ReportService) FlattenMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics {
 	var processedMetrics []types.ProcessedMetric
 
 	period := cluster.ClusterMetrics.MetricMetadata.Period
