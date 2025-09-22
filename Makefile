@@ -85,7 +85,7 @@ fmt:
 	gofmt -s -w .
 
 # Run tests
-test:
+test: build-frontend
 	@echo "🧪 Running tests..."
 	@echo "=================="
 	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Tests failed with exit code $$exit_code"; else echo "✅ All tests passed!"; fi; exit $$exit_code'
