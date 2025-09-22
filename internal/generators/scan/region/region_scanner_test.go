@@ -1007,7 +1007,7 @@ func TestScanner_SummariseAuthentication(t *testing.T) {
 					},
 				},
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 		{
 			name: "provisioned cluster with only SASL/SCRAM enabled",
@@ -1161,7 +1161,7 @@ func TestScanner_SummariseAuthentication(t *testing.T) {
 					},
 				},
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 	}
 
@@ -1276,7 +1276,7 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 					// ClientAuthentication is nil
 				},
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 		{
 			name: "serverless cluster with nil serverless config",
@@ -1284,7 +1284,7 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 				ClusterType: kafkatypes.ClusterTypeServerless,
 				// Serverless is nil
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 		{
 			name: "provisioned cluster with nil provisioned config",
@@ -1292,7 +1292,7 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 				ClusterType: kafkatypes.ClusterTypeProvisioned,
 				// Provisioned is nil
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 		{
 			name: "provisioned cluster with nil client authentication",
@@ -1302,7 +1302,7 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 					// ClientAuthentication is nil
 				},
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 		{
 			name: "provisioned cluster with only unauthenticated enabled",
@@ -1319,9 +1319,14 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 							Enabled: aws.Bool(true),
 						},
 					},
+					EncryptionInfo: &kafkatypes.EncryptionInfo{
+						EncryptionInTransit: &kafkatypes.EncryptionInTransit{
+							ClientBroker: kafkatypes.ClientBrokerTls,
+						},
+					},
 				},
 			},
-			expected: "Unauthenticated",
+			expected: "Unauthenticated (TLS Encryption)",
 		},
 		{
 			name: "provisioned cluster with mixed authentication including unauthenticated",
@@ -1338,16 +1343,21 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 							Enabled: aws.Bool(true),
 						},
 					},
+					EncryptionInfo: &kafkatypes.EncryptionInfo{
+						EncryptionInTransit: &kafkatypes.EncryptionInTransit{
+							ClientBroker: kafkatypes.ClientBrokerTls,
+						},
+					},
 				},
 			},
-			expected: "SASL/SCRAM,Unauthenticated",
+			expected: "SASL/SCRAM,Unauthenticated (TLS Encryption)",
 		},
 		{
 			name: "unknown cluster type",
 			cluster: kafkatypes.Cluster{
 				ClusterType: "UNKNOWN_TYPE", // Invalid cluster type
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 		{
 			name: "provisioned cluster with nil enabled fields",
@@ -1372,7 +1382,7 @@ func TestScanner_SummariseAuthentication_EdgeCases(t *testing.T) {
 					},
 				},
 			},
-			expected: "Unauthenticated",
+			expected: "",
 		},
 	}
 

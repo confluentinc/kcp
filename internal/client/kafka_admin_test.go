@@ -258,10 +258,17 @@ func TestAdminOptionFunctions(t *testing.T) {
 			},
 		},
 		{
-			name:   "WithUnauthenticatedAuth sets unauthenticated auth",
-			option: WithUnauthenticatedAuth(),
+			name:   "WithUnauthenticatedTlsAuth sets unauthenticated TLS auth",
+			option: WithUnauthenticatedTlsAuth(),
 			expectedConfig: AdminConfig{
-				authType: types.AuthTypeUnauthenticated,
+				authType: types.AuthTypeUnauthenticatedTLS,
+			},
+		},
+		{
+			name:   "WithUnauthenticatedPlaintextAuth sets unauthenticated plaintext auth",
+			option: WithUnauthenticatedPlaintextAuth(),
+			expectedConfig: AdminConfig{
+				authType: types.AuthTypeUnauthenticatedPlaintext,
 			},
 		},
 		{
@@ -378,7 +385,10 @@ func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
 
-			configureUnauthenticatedAuthentication(config, tt.clientBrokerEncryptionInTransit)
+			// Convert ClientBroker to boolean for the function call
+			withTLSEncryption := tt.clientBrokerEncryptionInTransit == kafkatypes.ClientBrokerTls ||
+				tt.clientBrokerEncryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext
+			configureUnauthenticatedAuthentication(config, withTLSEncryption)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			if tt.expectedTLSEnabled {
@@ -512,11 +522,19 @@ func TestNewKafkaAdmin(t *testing.T) {
 			expectError:                     false,
 		},
 		{
-			name:                            "successful unauthenticated auth creation",
+			name:                            "successful unauthenticated TLS auth creation",
 			brokerAddresses:                 []string{"broker1:9092"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithUnauthenticatedAuth()},
+			opts:                            []AdminOption{WithUnauthenticatedTlsAuth()},
+			expectError:                     false,
+		},
+		{
+			name:                            "successful unauthenticated plaintext auth creation",
+			brokerAddresses:                 []string{"broker1:9092"},
+			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerPlaintext,
+			region:                          "us-west-2",
+			opts:                            []AdminOption{WithUnauthenticatedPlaintextAuth()},
 			expectError:                     false,
 		},
 		{

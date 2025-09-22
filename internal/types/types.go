@@ -57,15 +57,16 @@ type TerraformOutputValue struct {
 type AuthType string
 
 const (
-	AuthTypeSASLSCRAM       AuthType = "SASL/SCRAM"
-	AuthTypeIAM             AuthType = "SASL/IAM"
-	AuthTypeTLS             AuthType = "TLS"
-	AuthTypeUnauthenticated AuthType = "Unauthenticated"
+	AuthTypeSASLSCRAM                AuthType = "SASL/SCRAM"
+	AuthTypeIAM                      AuthType = "SASL/IAM"
+	AuthTypeTLS                      AuthType = "TLS"
+	AuthTypeUnauthenticatedPlaintext AuthType = "Unauthenticated (Plaintext)"
+	AuthTypeUnauthenticatedTLS       AuthType = "Unauthenticated (TLS Encryption)"
 )
 
 func (a AuthType) IsValid() bool {
 	switch a {
-	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticated:
+	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS:
 		return true
 	default:
 		return false
@@ -84,7 +85,8 @@ func AllAuthTypes() []string {
 		string(AuthTypeSASLSCRAM),
 		string(AuthTypeIAM),
 		string(AuthTypeTLS),
-		string(AuthTypeUnauthenticated),
+		string(AuthTypeUnauthenticatedPlaintext),
+		string(AuthTypeUnauthenticatedTLS),
 	}
 }
 

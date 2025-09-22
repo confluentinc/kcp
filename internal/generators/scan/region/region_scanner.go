@@ -26,7 +26,8 @@ func (d *DefaultAuthenticationSummarizer) SummariseAuthentication(cluster kafkat
 	saslScramEnabled := false
 	saslIamEnabled := false
 	tlsEnabled := false
-	unauthenticatedEnabled := false
+	unauthenticatedEnabledTLS := false
+	unauthenticatedEnabledPlaintext := false
 
 	if cluster.ClusterType == kafkatypes.ClusterTypeServerless {
 		if cluster.Serverless != nil &&
@@ -60,8 +61,23 @@ func (d *DefaultAuthenticationSummarizer) SummariseAuthentication(cluster kafkat
 
 			// Check Unauthenticated
 			if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil &&
-				cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled != nil {
-				unauthenticatedEnabled = *cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled
+				cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled != nil &&
+				*cluster.Provisioned.ClientAuthentication.Unauthenticated.Enabled &&
+				cluster.Provisioned.EncryptionInfo != nil {
+
+				encryptionInTransit := cluster.Provisioned.EncryptionInfo.EncryptionInTransit
+				if encryptionInTransit != nil {
+					if encryptionInTransit.ClientBroker == kafkatypes.ClientBrokerTls {
+						unauthenticatedEnabledTLS = true
+					}
+					if encryptionInTransit.ClientBroker == kafkatypes.ClientBrokerPlaintext {
+						unauthenticatedEnabledPlaintext = true
+					}
+					if encryptionInTransit.ClientBroker == kafkatypes.ClientBrokerTlsPlaintext {
+						unauthenticatedEnabledTLS = true
+						unauthenticatedEnabledPlaintext = true
+					}
+				}
 			}
 		}
 	}
@@ -76,12 +92,11 @@ func (d *DefaultAuthenticationSummarizer) SummariseAuthentication(cluster kafkat
 	if tlsEnabled {
 		authTypes = append(authTypes, string(types.AuthTypeTLS))
 	}
-	if unauthenticatedEnabled {
-		authTypes = append(authTypes, string(types.AuthTypeUnauthenticated))
+	if unauthenticatedEnabledTLS {
+		authTypes = append(authTypes, string(types.AuthTypeUnauthenticatedTLS))
 	}
-
-	if len(authTypes) == 0 {
-		return string(types.AuthTypeUnauthenticated)
+	if unauthenticatedEnabledPlaintext {
+		authTypes = append(authTypes, string(types.AuthTypeUnauthenticatedPlaintext))
 	}
 
 	return strings.Join(authTypes, ",")
