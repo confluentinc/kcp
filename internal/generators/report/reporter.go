@@ -59,15 +59,17 @@ func (r *Reporter) generateReport(state types.State) error {
 		ProcessedClusterMetrics: allClusterMetrics,
 	}
 
-	metricsMarkdown := metricsReport.AsMarkdown()
-	metricsMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "metrics_report.md"})
+	_ = metricsReport
+	// metricsMarkdown := metricsReport.AsMarkdown()
+	// metricsMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "metrics_report.md"})
 
 	costReport := types.CostReport{
 		ProcessedRegionCosts: processedRegionsCosts,
 	}
+	_ = costReport
 
-	costMarkdown := costReport.AsMarkdown()
-	costMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "cost_report.md"})
+	// costMarkdown := costReport.AsMarkdown()
+	// costMarkdown.Print(markdown.PrintOptions{ToTerminal: true, ToFile: "cost_report.md"})
 
 	report := types.Report{
 		Costs:   processedRegionsCosts,

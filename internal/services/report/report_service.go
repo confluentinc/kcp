@@ -64,10 +64,9 @@ func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.Proce
 	}
 
 	return types.ProcessedRegionCosts{
-		Region:   region.Name,
-		Costs:    processedCosts,
-		Totals:   totals,
 		Metadata: region.Costs.CostMetadata,
+		Results:  processedCosts,
+		Totals:   totals,
 	}
 }
 
@@ -122,9 +121,7 @@ func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.P
 	}
 
 	return types.ProcessedClusterMetrics{
-		ClusterName: cluster.Name,
-		ClusterArn:  cluster.Arn,
-		Metrics:     processedMetrics,
-		Metadata:    cluster.ClusterMetrics.MetricMetadata,
+		Metrics:  processedMetrics,
+		Metadata: cluster.ClusterMetrics.MetricMetadata,
 	}
 }

@@ -59,7 +59,7 @@ func (ui *UI) handleState(c echo.Context) error {
 	reportService := report.NewReportService()
 
 	// Initialize slice to hold the processed regions with transformed cost and metrics data
-	processedRegions := []types.ProcessedDiscoveredRegion{}
+	processedRegions := []types.ProcessedRegion{}
 
 	// Process each region in the state data
 	for _, region := range state.Regions {
@@ -70,29 +70,35 @@ func (ui *UI) handleState(c echo.Context) error {
 		// Create the processed cost information structure that combines:
 		// - Original cost metadata (time ranges, granularity, etc.)
 		// - Newly processed/flattened cost data
-		processedCostInformation := types.ProcessedCostInformation{
-			CostMetadata:         region.Costs.CostMetadata,
-			ProcessedRegionCosts: processedCosts,
+
+		processedCostInformation := types.ProcessedRegionCosts{
+			Metadata: processedCosts.Metadata,
+			Results:  processedCosts.Results,
+			Totals:   processedCosts.Totals,
 		}
 
 		// Process each cluster's metrics data
-		processedClusters := []types.ProcessDiscoveredCluster{}
+		processedClusters := []types.ProcessedCluster{}
 		for _, cluster := range region.Clusters {
 			// Transform the raw CloudWatch metrics into flattened ProcessedClusterMetrics
 			// This converts complex nested AWS metrics data into simple, flat structures
 			processedMetrics := reportService.ProcessMetrics(cluster)
 
 			// Build the processed cluster with the simplified structure
-			processedClusters = append(processedClusters, types.ProcessDiscoveredCluster{
-				ClusterName: cluster.Name,     // Use cluster name
-				ClusterArn:  cluster.Arn,      // Use cluster ARN
-				Metrics:     processedMetrics, // Use processed metrics data
+			processedClusters = append(processedClusters, types.ProcessedCluster{
+				Name:                        cluster.Name, // Use cluster name
+				Arn:                         cluster.Arn,  // Use cluster ARN
+				ClusterMetrics:              processedMetrics,
+				Region:                      cluster.Region,
+				AWSClientInformation:        cluster.AWSClientInformation,
+				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+				// Use processed metrics data
 			})
 		}
 
 		// Build the processed region with the same structure as the original,
 		// but with transformed cost and metrics data that's easier to consume
-		processedRegions = append(processedRegions, types.ProcessedDiscoveredRegion{
+		processedRegions = append(processedRegions, types.ProcessedRegion{
 			Name:           region.Name,              // Keep original region name
 			Configurations: region.Configurations,    // Keep original MSK configurations
 			Costs:          processedCostInformation, // Use processed cost data
@@ -103,7 +109,7 @@ func (ui *UI) handleState(c echo.Context) error {
 	// Create the final processed discovery response with:
 	// - Processed regions (with flattened cost and metrics data)
 	// - Original build info and timestamp from the input
-	processedDiscovery := types.ProcessedDiscovery{
+	processedState := types.ProcessedState{
 		Regions:      processedRegions,
 		KcpBuildInfo: state.KcpBuildInfo, // Preserve original build information
 		Timestamp:    state.Timestamp,    // Preserve original timestamp
@@ -111,9 +117,5 @@ func (ui *UI) handleState(c echo.Context) error {
 
 	// Return successful response with the processed discovery data
 	// The frontend can now easily consume the flattened cost and metrics information
-	return c.JSON(http.StatusOK, map[string]any{
-		"status":  "success",
-		"message": "Discovery data processed successfully",
-		"result":  processedDiscovery,
-	})
+	return c.JSON(http.StatusOK, processedState)
 }

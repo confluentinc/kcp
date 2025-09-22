@@ -32,6 +32,7 @@ export default function Home() {
         const content = e.target?.result as string
         const parsed = JSON.parse(content)
 
+        console.log(parsed)
         // Validate that we have a Discovery object with regions
         if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
           // Call the /state endpoint to process the discovery data
@@ -49,10 +50,9 @@ export default function Home() {
           }
 
           const result = await response.json()
-          
           // Extract the processed regions from the API response
-          if (result && result.result && result.result.regions) {
-            const processedRegions = result.result.regions
+          if (result && result.regions) {
+            const processedRegions = result.regions
             setRegions(processedRegions)
 
             // Auto-select first cluster if available

@@ -17,6 +17,8 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
+// State represents the raw input data structure (kcp-state.json file)
+// This is what gets fed INTO the frontend/API for processing
 type State struct {
 	Regions      []DiscoveredRegion `json:"regions"`
 	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
@@ -296,4 +298,63 @@ type KcpBuildInfo struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
 	Date    string `json:"date"`
+}
+
+// ProcessedState represents the transformed output data structure
+// This is what comes OUT of the frontend/API after processing the raw State data
+// Same structure as State but with costs and metrics flattened for easier frontend consumption
+type ProcessedState struct {
+	Regions      []ProcessedRegion `json:"regions"`
+	KcpBuildInfo KcpBuildInfo      `json:"kcp_build_info"`
+	Timestamp    time.Time         `json:"timestamp"`
+}
+
+// ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters
+type ProcessedRegion struct {
+	Name           string                                      `json:"name"`
+	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
+	Costs          ProcessedRegionCosts                        `json:"costs"`    // Flattened from raw AWS Cost Explorer data
+	Clusters       []ProcessedCluster                          `json:"clusters"` // Simplified from full DiscoveredCluster data
+}
+
+type ProcessedRegionCosts struct {
+	Metadata CostMetadata    `json:"metadata"`
+	Results  []ProcessedCost `json:"results"`
+	Totals   []ServiceTotal  `json:"totals"`
+}
+
+type ProcessedCost struct {
+	Start     string `json:"start"`
+	End       string `json:"end"`
+	Service   string `json:"service"`
+	UsageType string `json:"usage_type"`
+	Value     string `json:"value"`
+}
+
+type ServiceTotal struct {
+	Service string `json:"service"`
+	Total   string `json:"total"`
+}
+
+// ProcessedCluster contains the complete cluster data with flattened metrics
+// This is the full cluster information with processed metrics, unlike the simplified version in types.go
+type ProcessedCluster struct {
+	Name                        string                      `json:"name"`
+	Arn                         string                      `json:"arn"`
+	Region                      string                      `json:"region"`
+	ClusterMetrics              ProcessedClusterMetrics     `json:"metrics"` // Flattened from raw CloudWatch metrics
+	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
+	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+}
+
+type ProcessedClusterMetrics struct {
+	Metadata MetricMetadata    `json:"metadata"`
+	Metrics  []ProcessedMetric `json:"results"`
+}
+
+type ProcessedMetric struct {
+	Start string   `json:"start"`
+	End   string   `json:"end"`
+	Label string   `json:"label"`
+	Value *float64 `json:"value"`
 }
