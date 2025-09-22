@@ -3,9 +3,12 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
@@ -92,6 +95,105 @@ type AWSClientInformation struct {
 	Connectors           []ConnectorSummary                     `json:"connectors"`
 }
 
+// Returns only one bootstrap broker per authentication type.
+func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
+	var brokerList string
+	var visibility string
+	slog.Info("🔍 parsing broker addresses", "authType", authType)
+
+	switch authType {
+	case AuthTypeIAM:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam)
+		visibility = "PUBLIC"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam)
+			visibility = "PRIVATE"
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
+		}
+	case AuthTypeSASLSCRAM:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
+		visibility = "PUBLIC"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram)
+			visibility = "PRIVATE"
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
+		}
+	case AuthTypeUnauthenticated:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
+		visibility = "PRIVATE"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No Unauthenticated brokers found in the cluster")
+		}
+	case AuthTypeTLS:
+		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
+		visibility = "PUBLIC"
+		if brokerList == "" {
+			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
+			visibility = "PRIVATE"
+		}
+		if brokerList == "" {
+			return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
+		}
+	default:
+		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	}
+
+	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
+
+	// Split by comma and trim whitespace from each address, filter out empty strings
+	rawAddresses := strings.Split(brokerList, ",")
+	addresses := make([]string, 0, len(rawAddresses))
+	for _, addr := range rawAddresses {
+		trimmedAddr := strings.TrimSpace(addr)
+		if trimmedAddr != "" {
+			addresses = append(addresses, trimmedAddr)
+		}
+	}
+	return addresses, nil
+}
+
+// Returns all bootstrap brokers for a given auth type.
+func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
+	var brokerList []string
+	slog.Info("🔍 parsing broker addresses", "authType", authType)
+
+	switch authType {
+	case AuthTypeIAM:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam))
+	case AuthTypeSASLSCRAM:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram))
+	case AuthTypeUnauthenticated:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerString))
+	case AuthTypeTLS:
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
+		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
+	default:
+		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+	}
+
+	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
+
+	rawAddresses := strings.Split(strings.Join(brokerList, ","), ",")
+	addresses := make([]string, 0, len(rawAddresses))
+	for _, addr := range rawAddresses {
+		trimmedAddr := strings.TrimSpace(addr)
+		if trimmedAddr != "" {
+			addresses = append(addresses, trimmedAddr)
+		}
+	}
+	return addresses, nil
+}
+
 type ConnectorSummary struct {
 	ConnectorArn                     string                                                        `json:"connector_arn"`
 	ConnectorName                    string                                                        `json:"connector_name"`
@@ -108,6 +210,49 @@ type KafkaAdminClientInformation struct {
 	ClusterID string  `json:"cluster_id"`
 	Topics    *Topics `json:"topics"`
 	Acls      []Acls  `json:"acls"`
+}
+
+func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
+	return c.CalculateTopicSummaryFromDetails(c.Topics.Details)
+}
+
+func (c *KafkaAdminClientInformation) CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
+	summary := TopicSummary{}
+
+	for _, topic := range topicDetails {
+		isInternal := strings.HasPrefix(topic.Name, "__")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
+
+		if isInternal {
+			summary.InternalTopics++
+			summary.TotalInternalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactInternalTopics++
+				summary.CompactInternalPartitions += topic.Partitions
+			}
+		} else {
+			summary.Topics++
+			summary.TotalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactTopics++
+				summary.CompactPartitions += topic.Partitions
+			}
+		}
+	}
+
+	return summary
+}
+
+func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
+	c.Topics = &Topics{
+		Details: topicDetails,
+		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
 }
 
 // ----- metrics -----

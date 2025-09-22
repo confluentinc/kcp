@@ -12,42 +12,42 @@ import (
 )
 
 type ReporterOpts struct {
-	Discovery types.Discovery
+	State types.State
 }
 
 type Reporter struct {
 	ReportService   report.ReportService
 	MarkdownService markdown.Markdown
-	Discovery       types.Discovery
+	State           types.State
 }
 
 func NewReporter(reportService report.ReportService, markdownService markdown.Markdown, opts ReporterOpts) *Reporter {
 	return &Reporter{
 		ReportService:   reportService,
 		MarkdownService: markdownService,
-		Discovery:       opts.Discovery,
+		State:           opts.State,
 	}
 }
 
 func (r *Reporter) Run() error {
 	slog.Info("🔍 running reporter")
-	if err := r.generateReport(r.Discovery); err != nil {
+	if err := r.generateReport(r.State); err != nil {
 		return fmt.Errorf("failed to generate report: %v", err)
 	}
 
 	return nil
 }
 
-func (r *Reporter) generateReport(discovery types.Discovery) error {
+func (r *Reporter) generateReport(state types.State) error {
 	processedRegionsCosts := []types.ProcessedRegionCosts{}
-	for _, region := range discovery.Regions {
+	for _, region := range state.Regions {
 		parsedRegionCost := r.ReportService.ProcessCosts(region)
 		processedRegionsCosts = append(processedRegionsCosts, parsedRegionCost)
 	}
 
 	// do stuff with metrics now
 	allClusterMetrics := []types.ProcessedClusterMetrics{}
-	for _, region := range discovery.Regions {
+	for _, region := range state.Regions {
 		for _, cluster := range region.Clusters {
 			clusterMetrics := r.ReportService.ProcessMetrics(cluster)
 			allClusterMetrics = append(allClusterMetrics, clusterMetrics)

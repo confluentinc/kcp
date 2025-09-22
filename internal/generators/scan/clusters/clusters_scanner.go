@@ -19,20 +19,20 @@ type ClustersScannerKafkaService interface {
 type ClustersScanner struct {
 	StateFile   string
 	Credentials types.Credentials
-	Discovery   *types.Discovery
+	State       *types.State
 }
 
 func NewClustersScanner(stateFile string, credentials types.Credentials) *ClustersScanner {
 	return &ClustersScanner{
 		StateFile:   stateFile,
 		Credentials: credentials,
-		Discovery:   &types.Discovery{},
+		State:       &types.State{},
 	}
 }
 
 func (cs *ClustersScanner) Run() error {
-	if err := cs.Discovery.LoadStateFile(cs.StateFile); err != nil {
-		return fmt.Errorf("❌ failed to load discovery state: %v", err)
+	if err := cs.State.LoadStateFile(cs.StateFile); err != nil {
+		return fmt.Errorf("❌ failed to load state: %v", err)
 	}
 
 	for _, regionEntry := range cs.Credentials.Regions {
@@ -44,7 +44,7 @@ func (cs *ClustersScanner) Run() error {
 		}
 	}
 
-	if err := cs.Discovery.PersistStateFile(cs.StateFile); err != nil {
+	if err := cs.State.PersistStateFile(cs.StateFile); err != nil {
 		return fmt.Errorf("❌ failed to save discovery state: %v", err)
 	}
 
@@ -104,11 +104,11 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 }
 
 func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterArn string) (*types.DiscoveredCluster, error) {
-	for i, discoveryRegion := range cs.Discovery.Regions {
-		if discoveryRegion.Name == region {
-			for j, discoveryCluster := range discoveryRegion.Clusters {
-				if discoveryCluster.Arn == clusterArn {
-					return &cs.Discovery.Regions[i].Clusters[j], nil
+	for i, currentRegion := range cs.State.Regions {
+		if currentRegion.Name == region {
+			for j, currentCluster := range currentRegion.Clusters {
+				if currentCluster.Arn == clusterArn {
+					return &cs.State.Regions[i].Clusters[j], nil
 				}
 			}
 		}

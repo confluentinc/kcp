@@ -76,13 +76,13 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read state file: %v", err)
 	}
 
-	var discovery types.Discovery
-	if err := json.Unmarshal(file, &discovery); err != nil {
-		return fmt.Errorf("failed to unmarshal discovery: %v", err)
+	var state types.State
+	if err := json.Unmarshal(file, &state); err != nil {
+		return fmt.Errorf("failed to unmarshal state: %v", err)
 	}
 
 	opts := report.ReporterOpts{
-		Discovery: discovery,
+		State: state,
 	}
 
 	reportService := rservic.NewReportService()

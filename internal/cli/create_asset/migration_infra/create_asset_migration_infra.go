@@ -20,10 +20,10 @@ var (
 	clusterArn         string
 	migrationInfraType string
 
-	ccEnvName          string
-	ccClusterName      string
-	
-	securityGroupIds   []string
+	ccEnvName     string
+	ccClusterName string
+
+	securityGroupIds []string
 
 	ccClusterType                 string
 	jumpClusterBrokerSubnetConfig string
@@ -155,12 +155,12 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
 	}
 
-	var discoveryData types.Discovery
-	if err := json.Unmarshal(file, &discoveryData); err != nil {
+	var state types.State
+	if err := json.Unmarshal(file, &state); err != nil {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&discoveryData, clusterArn)
+	cluster, err := utils.GetClusterByArn(&state, clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}

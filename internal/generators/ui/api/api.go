@@ -47,9 +47,9 @@ func (ui *UI) Run() error {
 }
 
 func (ui *UI) handleState(c echo.Context) error {
-	var discovery types.Discovery
+	var state types.State
 
-	if err := c.Bind(&discovery); err != nil {
+	if err := c.Bind(&state); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
 			"message": err.Error(),
@@ -61,8 +61,8 @@ func (ui *UI) handleState(c echo.Context) error {
 	// Initialize slice to hold the processed regions with transformed cost and metrics data
 	processedRegions := []types.ProcessedDiscoveredRegion{}
 
-	// Process each region in the discovery data
-	for _, region := range discovery.Regions {
+	// Process each region in the state data
+	for _, region := range state.Regions {
 		// Transform the raw AWS Cost Explorer results into flattened ProcessedRegionCosts
 		// This converts complex nested AWS cost data into simple, flat structures
 		processedCosts := reportService.ProcessCosts(region)
@@ -105,8 +105,8 @@ func (ui *UI) handleState(c echo.Context) error {
 	// - Original build info and timestamp from the input
 	processedDiscovery := types.ProcessedDiscovery{
 		Regions:      processedRegions,
-		KcpBuildInfo: discovery.KcpBuildInfo, // Preserve original build information
-		Timestamp:    discovery.Timestamp,    // Preserve original timestamp
+		KcpBuildInfo: state.KcpBuildInfo, // Preserve original build information
+		Timestamp:    state.Timestamp,    // Preserve original timestamp
 	}
 
 	// Return successful response with the processed discovery data
