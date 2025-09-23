@@ -119,10 +119,9 @@ func (d *Discoverer) discoverRegions() error {
 		}
 	}
 
-	// Write discovery results to JSON file
-	discovery := types.NewDiscovery(discoveredRegions)
-	if err := discovery.WriteToJsonFile("kcp-state.json"); err != nil {
-		return fmt.Errorf("failed to write discovery to file: %w", err)
+	state := types.NewState(discoveredRegions)
+	if err := state.WriteToJsonFile("kcp-state.json"); err != nil {
+		return fmt.Errorf("failed to write state to file: %w", err)
 	}
 
 	// Write credential configurations to YAML file

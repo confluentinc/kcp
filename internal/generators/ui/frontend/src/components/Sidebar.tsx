@@ -25,6 +25,8 @@ interface SidebarProps {
   onRegionSelect: (region: Region) => void
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
+  isProcessing?: boolean
+  error?: string | null
 }
 
 export default function Sidebar({
@@ -34,6 +36,8 @@ export default function Sidebar({
   onRegionSelect,
   selectedCluster,
   selectedRegion,
+  isProcessing = false,
+  error = null,
 }: SidebarProps) {
   // Calculate region cost totals
   const getRegionCostTotal = (region: Region) => {
@@ -64,14 +68,23 @@ export default function Sidebar({
   return (
     <aside className="w-80 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0 h-screen flex flex-col transition-colors">
       <div className="p-4 flex flex-col h-full">
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 space-y-3">
           <Button
             onClick={onFileUpload}
             variant="outline"
             className="w-full"
+            disabled={isProcessing}
           >
-            Upload KCP State File
+            {isProcessing ? 'Processing...' : 'Upload KCP State File'}
           </Button>
+          
+          {error && (
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+              <div className="text-sm text-red-800 dark:text-red-200">
+                <strong>Error:</strong> {error}
+              </div>
+            </div>
+          )}
         </div>
 
         {regions.length > 0 && (

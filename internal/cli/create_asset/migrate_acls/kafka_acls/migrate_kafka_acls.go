@@ -83,12 +83,12 @@ func runConvertKafkaAcls(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
 	}
 
-	var discoveryData types.Discovery
-	if err := json.Unmarshal(data, &discoveryData); err != nil {
+	var state types.State
+	if err := json.Unmarshal(data, &state); err != nil {
 		return fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&discoveryData, clusterArn)
+	cluster, err := utils.GetClusterByArn(&state, clusterArn)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}

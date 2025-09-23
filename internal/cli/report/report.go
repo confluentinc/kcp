@@ -7,7 +7,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/generators/report"
 	"github.com/confluentinc/kcp/internal/services/markdown"
-	rservic "github.com/confluentinc/kcp/internal/services/report"
+	rservice "github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -76,20 +76,20 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read state file: %v", err)
 	}
 
-	var discovery types.Discovery
-	if err := json.Unmarshal(file, &discovery); err != nil {
-		return fmt.Errorf("failed to unmarshal discovery: %v", err)
+	var state types.State
+	if err := json.Unmarshal(file, &state); err != nil {
+		return fmt.Errorf("failed to unmarshal state: %v", err)
 	}
 
 	opts := report.ReporterOpts{
-		Discovery: discovery,
+		State: state,
 	}
 
-	reportService := rservic.NewReportService()
+	reportService := rservice.NewReportService()
 
 	markdownService := markdown.New()
 
-	reporter := report.NewReporter(*reportService, *markdownService, opts)
+	reporter := report.NewReporter(reportService, *markdownService, opts)
 	if err := reporter.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}

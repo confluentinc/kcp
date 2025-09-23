@@ -14,7 +14,48 @@ func NewReportService() *ReportService {
 	return &ReportService{}
 }
 
-func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
+func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
+	processedRegions := []types.ProcessedRegion{}
+
+	// Process each region: flatten costs and metrics for frontend consumption
+	for _, region := range state.Regions {
+		// Flatten cost data from nested AWS Cost Explorer format
+		processedCosts := rs.flattenCosts(region)
+
+		// Process each cluster's metrics
+		processedClusters := []types.ProcessedCluster{}
+		for _, cluster := range region.Clusters {
+			// Flatten metrics data from nested CloudWatch format
+			processedMetrics := rs.flattenMetrics(cluster)
+
+			processedClusters = append(processedClusters, types.ProcessedCluster{
+				Name:                        cluster.Name,
+				Arn:                         cluster.Arn,
+				ClusterMetrics:              processedMetrics,
+				AWSClientInformation:        cluster.AWSClientInformation,
+				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+			})
+		}
+
+		processedRegions = append(processedRegions, types.ProcessedRegion{
+			Name:           region.Name,
+			Configurations: region.Configurations,
+			Costs:          processedCosts,
+			Clusters:       processedClusters,
+		})
+	}
+
+	// Return the processed state with flattened data for frontend consumption
+	processedState := types.ProcessedState{
+		Regions:      processedRegions,
+		KcpBuildInfo: state.KcpBuildInfo,
+		Timestamp:    state.Timestamp,
+	}
+
+	return processedState
+}
+
+func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
 	var processedCosts []types.ProcessedCost
 	serviceTotals := make(map[string]float64)
 
@@ -64,14 +105,13 @@ func (rs *ReportService) ProcessCosts(region types.DiscoveredRegion) types.Proce
 	}
 
 	return types.ProcessedRegionCosts{
-		Region:   region.Name,
-		Costs:    processedCosts,
-		Totals:   totals,
 		Metadata: region.Costs.CostMetadata,
+		Results:  processedCosts,
+		Totals:   totals,
 	}
 }
 
-func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics {
+func (rs *ReportService) flattenMetrics(cluster types.DiscoveredCluster) types.ProcessedClusterMetrics {
 	var processedMetrics []types.ProcessedMetric
 
 	period := cluster.ClusterMetrics.MetricMetadata.Period
@@ -122,9 +162,7 @@ func (rs *ReportService) ProcessMetrics(cluster types.DiscoveredCluster) types.P
 	}
 
 	return types.ProcessedClusterMetrics{
-		ClusterName: cluster.Name,
-		ClusterArn:  cluster.Arn,
-		Metrics:     processedMetrics,
-		Metadata:    cluster.ClusterMetrics.MetricMetadata,
+		Metrics:  processedMetrics,
+		Metadata: cluster.ClusterMetrics.MetricMetadata,
 	}
 }

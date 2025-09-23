@@ -6,16 +6,24 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/generators/ui/frontend"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/labstack/echo/v4"
 )
 
-type UI struct {
-	port string
+type ReportService interface {
+	ProcessState(state types.State) types.ProcessedState
 }
 
-func StartAPI(port string) *UI {
-	fmt.Println("Starting UI...")
-	return &UI{port: port}
+type UI struct {
+	port          string
+	reportService ReportService
+}
+
+func NewUI(port string, reportService ReportService) *UI {
+	return &UI{
+		port:          port,
+		reportService: reportService,
+	}
 }
 
 func (ui *UI) Run() error {
@@ -28,16 +36,33 @@ func (ui *UI) Run() error {
 
 	// Health check endpoint
 	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]interface{}{
+		return c.JSON(http.StatusOK, map[string]any{
 			"status":    "healthy",
 			"service":   "kcp-ui",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		})
 	})
 
+	e.POST("/state", ui.handleState)
+
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fmt.Printf("Starting UI server on %s\n", serverAddr)
 	e.Logger.Fatal(e.Start(serverAddr))
 
 	return nil
+}
+
+func (ui *UI) handleState(c echo.Context) error {
+	var state types.State
+
+	if err := c.Bind(&state); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	processedState := ui.reportService.ProcessState(state)
+
+	return c.JSON(http.StatusOK, processedState)
 }

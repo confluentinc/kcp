@@ -1,5 +1,7 @@
 package types
 
+import "strings"
+
 type TopicSummary struct {
 	Topics                    int `json:"topics"`
 	InternalTopics            int `json:"internal_topics"`
@@ -133,4 +135,36 @@ var AclMap = map[string]ACLMapping{
 		ResourceType:    "Cluster",
 		RequiresPattern: true,
 	},
+}
+
+func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
+	summary := TopicSummary{}
+
+	for _, topic := range topicDetails {
+		isInternal := strings.HasPrefix(topic.Name, "__")
+
+		// Check if cleanup.policy exists and is not nil before dereferencing
+		var isCompact bool
+		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
+			isCompact = strings.Contains(*cleanupPolicy, "compact")
+		}
+
+		if isInternal {
+			summary.InternalTopics++
+			summary.TotalInternalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactInternalTopics++
+				summary.CompactInternalPartitions += topic.Partitions
+			}
+		} else {
+			summary.Topics++
+			summary.TotalPartitions += topic.Partitions
+			if isCompact {
+				summary.CompactTopics++
+				summary.CompactPartitions += topic.Partitions
+			}
+		}
+	}
+
+	return summary
 }

@@ -94,12 +94,12 @@ func parseMigrationScriptsOpts() (*migration_scripts.MigrationScriptsOpts, error
 		return nil, fmt.Errorf("failed to read cluster file: %v", err)
 	}
 
-	var discoveryData types.Discovery
-	if err := json.Unmarshal(file, &discoveryData); err != nil {
+	var state types.State
+	if err := json.Unmarshal(file, &state); err != nil {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&discoveryData, clusterArn)
+	cluster, err := utils.GetClusterByArn(&state, clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
