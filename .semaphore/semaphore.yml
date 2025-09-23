@@ -26,6 +26,23 @@ global_job_config:
       - checkout
 
 blocks:
+  - name: "Show Go and Node versions"
+    task:
+      prologue:
+        commands:
+          - sem-version go 1.24.7     # Set Go version
+          - sem-version node 18.17.0  # Set Node.js version
+      jobs:
+        - name: Print versions
+          commands:
+            - echo "=== Go Version ==="
+            - go version
+            - echo ""
+            - echo "=== Node Version ==="
+            - node --version
+            - echo ""
+            - echo "=== NPM Version ==="
+            - npm --version
   - name: "test and security scan"
     task:
       env_vars:
