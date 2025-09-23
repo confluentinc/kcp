@@ -18,8 +18,8 @@ queue:
 global_job_config:
   prologue:
     commands:
-      - sem-version go 1.24.7
-      - sem-version node 24.6.0
+      - sem-version go 1.23.0
+      - sem-version node 22.13.1
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
