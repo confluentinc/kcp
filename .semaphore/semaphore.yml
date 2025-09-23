@@ -35,6 +35,7 @@ blocks:
       jobs:
         - name: "run tests"
           commands:
+            - apt list --installed
             - make test
 
         - name: "trivy scan"
