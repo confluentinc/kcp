@@ -1,8 +1,8 @@
 package migrate_acls
 
 import (
-	"github.com/confluentinc/kcp/internal/cli/create_asset/migrate_acls/iam_acls"
-	"github.com/confluentinc/kcp/internal/cli/create_asset/migrate_acls/kafka_acls"
+	"github.com/confluentinc/kcp/cmd/create_asset/migrate_acls/iam_acls"
+	"github.com/confluentinc/kcp/cmd/create_asset/migrate_acls/kafka_acls"
 
 	"github.com/spf13/cobra"
 )

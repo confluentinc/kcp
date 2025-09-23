@@ -1,6 +1,6 @@
 # Simple Makefile for kcp
 BINARY_NAME := kcp
-MAIN_PATH := ./cmd/cli
+MAIN_PATH := .
 
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')

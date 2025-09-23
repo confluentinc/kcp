@@ -1,11 +1,11 @@
 package create_asset
 
 import (
-	"github.com/confluentinc/kcp/internal/cli/create_asset/bastion_host"
-	"github.com/confluentinc/kcp/internal/cli/create_asset/migrate_acls"
-	"github.com/confluentinc/kcp/internal/cli/create_asset/migration_infra"
-	"github.com/confluentinc/kcp/internal/cli/create_asset/migration_scripts"
-	"github.com/confluentinc/kcp/internal/cli/create_asset/reverse_proxy"
+	"github.com/confluentinc/kcp/cmd/create_asset/bastion_host"
+	"github.com/confluentinc/kcp/cmd/create_asset/migrate_acls"
+	"github.com/confluentinc/kcp/cmd/create_asset/migration_infra"
+	"github.com/confluentinc/kcp/cmd/create_asset/migration_scripts"
+	"github.com/confluentinc/kcp/cmd/create_asset/reverse_proxy"
 	"github.com/spf13/cobra"
 )
 

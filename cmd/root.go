@@ -1,4 +1,4 @@
-package cli
+package cmd
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/confluentinc/kcp/cmd/create_asset"
+	"github.com/confluentinc/kcp/cmd/discover"
+	"github.com/confluentinc/kcp/cmd/report"
+	"github.com/confluentinc/kcp/cmd/scan"
+	"github.com/confluentinc/kcp/cmd/ui"
+	"github.com/confluentinc/kcp/cmd/update"
+	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
-	"github.com/confluentinc/kcp/internal/cli/create_asset"
-	"github.com/confluentinc/kcp/internal/cli/discover"
-	"github.com/confluentinc/kcp/internal/cli/report"
-	"github.com/confluentinc/kcp/internal/cli/scan"
-	"github.com/confluentinc/kcp/internal/cli/ui"
-	"github.com/confluentinc/kcp/internal/cli/update"
-	"github.com/confluentinc/kcp/internal/cli/version"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
