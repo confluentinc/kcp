@@ -31,7 +31,7 @@ blocks:
       prologue:
         commands:
           - sem-version go 1.24.7     # Set Go version
-          - sem-version node 18.17.0  # Set Node.js version
+          # - sem-version node 18.17.0  # Set Node.js version
       jobs:
         - name: Print versions
           commands:
