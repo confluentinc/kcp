@@ -14,6 +14,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -356,7 +357,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	}
 
 	// this time window can be extracted as a parameter in future
-	timeWindow, err := GetTimeWindow(time.Now().UTC(), LastWeek)
+	timeWindow, err := metrics.GetTimeWindow(time.Now().UTC(), metrics.LastWeek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate time window: %v", err)
 	}

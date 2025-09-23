@@ -1,4 +1,4 @@
-package discover
+package metrics
 
 import (
 	"fmt"
