@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/confluentinc/kcp/internal/generators/create_asset/bastion_host"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -88,7 +87,7 @@ func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse bastion host opts: %v", err)
 	}
 
-	bastionHostAssetGenerator := bastion_host.NewBastionHostAssetGenerator(*opts)
+	bastionHostAssetGenerator := NewBastionHostAssetGenerator(*opts)
 	if err := bastionHostAssetGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to create bastion host assets: %v", err)
 	}
@@ -96,8 +95,8 @@ func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseBastionHostOpts() (*bastion_host.BastionHostOpts, error) {
-	opts := bastion_host.BastionHostOpts{
+func parseBastionHostOpts() (*BastionHostOpts, error) {
+	opts := BastionHostOpts{
 		Region:           region,
 		VPCId:            vpcId,
 		PublicSubnetCidr: bastionHostCidr.String(),

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_scripts"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -80,7 +79,7 @@ func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse migration scripts opts: %v", err)
 	}
 
-	migrationAssetGenerator := migration_scripts.NewMigrationAssetGenerator(*opts)
+	migrationAssetGenerator := NewMigrationAssetGenerator(*opts)
 	if err := migrationAssetGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to create migration assets: %v", err)
 	}
@@ -88,7 +87,7 @@ func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationScriptsOpts() (*migration_scripts.MigrationScriptsOpts, error) {
+func parseMigrationScriptsOpts() (*MigrationScriptsOpts, error) {
 	file, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cluster file: %v", err)
@@ -132,7 +131,7 @@ func parseMigrationScriptsOpts() (*migration_scripts.MigrationScriptsOpts, error
 		return nil, fmt.Errorf("error: %v\n please run terraform apply in the migration infra folder", err)
 	}
 
-	opts := migration_scripts.MigrationScriptsOpts{
+	opts := MigrationScriptsOpts{
 		MirrorTopics:    mirrorTopics,
 		TerraformOutput: terraformState.Outputs,
 		Manifest:        manifest,
