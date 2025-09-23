@@ -14,7 +14,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 # Build the frontend
 build-frontend:
 	@echo "🌐 Building frontend..."
-	@cd internal/generators/ui/frontend && yarn install && yarn build
+	@cd cmd/ui/frontend && yarn install && yarn build
 	@echo "✅ Frontend build complete"
 
 # Build the binary (depends on frontend)

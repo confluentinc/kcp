@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/confluentinc/kcp/internal/generators/ui/frontend"
+	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/labstack/echo/v4"
 )
