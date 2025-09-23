@@ -15,6 +15,7 @@ var (
 	useBasicAuth bool
 	username string
 	password string
+	skipSSLVerification bool  // TODO: delete this dev flag
 	groups = make(map[*pflag.FlagSet]string)
 )
 
@@ -45,11 +46,20 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd.Flags().AddFlagSet(authFlags)
 	groups[authFlags] = "Authentication Flags"
 
+	// TODO: delete this ssl dev flag group 
+	sslFlags := pflag.NewFlagSet("ssl", pflag.ExitOnError)
+	sslFlags.BoolVar(&skipSSLVerification, "skip-ssl-verification", false, "Skip SSL certificate verification (for self-signed certs)")
+	schemaRegistryCmd.Flags().AddFlagSet(sslFlags)
+	groups[sslFlags] = "SSL/TLS Flags"
+
 	schemaRegistryCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags}
-		groupNames := []string{"Required Flags", "Authentication Flags"}
+		// flagOrder := []*pflag.FlagSet{requiredFlags, authFlags}
+    // groupNames := []string{"Required Flags", "Authentication Flags"}
+		// TODO: delete ssl dev flag group after testing of skip ssl verification
+		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, sslFlags}
+		groupNames := []string{"Required Flags", "Authentication Flags", "SSL/TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -76,12 +86,18 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 	
 	switch {
 	case useUnauthenticated:
-		config = client.SchemaRegistryConfig{URL: schemaRegistryURL}
+		config = client.SchemaRegistryConfig{
+			URL:                 schemaRegistryURL,
+			// TODO: delete SkipSSLVerification after dev testing
+			SkipSSLVerification: skipSSLVerification,
+		}
 	case useBasicAuth:
 		config = client.SchemaRegistryConfig{
-			URL:      schemaRegistryURL,
-			Username: username,
-			Password: password,
+			URL:                 schemaRegistryURL,
+			Username:            username,
+			Password:            password,
+			// TODO: delete SkipSSLVerification after dev testing
+			SkipSSLVerification: skipSSLVerification,
 		}
 	default: 
 		return fmt.Errorf("❌ Authentication type not supported")
