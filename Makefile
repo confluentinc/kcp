@@ -1,6 +1,6 @@
 # Simple Makefile for kcp
 BINARY_NAME := kcp
-MAIN_PATH := ./cmd/cli
+MAIN_PATH := .
 
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -14,7 +14,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 # Build the frontend
 build-frontend:
 	@echo "🌐 Building frontend..."
-	@cd internal/generators/ui/frontend && yarn install && yarn build
+	@cd cmd/ui/frontend && yarn install && yarn build
 	@echo "✅ Frontend build complete"
 
 # Build the binary (depends on frontend)

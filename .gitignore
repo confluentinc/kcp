@@ -47,10 +47,7 @@ migration-plan/
 
 # Ignore kcp generated files
 kcp-scan/
-bastion_host/
 kcp
-migration_infra/
-reverse_proxy/
 set_migration_env_vars.sh
 kcp-scan*
 cluster-credentials.yaml
