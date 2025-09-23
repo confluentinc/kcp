@@ -22,10 +22,15 @@ type ClustersScanner struct {
 	State       *types.State
 }
 
-func NewClustersScanner(stateFile string, credentials types.Credentials) *ClustersScanner {
+type ClustersScannerOpts struct {
+	StateFile   string
+	Credentials types.Credentials
+}
+
+func NewClustersScanner(opts ClustersScannerOpts) *ClustersScanner {
 	return &ClustersScanner{
-		StateFile:   stateFile,
-		Credentials: credentials,
+		StateFile:   opts.StateFile,
+		Credentials: opts.Credentials,
 		State:       &types.State{},
 	}
 }

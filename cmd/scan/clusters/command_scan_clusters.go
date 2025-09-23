@@ -68,23 +68,37 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 }
 
 func runScanClusters(cmd *cobra.Command, args []string) error {
+	opts, err := parseScanClustersOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse scan clusters opts: %v", err)
+	}
+
+	clustersScanner := NewClustersScanner(*opts)
+	if err := clustersScanner.Run(); err != nil {
+		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+	}
+
+	return nil
+}
+
+func parseScanClustersOpts() (*ClustersScannerOpts, error) {
 	credsFile, errs := types.NewCredentials(credentialsYaml)
 	if len(errs) > 0 {
 		errMsg := "Failed to parse credentials file:"
 		for _, e := range errs {
 			errMsg += "\n\t❌ " + e.Error()
 		}
-		return fmt.Errorf("%s", errMsg)
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return fmt.Errorf("❌ state file does not exist: %s", stateFile)
+		return nil, fmt.Errorf("❌ state file does not exist: %s", stateFile)
 	}
 
-	clustersScanner := NewClustersScanner(stateFile, *credsFile)
-	if err := clustersScanner.Run(); err != nil {
-		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+	opts := ClustersScannerOpts{
+		StateFile:   stateFile,
+		Credentials: *credsFile,
 	}
 
-	return nil
+	return &opts, nil
 }

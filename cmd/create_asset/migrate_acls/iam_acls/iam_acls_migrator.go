@@ -8,11 +8,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/client"
-	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls"
 	iamservice "github.com/confluentinc/kcp/internal/services/iam"
+	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -24,34 +25,43 @@ type TemplateData struct {
 	Acls      []types.Acls
 }
 
-var (
+type MigrateIamAclsOpts struct {
+	PrincipalArns   []string
+	OutputDir       string
+	SkipAuditReport bool
+}
+
+type IamAclsMigrator struct {
 	principalArns   []string
 	outputDir       string
 	skipAuditReport bool
-)
+}
 
-func RunConvertIamAcls(userPrincipalArns []string, userOutputDir string, userSkipAuditReport bool) error {
+func NewIamAclsMigrator(opts MigrateIamAclsOpts) *IamAclsMigrator {
+	return &IamAclsMigrator{
+		principalArns:   opts.PrincipalArns,
+		outputDir:       opts.OutputDir,
+		skipAuditReport: opts.SkipAuditReport,
+	}
+}
+
+func (iac *IamAclsMigrator) Run() error {
+	slog.Info("🚀 Converting IAM ACLs for principals", "principals", iac.principalArns)
 	ctx := context.Background()
-
-	principalArns = userPrincipalArns
-	outputDir = userOutputDir
-	skipAuditReport = userSkipAuditReport
-
-	slog.Info("🚀 Converting IAM ACLs for principals", "principals", principalArns)
 
 	iamClient, err := client.NewIAMClient()
 	if err != nil {
 		return fmt.Errorf("failed to create IAM client: %v", err)
 	}
 
-	for _, principal := range principalArns {
+	for _, principal := range iac.principalArns {
 		slog.Info("📋 Retrieving IAM policies for principal", "principal", principal)
 		policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principal)
 		if err != nil {
 			return fmt.Errorf("failed to get principal policies: %v", err)
 		}
 
-		extractedACLs, err := extractKafkaPermissionsFromPrincipalPolicies(principal, policies)
+		extractedACLs, err := iac.extractKafkaPermissionsFromPrincipalPolicies(principal, policies)
 		if err != nil {
 			return fmt.Errorf("failed to extract Kafka permissions: %v", err)
 		}
@@ -61,12 +71,12 @@ func RunConvertIamAcls(userPrincipalArns []string, userOutputDir string, userSki
 			return nil
 		}
 
-		if outputDir == "" {
-			principal := cleanPrincipalName(getPrincipalFromArn(principal))
-			outputDir = fmt.Sprintf("%s_iam_acls", principal)
+		if iac.outputDir == "" {
+			principal := iac.cleanPrincipalName(iac.getPrincipalFromArn(principal))
+			iac.outputDir = fmt.Sprintf("%s_iam_acls", principal)
 		}
 
-		if err := os.MkdirAll(outputDir, 0755); err != nil {
+		if err := os.MkdirAll(iac.outputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory: %w", err)
 		}
 
@@ -91,7 +101,7 @@ func RunConvertIamAcls(userPrincipalArns []string, userOutputDir string, userSki
 		// Generate a separate file for each principal
 		for principal, acls := range aclsByPrincipal {
 			filename := fmt.Sprintf("%s-acls.tf", principal)
-			filepath := filepath.Join(outputDir, filename)
+			filepath := filepath.Join(iac.outputDir, filename)
 
 			file, err := os.Create(filepath)
 			if err != nil {
@@ -109,45 +119,45 @@ func RunConvertIamAcls(userPrincipalArns []string, userOutputDir string, userSki
 			}
 		}
 
-		principal := cleanPrincipalName(getPrincipalFromArn(principal))
+		principal := iac.cleanPrincipalName(iac.getPrincipalFromArn(principal))
 
-		if !skipAuditReport {
-			aclAuditReportPath := filepath.Join(outputDir, "migrated-acls-report.md")
-			if err := migrate_acls.GenerateIamAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
+		if !iac.skipAuditReport {
+			aclAuditReportPath := filepath.Join(iac.outputDir, "migrated-acls-report.md")
+			if err := iac.generateIamAuditReport(principal, extractedACLs, aclAuditReportPath, "iam"); err != nil {
 				return fmt.Errorf("failed to generate audit report: %w", err)
 			}
 		}
 	}
 
-	for _, principal := range principalArns {
-		principal := cleanPrincipalName(getPrincipalFromArn(principal))
-		slog.Info("✅ Successfully generated ACL files", "principal", principal, "outputDir", outputDir)
+	for _, principal := range iac.principalArns {
+		principal := iac.cleanPrincipalName(iac.getPrincipalFromArn(principal))
+		slog.Info("✅ Successfully generated ACL files", "principal", principal, "outputDir", iac.outputDir)
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully generated ACL files for %d principals in %s", len(principalArns), outputDir))
+	slog.Info(fmt.Sprintf("✅ Successfully generated ACL files for %d principals in %s", len(iac.principalArns), iac.outputDir))
 
 	return nil
 }
 
-func extractKafkaPermissionsFromPrincipalPolicies(principalArn string, policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
+func (iac *IamAclsMigrator) extractKafkaPermissionsFromPrincipalPolicies(principalArn string, policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
 		fmt.Printf("📝 Processing attached policy: %s\n", policy.PolicyName)
-		acls := processPolicy(principalArn, policy.PolicyDocument)
+		acls := iac.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	for _, policy := range policies.InlinePolicies {
 		fmt.Printf("📝 Processing inline policy: %s\n", policy.PolicyName)
-		acls := processPolicy(principalArn, policy.PolicyDocument)
+		acls := iac.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	return extractedACLs, nil
 }
 
-func processPolicy(principalArn string, policyDocument map[string]any) []types.Acls {
+func (iac *IamAclsMigrator) processPolicy(principalArn string, policyDocument map[string]any) []types.Acls {
 	var extractedACLs []types.Acls
 
 	for _, statement := range policyDocument["Statement"].([]any) {
@@ -187,13 +197,13 @@ func processPolicy(principalArn string, policyDocument map[string]any) []types.A
 				if action == "kafka-cluster:*" {
 					// If wildcard on action - apply all ACL mappings.
 					for _, mapping := range types.AclMap {
-						acl := createACLFromMapping(principalArn, mapping, effect, resources)
+						acl := iac.createACLFromMapping(principalArn, mapping, effect, resources)
 						extractedACLs = append(extractedACLs, acl)
 					}
 				} else {
-					mapping, found := TranslateIAMToKafkaACL(action)
+					mapping, found := iac.translateIAMToKafkaACL(action)
 					if found {
-						acl := createACLFromMapping(principalArn, mapping, effect, resources)
+						acl := iac.createACLFromMapping(principalArn, mapping, effect, resources)
 						extractedACLs = append(extractedACLs, acl)
 					} else {
 						continue
@@ -206,19 +216,19 @@ func processPolicy(principalArn string, policyDocument map[string]any) []types.A
 	return extractedACLs
 }
 
-func TranslateIAMToKafkaACL(iamPermission string) (types.ACLMapping, bool) {
+func (iac *IamAclsMigrator) translateIAMToKafkaACL(iamPermission string) (types.ACLMapping, bool) {
 	normalizedPermission := strings.TrimSpace(iamPermission)
 	acl, found := types.AclMap[normalizedPermission]
 	return acl, found
 }
 
-func createACLFromMapping(principalArn string, mapping types.ACLMapping, effect string, resources []string) types.Acls {
+func (iac *IamAclsMigrator) createACLFromMapping(principalArn string, mapping types.ACLMapping, effect string, resources []string) types.Acls {
 	// Set defaults
 	resourceName := "*"
 	patternType := "LITERAL"
 
 	if mapping.RequiresPattern && len(resources) > 0 {
-		parsedResourceName, parsedPatternType := parseKafkaResourceFromArn(resources[0], mapping.ResourceType)
+		parsedResourceName, parsedPatternType := iac.parseKafkaResourceFromArn(resources[0], mapping.ResourceType)
 
 		if parsedResourceName != "" {
 			resourceName = parsedResourceName
@@ -230,25 +240,25 @@ func createACLFromMapping(principalArn string, mapping types.ACLMapping, effect 
 		ResourceType:        mapping.ResourceType,
 		ResourceName:        resourceName,
 		ResourcePatternType: patternType,
-		Principal:           cleanPrincipalName(getPrincipalFromArn(principalArn)),
+		Principal:           iac.cleanPrincipalName(iac.getPrincipalFromArn(principalArn)),
 		Host:                "*", // Unsure how we would retrieve this from the IAM policy.
 		Operation:           mapping.Operation,
 		PermissionType:      effect,
 	}
 }
 
-func parseKafkaResourceFromArn(arn string, resourceType string) (string, string) {
+func (iac *IamAclsMigrator) parseKafkaResourceFromArn(arn string, resourceType string) (string, string) {
 	if arn == "*" || strings.Contains(arn, ":*") {
 		return "*", "LITERAL"
 	}
 
 	switch resourceType {
 	case "Topic":
-		return parseTopicFromArn(arn)
+		return iac.parseTopicFromArn(arn)
 	case "Group":
-		return parseGroupFromArn(arn)
+		return iac.parseGroupFromArn(arn)
 	case "TransactionalId":
-		return parseTransactionalIdFromArn(arn)
+		return iac.parseTransactionalIdFromArn(arn)
 	case "Cluster":
 		return "kafka-cluster", "LITERAL"
 	}
@@ -258,7 +268,7 @@ func parseKafkaResourceFromArn(arn string, resourceType string) (string, string)
 
 // arn:aws:kafka:region:account:topic/cluster-name/cluster-id/topic-name
 // arn:aws:kafka:region:account:topic/cluster-name/cluster-id/prefix-*
-func parseTopicFromArn(arn string) (string, string) {
+func (iac *IamAclsMigrator) parseTopicFromArn(arn string) (string, string) {
 	if strings.Contains(arn, ":topic/") {
 		parts := strings.Split(arn, ":topic/")
 
@@ -269,7 +279,7 @@ func parseTopicFromArn(arn string) (string, string) {
 			if len(topicSegments) >= 3 {
 				topicName := topicSegments[len(topicSegments)-1]
 
-				return determineResourceNameAndPattern(topicName)
+				return iac.determineResourceNameAndPattern(topicName)
 			}
 		}
 	}
@@ -279,7 +289,7 @@ func parseTopicFromArn(arn string) (string, string) {
 
 // arn:aws:kafka:region:account:group/cluster-name/cluster-id/group-name
 // arn:aws:kafka:region:account:group/cluster-name/cluster-id/prefix-*
-func parseGroupFromArn(arn string) (string, string) {
+func (iac *IamAclsMigrator) parseGroupFromArn(arn string) (string, string) {
 	if strings.Contains(arn, ":group/") {
 		parts := strings.Split(arn, ":group/")
 
@@ -290,7 +300,7 @@ func parseGroupFromArn(arn string) (string, string) {
 			if len(groupSegments) >= 3 {
 				groupName := groupSegments[len(groupSegments)-1]
 
-				return determineResourceNameAndPattern(groupName)
+				return iac.determineResourceNameAndPattern(groupName)
 			}
 		}
 	}
@@ -299,7 +309,7 @@ func parseGroupFromArn(arn string) (string, string) {
 }
 
 // arn:aws:kafka:region:account:transactional-id/cluster-name/cluster-id/txn-id
-func parseTransactionalIdFromArn(arn string) (string, string) {
+func (iac *IamAclsMigrator) parseTransactionalIdFromArn(arn string) (string, string) {
 	if strings.Contains(arn, ":transactional-id/") {
 		parts := strings.Split(arn, ":transactional-id/")
 
@@ -310,7 +320,7 @@ func parseTransactionalIdFromArn(arn string) (string, string) {
 			if len(txnSegments) >= 3 {
 				txnId := txnSegments[len(txnSegments)-1]
 
-				return determineResourceNameAndPattern(txnId)
+				return iac.determineResourceNameAndPattern(txnId)
 			}
 		}
 	}
@@ -318,7 +328,7 @@ func parseTransactionalIdFromArn(arn string) (string, string) {
 	return "*", "LITERAL"
 }
 
-func determineResourceNameAndPattern(resourceName string) (string, string) {
+func (iac *IamAclsMigrator) determineResourceNameAndPattern(resourceName string) (string, string) {
 	if resourceName == "*" {
 		return "*", "LITERAL"
 	}
@@ -343,13 +353,13 @@ func determineResourceNameAndPattern(resourceName string) (string, string) {
 	return resourceName, "LITERAL"
 }
 
-func getPrincipalFromArn(principalArn string) string {
+func (iac *IamAclsMigrator) getPrincipalFromArn(principalArn string) string {
 	parts := strings.Split(principalArn, "/")[1]
 	return fmt.Sprintf("User:%s", parts)
 }
 
 // Clean the principal name for filename (remove User: prefix and special chars).
-func cleanPrincipalName(principal string) string {
+func (iac *IamAclsMigrator) cleanPrincipalName(principal string) string {
 	name := strings.TrimPrefix(principal, "User:")
 
 	name = strings.ReplaceAll(name, ".", "_")
@@ -360,4 +370,94 @@ func cleanPrincipalName(principal string) string {
 	name = strings.ReplaceAll(name, "\\", "_")
 
 	return strings.ToLower(name)
+}
+
+func (iac *IamAclsMigrator) generateIamAuditReport(principalName string, migratedACls []types.Acls, filePath string, aclSource string) error {
+	md := markdown.New()
+
+	md.AddHeading("Audit Report", 1)
+	md.AddParagraph(fmt.Sprintf("This report highlights the ACLs that will be migrated using the generated Terraform assets for %s.", principalName))
+
+	md.AddHeading(fmt.Sprintf("Principal: %s", principalName), 2)
+	iac.addAclSectionForIamPrincipal(md, migratedACls)
+
+	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: filePath})
+}
+
+func (iac *IamAclsMigrator) addAclSectionForIamPrincipal(md *markdown.Markdown, migratedACls []types.Acls) {
+	type aclEntry struct {
+		IamActions     string
+		ResourceType   string
+		ResourceName   string
+		PatternType    string
+		Operation      string
+		PermissionType string
+	}
+
+	var aclEntries []aclEntry
+
+	for _, acl := range migratedACls {
+		var iamActions string
+		actions := iac.resolveKafkaIAMActionsForACL(acl)
+		if len(actions) > 0 {
+			iamActions = strings.Join(actions, ", ")
+		}
+
+		entry := aclEntry{
+			IamActions:     iamActions,
+			ResourceType:   acl.ResourceType,
+			ResourceName:   acl.ResourceName,
+			PatternType:    acl.ResourcePatternType,
+			Operation:      acl.Operation,
+			PermissionType: acl.PermissionType,
+		}
+		aclEntries = append(aclEntries, entry)
+	}
+
+	if len(aclEntries) == 0 {
+		md.AddParagraph("No ACLs found.")
+		return
+	}
+
+	// Sort entries by resource type, resource name, operation
+	sort.Slice(aclEntries, func(i, j int) bool {
+		if aclEntries[i].ResourceType != aclEntries[j].ResourceType {
+			return aclEntries[i].ResourceType < aclEntries[j].ResourceType
+		}
+
+		if aclEntries[i].ResourceName != aclEntries[j].ResourceName {
+			return aclEntries[i].ResourceName < aclEntries[j].ResourceName
+		}
+		return aclEntries[i].Operation < aclEntries[j].Operation
+	})
+
+	headers := []string{"IAM Action", "Resource Type", "Resource Name", "Pattern Type", "Operation", "Permission Type"}
+
+	var tableData [][]string
+
+	for _, entry := range aclEntries {
+		row := []string{
+			entry.IamActions,
+			entry.ResourceType,
+			entry.ResourceName,
+			entry.PatternType,
+			entry.Operation,
+			entry.PermissionType,
+		}
+		tableData = append(tableData, row)
+	}
+
+	md.AddTable(headers, tableData)
+}
+
+// Returns the AWS kafka-cluster action(s) that translate to the given ACL's resource type and operation.
+func (iac *IamAclsMigrator) resolveKafkaIAMActionsForACL(acl types.Acls) []string {
+	var actions []string
+	for action, mapping := range types.AclMap {
+		if mapping.ResourceType == acl.ResourceType && mapping.Operation == acl.Operation {
+			actions = append(actions, action)
+		}
+	}
+	sort.Strings(actions)
+	return actions
 }

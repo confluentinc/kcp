@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls/iam_acls"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -84,31 +83,47 @@ func preRunMigrateIamAcls(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrateIamAcls(cmd *cobra.Command, args []string) error {
-	var principalArn []string
+	opts, err := parseMigrateIamAclsOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse migrate IAM ACLs opts: %v", err)
+	}
+
+	iamAclsMigrator := NewIamAclsMigrator(*opts)
+	if err := iamAclsMigrator.Run(); err != nil {
+		return fmt.Errorf("failed to migrate IAM ACLs: %v", err)
+	}
+
+	return nil
+}
+
+func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
+	var principalArns []string
 
 	switch {
 	case roleArn != "":
-		principalArn = []string{roleArn}
+		principalArns = []string{roleArn}
 	case userArn != "":
-		principalArn = []string{userArn}
+		principalArns = []string{userArn}
 	case clientDiscovFile != "":
 		principals, err := parseClientDiscoveryFile(clientDiscovFile)
 		if err != nil {
-			return fmt.Errorf("failed to parse client discovery file: %v", err)
+			return nil, fmt.Errorf("failed to parse client discovery file: %v", err)
 		}
 
 		if outputDir == "" {
 			outputDir = "client-discovery-acls"
 		}
 
-		principalArn = principals
+		principalArns = principals
 	}
 
-	if err := iam_acls.RunConvertIamAcls(principalArn, outputDir, skipAuditReport); err != nil {
-		return fmt.Errorf("failed to convert IAM ACLs: %v", err)
+	opts := MigrateIamAclsOpts{
+		PrincipalArns:   principalArns,
+		OutputDir:       outputDir,
+		SkipAuditReport: skipAuditReport,
 	}
 
-	return nil
+	return &opts, nil
 }
 
 // Client ID,Role,Topic,Auth,Principal,Timestamp

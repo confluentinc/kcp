@@ -3,10 +3,8 @@ package kafka_acls
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/generators/create_asset/migrate_acls/kafka_acls"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -78,31 +76,46 @@ func preRunConvertKafkaAcls(cmd *cobra.Command, args []string) error {
 }
 
 func runConvertKafkaAcls(cmd *cobra.Command, args []string) error {
+	opts, err := parseMigrateKafkaAclsOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse migrate Kafka ACLs opts: %v", err)
+	}
+
+	kafkaAclsMigrator := NewKafkaAclsMigrator(*opts)
+	if err := kafkaAclsMigrator.Run(); err != nil {
+		return fmt.Errorf("failed to migrate Kafka ACLs: %v", err)
+	}
+
+	return nil
+}
+
+func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
+
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
-		return fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
+		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
 	}
 
 	var state types.State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return fmt.Errorf("failed to parse statefile JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
 	cluster, err := utils.GetClusterByArn(&state, clusterArn)
 	if err != nil {
-		return fmt.Errorf("failed to get cluster: %w", err)
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
-	clusterName := cluster.Name
 
 	if len(cluster.KafkaAdminClientInformation.Acls) == 0 {
-		slog.Warn(fmt.Sprintf("⚠️ Cluster %s has no ACLs within the state file: %s", cluster.Name, stateFile))
-		return nil
-	}
-	kafkaAcls := cluster.KafkaAdminClientInformation.Acls
-
-	if err := kafka_acls.RunConvertKafkaAcls(clusterName, kafkaAcls, outputDir, skipAuditReport); err != nil {
-		return fmt.Errorf("failed to convert Kafka ACLs: %v", err)
+		return nil, fmt.Errorf("cluster %s has no ACLs within the state file: %s", cluster.Name, stateFile)
 	}
 
-	return nil
+	opts := MigrateKafkaAclsOpts{
+		clusterName:     cluster.Name,
+		kafkaAcls:       cluster.KafkaAdminClientInformation.Acls,
+		OutputDir:       outputDir,
+		SkipAuditReport: skipAuditReport,
+	}
+
+	return &opts, nil
 }
