@@ -7,6 +7,11 @@ import (
 	"github.com/spf13/pflag"
 )
 
+var (
+	force     bool
+	checkOnly bool
+)
+
 func NewUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "update",
@@ -20,8 +25,8 @@ func NewUpdateCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.Bool("force", false, "Force update without user confirmation")
-	optionalFlags.Bool("check-only", false, "Only check for updates, don't install")
+	optionalFlags.BoolVar(&force, "force", false, "Force update without user confirmation")
+	optionalFlags.BoolVar(&checkOnly, "check-only", false, "Only check for updates, don't install")
 	groups[optionalFlags] = "Optional Flags"
 
 	cmd.Flags().AddFlagSet(optionalFlags)
@@ -47,13 +52,24 @@ func NewUpdateCmd() *cobra.Command {
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	force, _ := cmd.Flags().GetBool("force")
-	checkOnly, _ := cmd.Flags().GetBool("check-only")
+	opts, err := parseUpdateOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse update opts: %v", err)
+	}
 
-	updater := NewUpdater()
-	if err := updater.Run(force, checkOnly); err != nil {
+	updater := NewUpdater(*opts)
+	if err := updater.Run(); err != nil {
 		return fmt.Errorf("failed to update: %v", err)
 	}
 
 	return nil
+}
+
+func parseUpdateOpts() (*UpdaterOpts, error) {
+	opts := UpdaterOpts{
+		Force:     force,
+		CheckOnly: checkOnly,
+	}
+
+	return &opts, nil
 }

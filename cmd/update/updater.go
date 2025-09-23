@@ -24,23 +24,35 @@ const (
 	timeout      = 30 * time.Second
 )
 
+type UpdaterOpts struct {
+	Force        bool
+	CheckOnly    bool
+	GitHubAPIURL string
+	Timeout      time.Duration
+}
+
 type Updater struct {
+	force     bool
+	checkOnly bool
 }
 
 type GitHubRelease struct {
 	TagName string `json:"tag_name"`
 }
 
-func NewUpdater() *Updater {
-	return &Updater{}
+func NewUpdater(opts UpdaterOpts) *Updater {
+	return &Updater{
+		force:     opts.Force,
+		checkOnly: opts.CheckOnly,
+	}
 }
 
-func (u *Updater) Run(force, checkOnly bool) error {
+func (u *Updater) Run() error {
 	// Get current version
 	currentVersion := build_info.Version
 
 	// Skip update check for dev versions. If `--force` is set, push install of latest version.
-	if (currentVersion == "dev" || currentVersion == "") && !force {
+	if (currentVersion == "dev" || currentVersion == "") && !u.force {
 		slog.Warn("Development version detected, skipping update check. Use `--force` to install latest version.")
 		return nil
 	}
@@ -59,8 +71,14 @@ func (u *Updater) Run(force, checkOnly bool) error {
 
 	slog.Info(fmt.Sprintf("🎉 New version available: %s", latestVersion))
 
+	// If checkOnly is set, just inform about the available update and return
+	if u.checkOnly {
+		slog.Info(fmt.Sprintf("ℹ️ Update available from %s to %s. Run without --check-only to update.", currentVersion, latestVersion))
+		return nil
+	}
+
 	// Ask for confirmation unless force flag is set
-	if !force && !u.askForConfirmation("Do you want to update now? (y/N): ") {
+	if !u.force && !u.askForConfirmation("Do you want to update now? (y/N): ") {
 		slog.Warn("Update cancelled")
 		return nil
 	}

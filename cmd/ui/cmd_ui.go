@@ -8,16 +8,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewUICmd() *cobra.Command {
-	var port string
+var (
+	port string
+)
 
+func NewUICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "ui",
 		Short:         "Start the UI",
 		Long:          `Starts the kcp UI.`,
 		Example:       `kcp ui --port 8080`,
 		SilenceErrors: true,
-		RunE:          startUI,
+		RunE:          runStartUI,
 	}
 
 	cmd.Flags().StringVarP(&port, "port", "p", "5556", "Port to run the UI server on")
@@ -25,14 +27,25 @@ func NewUICmd() *cobra.Command {
 	return cmd
 }
 
-func startUI(cmd *cobra.Command, args []string) error {
-	port, _ := cmd.Flags().GetString("port")
+func runStartUI(cmd *cobra.Command, args []string) error {
+	opts, err := parseUICmdOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse UI cmd opts: %v", err)
+	}
 
-	ui := api.NewUI(port, report.NewReportService())
+	ui := api.NewUI(report.NewReportService(), *opts)
 
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
 	}
 
 	return nil
+}
+
+func parseUICmdOpts() (*api.UICmdOpts, error) {
+	opts := api.UICmdOpts{
+		Port: port,
+	}
+
+	return &opts, nil
 }

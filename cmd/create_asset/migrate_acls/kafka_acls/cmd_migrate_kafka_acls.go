@@ -90,7 +90,6 @@ func runConvertKafkaAcls(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
-
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)

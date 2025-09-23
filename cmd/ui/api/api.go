@@ -14,14 +14,18 @@ type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
 }
 
+type UICmdOpts struct {
+	Port string
+}
+
 type UI struct {
 	port          string
 	reportService ReportService
 }
 
-func NewUI(port string, reportService ReportService) *UI {
+func NewUI(reportService ReportService, opts UICmdOpts) *UI {
 	return &UI{
-		port:          port,
+		port:          opts.Port,
 		reportService: reportService,
 	}
 }

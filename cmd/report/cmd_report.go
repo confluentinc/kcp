@@ -66,31 +66,40 @@ func preRunReport(cmd *cobra.Command, args []string) error {
 }
 
 func runReport(cmd *cobra.Command, args []string) error {
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return fmt.Errorf("❌ state file does not exist: %s", stateFile)
-	}
-
-	file, err := os.ReadFile(stateFile)
+	opts, err := parseReportOpts()
 	if err != nil {
-		return fmt.Errorf("failed to read state file: %v", err)
-	}
-
-	var state types.State
-	if err := json.Unmarshal(file, &state); err != nil {
-		return fmt.Errorf("failed to unmarshal state: %v", err)
-	}
-
-	opts := ReporterOpts{
-		State: state,
+		return fmt.Errorf("failed to parse report opts: %v", err)
 	}
 
 	reportService := rservice.NewReportService()
 
 	markdownService := markdown.New()
 
-	reporter := NewReporter(reportService, *markdownService, opts)
+	reporter := NewReporter(reportService, *markdownService, *opts)
 	if err := reporter.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}
 	return nil
+}
+
+func parseReportOpts() (*ReporterOpts, error) {
+	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("❌ state file does not exist: %s", stateFile)
+	}
+
+	file, err := os.ReadFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state file: %v", err)
+	}
+
+	var state types.State
+	if err := json.Unmarshal(file, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+	}
+
+	opts := ReporterOpts{
+		State: state,
+	}
+
+	return &opts, nil
 }
