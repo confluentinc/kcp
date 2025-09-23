@@ -200,6 +200,21 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 	return addresses, nil
 }
 
+type ClusterNetworking struct {
+	VpcId          string       `json:"vpc_id"`
+	SubnetIds      []string     `json:"subnet_ids"`
+	SecurityGroups []string     `json:"security_groups"`
+	Subnets        []SubnetInfo `json:"subnets"`
+}
+
+type SubnetInfo struct {
+	SubnetMskBrokerId int    `json:"subnet_msk_broker_id"`
+	SubnetId          string `json:"subnet_id"`
+	AvailabilityZone  string `json:"availability_zone"`
+	PrivateIpAddress  string `json:"private_ip_address"`
+	CidrBlock         string `json:"cidr_block"`
+}
+
 type ConnectorSummary struct {
 	ConnectorArn                     string                                                        `json:"connector_arn"`
 	ConnectorName                    string                                                        `json:"connector_name"`
@@ -221,38 +236,6 @@ type KafkaAdminClientInformation struct {
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
 	return CalculateTopicSummaryFromDetails(c.Topics.Details)
 }
-
-// func (c *KafkaAdminClientInformation) CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary {
-// 	summary := TopicSummary{}
-
-// 	for _, topic := range topicDetails {
-// 		isInternal := strings.HasPrefix(topic.Name, "__")
-
-// 		// Check if cleanup.policy exists and is not nil before dereferencing
-// 		var isCompact bool
-// 		if cleanupPolicy, exists := topic.Configurations["cleanup.policy"]; exists && cleanupPolicy != nil {
-// 			isCompact = strings.Contains(*cleanupPolicy, "compact")
-// 		}
-
-// 		if isInternal {
-// 			summary.InternalTopics++
-// 			summary.TotalInternalPartitions += topic.Partitions
-// 			if isCompact {
-// 				summary.CompactInternalTopics++
-// 				summary.CompactInternalPartitions += topic.Partitions
-// 			}
-// 		} else {
-// 			summary.Topics++
-// 			summary.TotalPartitions += topic.Partitions
-// 			if isCompact {
-// 				summary.CompactTopics++
-// 				summary.CompactPartitions += topic.Partitions
-// 			}
-// 		}
-// 	}
-
-// 	return summary
-// }
 
 func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 	c.Topics = &Topics{

@@ -95,21 +95,6 @@ type Manifest struct {
 	MigrationInfraType MigrationInfraType `json:"migration_infra_type"`
 }
 
-type ClusterNetworking struct {
-	VpcId          string       `json:"vpc_id"`
-	SubnetIds      []string     `json:"subnet_ids"`
-	SecurityGroups []string     `json:"security_groups"`
-	Subnets        []SubnetInfo `json:"subnets"`
-}
-
-type SubnetInfo struct {
-	SubnetMskBrokerId int    `json:"subnet_msk_broker_id"`
-	SubnetId          string `json:"subnet_id"`
-	AvailabilityZone  string `json:"availability_zone"`
-	PrivateIpAddress  string `json:"private_ip_address"`
-	CidrBlock         string `json:"cidr_block"`
-}
-
 // / todo review if we need
 type GlobalMetrics struct {
 	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
