@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
-	"github.com/confluentinc/kcp/internal/generators/scan/client_inventory"
 	"github.com/confluentinc/kcp/internal/services/s3"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -83,7 +82,7 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 
 	s3Service := s3.NewS3Service(s3Client)
 
-	clientInventoryScanner, err := client_inventory.NewClientInventoryScanner(s3Service, *opts)
+	clientInventoryScanner, err := NewClientInventoryScanner(s3Service, *opts)
 	if err != nil {
 		return fmt.Errorf("failed to create client inventory scanner: %v", err)
 	}
@@ -95,8 +94,8 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseScanClientInventoryOpts() (*client_inventory.ClientInventoryScannerOpts, error) {
-	opts := client_inventory.ClientInventoryScannerOpts{
+func parseScanClientInventoryOpts() (*ClientInventoryScannerOpts, error) {
+	opts := ClientInventoryScannerOpts{
 		S3Uri:  s3Uri,
 		Region: region,
 	}

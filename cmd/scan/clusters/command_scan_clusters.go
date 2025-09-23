@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/generators/scan/clusters"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
@@ -82,7 +81,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("❌ state file does not exist: %s", stateFile)
 	}
 
-	clustersScanner := clusters.NewClustersScanner(stateFile, *credsFile)
+	clustersScanner := NewClustersScanner(stateFile, *credsFile)
 	if err := clustersScanner.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}
