@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/confluentinc/kcp/internal/generators/create_asset/reverse_proxy"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -88,7 +87,7 @@ func runCreateReverseProxy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse reverse proxy opts: %v", err)
 	}
 
-	reverseProxyAssetGenerator := reverse_proxy.NewReverseProxyAssetGenerator(*opts)
+	reverseProxyAssetGenerator := NewReverseProxyAssetGenerator(*opts)
 	if err := reverseProxyAssetGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to create reverse proxy assets: %v", err)
 	}
@@ -96,14 +95,14 @@ func runCreateReverseProxy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseReverseProxyOpts() (*reverse_proxy.ReverseProxyOpts, error) {
+func parseReverseProxyOpts() (*ReverseProxyOpts, error) {
 	requiredTFStateFields := []string{"confluent_cloud_cluster_bootstrap_endpoint"}
 	terraformState, err := utils.ParseTerraformState(migrationInfraFolder, requiredTFStateFields)
 	if err != nil {
 		return nil, fmt.Errorf("error: %v\n please run terraform apply in the migration infra folder", err)
 	}
 
-	opts := reverse_proxy.ReverseProxyOpts{
+	opts := ReverseProxyOpts{
 		Region:           region,
 		VPCId:            vpcId,
 		PublicSubnetCidr: reverseProxyCidr.String(),

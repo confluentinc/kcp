@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/confluentinc/kcp/internal/generators/create_asset/migration_infra"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -138,7 +137,7 @@ func runCreateMigrationInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse migration infra opts: %v", err)
 	}
 
-	migrationInfraAssetGenerator := migration_infra.NewMigrationInfraAssetGenerator(*opts)
+	migrationInfraAssetGenerator := NewMigrationInfraAssetGenerator(*opts)
 	if err := migrationInfraAssetGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to create migration infrastructure assets: %v", err)
 	}
@@ -146,7 +145,7 @@ func runCreateMigrationInfra(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
+func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	// ignoring error as already validated in preRunCreateMigrationInfra
 	migrationInfraType, _ := types.ToMigrationInfraType(migrationInfraType)
 
@@ -181,7 +180,7 @@ func parseMigrationInfraOpts() (*migration_infra.MigrationInfraOpts, error) {
 		return nil, fmt.Errorf("failed to get bootstrap brokers: %v", err)
 	}
 
-	opts := migration_infra.MigrationInfraOpts{
+	opts := MigrationInfraOpts{
 		Region:                        region,
 		VPCId:                         vpcId,
 		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig,
