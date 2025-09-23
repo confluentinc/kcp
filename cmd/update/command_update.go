@@ -3,7 +3,6 @@ package update
 import (
 	"fmt"
 
-	u "github.com/confluentinc/kcp/internal/generators/update"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -51,7 +50,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	checkOnly, _ := cmd.Flags().GetBool("check-only")
 
-	updater := u.NewUpdater()
+	updater := NewUpdater()
 	if err := updater.Run(force, checkOnly); err != nil {
 		return fmt.Errorf("failed to update: %v", err)
 	}
