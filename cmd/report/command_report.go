@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/generators/report"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	rservice "github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
@@ -81,7 +80,7 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to unmarshal state: %v", err)
 	}
 
-	opts := report.ReporterOpts{
+	opts := ReporterOpts{
 		State: state,
 	}
 
@@ -89,7 +88,7 @@ func runReport(cmd *cobra.Command, args []string) error {
 
 	markdownService := markdown.New()
 
-	reporter := report.NewReporter(reportService, *markdownService, opts)
+	reporter := NewReporter(reportService, *markdownService, opts)
 	if err := reporter.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}
