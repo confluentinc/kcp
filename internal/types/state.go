@@ -79,32 +79,16 @@ func (s *State) PersistStateFile(stateFile string) error {
 // UpsertRegion inserts a new region or updates an existing one by name
 // Automatically preserves KafkaAdminClientInformation from existing clusters
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
-	// Find existing region by name and replace it
 	for i, existingRegion := range s.Regions {
 		if existingRegion.Name == newRegion.Name {
-			// Preserve cluster admin info before replacing
-			if len(existingRegion.Clusters) > 0 {
-				// Temporarily set existing clusters so UpsertClusters can build admin info map
-				discoveredClusters := newRegion.Clusters
-				newRegion.Clusters = existingRegion.Clusters
-				newRegion.UpsertClusters(discoveredClusters)
-			}
+			discoveredClusters := newRegion.Clusters
+			newRegion.Clusters = existingRegion.Clusters
+			newRegion.UpsertClusters(discoveredClusters)
 			s.Regions[i] = newRegion
 			return
 		}
 	}
-
-	// Region not found, add as new (no preservation needed)
 	s.Regions = append(s.Regions, newRegion)
-}
-
-func (s *State) GetRegionByName(regionName string) *DiscoveredRegion {
-	for i := range s.Regions {
-		if s.Regions[i].Name == regionName {
-			return &s.Regions[i]
-		}
-	}
-	return nil
 }
 
 type DiscoveredRegion struct {
@@ -121,9 +105,7 @@ func (dr *DiscoveredRegion) UpsertClusters(newClusters []DiscoveredCluster) {
 	// Build map of ARN -> KafkaAdminClientInformation from existing clusters
 	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
 	for _, existingCluster := range dr.Clusters {
-		if existingCluster.KafkaAdminClientInformation.ClusterID != "" {
-			adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
-		}
+		adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
 	}
 
 	// Replace cluster list with new discoveries
