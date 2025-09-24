@@ -42,7 +42,7 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string) (*types
 		Name: region,
 	}
 
-	maxResults := int32(250)
+	maxResults := int32(100)
 
 	configurations, err := rd.discoverConfigurations(ctx, maxResults)
 	if err != nil {
