@@ -3,35 +3,7 @@ package types
 import (
 	"fmt"
 	"strconv"
-
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )
-
-// DefaultClientBrokerEncryptionInTransit is the fallback encryption type when cluster encryption info is not available
-const DefaultClientBrokerEncryptionInTransit = kafkatypes.ClientBrokerTls
-
-// GetClientBrokerEncryptionInTransit determines the client broker encryption in transit value for a cluster
-// with proper fallback logic when encryption info is not available
-func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.ClientBroker {
-	if cluster.ClusterType == kafkatypes.ClusterTypeProvisioned &&
-		cluster.Provisioned != nil &&
-		cluster.Provisioned.EncryptionInfo != nil &&
-		cluster.Provisioned.EncryptionInfo.EncryptionInTransit != nil {
-		return cluster.Provisioned.EncryptionInfo.EncryptionInTransit.ClientBroker
-	}
-	return DefaultClientBrokerEncryptionInTransit
-}
-
-// ClusterSummary contains summary information about an MSK cluster
-type ClusterSummary struct {
-	ClusterName                     string                  `json:"cluster_name"`
-	ClusterARN                      string                  `json:"cluster_arn"`
-	Status                          string                  `json:"status"`
-	Type                            string                  `json:"type"`
-	Authentication                  string                  `json:"authentication"`
-	PublicAccess                    bool                    `json:"public_access"`
-	ClientBrokerEncryptionInTransit kafkatypes.ClientBroker `json:"client_broker_encryption_in_transit"`
-}
 
 type TerraformState struct {
 	Outputs TerraformOutput `json:"outputs"`
@@ -57,15 +29,16 @@ type TerraformOutputValue struct {
 type AuthType string
 
 const (
-	AuthTypeSASLSCRAM       AuthType = "SASL/SCRAM"
-	AuthTypeIAM             AuthType = "SASL/IAM"
-	AuthTypeTLS             AuthType = "TLS"
-	AuthTypeUnauthenticated AuthType = "Unauthenticated"
+	AuthTypeSASLSCRAM                AuthType = "SASL/SCRAM"
+	AuthTypeIAM                      AuthType = "SASL/IAM"
+	AuthTypeTLS                      AuthType = "TLS"
+	AuthTypeUnauthenticatedPlaintext AuthType = "Unauthenticated (Plaintext)"
+	AuthTypeUnauthenticatedTLS       AuthType = "Unauthenticated (TLS Encryption)"
 )
 
 func (a AuthType) IsValid() bool {
 	switch a {
-	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticated:
+	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS:
 		return true
 	default:
 		return false
@@ -84,7 +57,8 @@ func AllAuthTypes() []string {
 		string(AuthTypeSASLSCRAM),
 		string(AuthTypeIAM),
 		string(AuthTypeTLS),
-		string(AuthTypeUnauthenticated),
+		string(AuthTypeUnauthenticatedPlaintext),
+		string(AuthTypeUnauthenticatedTLS),
 	}
 }
 
@@ -121,8 +95,8 @@ type Manifest struct {
 	MigrationInfraType MigrationInfraType `json:"migration_infra_type"`
 }
 
-type KcpBuildInfo struct {
-	Version string `json:"version"`
-	Commit  string `json:"commit"`
-	Date    string `json:"date"`
+// / todo review if we need
+type GlobalMetrics struct {
+	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
+	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }

@@ -21,19 +21,9 @@ func NewMSKService(client *kafka.Client) *MSKService {
 	return &MSKService{client: client}
 }
 
-func (ms *MSKService) DescribeCluster(ctx context.Context, clusterArn *string) (*kafkatypes.Cluster, error) {
-	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
-		ClusterArn: clusterArn,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
-	}
-	return cluster.ClusterInfo, nil
-}
-
-func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn *string) (*kafka.GetBootstrapBrokersOutput, error) {
+func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
 	brokers, err := ms.client.GetBootstrapBrokers(ctx, &kafka.GetBootstrapBrokersInput{
-		ClusterArn: clusterArn,
+		ClusterArn: &clusterArn,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get bootstrap brokers: %v", err)
@@ -42,7 +32,6 @@ func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn *strin
 }
 
 func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {
-
 	if cluster.Provisioned == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn == nil ||
@@ -75,9 +64,9 @@ func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster ka
 	return aws.Bool(false), nil
 }
 
-func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn *string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
 	versions, err := ms.client.GetCompatibleKafkaVersions(ctx, &kafka.GetCompatibleKafkaVersionsInput{
-		ClusterArn: clusterArn,
+		ClusterArn: &clusterArn,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
@@ -91,9 +80,9 @@ func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn
 	return versions, nil
 }
 
-func (ms *MSKService) GetClusterPolicy(ctx context.Context, clusterArn *string) (*kafka.GetClusterPolicyOutput, error) {
+func (ms *MSKService) GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error) {
 	policy, err := ms.client.GetClusterPolicy(ctx, &kafka.GetClusterPolicyInput{
-		ClusterArn: clusterArn,
+		ClusterArn: &clusterArn,
 	})
 	if err == nil {
 		return policy, nil
@@ -106,9 +95,9 @@ func (ms *MSKService) GetClusterPolicy(ctx context.Context, clusterArn *string) 
 	return nil, err
 }
 
-func (ms *MSKService) DescribeClusterV2(ctx context.Context, clusterArn *string) (*kafka.DescribeClusterV2Output, error) {
+func (ms *MSKService) DescribeClusterV2(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 	cluster, err := ms.client.DescribeClusterV2(ctx, &kafka.DescribeClusterV2Input{
-		ClusterArn: clusterArn,
+		ClusterArn: &clusterArn,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
@@ -116,16 +105,14 @@ func (ms *MSKService) DescribeClusterV2(ctx context.Context, clusterArn *string)
 	return cluster, nil
 }
 
-func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn *string) ([]kafkatypes.ClientVpcConnection, error) {
-
+func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.ClientVpcConnection, error) {
 	var connections []kafkatypes.ClientVpcConnection
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListClientVpcConnections(ctx, &kafka.ListClientVpcConnectionsInput{
 			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
+			ClusterArn: &clusterArn,
 			NextToken:  nextToken,
 		})
 		if err != nil {
@@ -145,15 +132,14 @@ func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn *
 	return connections, nil
 }
 
-func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn *string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.ClusterOperationV2Summary, error) {
 	var operations []kafkatypes.ClusterOperationV2Summary
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListClusterOperationsV2(ctx, &kafka.ListClusterOperationsV2Input{
 			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
+			ClusterArn: &clusterArn,
 			NextToken:  nextToken,
 		})
 		if err != nil {
@@ -169,15 +155,14 @@ func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn *s
 	return operations, nil
 }
 
-func (ms *MSKService) ListNodes(ctx context.Context, clusterArn *string) ([]kafkatypes.NodeInfo, error) {
+func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.NodeInfo, error) {
 	var nodes []kafkatypes.NodeInfo
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListNodes(ctx, &kafka.ListNodesInput{
 			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
+			ClusterArn: &clusterArn,
 			NextToken:  nextToken,
 		})
 		if err != nil {
@@ -197,15 +182,14 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn *string) ([]kafk
 	return nodes, nil
 }
 
-func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn *string) ([]string, error) {
+func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, maxResults int32) ([]string, error) {
 	var secrets []string
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListScramSecrets(ctx, &kafka.ListScramSecretsInput{
 			MaxResults: &maxResults,
-			ClusterArn: clusterArn,
+			ClusterArn: &clusterArn,
 			NextToken:  nextToken,
 		})
 		if err != nil {
@@ -252,4 +236,39 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 	slog.Info("✨ found clusters", "count", len(clusterInfoList))
 
 	return clusterInfoList, nil
+}
+
+func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
+	var configurations []kafka.DescribeConfigurationRevisionOutput
+	var nextToken *string
+
+	for {
+		output, err := ms.client.ListConfigurations(ctx, &kafka.ListConfigurationsInput{
+			MaxResults: &maxResults,
+			NextToken:  nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error listing configurations: %v", err)
+		}
+
+		for _, configuration := range output.Configurations {
+			revision, err := ms.client.DescribeConfigurationRevision(context.Background(), &kafka.DescribeConfigurationRevisionInput{
+				Arn:      configuration.Arn,
+				Revision: configuration.LatestRevision.Revision,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("error describing configuration revision: %v", err)
+			}
+			configurations = append(configurations, *revision)
+		}
+
+		if output.NextToken == nil {
+			break
+		}
+		nextToken = output.NextToken
+	}
+
+	slog.Info("✨ found configurations", "count", len(configurations))
+
+	return configurations, nil
 }
