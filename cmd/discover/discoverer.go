@@ -46,8 +46,7 @@ func (d *Discoverer) Run() error {
 func (d *Discoverer) discoverRegions() error {
 	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
-
-	// Initialize working state from existing state (preserves untouched regions)
+	// initialize working state from existing state if present(preserves untouched regions)
 	currentState := types.NewState(d.state)
 
 	for _, region := range d.regions {
@@ -85,7 +84,7 @@ func (d *Discoverer) discoverRegions() error {
 		}
 		mskConnectService := msk_connect.NewMSKConnectService(mskConnectClient)
 
-		// Discover region-level resources (costs, configurations, cluster ARNs)
+		// discover region-level resources (costs, configurations, cluster ARNs)
 		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
 		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
 		if err != nil {
@@ -93,7 +92,7 @@ func (d *Discoverer) discoverRegions() error {
 			continue
 		}
 
-		// Discover detailed cluster information for each cluster in the region
+		// discover detailed cluster information for each cluster in the region
 		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService, mskConnectService)
 		discoveredClusters := []types.DiscoveredCluster{}
 
@@ -106,18 +105,18 @@ func (d *Discoverer) discoverRegions() error {
 			discoveredClusters = append(discoveredClusters, *discoveredCluster)
 		}
 
-		// Set discovered clusters and upsert into state (preserves KafkaAdminClientInformation)
+		// set discovered clusters and upsert into state (preserves KafkaAdminClientInformation)
 		discoveredRegion.Clusters = discoveredClusters
 		currentState.UpsertRegion(*discoveredRegion)
 
-		// Generate credential configurations for connecting to clusters
+		// generate credential configurations for connecting to clusters
 		regionEntry, err := d.captureCredentialOptions(mskService, region)
 		if err != nil {
 			slog.Error("failed to get region entry", "region", region, "error", err)
 			continue
 		}
 
-		// Track regions with/without clusters for reporting
+		// track regions with/without clusters for reporting
 		if len(regionEntry.Clusters) == 0 {
 			regionsWithoutClusters = append(regionsWithoutClusters, region)
 		} else {
@@ -129,7 +128,7 @@ func (d *Discoverer) discoverRegions() error {
 		return fmt.Errorf("failed to write state to file: %w", err)
 	}
 
-	// Write credential configurations to YAML file
+	// write credential configurations to YAML file
 	credentials := types.Credentials{
 		Regions: regionEntries,
 	}
@@ -137,7 +136,7 @@ func (d *Discoverer) discoverRegions() error {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
-	// Report regions without clusters
+	// report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {
 			slog.Info("no clusters found in region", "region", region)
