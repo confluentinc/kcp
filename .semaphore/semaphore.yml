@@ -18,8 +18,8 @@ queue:
 global_job_config:
   prologue:
     commands:
-      - sem-version go 1.23.0
-      # - sem-version node 22.13.1
+      - sem-version node 24.6.0
+      - sem-version go 1.24.7
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -27,21 +27,6 @@ global_job_config:
       - checkout
 
 blocks:
-  - name: "Show Go and Node versions"
-    task:
-      jobs:
-        - name: Print versions
-          commands:
-            - echo "=== Go Version ==="
-            - go version
-            - echo ""
-            - echo "=== Node Version ==="
-            - node --version
-            - echo ""
-            - echo "=== NPM Version ==="
-            - npm --version
-            - echo "=== Yarn Version ==="
-            - yarn --version
   - name: "test and security scan"
     task:
       env_vars:
