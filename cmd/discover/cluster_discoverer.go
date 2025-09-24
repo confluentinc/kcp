@@ -357,7 +357,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	}
 
 	// this time window can be extracted as a parameter in future
-	timeWindow, err := metrics.GetTimeWindow(time.Now().UTC(), metrics.LastWeek)
+	timeWindow, err := metrics.GetTimeWindow(time.Now().UTC(), metrics.LastYear)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate time window: %v", err)
 	}
