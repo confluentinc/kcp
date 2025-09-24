@@ -23,6 +23,8 @@ require (
 	github.com/xdg-go/scram v1.1.2
 )
 
+require github.com/fatih/color v1.18.0
+
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.1 // indirect

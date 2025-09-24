@@ -17,6 +17,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/update"
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -26,7 +27,20 @@ var RootCmd = &cobra.Command{
 	Short: "A CLI tool for kafka cluster planning and migration",
 	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		slog.Info("Executing kcp with build", "version", build_info.Version, "commit", build_info.Commit, "date", build_info.Date)
+		if build_info.Version == "dev" {
+			fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
+				color.RedString("┌─────────────────────────────────────────────────────────────────────────┐"),
+				color.RedString("│ ⚠️  WARNING: This is a development build                                │"),
+				color.RedString("│ Official releases: https://github.com/confluentinc/kcp/releases         │"),
+				color.RedString("└─────────────────────────────────────────────────────────────────────────┘"))
+		}
+
+		fmt.Printf("%s %s %s %s\n",
+			color.CyanString("Executing kcp with build"),
+			color.GreenString("version=%s", build_info.Version),
+			color.YellowString("commit=%s", build_info.Commit),
+			color.BlueString("date=%s", build_info.Date))
+
 	},
 }
 
