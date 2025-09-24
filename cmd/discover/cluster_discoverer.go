@@ -21,10 +21,10 @@ import (
 type ClusterDiscovererMSKService interface {
 	DescribeClusterV2(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error)
 	GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error)
-	ListClientVpcConnections(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error)
-	ListClusterOperationsV2(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error)
-	ListNodes(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error)
-	ListScramSecrets(ctx context.Context, clusterArn string) ([]string, error)
+	ListClientVpcConnections(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.ClientVpcConnection, error)
+	ListClusterOperationsV2(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.ClusterOperationV2Summary, error)
+	ListNodes(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.NodeInfo, error)
+	ListScramSecrets(ctx context.Context, clusterArn string, maxResults int32) ([]string, error)
 	GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error)
 	GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
 	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
@@ -174,7 +174,7 @@ func (cd *ClusterDiscoverer) getBootstrapBrokers(ctx context.Context, clusterArn
 func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
 	slog.Info("🔍 scanning for client vpc connections", "clusterArn", clusterArn)
 
-	connections, err := cd.mskService.ListClientVpcConnections(ctx, clusterArn)
+	connections, err := cd.mskService.ListClientVpcConnections(ctx, clusterArn, int32(100))
 	if err != nil {
 		// Check if it's an MSK Serverless VPC connectivity error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
@@ -189,7 +189,7 @@ func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clus
 func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
 	slog.Info("🔍 scanning for cluster operations", "clusterArn", clusterArn)
 
-	operations, err := cd.mskService.ListClusterOperationsV2(ctx, clusterArn)
+	operations, err := cd.mskService.ListClusterOperationsV2(ctx, clusterArn, int32(100))
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed listing operations: %v", err)
 	}
@@ -199,7 +199,7 @@ func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterA
 func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
 	slog.Info("🔍 scanning for cluster nodes", "clusterArn", clusterArn)
 
-	nodes, err := cd.mskService.ListNodes(ctx, clusterArn)
+	nodes, err := cd.mskService.ListNodes(ctx, clusterArn, int32(100))
 	if err != nil {
 		// Check if it's an MSK Serverless error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
@@ -215,7 +215,7 @@ func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn st
 func (cd *ClusterDiscoverer) scanClusterScramSecrets(ctx context.Context, clusterArn string) ([]string, error) {
 	slog.Info("🔍 scanning for cluster scram secrets", "clusterArn", clusterArn)
 
-	secrets, err := cd.mskService.ListScramSecrets(ctx, clusterArn)
+	secrets, err := cd.mskService.ListScramSecrets(ctx, clusterArn, int32(100))
 	if err != nil {
 		// Check if it's an MSK Serverless error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {

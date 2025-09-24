@@ -105,10 +105,9 @@ func (ms *MSKService) DescribeClusterV2(ctx context.Context, clusterArn string) 
 	return cluster, nil
 }
 
-func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn string) ([]kafkatypes.ClientVpcConnection, error) {
+func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.ClientVpcConnection, error) {
 	var connections []kafkatypes.ClientVpcConnection
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListClientVpcConnections(ctx, &kafka.ListClientVpcConnectionsInput{
@@ -133,10 +132,9 @@ func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn s
 	return connections, nil
 }
 
-func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.ClusterOperationV2Summary, error) {
 	var operations []kafkatypes.ClusterOperationV2Summary
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListClusterOperationsV2(ctx, &kafka.ListClusterOperationsV2Input{
@@ -157,10 +155,9 @@ func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn st
 	return operations, nil
 }
 
-func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {
+func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.NodeInfo, error) {
 	var nodes []kafkatypes.NodeInfo
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListNodes(ctx, &kafka.ListNodesInput{
@@ -185,10 +182,9 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string) ([]kafka
 	return nodes, nil
 }
 
-func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string) ([]string, error) {
+func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, maxResults int32) ([]string, error) {
 	var secrets []string
 	var nextToken *string
-	maxResults := int32(100)
 
 	for {
 		output, err := ms.client.ListScramSecrets(ctx, &kafka.ListScramSecretsInput{
@@ -245,7 +241,6 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) ([]kafka.DescribeConfigurationRevisionOutput, error) {
 	var configurations []kafka.DescribeConfigurationRevisionOutput
 	var nextToken *string
-	maxResults = int32(100)
 
 	for {
 		output, err := ms.client.ListConfigurations(ctx, &kafka.ListConfigurationsInput{
