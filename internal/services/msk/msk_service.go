@@ -252,7 +252,7 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 		}
 
 		for _, configuration := range output.Configurations {
-			revision, err := ms.client.DescribeConfigurationRevision(context.Background(), &kafka.DescribeConfigurationRevisionInput{
+			revision, err := ms.client.DescribeConfigurationRevision(ctx, &kafka.DescribeConfigurationRevisionInput{
 				Arn:      configuration.Arn,
 				Revision: configuration.LatestRevision.Revision,
 			})
