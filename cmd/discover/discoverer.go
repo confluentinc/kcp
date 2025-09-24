@@ -103,8 +103,8 @@ func (d *Discoverer) discoverRegions() error {
 			}
 			discoveredClusters = append(discoveredClusters, *discoveredCluster)
 		}
-		discoveredRegion.Clusters = discoveredClusters
 
+		discoveredRegion.Clusters = discoveredClusters
 		currentState.UpsertRegion(*discoveredRegion)
 
 		// Generate credential configurations for connecting to clusters
