@@ -18,15 +18,18 @@ import (
 
 type DiscovererOpts struct {
 	Regions []string
+	State   *types.State
 }
 
 type Discoverer struct {
 	regions []string
+	state   *types.State
 }
 
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
 		regions: opts.Regions,
+		state:   opts.State,
 	}
 }
 
@@ -43,7 +46,7 @@ func (d *Discoverer) Run() error {
 func (d *Discoverer) discoverRegions() error {
 	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
-	discoveredRegions := []types.DiscoveredRegion{}
+	currentState := types.NewState(d.state)
 
 	for _, region := range d.regions {
 		mskClient, err := client.NewMSKClient(region)
@@ -102,7 +105,7 @@ func (d *Discoverer) discoverRegions() error {
 		}
 		discoveredRegion.Clusters = discoveredClusters
 
-		discoveredRegions = append(discoveredRegions, *discoveredRegion)
+		currentState.UpsertRegion(*discoveredRegion)
 
 		// Generate credential configurations for connecting to clusters
 		regionEntry, err := d.captureCredentialOptions(mskService, region)
@@ -119,8 +122,7 @@ func (d *Discoverer) discoverRegions() error {
 		}
 	}
 
-	state := types.NewState(discoveredRegions)
-	if err := state.WriteToJsonFile("kcp-state.json"); err != nil {
+	if err := currentState.WriteToJsonFile("kcp-state.json"); err != nil {
 		return fmt.Errorf("failed to write state to file: %w", err)
 	}
 

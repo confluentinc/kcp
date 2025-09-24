@@ -25,9 +25,9 @@ type State struct {
 	Timestamp    time.Time          `json:"timestamp"`
 }
 
-func NewState(discoveredRegions []DiscoveredRegion) State {
-	return State{
-		Regions: discoveredRegions,
+func NewState(fromState *State) *State {
+	// Always create with fresh metadata for the current discovery run
+	workingState := &State{
 		KcpBuildInfo: KcpBuildInfo{
 			Version: build_info.Version,
 			Commit:  build_info.Commit,
@@ -35,6 +35,16 @@ func NewState(discoveredRegions []DiscoveredRegion) State {
 		},
 		Timestamp: time.Now(),
 	}
+
+	if fromState == nil {
+		workingState.Regions = []DiscoveredRegion{}
+	} else {
+		// Copy existing regions to preserve untouched regions
+		workingState.Regions = make([]DiscoveredRegion, len(fromState.Regions))
+		copy(workingState.Regions, fromState.Regions)
+	}
+
+	return workingState
 }
 
 func (s *State) WriteToJsonFile(filePath string) error {
@@ -64,6 +74,20 @@ func (s *State) PersistStateFile(stateFile string) error {
 	}
 
 	return s.WriteToJsonFile(stateFile)
+}
+
+// UpsertRegion inserts a new region or updates an existing one by name
+func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
+	// Find existing region by name and replace it
+	for i, existingRegion := range s.Regions {
+		if existingRegion.Name == newRegion.Name {
+			s.Regions[i] = newRegion // Replace existing
+			return
+		}
+	}
+
+	// Region not found, add as new
+	s.Regions = append(s.Regions, newRegion)
 }
 
 type DiscoveredRegion struct {
