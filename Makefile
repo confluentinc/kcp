@@ -1,6 +1,6 @@
 # Simple Makefile for kcp
 BINARY_NAME := kcp
-MAIN_PATH := ./cmd/cli
+MAIN_PATH := .
 
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -9,29 +9,35 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-all
+.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-all build-frontend
 
-# Build the binary
-build:
+# Build the frontend
+build-frontend:
+	@echo "🌐 Building frontend..."
+	@cd cmd/ui/frontend && yarn install && yarn build
+	@echo "✅ Frontend build complete"
+
+# Build the binary (depends on frontend)
+build: build-frontend
 	@echo "🔨 Building $(BINARY_NAME)..."
 	go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "✅ Build complete: $(BINARY_NAME)"
 
 # Individual platform builds
-build-linux:
+build-linux: build-frontend
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
 
-build-linux-arm64:
+build-linux-arm64: build-frontend
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
 
-build-darwin:
+build-darwin: build-frontend
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
 
-build-darwin-arm64:
+build-darwin-arm64: build-frontend
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
 
 # Build for all platforms and architectures
-build-all:
+build-all: build-frontend
 	@echo "🔨 Building for all platforms..."
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH); \
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH); \
@@ -49,6 +55,7 @@ help:
 	@echo "=========================================="
 	@echo ""
 	@echo "📦 build              - Build the binary for current platform"
+	@echo "📦 build-frontend     - Build the frontend application"
 	@echo "📦 build-linux        - Build for Linux amd64"
 	@echo "📦 build-linux-arm64  - Build for Linux arm64"
 	@echo "📦 build-darwin       - Build for macOS amd64 (Intel)"
@@ -78,7 +85,7 @@ fmt:
 	gofmt -s -w .
 
 # Run tests
-test:
+test: build-frontend
 	@echo "🧪 Running tests..."
 	@echo "=================="
 	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Tests failed with exit code $$exit_code"; else echo "✅ All tests passed!"; fi; exit $$exit_code'
