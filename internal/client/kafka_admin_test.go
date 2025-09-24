@@ -259,9 +259,9 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithUnauthenticatedAuth sets unauthenticated auth",
-			option: WithUnauthenticatedAuth(),
+			option: WithUnauthenticatedTlsAuth(),
 			expectedConfig: AdminConfig{
-				authType: types.AuthTypeUnauthenticated,
+				authType: types.AuthTypeUnauthenticatedTLS,
 			},
 		},
 		{
@@ -378,7 +378,9 @@ func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
 
-			configureUnauthenticatedAuthentication(config, tt.clientBrokerEncryptionInTransit)
+			// Determine if TLS should be enabled based on the encryption type
+			withTLSEncryption := tt.clientBrokerEncryptionInTransit != kafkatypes.ClientBrokerPlaintext
+			configureUnauthenticatedAuthentication(config, withTLSEncryption)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			if tt.expectedTLSEnabled {
@@ -513,10 +515,18 @@ func TestNewKafkaAdmin(t *testing.T) {
 		},
 		{
 			name:                            "successful unauthenticated auth creation",
-			brokerAddresses:                 []string{"broker1:9092"},
+			brokerAddresses:                 []string{"broker1:9094"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithUnauthenticatedAuth()},
+			opts:                            []AdminOption{WithUnauthenticatedTlsAuth()},
+			expectError:                     false,
+		},
+		{
+			name:                            "successful unauthenticated auth creation",
+			brokerAddresses:                 []string{"broker1:9092"},
+			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerPlaintext,
+			region:                          "us-west-2",
+			opts:                            []AdminOption{WithUnauthenticatedPlaintextAuth()},
 			expectError:                     false,
 		},
 		{
