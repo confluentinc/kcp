@@ -24,21 +24,22 @@ type ClustersScanner struct {
 
 type ClustersScannerOpts struct {
 	StateFile   string
+	State       *types.State
 	Credentials types.Credentials
 }
 
 func NewClustersScanner(opts ClustersScannerOpts) *ClustersScanner {
 	return &ClustersScanner{
 		StateFile:   opts.StateFile,
+		State:       opts.State,
 		Credentials: opts.Credentials,
-		State:       &types.State{},
 	}
 }
 
 func (cs *ClustersScanner) Run() error {
-	if err := cs.State.LoadStateFile(cs.StateFile); err != nil {
-		return fmt.Errorf("❌ failed to load state: %v", err)
-	}
+	// if err := cs.State.LoadStateFile(cs.StateFile); err != nil {
+	// 	return fmt.Errorf("❌ failed to load state: %v", err)
+	// }
 
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {

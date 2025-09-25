@@ -50,7 +50,7 @@ func (d *Discoverer) discoverRegions() error {
 	regionAuths := []types.RegionAuth{}
 	regionsWithoutClusters := []string{}
 	// initialize working state from existing state if present
-	currentState := types.NewState(d.state)
+	currentState := types.NewStateFrom(d.state)
 
 	for _, region := range d.regions {
 		mskClient, err := client.NewMSKClient(region)

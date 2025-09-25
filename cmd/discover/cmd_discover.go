@@ -101,8 +101,8 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		return nil, fmt.Errorf("failed to check state file: %v", err)
 	} else {
 		// State file exists - load it
-		state = &types.State{}
-		if err := state.LoadStateFile(stateFileName); err != nil {
+		state, err = types.NewStateFromFile(stateFileName)
+		if err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
 		slog.Info("using existing state file", "file", stateFileName)
@@ -118,7 +118,7 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 	} else {
 		// Credentials file exists - load it
 		var errs []error
-		credentials, errs = types.NewCredentials(credentialsFileName)
+		credentials, errs = types.NewCredentialsFromFile(credentialsFileName)
 		if len(errs) > 0 {
 			return nil, fmt.Errorf("failed to load existing credentials file: %v", errs)
 		}

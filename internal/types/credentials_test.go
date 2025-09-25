@@ -79,7 +79,7 @@ regions:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filePath := tt.setupFile()
-			creds, errs := NewCredentials(filePath)
+			creds, errs := NewCredentialsFromFile(filePath)
 
 			if tt.expectedError {
 				assert.Nil(t, creds)
@@ -557,7 +557,7 @@ func TestCredentials_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read back from file
-	readCreds, errs := NewCredentials(tmpFile)
+	readCreds, errs := NewCredentialsFromFile(tmpFile)
 	require.Empty(t, errs)
 	require.NotNil(t, readCreds)
 

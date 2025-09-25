@@ -11,7 +11,12 @@ type Credentials struct {
 	Regions []RegionAuth `yaml:"regions"`
 }
 
-func NewCredentials(credentialsYamlPath string) (*Credentials, []error) {
+func NewCredentialsFrom(fromCredentials *Credentials) (*Credentials, []error) {
+	// implement the pattern in NewStateFrom
+	return nil, nil
+}
+
+func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
 	data, err := os.ReadFile(credentialsYamlPath)
 	if err != nil {
 		return nil, []error{fmt.Errorf("failed to read creds.yaml file: %w", err)}
