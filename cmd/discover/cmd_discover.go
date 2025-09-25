@@ -2,7 +2,10 @@ package discover
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -81,9 +84,27 @@ func runDiscover(cmd *cobra.Command, args []string) error {
 }
 
 func parseDiscoverOpts() (*DiscovererOpts, error) {
-	opts := DiscovererOpts{
-		Regions: regions,
+	const stateFile = "kcp-state.json"
+	var state *types.State
+
+	// Check if existing state file exists
+	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+		// No state file found - start fresh
+		slog.Info("starting with fresh state")
+	} else if err != nil {
+		// Error checking file - return error
+		return nil, fmt.Errorf("failed to check state file: %v", err)
+	} else {
+		// State file exists - load it
+		state = &types.State{}
+		if err := state.LoadStateFile(stateFile); err != nil {
+			return nil, fmt.Errorf("failed to load existing state file: %v", err)
+		}
+		slog.Info("using existing state file", "file", stateFile)
 	}
 
-	return &opts, nil
+	return &DiscovererOpts{
+		Regions: regions,
+		State:   state,
+	}, nil
 }
