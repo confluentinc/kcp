@@ -83,7 +83,7 @@ func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 		if existingRegion.Name == newRegion.Name {
 			discoveredClusters := newRegion.Clusters
 			newRegion.Clusters = existingRegion.Clusters
-			newRegion.UpsertClusters(discoveredClusters)
+			newRegion.RefreshClusters(discoveredClusters)
 			s.Regions[i] = newRegion
 			return
 		}
@@ -100,18 +100,18 @@ type DiscoveredRegion struct {
 	ClusterArns []string `json:"-"`
 }
 
-// UpsertClusters replaces the cluster list but preserves KafkaAdminClientInformation from existing clusters
-func (dr *DiscoveredRegion) UpsertClusters(newClusters []DiscoveredCluster) {
-	// Build map of ARN -> KafkaAdminClientInformation from existing clusters
+// RefreshClusters replaces the cluster list but preserves KafkaAdminClientInformation from existing clusters
+func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
+	// build map of ARN -> KafkaAdminClientInformation from existing clusters
 	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
 	for _, existingCluster := range dr.Clusters {
 		adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
 	}
 
-	// Replace cluster list with new discoveries
+	// replace cluster list with new discoveries
 	dr.Clusters = newClusters
 
-	// Restore admin info for clusters that still exist
+	// restore admin info for clusters that still exist
 	for i := range dr.Clusters {
 		if adminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
 			dr.Clusters[i].KafkaAdminClientInformation = adminInfo

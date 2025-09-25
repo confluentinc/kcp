@@ -67,7 +67,6 @@ func TestNewState(t *testing.T) {
 		})
 	}
 }
-
 func TestUpsertRegion(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -153,6 +152,90 @@ func TestUpsertRegion(t *testing.T) {
 					if actualRegion.ClusterArns[j] != wantArn {
 						t.Errorf("UpsertRegion() region[%d].ClusterArns[%d] = %q, want %q", i, j, actualRegion.ClusterArns[j], wantArn)
 					}
+				}
+			}
+		})
+	}
+}
+
+func TestRefreshClusters(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialClusters []DiscoveredCluster
+		newClusters     []DiscoveredCluster
+		wantClusters    []DiscoveredCluster
+	}{
+		{
+			name:            "add clusters to empty region",
+			initialClusters: []DiscoveredCluster{},
+			newClusters: []DiscoveredCluster{
+				{Name: "cluster-1", Arn: "arn:cluster-1"},
+				{Name: "cluster-2", Arn: "arn:cluster-2"},
+			},
+			wantClusters: []DiscoveredCluster{
+				{Name: "cluster-1", Arn: "arn:cluster-1"},
+				{Name: "cluster-2", Arn: "arn:cluster-2"},
+			},
+		},
+		{
+			name: "preserve admin info for existing clusters",
+			initialClusters: []DiscoveredCluster{
+				{
+					Name:                        "cluster-1",
+					Arn:                         "arn:cluster-1",
+					KafkaAdminClientInformation: KafkaAdminClientInformation{ClusterID: "old-cluster-1-id"},
+				},
+				{
+					Name:                        "cluster-2",
+					Arn:                         "arn:cluster-2",
+					KafkaAdminClientInformation: KafkaAdminClientInformation{ClusterID: "old-cluster-2-id"},
+				},
+			},
+			newClusters: []DiscoveredCluster{
+				{Name: "cluster-1", Arn: "arn:cluster-1"}, // fresh discovery data
+				{Name: "cluster-3", Arn: "arn:cluster-3"}, // new cluster
+			},
+			wantClusters: []DiscoveredCluster{
+				{
+					Name:                        "cluster-1",
+					Arn:                         "arn:cluster-1",
+					KafkaAdminClientInformation: KafkaAdminClientInformation{ClusterID: "old-cluster-1-id"}, // preserved
+				},
+				{Name: "cluster-3", Arn: "arn:cluster-3"}, // no admin info to preserve
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			region := &DiscoveredRegion{
+				Name:     "test-region",
+				Clusters: tt.initialClusters,
+			}
+
+			region.RefreshClusters(tt.newClusters)
+
+			// Check that final clusters match expected
+			if len(region.Clusters) != len(tt.wantClusters) {
+				t.Errorf("RefreshClusters() got %d clusters, want %d", len(region.Clusters), len(tt.wantClusters))
+			}
+
+			for i, wantCluster := range tt.wantClusters {
+				if i >= len(region.Clusters) {
+					t.Errorf("RefreshClusters() missing cluster at index %d", i)
+					continue
+				}
+
+				actualCluster := region.Clusters[i]
+				if actualCluster.Name != wantCluster.Name {
+					t.Errorf("RefreshClusters() cluster[%d].Name = %q, want %q", i, actualCluster.Name, wantCluster.Name)
+				}
+				if actualCluster.Arn != wantCluster.Arn {
+					t.Errorf("RefreshClusters() cluster[%d].Arn = %q, want %q", i, actualCluster.Arn, wantCluster.Arn)
+				}
+				if actualCluster.KafkaAdminClientInformation.ClusterID != wantCluster.KafkaAdminClientInformation.ClusterID {
+					t.Errorf("RefreshClusters() cluster[%d].KafkaAdminClientInformation.ClusterID = %q, want %q",
+						i, actualCluster.KafkaAdminClientInformation.ClusterID, wantCluster.KafkaAdminClientInformation.ClusterID)
 				}
 			}
 		})
