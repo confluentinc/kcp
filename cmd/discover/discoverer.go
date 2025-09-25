@@ -46,7 +46,7 @@ func (d *Discoverer) Run() error {
 func (d *Discoverer) discoverRegions() error {
 	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
-	// initialize working state from existing state if present(preserves untouched regions)
+	// initialize working state from existing state if present
 	currentState := types.NewState(d.state)
 
 	for _, region := range d.regions {
@@ -105,8 +105,8 @@ func (d *Discoverer) discoverRegions() error {
 			discoveredClusters = append(discoveredClusters, *discoveredCluster)
 		}
 
-		// set discovered clusters and upsert into state (preserves KafkaAdminClientInformation)
 		discoveredRegion.Clusters = discoveredClusters
+		// upsert region into state (preserves untouched regions)
 		currentState.UpsertRegion(*discoveredRegion)
 
 		// generate credential configurations for connecting to clusters

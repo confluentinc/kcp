@@ -83,6 +83,7 @@ func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 		if existingRegion.Name == newRegion.Name {
 			discoveredClusters := newRegion.Clusters
 			newRegion.Clusters = existingRegion.Clusters
+			// set discovered clusters and refresh into state (preserves KafkaAdminClientInformation)
 			newRegion.RefreshClusters(discoveredClusters)
 			s.Regions[i] = newRegion
 			return
