@@ -1071,7 +1071,7 @@ kcp update
 - `--force`: Force update without user confirmation
 - `--check-only`: Only check for updates, don't install
 
->[!NOTE]
+> [!NOTE]
 > This will require sudo to update the binary.
 
 ---
