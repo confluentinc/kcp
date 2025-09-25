@@ -8,7 +8,7 @@ import (
 )
 
 type Credentials struct {
-	Regions []RegionEntry `yaml:"regions"`
+	Regions []RegionAuth `yaml:"regions"`
 }
 
 func NewCredentials(credentialsYamlPath string) (*Credentials, []error) {
@@ -63,18 +63,18 @@ func (c Credentials) Validate() (bool, []error) {
 	return len(errs) == 0, errs
 }
 
-type RegionEntry struct {
-	Name     string         `yaml:"name"`
-	Clusters []ClusterEntry `yaml:"clusters"`
+type RegionAuth struct {
+	Name     string        `yaml:"name"`
+	Clusters []ClusterAuth `yaml:"clusters"`
 }
 
-type ClusterEntry struct {
+type ClusterAuth struct {
 	Name       string           `yaml:"name"`
 	Arn        string           `yaml:"arn"`
 	AuthMethod AuthMethodConfig `yaml:"auth_method"`
 }
 
-func (ce ClusterEntry) GetSelectedAuthType() (AuthType, error) {
+func (ce ClusterAuth) GetSelectedAuthType() (AuthType, error) {
 	enabledMethods := ce.GetAuthMethods()
 	if len(enabledMethods) == 0 {
 		return "", fmt.Errorf("no authentication method enabled for cluster")
@@ -84,7 +84,7 @@ func (ce ClusterEntry) GetSelectedAuthType() (AuthType, error) {
 }
 
 // Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
-func (ce ClusterEntry) GetAuthMethods() []AuthType {
+func (ce ClusterAuth) GetAuthMethods() []AuthType {
 	enabledMethods := []AuthType{}
 
 	if ce.AuthMethod.UnauthenticatedPlaintext != nil && ce.AuthMethod.UnauthenticatedPlaintext.Use {

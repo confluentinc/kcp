@@ -105,10 +105,10 @@ func TestCredentials_Validate(t *testing.T) {
 		{
 			name: "valid single auth method",
 			credentials: Credentials{
-				Regions: []RegionEntry{
+				Regions: []RegionAuth{
 					{
 						Name: "us-east-1",
-						Clusters: []ClusterEntry{
+						Clusters: []ClusterAuth{
 							{
 								Name: "test-cluster",
 								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
@@ -126,10 +126,10 @@ func TestCredentials_Validate(t *testing.T) {
 		{
 			name: "multiple auth methods selected for a cluster is not allowed",
 			credentials: Credentials{
-				Regions: []RegionEntry{
+				Regions: []RegionAuth{
 					{
 						Name: "us-east-1",
-						Clusters: []ClusterEntry{
+						Clusters: []ClusterAuth{
 							{
 								Name: "test-cluster",
 								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
@@ -148,10 +148,10 @@ func TestCredentials_Validate(t *testing.T) {
 		{
 			name: "no auth methods enabled is valid - means skip this cluster",
 			credentials: Credentials{
-				Regions: []RegionEntry{
+				Regions: []RegionAuth{
 					{
 						Name: "us-east-1",
-						Clusters: []ClusterEntry{
+						Clusters: []ClusterAuth{
 							{
 								Name:       "test-cluster",
 								Arn:        "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
@@ -167,10 +167,10 @@ func TestCredentials_Validate(t *testing.T) {
 		{
 			name: "multiple clusters with mixed validity",
 			credentials: Credentials{
-				Regions: []RegionEntry{
+				Regions: []RegionAuth{
 					{
 						Name: "us-east-1",
-						Clusters: []ClusterEntry{
+						Clusters: []ClusterAuth{
 							{
 								Name: "test-cluster",
 								Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
@@ -207,19 +207,19 @@ func TestCredentials_Validate(t *testing.T) {
 func TestClusterEntry_GetAuthMethods(t *testing.T) {
 	tests := []struct {
 		name            string
-		clusterEntry    ClusterEntry
+		clusterAuth     ClusterAuth
 		expectedMethods []AuthType
 	}{
 		{
 			name: "no auth methods enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{},
 			},
 			expectedMethods: []AuthType{},
 		},
 		{
 			name: "unauthenticated TLS enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: true},
 				},
@@ -228,7 +228,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 		},
 		{
 			name: "unauthenticated plaintext enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
@@ -237,7 +237,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 		},
 		{
 			name: "IAM enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					IAM: &IAMConfig{Use: true},
 				},
@@ -246,7 +246,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 		},
 		{
 			name: "SASL/SCRAM enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					SASLScram: &SASLScramConfig{Use: true},
 				},
@@ -255,7 +255,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 		},
 		{
 			name: "TLS enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					TLS: &TLSConfig{Use: true},
 				},
@@ -264,7 +264,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 		},
 		{
 			name: "multiple methods enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					IAM: &IAMConfig{Use: true},
 					TLS: &TLSConfig{Use: true},
@@ -274,7 +274,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 		},
 		{
 			name: "auth method configured but not enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					IAM: &IAMConfig{Use: false},
 				},
@@ -285,7 +285,7 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			methods := tt.clusterEntry.GetAuthMethods()
+			methods := tt.clusterAuth.GetAuthMethods()
 			assert.Equal(t, tt.expectedMethods, methods)
 		})
 	}
@@ -294,13 +294,13 @@ func TestClusterEntry_GetAuthMethods(t *testing.T) {
 func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 	tests := []struct {
 		name          string
-		clusterEntry  ClusterEntry
+		clusterAuth   ClusterAuth
 		expectedType  AuthType
 		expectedError bool
 	}{
 		{
 			name: "unauthenticated TLS auth type",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: true},
 				},
@@ -310,7 +310,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		},
 		{
 			name: "unauthenticated plaintext auth type",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
@@ -320,7 +320,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		},
 		{
 			name: "IAM auth type",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					IAM: &IAMConfig{Use: true},
 				},
@@ -330,7 +330,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		},
 		{
 			name: "SASL/SCRAM auth type",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					SASLScram: &SASLScramConfig{Use: true},
 				},
@@ -340,7 +340,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		},
 		{
 			name: "TLS auth type",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					TLS: &TLSConfig{Use: true},
 				},
@@ -350,7 +350,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		},
 		{
 			name: "no auth method enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{},
 			},
 			expectedType:  "",
@@ -358,7 +358,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 		},
 		{
 			name: "multiple auth methods enabled",
-			clusterEntry: ClusterEntry{
+			clusterAuth: ClusterAuth{
 				AuthMethod: AuthMethodConfig{
 					IAM: &IAMConfig{Use: true},
 					TLS: &TLSConfig{Use: true},
@@ -371,7 +371,7 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			authType, err := tt.clusterEntry.GetSelectedAuthType()
+			authType, err := tt.clusterAuth.GetSelectedAuthType()
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -386,10 +386,10 @@ func TestClusterEntry_GetSelectedAuthType(t *testing.T) {
 
 func TestCredentials_ToYaml(t *testing.T) {
 	creds := &Credentials{
-		Regions: []RegionEntry{
+		Regions: []RegionAuth{
 			{
 				Name: "us-east-1",
-				Clusters: []ClusterEntry{
+				Clusters: []ClusterAuth{
 					{
 						Name: "test-cluster",
 						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
@@ -415,10 +415,10 @@ func TestCredentials_ToYaml(t *testing.T) {
 
 func TestCredentials_WriteToFile(t *testing.T) {
 	creds := &Credentials{
-		Regions: []RegionEntry{
+		Regions: []RegionAuth{
 			{
 				Name: "us-east-1",
-				Clusters: []ClusterEntry{
+				Clusters: []ClusterAuth{
 					{
 						Name: "test-cluster",
 						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/12345678-1234-1234-1234-123456789012-1",
@@ -450,7 +450,7 @@ func TestCredentials_WriteToFile(t *testing.T) {
 
 func TestCredentials_WriteToFile_InvalidPath(t *testing.T) {
 	creds := &Credentials{
-		Regions: []RegionEntry{},
+		Regions: []RegionAuth{},
 	}
 
 	// Try to write to a directory (should fail)
@@ -503,10 +503,10 @@ func TestAuthMethodConfigs(t *testing.T) {
 func TestCredentials_Integration(t *testing.T) {
 	// Test a complete round-trip: create, marshal, write, read, unmarshal
 	originalCreds := &Credentials{
-		Regions: []RegionEntry{
+		Regions: []RegionAuth{
 			{
 				Name: "us-east-1",
-				Clusters: []ClusterEntry{
+				Clusters: []ClusterAuth{
 					{
 						Name: "cluster1",
 						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/cluster1/12345678-1234-1234-1234-123456789012-1",
@@ -530,7 +530,7 @@ func TestCredentials_Integration(t *testing.T) {
 			},
 			{
 				Name: "us-west-2",
-				Clusters: []ClusterEntry{
+				Clusters: []ClusterAuth{
 					{
 						Name: "cluster3",
 						Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/cluster3/12345678-1234-1234-1234-123456789012-3",

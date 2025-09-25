@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	stateFileName       = "kcp-state.json"
+	credentialsFileName = "cluster-credentials.yaml"
+)
+
 var (
 	regions []string
 )
@@ -84,11 +89,11 @@ func runDiscover(cmd *cobra.Command, args []string) error {
 }
 
 func parseDiscoverOpts() (*DiscovererOpts, error) {
-	const stateFile = "kcp-state.json"
 	var state *types.State
+	var credentials *types.Credentials
 
 	// Check if existing state file exists
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+	if _, err := os.Stat(stateFileName); os.IsNotExist(err) {
 		// No state file found - start fresh
 		slog.Info("starting with fresh state")
 	} else if err != nil {
@@ -97,14 +102,32 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 	} else {
 		// State file exists - load it
 		state = &types.State{}
-		if err := state.LoadStateFile(stateFile); err != nil {
+		if err := state.LoadStateFile(stateFileName); err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
-		slog.Info("using existing state file", "file", stateFile)
+		slog.Info("using existing state file", "file", stateFileName)
+	}
+
+	// Check if existing credentials file exists
+	if _, err := os.Stat(credentialsFileName); os.IsNotExist(err) {
+		// No credentials file found - start fresh
+		slog.Info("starting with fresh credentials")
+	} else if err != nil {
+		// Error checking file - return error
+		return nil, fmt.Errorf("failed to check credentials file: %v", err)
+	} else {
+		// Credentials file exists - load it
+		var errs []error
+		credentials, errs = types.NewCredentials(credentialsFileName)
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("failed to load existing credentials file: %v", errs)
+		}
+		slog.Info("using existing credentials file", "file", credentialsFileName)
 	}
 
 	return &DiscovererOpts{
-		Regions: regions,
-		State:   state,
+		Regions:     regions,
+		State:       state,
+		Credentials: credentials,
 	}, nil
 }
