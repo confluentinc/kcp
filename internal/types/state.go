@@ -69,20 +69,6 @@ func (s *State) WriteToFile(filePath string) error {
 	return os.WriteFile(filePath, data, 0644)
 }
 
-// todo delete
-func (s *State) LoadStateFile(stateFile string) error {
-	file, err := os.ReadFile(stateFile)
-	if err != nil {
-		return fmt.Errorf("failed to read state file: %v", err)
-	}
-
-	if err := json.Unmarshal(file, s); err != nil {
-		return fmt.Errorf("failed to unmarshal discovery: %v", err)
-	}
-
-	return nil
-}
-
 func (s *State) PersistStateFile(stateFile string) error {
 	if s == nil {
 		return fmt.Errorf("discovery state is nil")
