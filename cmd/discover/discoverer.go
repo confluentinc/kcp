@@ -17,19 +17,22 @@ import (
 )
 
 type DiscovererOpts struct {
-	Regions []string
-	State   *types.State
+	Regions     []string
+	State       *types.State
+	Credentials *types.Credentials
 }
 
 type Discoverer struct {
-	regions []string
-	state   *types.State
+	regions     []string
+	state       *types.State
+	credentials *types.Credentials
 }
 
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
-		regions: opts.Regions,
-		state:   opts.State,
+		regions:     opts.Regions,
+		state:       opts.State,
+		credentials: opts.Credentials,
 	}
 }
 
@@ -44,10 +47,10 @@ func (d *Discoverer) Run() error {
 }
 
 func (d *Discoverer) discoverRegions() error {
-	regionEntries := []types.RegionEntry{}
 	regionsWithoutClusters := []string{}
-	// initialize working state from existing state if present
-	currentState := types.NewState(d.state)
+	// initialize state/credentials from existing state/credentials if passed in
+	state := types.NewStateFrom(d.state)
+	credentials := types.NewCredentialsFrom(d.credentials)
 
 	for _, region := range d.regions {
 		mskClient, err := client.NewMSKClient(region)
@@ -107,32 +110,29 @@ func (d *Discoverer) discoverRegions() error {
 
 		discoveredRegion.Clusters = discoveredClusters
 		// upsert region into state (preserves untouched regions)
-		currentState.UpsertRegion(*discoveredRegion)
+		state.UpsertRegion(*discoveredRegion)
 
 		// generate credential configurations for connecting to clusters
-		regionEntry, err := d.captureCredentialOptions(mskService, region)
+		regionAuth, err := d.captureCredentialOptions(discoveredRegion.Clusters, region)
 		if err != nil {
 			slog.Error("failed to get region entry", "region", region, "error", err)
 			continue
 		}
 
+		// upsert region credentials (preserves existing region auths)
+		credentials.UpsertRegion(*regionAuth)
+
 		// track regions with/without clusters for reporting
-		if len(regionEntry.Clusters) == 0 {
+		if len(regionAuth.Clusters) == 0 {
 			regionsWithoutClusters = append(regionsWithoutClusters, region)
-		} else {
-			regionEntries = append(regionEntries, *regionEntry)
 		}
 	}
 
-	if err := currentState.WriteToJsonFile("kcp-state.json"); err != nil {
+	if err := state.WriteToFile(stateFileName); err != nil {
 		return fmt.Errorf("failed to write state to file: %w", err)
 	}
 
-	// write credential configurations to YAML file
-	credentials := types.Credentials{
-		Regions: regionEntries,
-	}
-	if err := credentials.WriteToFile("cluster-credentials.yaml"); err != nil {
+	if err := credentials.WriteToFile(credentialsFileName); err != nil {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
@@ -146,34 +146,28 @@ func (d *Discoverer) discoverRegions() error {
 	return nil
 }
 
-func (d *Discoverer) captureCredentialOptions(mskService *msk.MSKService, region string) (*types.RegionEntry, error) {
-	// Get basic cluster info for credential generation
-	clusters, err := mskService.ListClusters(context.Background(), 100)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list clusters: %v", err)
-	}
-
-	clusterEntries := []types.ClusterEntry{}
+func (d *Discoverer) captureCredentialOptions(clusters []types.DiscoveredCluster, region string) (*types.RegionAuth, error) {
+	clusterAuths := []types.ClusterAuth{}
 
 	// Parse authentication options for each cluster
 	for _, cluster := range clusters {
-		clusterEntry, err := d.getAvailableClusterAuthOptions(cluster)
+		clusterAuth, err := d.getAvailableClusterAuthOptions(cluster.AWSClientInformation.MskClusterConfig)
 		if err != nil {
-			slog.Error("failed to get cluster entry", "cluster", cluster.ClusterName, "error", err)
+			slog.Error("failed to get cluster entry", "cluster", cluster.Name, "error", err)
 			continue
 		}
-		clusterEntries = append(clusterEntries, clusterEntry)
+		clusterAuths = append(clusterAuths, clusterAuth)
 	}
 
-	return &types.RegionEntry{
+	return &types.RegionAuth{
 		Name:     region,
-		Clusters: clusterEntries,
+		Clusters: clusterAuths,
 	}, nil
 
 }
 
-func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) (types.ClusterEntry, error) {
-	clusterEntry := types.ClusterEntry{
+func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) (types.ClusterAuth, error) {
+	clusterAuth := types.ClusterAuth{
 		Name: aws.ToString(cluster.ClusterName),
 		Arn:  aws.ToString(cluster.ClusterArn),
 	}
@@ -223,25 +217,25 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	// Only one method is set as default to avoid conflicts
 	defaultAuthSelected := false
 	if isUnauthenticatedTLSEnabled {
-		clusterEntry.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
+		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
 	if isUnauthenticatedPlaintextEnabled {
-		clusterEntry.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{
+		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
 	if isSaslIamEnabled {
-		clusterEntry.AuthMethod.IAM = &types.IAMConfig{
+		clusterAuth.AuthMethod.IAM = &types.IAMConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
 	if isSaslScramEnabled {
-		clusterEntry.AuthMethod.SASLScram = &types.SASLScramConfig{
+		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
 			Use:      !defaultAuthSelected,
 			Username: "",
 			Password: "",
@@ -249,7 +243,7 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		defaultAuthSelected = true
 	}
 	if isTlsEnabled {
-		clusterEntry.AuthMethod.TLS = &types.TLSConfig{
+		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
 			Use:        !defaultAuthSelected,
 			CACert:     "",
 			ClientCert: "",
@@ -258,5 +252,5 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		defaultAuthSelected = true
 	}
 
-	return clusterEntry, nil
+	return clusterAuth, nil
 }

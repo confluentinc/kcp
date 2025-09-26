@@ -8,10 +8,25 @@ import (
 )
 
 type Credentials struct {
-	Regions []RegionEntry `yaml:"regions"`
+	Regions []RegionAuth `yaml:"regions"`
 }
 
-func NewCredentials(credentialsYamlPath string) (*Credentials, []error) {
+func NewCredentialsFrom(fromCredentials *Credentials) *Credentials {
+	// Always create with fresh structure for the current discovery run
+	workingCredentials := &Credentials{}
+
+	if fromCredentials == nil {
+		workingCredentials.Regions = []RegionAuth{}
+	} else {
+		// Copy existing regions to preserve untouched regions
+		workingCredentials.Regions = make([]RegionAuth, len(fromCredentials.Regions))
+		copy(workingCredentials.Regions, fromCredentials.Regions)
+	}
+
+	return workingCredentials
+}
+
+func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
 	data, err := os.ReadFile(credentialsYamlPath)
 	if err != nil {
 		return nil, []error{fmt.Errorf("failed to read creds.yaml file: %w", err)}
@@ -27,6 +42,21 @@ func NewCredentials(credentialsYamlPath string) (*Credentials, []error) {
 	}
 
 	return &credsFile, nil
+}
+
+// UpsertRegion inserts a new region or updates an existing one by name
+// Automatically preserves existing cluster auth configurations
+func (c *Credentials) UpsertRegion(newRegion RegionAuth) {
+	for i, existingRegion := range c.Regions {
+		if existingRegion.Name == newRegion.Name {
+			// Region exists - merge cluster configs and update in place
+			newRegion.MergeClusterConfigs(existingRegion)
+			c.Regions[i] = newRegion
+			return
+		}
+	}
+	// New region - add it
+	c.Regions = append(c.Regions, newRegion)
 }
 
 func (c *Credentials) WriteToFile(filePath string) error {
@@ -63,18 +93,35 @@ func (c Credentials) Validate() (bool, []error) {
 	return len(errs) == 0, errs
 }
 
-type RegionEntry struct {
-	Name     string         `yaml:"name"`
-	Clusters []ClusterEntry `yaml:"clusters"`
+type RegionAuth struct {
+	Name     string        `yaml:"name"`
+	Clusters []ClusterAuth `yaml:"clusters"`
 }
 
-type ClusterEntry struct {
+// MergeClusterConfigs preserves existing cluster auth configurations from the existing region
+func (ra *RegionAuth) MergeClusterConfigs(existingRegion RegionAuth) {
+	// Build map of cluster ARN -> existing ClusterAuth for preservation
+	existingClustersByArn := make(map[string]ClusterAuth)
+	for _, existingCluster := range existingRegion.Clusters {
+		existingClustersByArn[existingCluster.Arn] = existingCluster
+	}
+
+	// Restore existing auth configurations for clusters that still exist
+	for i := range ra.Clusters {
+		if existingCluster, exists := existingClustersByArn[ra.Clusters[i].Arn]; exists {
+			// Merge auth method configurations - only preserve configs for auth methods that still exist
+			ra.Clusters[i].AuthMethod.MergeWith(existingCluster.AuthMethod)
+		}
+	}
+}
+
+type ClusterAuth struct {
 	Name       string           `yaml:"name"`
 	Arn        string           `yaml:"arn"`
 	AuthMethod AuthMethodConfig `yaml:"auth_method"`
 }
 
-func (ce ClusterEntry) GetSelectedAuthType() (AuthType, error) {
+func (ce ClusterAuth) GetSelectedAuthType() (AuthType, error) {
 	enabledMethods := ce.GetAuthMethods()
 	if len(enabledMethods) == 0 {
 		return "", fmt.Errorf("no authentication method enabled for cluster")
@@ -84,7 +131,7 @@ func (ce ClusterEntry) GetSelectedAuthType() (AuthType, error) {
 }
 
 // Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
-func (ce ClusterEntry) GetAuthMethods() []AuthType {
+func (ce ClusterAuth) GetAuthMethods() []AuthType {
 	enabledMethods := []AuthType{}
 
 	if ce.AuthMethod.UnauthenticatedPlaintext != nil && ce.AuthMethod.UnauthenticatedPlaintext.Use {
@@ -112,6 +159,35 @@ type AuthMethodConfig struct {
 	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
 	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
 	SASLScram                *SASLScramConfig                `yaml:"sasl_scram,omitempty"`
+}
+
+// MergeWith preserves existing auth configurations only for auth methods that still exist in the new config
+func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
+	// Only preserve existing configs if the auth method still exists in the new discovery
+	if amc.UnauthenticatedTLS != nil && existing.UnauthenticatedTLS != nil {
+		amc.UnauthenticatedTLS.Use = existing.UnauthenticatedTLS.Use
+	}
+
+	if amc.UnauthenticatedPlaintext != nil && existing.UnauthenticatedPlaintext != nil {
+		amc.UnauthenticatedPlaintext.Use = existing.UnauthenticatedPlaintext.Use
+	}
+
+	if amc.IAM != nil && existing.IAM != nil {
+		amc.IAM.Use = existing.IAM.Use
+	}
+
+	if amc.TLS != nil && existing.TLS != nil {
+		amc.TLS.Use = existing.TLS.Use
+		amc.TLS.CACert = existing.TLS.CACert
+		amc.TLS.ClientCert = existing.TLS.ClientCert
+		amc.TLS.ClientKey = existing.TLS.ClientKey
+	}
+
+	if amc.SASLScram != nil && existing.SASLScram != nil {
+		amc.SASLScram.Use = existing.SASLScram.Use
+		amc.SASLScram.Username = existing.SASLScram.Username
+		amc.SASLScram.Password = existing.SASLScram.Password
+	}
 }
 
 type UnauthenticatedPlaintextConfig struct {

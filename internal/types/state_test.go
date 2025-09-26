@@ -35,7 +35,7 @@ func TestNewState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := NewState(tt.fromState)
+			result := NewStateFrom(tt.fromState)
 
 			// Check if result is nil when we expect it to be
 			if (result == nil) != tt.wantNil {

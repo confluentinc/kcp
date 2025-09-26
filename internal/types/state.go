@@ -25,7 +25,7 @@ type State struct {
 	Timestamp    time.Time          `json:"timestamp"`
 }
 
-func NewState(fromState *State) *State {
+func NewStateFrom(fromState *State) *State {
 	// Always create with fresh metadata for the current discovery run
 	workingState := &State{
 		KcpBuildInfo: KcpBuildInfo{
@@ -47,7 +47,21 @@ func NewState(fromState *State) *State {
 	return workingState
 }
 
-func (s *State) WriteToJsonFile(filePath string) error {
+func NewStateFromFile(stateFile string) (*State, error) {
+	file, err := os.ReadFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state file: %v", err)
+	}
+
+	var state State
+	if err := json.Unmarshal(file, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+	}
+
+	return &state, nil
+}
+
+func (s *State) WriteToFile(filePath string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
@@ -55,6 +69,7 @@ func (s *State) WriteToJsonFile(filePath string) error {
 	return os.WriteFile(filePath, data, 0644)
 }
 
+// todo delete
 func (s *State) LoadStateFile(stateFile string) error {
 	file, err := os.ReadFile(stateFile)
 	if err != nil {
@@ -73,7 +88,7 @@ func (s *State) PersistStateFile(stateFile string) error {
 		return fmt.Errorf("discovery state is nil")
 	}
 
-	return s.WriteToJsonFile(stateFile)
+	return s.WriteToFile(stateFile)
 }
 
 // UpsertRegion inserts a new region or updates an existing one by name
