@@ -50,7 +50,6 @@ func (d *Discoverer) discoverRegions() error {
 	regionAuths := []types.RegionAuth{}
 	regionsWithoutClusters := []string{}
 	// initialize working state from existing state if present
-	// todo name
 	workingState := types.NewStateFrom(d.state)
 	// initialize working credentials from existing credentials if present
 	workingCredentials := types.NewCredentialsFrom(d.credentials)
@@ -153,7 +152,6 @@ func (d *Discoverer) discoverRegions() error {
 func (d *Discoverer) captureCredentialOptions(clusters []types.DiscoveredCluster, region string) (*types.RegionAuth, error) {
 	clusterAuths := []types.ClusterAuth{}
 
-	fmt.Println("using this new stuff")
 	// Parse authentication options for each cluster
 	for _, cluster := range clusters {
 		clusterAuth, err := d.getAvailableClusterAuthOptions(cluster.AWSClientInformation.MskClusterConfig)
