@@ -12,8 +12,8 @@ type Credentials struct {
 }
 
 func NewCredentialsFrom(fromCredentials *Credentials) (*Credentials, []error) {
-	// implement the pattern in NewStateFrom
-	return nil, nil
+	// todo complete this
+	return fromCredentials, nil
 }
 
 func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
