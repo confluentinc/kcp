@@ -37,10 +37,6 @@ func NewClustersScanner(opts ClustersScannerOpts) *ClustersScanner {
 }
 
 func (cs *ClustersScanner) Run() error {
-	// if err := cs.State.LoadStateFile(cs.StateFile); err != nil {
-	// 	return fmt.Errorf("❌ failed to load state: %v", err)
-	// }
-
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {
 			if err := cs.scanCluster(regionAuth.Name, clusterAuth); err != nil {

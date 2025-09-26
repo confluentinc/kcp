@@ -61,7 +61,7 @@ func NewStateFromFile(stateFile string) (*State, error) {
 	return &state, nil
 }
 
-func (s *State) WriteToJsonFile(filePath string) error {
+func (s *State) WriteToFile(filePath string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
@@ -88,7 +88,7 @@ func (s *State) PersistStateFile(stateFile string) error {
 		return fmt.Errorf("discovery state is nil")
 	}
 
-	return s.WriteToJsonFile(stateFile)
+	return s.WriteToFile(stateFile)
 }
 
 // UpsertRegion inserts a new region or updates an existing one by name

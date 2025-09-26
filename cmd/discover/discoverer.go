@@ -128,7 +128,7 @@ func (d *Discoverer) discoverRegions() error {
 		}
 	}
 
-	if err := state.WriteToJsonFile(stateFileName); err != nil {
+	if err := state.WriteToFile(stateFileName); err != nil {
 		return fmt.Errorf("failed to write state to file: %w", err)
 	}
 
