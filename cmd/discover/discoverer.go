@@ -50,7 +50,10 @@ func (d *Discoverer) discoverRegions() error {
 	regionAuths := []types.RegionAuth{}
 	regionsWithoutClusters := []string{}
 	// initialize working state from existing state if present
-	currentState := types.NewStateFrom(d.state)
+	// todo name
+	workingState := types.NewStateFrom(d.state)
+	// initialize working credentials from existing credentials if present
+	workingCredentials := types.NewCredentialsFrom(d.credentials)
 
 	for _, region := range d.regions {
 		mskClient, err := client.NewMSKClient(region)
@@ -110,7 +113,7 @@ func (d *Discoverer) discoverRegions() error {
 
 		discoveredRegion.Clusters = discoveredClusters
 		// upsert region into state (preserves untouched regions)
-		currentState.UpsertRegion(*discoveredRegion)
+		workingState.UpsertRegion(*discoveredRegion)
 
 		// generate credential configurations for connecting to clusters
 		regionAuth, err := d.captureCredentialOptions(discoveredRegion.Clusters, region)
@@ -127,15 +130,13 @@ func (d *Discoverer) discoverRegions() error {
 		}
 	}
 
-	if err := currentState.WriteToJsonFile(stateFileName); err != nil {
+	if err := workingState.WriteToJsonFile(stateFileName); err != nil {
 		return fmt.Errorf("failed to write state to file: %w", err)
 	}
 
-	// write credential configurations to YAML file
-	credentials := types.Credentials{
-		Regions: regionAuths,
-	}
-	if err := credentials.WriteToFile(credentialsFileName); err != nil {
+	workingCredentials.Refresh(regionAuths)
+
+	if err := workingCredentials.WriteToFile(credentialsFileName); err != nil {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 

@@ -11,9 +11,19 @@ type Credentials struct {
 	Regions []RegionAuth `yaml:"regions"`
 }
 
-func NewCredentialsFrom(fromCredentials *Credentials) (*Credentials, []error) {
-	// todo complete this
-	return fromCredentials, nil
+func NewCredentialsFrom(fromCredentials *Credentials) *Credentials {
+	// Always create with fresh structure for the current discovery run
+	workingCredentials := &Credentials{}
+
+	if fromCredentials == nil {
+		workingCredentials.Regions = []RegionAuth{}
+	} else {
+		// Copy existing regions to preserve untouched regions
+		workingCredentials.Regions = make([]RegionAuth, len(fromCredentials.Regions))
+		copy(workingCredentials.Regions, fromCredentials.Regions)
+	}
+
+	return workingCredentials
 }
 
 func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
@@ -32,6 +42,34 @@ func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) 
 	}
 
 	return &credsFile, nil
+}
+
+// Refresh updates the credentials with new region auth data while preserving existing configurations
+// Only updates regions that are in newRegionAuths, leaves other regions untouched
+func (c *Credentials) Refresh(newRegionAuths []RegionAuth) {
+	// Build map of region name -> existing RegionAuth for preservation
+	existingRegionsByName := make(map[string]RegionAuth)
+	for _, existingRegion := range c.Regions {
+		existingRegionsByName[existingRegion.Name] = existingRegion
+	}
+
+	// Update or add each new region
+	for _, newRegion := range newRegionAuths {
+		if existingRegion, exists := existingRegionsByName[newRegion.Name]; exists {
+			// Region exists - merge cluster configs and update in place
+			newRegion.MergeClusterConfigs(existingRegion)
+			// Find and replace the existing region
+			for i := range c.Regions {
+				if c.Regions[i].Name == newRegion.Name {
+					c.Regions[i] = newRegion
+					break
+				}
+			}
+		} else {
+			// New region - add it
+			c.Regions = append(c.Regions, newRegion)
+		}
+	}
 }
 
 func (c *Credentials) WriteToFile(filePath string) error {
@@ -71,6 +109,23 @@ func (c Credentials) Validate() (bool, []error) {
 type RegionAuth struct {
 	Name     string        `yaml:"name"`
 	Clusters []ClusterAuth `yaml:"clusters"`
+}
+
+// MergeClusterConfigs preserves existing cluster auth configurations from the existing region
+func (ra *RegionAuth) MergeClusterConfigs(existingRegion RegionAuth) {
+	// Build map of cluster ARN -> existing ClusterAuth for preservation
+	existingClustersByArn := make(map[string]ClusterAuth)
+	for _, existingCluster := range existingRegion.Clusters {
+		existingClustersByArn[existingCluster.Arn] = existingCluster
+	}
+
+	// Restore existing auth configurations for clusters that still exist
+	for i := range ra.Clusters {
+		if existingCluster, exists := existingClustersByArn[ra.Clusters[i].Arn]; exists {
+			// Merge auth method configurations - only preserve configs for auth methods that still exist
+			ra.Clusters[i].AuthMethod.MergeWith(existingCluster.AuthMethod)
+		}
+	}
 }
 
 type ClusterAuth struct {
@@ -117,6 +172,35 @@ type AuthMethodConfig struct {
 	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
 	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
 	SASLScram                *SASLScramConfig                `yaml:"sasl_scram,omitempty"`
+}
+
+// MergeWith preserves existing auth configurations only for auth methods that still exist in the new config
+func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
+	// Only preserve existing configs if the auth method still exists in the new discovery
+	if amc.UnauthenticatedTLS != nil && existing.UnauthenticatedTLS != nil {
+		amc.UnauthenticatedTLS.Use = existing.UnauthenticatedTLS.Use
+	}
+
+	if amc.UnauthenticatedPlaintext != nil && existing.UnauthenticatedPlaintext != nil {
+		amc.UnauthenticatedPlaintext.Use = existing.UnauthenticatedPlaintext.Use
+	}
+
+	if amc.IAM != nil && existing.IAM != nil {
+		amc.IAM.Use = existing.IAM.Use
+	}
+
+	if amc.TLS != nil && existing.TLS != nil {
+		amc.TLS.Use = existing.TLS.Use
+		amc.TLS.CACert = existing.TLS.CACert
+		amc.TLS.ClientCert = existing.TLS.ClientCert
+		amc.TLS.ClientKey = existing.TLS.ClientKey
+	}
+
+	if amc.SASLScram != nil && existing.SASLScram != nil {
+		amc.SASLScram.Use = existing.SASLScram.Use
+		amc.SASLScram.Username = existing.SASLScram.Username
+		amc.SASLScram.Password = existing.SASLScram.Password
+	}
 }
 
 type UnauthenticatedPlaintextConfig struct {
