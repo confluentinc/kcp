@@ -12,10 +12,7 @@ type TimePeriod string
 const (
 	// debugging period
 	OneHourPeriodInSeconds int32 = 60 * 60 // 60 seconds * 60 minutes
-	// testing using daily period with 7 days of data
 	DailyPeriodInSeconds   int32 = 60 * 60 * 24      // 60 seconds * 60 minutes * 24 hours
-	MonthlyPeriodInSeconds int32 = 60 * 60 * 24 * 30 // 60 seconds * 60 minutes * 24 hours * 30 days
-	WeeklyPeriodInSeconds  int32 = 60 * 60 * 24 * 7  // 60 seconds * 60 minutes * 24 hours * 7 days
 
 	Last24Hours TimePeriod = "last24Hours"
 	LastWeek    TimePeriod = "lastWeek"
