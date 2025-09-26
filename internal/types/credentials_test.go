@@ -582,3 +582,362 @@ func createTempFile(t *testing.T, content string) string {
 
 	return tmpFile.Name()
 }
+
+func TestAuthMethodConfig_MergeWith(t *testing.T) {
+	tests := []struct {
+		name     string
+		new      AuthMethodConfig
+		existing AuthMethodConfig
+		expected AuthMethodConfig
+	}{
+		{
+			name: "preserve IAM use setting when both have IAM",
+			new: AuthMethodConfig{
+				IAM: &IAMConfig{Use: false},
+			},
+			existing: AuthMethodConfig{
+				IAM: &IAMConfig{Use: true},
+			},
+			expected: AuthMethodConfig{
+				IAM: &IAMConfig{Use: true}, // should preserve existing Use setting
+			},
+		},
+		{
+			name: "preserve SASL/SCRAM credentials when both have SASL/SCRAM",
+			new: AuthMethodConfig{
+				SASLScram: &SASLScramConfig{Use: false, Username: "", Password: ""},
+			},
+			existing: AuthMethodConfig{
+				SASLScram: &SASLScramConfig{Use: true, Username: "myuser", Password: "mypass"},
+			},
+			expected: AuthMethodConfig{
+				SASLScram: &SASLScramConfig{Use: true, Username: "myuser", Password: "mypass"},
+			},
+		},
+		{
+			name: "preserve TLS certificates when both have TLS",
+			new: AuthMethodConfig{
+				TLS: &TLSConfig{Use: false, CACert: "", ClientCert: "", ClientKey: ""},
+			},
+			existing: AuthMethodConfig{
+				TLS: &TLSConfig{Use: true, CACert: "my-ca", ClientCert: "my-cert", ClientKey: "my-key"},
+			},
+			expected: AuthMethodConfig{
+				TLS: &TLSConfig{Use: true, CACert: "my-ca", ClientCert: "my-cert", ClientKey: "my-key"},
+			},
+		},
+		{
+			name: "preserve UnauthenticatedTLS use setting when both have UnauthenticatedTLS",
+			new: AuthMethodConfig{
+				UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: false},
+			},
+			existing: AuthMethodConfig{
+				UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: true},
+			},
+			expected: AuthMethodConfig{
+				UnauthenticatedTLS: &UnauthenticatedTLSConfig{Use: true},
+			},
+		},
+		{
+			name: "preserve UnauthenticatedPlaintext use setting when both have UnauthenticatedPlaintext",
+			new: AuthMethodConfig{
+				UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: false},
+			},
+			existing: AuthMethodConfig{
+				UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+			},
+			expected: AuthMethodConfig{
+				UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+			},
+		},
+		{
+			name: "ignore existing auth method when new doesn't have it (TLS removed)",
+			new: AuthMethodConfig{
+				IAM: &IAMConfig{Use: false},
+			},
+			existing: AuthMethodConfig{
+				IAM: &IAMConfig{Use: true},
+				TLS: &TLSConfig{Use: true, CACert: "my-ca", ClientCert: "my-cert", ClientKey: "my-key"},
+			},
+			expected: AuthMethodConfig{
+				IAM: &IAMConfig{Use: true}, // preserved
+				// TLS should not be copied since new config doesn't have it
+			},
+		},
+		{
+			name: "no merge when existing doesn't have the auth method",
+			new: AuthMethodConfig{
+				IAM: &IAMConfig{Use: false},
+				TLS: &TLSConfig{Use: false, CACert: "ca-cert", ClientCert: "client-cert", ClientKey: "client-key"},
+			},
+			existing: AuthMethodConfig{
+				SASLScram: &SASLScramConfig{Use: true, Username: "myuser", Password: "mypass"},
+			},
+			expected: AuthMethodConfig{
+				IAM: &IAMConfig{Use: false},                                                                        // unchanged since existing doesn't have IAM
+				TLS: &TLSConfig{Use: false, CACert: "ca-cert", ClientCert: "client-cert", ClientKey: "client-key"}, // unchanged since existing doesn't have TLS
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.new.MergeWith(tt.existing)
+			assert.Equal(t, tt.expected, tt.new)
+		})
+	}
+}
+
+func TestRegionAuth_MergeClusterConfigs(t *testing.T) {
+	tests := []struct {
+		name     string
+		new      RegionAuth
+		existing RegionAuth
+		expected RegionAuth
+	}{
+		{
+			name: "preserve existing cluster auth config",
+			new: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "cluster1",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/cluster1/abc",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: false},
+						},
+					},
+				},
+			},
+			existing: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "cluster1",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/cluster1/abc",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: true},
+						},
+					},
+				},
+			},
+			expected: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "cluster1",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/cluster1/abc",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: true}, // preserved from existing
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "new cluster gets default config (no existing config to merge)",
+			new: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "new-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/new-cluster/xyz",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: false},
+						},
+					},
+				},
+			},
+			existing: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "old-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/old-cluster/abc",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: true},
+						},
+					},
+				},
+			},
+			expected: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "new-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/new-cluster/xyz",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: false}, // unchanged since no existing config for this cluster
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "mix of existing and new clusters",
+			new: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "existing-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/existing-cluster/abc",
+						AuthMethod: AuthMethodConfig{
+							SASLScram: &SASLScramConfig{Use: false, Username: "", Password: ""},
+						},
+					},
+					{
+						Name: "new-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/new-cluster/xyz",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: false},
+						},
+					},
+				},
+			},
+			existing: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "existing-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/existing-cluster/abc",
+						AuthMethod: AuthMethodConfig{
+							SASLScram: &SASLScramConfig{Use: true, Username: "myuser", Password: "mypass"},
+						},
+					},
+				},
+			},
+			expected: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "existing-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/existing-cluster/abc",
+						AuthMethod: AuthMethodConfig{
+							SASLScram: &SASLScramConfig{Use: true, Username: "myuser", Password: "mypass"}, // preserved
+						},
+					},
+					{
+						Name: "new-cluster",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/new-cluster/xyz",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: false}, // unchanged
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.new.MergeClusterConfigs(tt.existing)
+			assert.Equal(t, tt.expected, tt.new)
+		})
+	}
+}
+
+func TestCredentials_UpsertRegion(t *testing.T) {
+	tests := []struct {
+		name     string
+		initial  Credentials
+		upsert   RegionAuth
+		expected Credentials
+	}{
+		{
+			name: "add new region to empty credentials",
+			initial: Credentials{
+				Regions: []RegionAuth{},
+			},
+			upsert: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{Name: "cluster1", Arn: "arn:cluster1"},
+				},
+			},
+			expected: Credentials{
+				Regions: []RegionAuth{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterAuth{
+							{Name: "cluster1", Arn: "arn:cluster1"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "add new region to existing credentials",
+			initial: Credentials{
+				Regions: []RegionAuth{
+					{Name: "us-west-2", Clusters: []ClusterAuth{{Name: "old-cluster", Arn: "arn:old"}}},
+				},
+			},
+			upsert: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{Name: "new-cluster", Arn: "arn:new"},
+				},
+			},
+			expected: Credentials{
+				Regions: []RegionAuth{
+					{Name: "us-west-2", Clusters: []ClusterAuth{{Name: "old-cluster", Arn: "arn:old"}}},
+					{Name: "us-east-1", Clusters: []ClusterAuth{{Name: "new-cluster", Arn: "arn:new"}}},
+				},
+			},
+		},
+		{
+			name: "update existing region (preserves existing cluster configs)",
+			initial: Credentials{
+				Regions: []RegionAuth{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterAuth{
+							{
+								Name: "cluster1",
+								Arn:  "arn:cluster1",
+								AuthMethod: AuthMethodConfig{
+									IAM: &IAMConfig{Use: true}, // existing user selection
+								},
+							},
+						},
+					},
+				},
+			},
+			upsert: RegionAuth{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "cluster1",
+						Arn:  "arn:cluster1",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: false}, // new default from discovery
+						},
+					},
+				},
+			},
+			expected: Credentials{
+				Regions: []RegionAuth{
+					{
+						Name: "us-east-1",
+						Clusters: []ClusterAuth{
+							{
+								Name: "cluster1",
+								Arn:  "arn:cluster1",
+								AuthMethod: AuthMethodConfig{
+									IAM: &IAMConfig{Use: true}, // preserved existing user selection
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.initial.UpsertRegion(tt.upsert)
+			assert.Equal(t, tt.expected, tt.initial)
+		})
+	}
+}

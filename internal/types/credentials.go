@@ -44,32 +44,19 @@ func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) 
 	return &credsFile, nil
 }
 
-// Refresh updates the credentials with new region auth data while preserving existing configurations
-// Only updates regions that are in newRegionAuths, leaves other regions untouched
-func (c *Credentials) Refresh(newRegionAuths []RegionAuth) {
-	// Build map of region name -> existing RegionAuth for preservation
-	existingRegionsByName := make(map[string]RegionAuth)
-	for _, existingRegion := range c.Regions {
-		existingRegionsByName[existingRegion.Name] = existingRegion
-	}
-
-	// Update or add each new region
-	for _, newRegion := range newRegionAuths {
-		if existingRegion, exists := existingRegionsByName[newRegion.Name]; exists {
+// UpsertRegion inserts a new region or updates an existing one by name
+// Automatically preserves existing cluster auth configurations
+func (c *Credentials) UpsertRegion(newRegion RegionAuth) {
+	for i, existingRegion := range c.Regions {
+		if existingRegion.Name == newRegion.Name {
 			// Region exists - merge cluster configs and update in place
 			newRegion.MergeClusterConfigs(existingRegion)
-			// Find and replace the existing region
-			for i := range c.Regions {
-				if c.Regions[i].Name == newRegion.Name {
-					c.Regions[i] = newRegion
-					break
-				}
-			}
-		} else {
-			// New region - add it
-			c.Regions = append(c.Regions, newRegion)
+			c.Regions[i] = newRegion
+			return
 		}
 	}
+	// New region - add it
+	c.Regions = append(c.Regions, newRegion)
 }
 
 func (c *Credentials) WriteToFile(filePath string) error {
