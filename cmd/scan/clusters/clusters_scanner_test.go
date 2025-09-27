@@ -224,7 +224,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 		name         string
 		scanner      *ClustersScanner
 		region       string
-		clusterEntry types.ClusterEntry
+		clusterAuth types.ClusterAuth
 		wantErr      bool
 		wantErrMsg   string
 	}{
@@ -241,7 +241,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				},
 			},
 			region: "us-east-1",
-			clusterEntry: types.ClusterEntry{
+			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/nonexistent/abc-123",
 			},
 			wantErr:    true,
@@ -265,7 +265,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				},
 			},
 			region: "us-east-1",
-			clusterEntry: types.ClusterEntry{
+			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 				// No auth method configured - will cause GetSelectedAuthType to fail
 			},
@@ -295,7 +295,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				},
 			},
 			region: "us-east-1",
-			clusterEntry: types.ClusterEntry{
+			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 				AuthMethod: types.AuthMethodConfig{
 					IAM: &types.IAMConfig{Use: true}, // Valid auth method so GetSelectedAuthType succeeds
@@ -335,7 +335,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				},
 			},
 			region: "us-east-1",
-			clusterEntry: types.ClusterEntry{
+			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 				AuthMethod: types.AuthMethodConfig{
 					SASLScram: &types.SASLScramConfig{
@@ -352,7 +352,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.scanner.scanCluster(tt.region, tt.clusterEntry)
+			err := tt.scanner.scanCluster(tt.region, tt.clusterAuth)
 
 			if tt.wantErr {
 				assert.Error(t, err)

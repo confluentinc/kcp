@@ -25,9 +25,9 @@ type State struct {
 	Timestamp    time.Time          `json:"timestamp"`
 }
 
-func NewState(discoveredRegions []DiscoveredRegion) State {
-	return State{
-		Regions: discoveredRegions,
+func NewStateFrom(fromState *State) *State {
+	// Always create with fresh metadata for the current discovery run
+	workingState := &State{
 		KcpBuildInfo: KcpBuildInfo{
 			Version: build_info.Version,
 			Commit:  build_info.Commit,
@@ -35,9 +35,33 @@ func NewState(discoveredRegions []DiscoveredRegion) State {
 		},
 		Timestamp: time.Now(),
 	}
+
+	if fromState == nil {
+		workingState.Regions = []DiscoveredRegion{}
+	} else {
+		// Copy existing regions to preserve untouched regions
+		workingState.Regions = make([]DiscoveredRegion, len(fromState.Regions))
+		copy(workingState.Regions, fromState.Regions)
+	}
+
+	return workingState
 }
 
-func (s *State) WriteToJsonFile(filePath string) error {
+func NewStateFromFile(stateFile string) (*State, error) {
+	file, err := os.ReadFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state file: %v", err)
+	}
+
+	var state State
+	if err := json.Unmarshal(file, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+	}
+
+	return &state, nil
+}
+
+func (s *State) WriteToFile(filePath string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
@@ -45,25 +69,28 @@ func (s *State) WriteToJsonFile(filePath string) error {
 	return os.WriteFile(filePath, data, 0644)
 }
 
-func (s *State) LoadStateFile(stateFile string) error {
-	file, err := os.ReadFile(stateFile)
-	if err != nil {
-		return fmt.Errorf("failed to read state file: %v", err)
-	}
-
-	if err := json.Unmarshal(file, s); err != nil {
-		return fmt.Errorf("failed to unmarshal discovery: %v", err)
-	}
-
-	return nil
-}
-
 func (s *State) PersistStateFile(stateFile string) error {
 	if s == nil {
 		return fmt.Errorf("discovery state is nil")
 	}
 
-	return s.WriteToJsonFile(stateFile)
+	return s.WriteToFile(stateFile)
+}
+
+// UpsertRegion inserts a new region or updates an existing one by name
+// Automatically preserves KafkaAdminClientInformation from existing clusters
+func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
+	for i, existingRegion := range s.Regions {
+		if existingRegion.Name == newRegion.Name {
+			discoveredClusters := newRegion.Clusters
+			newRegion.Clusters = existingRegion.Clusters
+			// set discovered clusters and refresh into state (preserves KafkaAdminClientInformation)
+			newRegion.RefreshClusters(discoveredClusters)
+			s.Regions[i] = newRegion
+			return
+		}
+	}
+	s.Regions = append(s.Regions, newRegion)
 }
 
 type DiscoveredRegion struct {
@@ -73,6 +100,25 @@ type DiscoveredRegion struct {
 	Clusters       []DiscoveredCluster                         `json:"clusters"`
 	// internal only - exclude from JSON output
 	ClusterArns []string `json:"-"`
+}
+
+// RefreshClusters replaces the cluster list but preserves KafkaAdminClientInformation from existing clusters
+func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
+	// build map of ARN -> KafkaAdminClientInformation from existing clusters
+	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
+	for _, existingCluster := range dr.Clusters {
+		adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
+	}
+
+	// replace cluster list with new discoveries
+	dr.Clusters = newClusters
+
+	// restore admin info for clusters that still exist
+	for i := range dr.Clusters {
+		if adminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
+			dr.Clusters[i].KafkaAdminClientInformation = adminInfo
+		}
+	}
 }
 
 type DiscoveredCluster struct {
