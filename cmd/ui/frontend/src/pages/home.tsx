@@ -120,7 +120,7 @@ export default function Home() {
           error={error}
         />
 
-        <main className="flex flex-1 p-4 w-full">
+        <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
           <input
             ref={fileInputRef}
             type="file"
@@ -129,7 +129,7 @@ export default function Home() {
             className="hidden"
           />
 
-          <div className="mx-auto space-y-6 w-full">
+          <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
             {selectedCluster ? (
               <ClusterReport
                 cluster={selectedCluster.cluster}

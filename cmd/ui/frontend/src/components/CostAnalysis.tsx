@@ -19,9 +19,19 @@ import {
 import { Button } from '@/components/ui/button'
 
 interface CostBucket {
-  time_period_start: string
-  time_period_end: string
-  data: Record<string, Record<string, number>>
+  Groups: Array<{
+    Keys: string[]
+    Metrics: {
+      UnblendedCost: {
+        Amount: string
+        Unit: string
+      }
+    }
+  }>
+  TimePeriod: {
+    Start: string
+    End: string
+  }
 }
 
 interface CostAnalysisProps {
@@ -54,37 +64,39 @@ export default function CostAnalysis({ costData }: CostAnalysisProps) {
     const costByMonth: Record<string, number> = {}
     const costByMonthAndService: Record<string, Record<string, number>> = {}
 
-    // Single iteration - calculate everything at once
-    costData.forEach((bucket) => {
-      const month = new Date(bucket.time_period_start).toLocaleDateString('en-US', {
+    // Single iteration - calculate everything at once for new data structure
+    costData.forEach((result) => {
+      const month = new Date(result.TimePeriod?.Start).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
       })
 
-      Object.entries(bucket.data || {}).forEach(([service, usageTypes]) => {
-        Object.entries(usageTypes || {}).forEach(([usageType, cost]) => {
-          if (typeof cost === 'number' && cost > 0) {
-            // Add to flat data
-            flatCostData.push({
-              time_period_start: bucket.time_period_start,
-              time_period_end: bucket.time_period_end,
-              service,
-              usage_type: usageType,
-              cost,
-            })
+      result.Groups?.forEach((group) => {
+        const service = group.Keys?.[0] || 'Unknown'
+        const usageType = group.Keys?.[1] || 'Unknown'
+        const cost = parseFloat(group.Metrics?.UnblendedCost?.Amount || '0')
 
-            // Calculate aggregations in the same loop
-            totalCost += cost
-            costByService[service] = (costByService[service] || 0) + cost
-            costByMonth[month] = (costByMonth[month] || 0) + cost
+        if (cost > 0) {
+          // Add to flat data
+          flatCostData.push({
+            time_period_start: result.TimePeriod?.Start,
+            time_period_end: result.TimePeriod?.End,
+            service,
+            usage_type: usageType,
+            cost,
+          })
 
-            if (!costByMonthAndService[month]) {
-              costByMonthAndService[month] = {}
-            }
-            costByMonthAndService[month][service] =
-              (costByMonthAndService[month][service] || 0) + cost
+          // Calculate aggregations in the same loop
+          totalCost += cost
+          costByService[service] = (costByService[service] || 0) + cost
+          costByMonth[month] = (costByMonth[month] || 0) + cost
+
+          if (!costByMonthAndService[month]) {
+            costByMonthAndService[month] = {}
           }
-        })
+          costByMonthAndService[month][service] =
+            (costByMonthAndService[month][service] || 0) + cost
+        }
       })
     })
 

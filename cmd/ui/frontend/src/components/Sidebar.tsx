@@ -2,9 +2,26 @@ import { Button } from '@/components/ui/button'
 
 export interface Cluster {
   name: string
-  metrics?: any
+  metrics?: {
+    metadata: {
+      cluster_type: string
+      follower_fetching: boolean
+      broker_az_distribution: string
+      kafka_version: string
+      enhanced_monitoring: string
+      start_window_date: string
+      end_window_date: string
+      period: number // Period in seconds
+    }
+    results: Array<{
+      start: string
+      end: string
+      label: string
+      value: number | null
+    }>
+  }
   aws_client_information: any
-  kafk_admin_client_information: any
+  kafka_admin_client_information: any
   timestamp?: string
 }
 
@@ -12,7 +29,7 @@ export interface Region {
   name: string
   configurations?: Array<any>
   costs?: {
-    buckets: Array<any>
+    results: Array<any>
     metadata: any
   }
   clusters?: Array<Cluster>
@@ -41,21 +58,15 @@ export default function Sidebar({
 }: SidebarProps) {
   // Calculate region cost totals
   const getRegionCostTotal = (region: Region) => {
-    const costBuckets = region.costs?.buckets || []
-    return costBuckets.reduce((sum: number, bucket: any) => {
-      const bucketTotal = Object.values(bucket.data || {}).reduce(
-        (bucketSum: number, service: any) => {
-          return (
-            bucketSum +
-            Object.values(service || {}).reduce(
-              (serviceSum: number, cost: any) => serviceSum + (typeof cost === 'number' ? cost : 0),
-              0
-            )
-          )
-        },
-        0
-      )
-      return sum + bucketTotal
+    const costResults = region.costs?.results || []
+    return costResults.reduce((sum: number, result: any) => {
+      const resultTotal =
+        result.Groups?.reduce((groupSum: number, group: any) => {
+          const cost = parseFloat(group.Metrics?.UnblendedCost?.Amount || '0')
+          return groupSum + cost
+        }, 0) || 0
+
+      return sum + resultTotal
     }, 0)
   }
 
@@ -77,7 +88,7 @@ export default function Sidebar({
           >
             {isProcessing ? 'Processing...' : 'Upload KCP State File'}
           </Button>
-          
+
           {error && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
               <div className="text-sm text-red-800 dark:text-red-200">

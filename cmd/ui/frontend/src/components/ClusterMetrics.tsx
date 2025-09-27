@@ -1,4 +1,15 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { Calendar } from '@/components/ui/calendar'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -7,205 +18,187 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-
-interface MetricBucket {
-  start: string
-  end: string
-  data: {
-    bytes_in_per_sec_avg: number
-    bytes_out_per_sec_avg: number
-    messages_in_per_sec_avg: number
-    connection_count?: number
-    client_connection_count?: number
-    cpu_idle?: number
-    cpu_user?: number
-    cpu_system?: number
-    cpu_io_wait?: number
-    heap_memory_after_gc?: number
-    kafka_data_logs_disk_used?: number
-    kafka_app_logs_disk_used?: number
-    network_rx_errors?: number
-    network_rx_dropped?: number
-    network_tx_errors?: number
-    network_tx_dropped?: number
-    leader_count?: number
-    partition_count?: number
-    request_handler_avg_idle_percent?: number
-    replication_bytes_in_per_sec?: number
-    replication_bytes_out_per_sec?: number
-    volume_read_bytes?: number
-    volume_write_bytes?: number
-    volume_read_ops?: number
-    volume_write_ops?: number
-    volume_queue_length?: number
-    volume_total_read_time?: number
-    volume_total_write_time?: number
-    burst_balance?: number
-    memory_free?: number
-    memory_used?: number
-    memory_buffered?: number
-    memory_cached?: number
-    active_controller_count?: number
-    global_topic_count?: number
-    global_partition_count?: number
-    tcp_connections?: number
-    request_throttle_time?: number
-    request_throttle_queue_size?: number
-    cpu_credit_balance?: number
-  }
-}
+import { CalendarIcon, X, Download } from 'lucide-react'
+import { format } from 'date-fns'
+import { cn, downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts'
 
 interface ClusterMetricsProps {
   cluster: {
     name: string
-    metrics: {
-      broker_az_distribution: string
-      kafka_version: string
-      enhanced_monitoring: string
-      start_window_date: string
-      end_window_date: string
-      buckets: MetricBucket[]
-    }
+    region?: string
   }
+  isActive?: boolean
 }
 
-export default function ClusterMetrics({ cluster }: ClusterMetricsProps) {
-  const [isLoading, setIsLoading] = useState(true)
+export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProps) {
+  const [isLoading, setIsLoading] = useState(false)
+  const [metricsResponse, setMetricsResponse] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined)
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined)
+  const [selectedMetric, setSelectedMetric] = useState<string>('')
 
-  // Process metrics data for table format
-  const metricsData = useMemo(() => {
-    const buckets = cluster.metrics.buckets || []
-
-    // Define metrics with their labels and formatters
-    const metricDefinitions = [
-      {
-        key: 'bytes_in_per_sec_avg',
-        label: 'Bytes In/Sec',
-        formatter: (v: number) => `${v?.toFixed(2) || '0'} B/s`,
-      },
-      {
-        key: 'bytes_out_per_sec_avg',
-        label: 'Bytes Out/Sec',
-        formatter: (v: number) => `${v?.toFixed(2) || '0'} B/s`,
-      },
-      {
-        key: 'messages_in_per_sec_avg',
-        label: 'Messages/Sec',
-        formatter: (v: number) => `${v?.toFixed(2) || '0'} msg/s`,
-      },
-      {
-        key: 'connection_count',
-        label: 'Connections',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-      {
-        key: 'client_connection_count',
-        label: 'Client Connections',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-      {
-        key: 'cpu_idle',
-        label: 'CPU Idle %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'cpu_user',
-        label: 'CPU User %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'cpu_system',
-        label: 'CPU System %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'heap_memory_after_gc',
-        label: 'Heap Memory %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'kafka_data_logs_disk_used',
-        label: 'Data Disk Used %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'kafka_app_logs_disk_used',
-        label: 'App Disk Used %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'memory_used',
-        label: 'Memory Used',
-        formatter: (v: number) => `${((v || 0) / 1024 / 1024 / 1024).toFixed(2)} GB`,
-      },
-      {
-        key: 'memory_free',
-        label: 'Memory Free',
-        formatter: (v: number) => `${((v || 0) / 1024 / 1024 / 1024).toFixed(2)} GB`,
-      },
-      {
-        key: 'volume_read_ops',
-        label: 'Volume Read Ops',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-      {
-        key: 'volume_write_ops',
-        label: 'Volume Write Ops',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-      {
-        key: 'global_topic_count',
-        label: 'Global Topics',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-      {
-        key: 'global_partition_count',
-        label: 'Global Partitions',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-      {
-        key: 'burst_balance',
-        label: 'EBS Burst Balance %',
-        formatter: (v: number) => `${v?.toFixed(1) || '0'}%`,
-      },
-      {
-        key: 'tcp_connections',
-        label: 'TCP Connections',
-        formatter: (v: number) => v?.toLocaleString() || '0',
-      },
-    ]
-
-    // Prepare time period headers
-    const timeHeaders = buckets.map((bucket) => ({
-      start: bucket.start,
-      end: bucket.end,
-      label: new Date(bucket.start).toLocaleDateString('en-US', {
-        month: 'short',
-        year: 'numeric',
-      }),
-      fullDate: new Date(bucket.start).toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-      }),
-    }))
-
-    return {
-      buckets,
-      metricDefinitions,
-      timeHeaders,
+  // Process metrics data for table and CSV formats
+  const processedData = useMemo(() => {
+    if (!metricsResponse?.results || !Array.isArray(metricsResponse.results)) {
+      return { tableData: [], csvData: '', chartData: [], uniqueDates: [], metrics: [] }
     }
-  }, [cluster.metrics.buckets])
 
-  // Handle loading state - no artificial delays
-  useEffect(() => {
-    setIsLoading(true)
-    // Use requestAnimationFrame to allow React to render, then immediately finish loading
-    const frame = requestAnimationFrame(() => {
-      setIsLoading(false)
+    const metrics = metricsResponse.results
+
+    // Get all unique dates and sort them
+    const allDates = new Set<string>()
+    metrics.forEach((metric: any) => {
+      if (metric && metric.start && typeof metric.start === 'string') {
+        allDates.add(metric.start.split('T')[0]) // Get date part only
+      }
+    })
+    const uniqueDates = Array.from(allDates).sort()
+
+    // Group metrics by label
+    const metricsByLabel: Record<string, Record<string, number | null>> = {}
+    metrics.forEach((metric: any) => {
+      if (!metric || !metric.label) return
+
+      if (!metricsByLabel[metric.label]) {
+        metricsByLabel[metric.label] = {}
+      }
+      const date =
+        metric.start && typeof metric.start === 'string' ? metric.start.split('T')[0] : ''
+      if (date) {
+        metricsByLabel[metric.label][date] = typeof metric.value === 'number' ? metric.value : null
+      }
     })
 
-    return () => cancelAnimationFrame(frame)
-  }, [cluster.metrics.buckets])
+    // Create table data
+    const tableData = Object.keys(metricsByLabel).map((label) => ({
+      metric: label,
+      values: uniqueDates.map((date) => metricsByLabel[label][date] ?? null),
+    }))
+
+    // Create CSV data
+    const csvHeaders = ['Metric', ...uniqueDates]
+    const csvRows = Object.keys(metricsByLabel).map((label) => [
+      label || '',
+      ...uniqueDates.map((date) => {
+        const value = metricsByLabel[label][date]
+        return value !== null && value !== undefined && typeof value === 'number'
+          ? value.toString()
+          : ''
+      }),
+    ])
+    const csvData = [csvHeaders, ...csvRows]
+      .map((row) => row.map((cell) => `"${cell || ''}"`).join(','))
+      .join('\n')
+
+    // Create chart data
+    const chartData = uniqueDates.map((date) => {
+      const dataPoint: any = {
+        date: date,
+        formattedDate: new Date(date).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+      }
+
+      Object.keys(metricsByLabel).forEach((label) => {
+        const cleanLabel = label.replace('Cluster Aggregate - ', '')
+        const value = metricsByLabel[label][date]
+        dataPoint[cleanLabel] = value !== null && value !== undefined ? value : null
+      })
+
+      return dataPoint
+    })
+
+    return {
+      tableData,
+      csvData,
+      chartData,
+      uniqueDates,
+      metrics: Object.keys(metricsByLabel).map((label) =>
+        label.replace('Cluster Aggregate - ', '')
+      ),
+    }
+  }, [metricsResponse])
+
+  const handleDownloadCSV = () => {
+    const filename = generateMetricsFilename(cluster.name, cluster.region)
+    downloadCSV(processedData.csvData, filename)
+  }
+
+  const handleDownloadJSON = () => {
+    const filename = generateMetricsFilename(cluster.name, cluster.region)
+    downloadJSON(metricsResponse, filename)
+  }
+
+  // Fetch metrics when tab becomes active
+  useEffect(() => {
+    if (!isActive || !cluster.name) {
+      setIsLoading(false)
+      return
+    }
+
+    const fetchMetrics = async () => {
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        // Use cluster.region if available, otherwise fallback to 'unknown'
+        const region = cluster.region || 'unknown'
+        const clusterName = cluster.name
+
+        console.log(`Fetching metrics for region: ${region}, cluster: ${clusterName}`)
+
+        // Build URL with optional date parameters
+        let url = `/metrics/${region}/${clusterName}`
+        const params = new URLSearchParams()
+
+        if (startDate) {
+          params.append('startDate', startDate.toISOString())
+        }
+        if (endDate) {
+          params.append('endDate', endDate.toISOString())
+        }
+
+        if (params.toString()) {
+          url += `?${params.toString()}`
+        }
+
+        const response = await fetch(url)
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch metrics: ${response.status} ${response.statusText}`)
+        }
+
+        const data = await response.json()
+        setMetricsResponse(data)
+        console.log('Metrics response:', data)
+      } catch (err) {
+        console.error('Error fetching metrics:', err)
+        setError(err instanceof Error ? err.message : 'Failed to fetch metrics')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchMetrics()
+  }, [isActive, cluster.name, cluster.region, startDate, endDate])
+
+  // Set default selected metric when data loads
+  useEffect(() => {
+    if (processedData.metrics.length > 0 && !selectedMetric) {
+      setSelectedMetric(processedData.metrics[0])
+    }
+  }, [processedData.metrics, selectedMetric])
 
   if (isLoading) {
     return (
@@ -213,7 +206,7 @@ export default function ClusterMetrics({ cluster }: ClusterMetricsProps) {
         {/* Loading Table */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-            ⚡ Cluster Metrics
+            Cluster Metrics
           </h3>
           <div className="flex items-center justify-center h-64">
             <div className="flex flex-col items-center space-y-4">
@@ -226,114 +219,415 @@ export default function ClusterMetrics({ cluster }: ClusterMetricsProps) {
     )
   }
 
-  if (!metricsData.buckets.length) {
+  // Show error state
+  if (error) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          ⚡ Cluster Metrics
+          Cluster Metrics
         </h3>
-        <p className="text-gray-500 dark:text-gray-400">
-          No metrics data available for this cluster.
-        </p>
+        <div className="text-red-500 dark:text-red-400">
+          <p className="font-medium">Error loading metrics:</p>
+          <p className="text-sm mt-1">{error}</p>
+        </div>
       </div>
     )
   }
 
+  // Main component render
   return (
-    <div className="space-y-6">
-      {/* Metrics Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          ⚡ Cluster Metrics
-        </h3>
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+      <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-6">
+        Cluster Metrics
+      </h3>
 
-        <div className="overflow-auto border border-gray-200 dark:border-gray-600 rounded-lg max-h-96">
-          <div className="min-w-max">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10 w-48 min-w-48 max-w-48 border-r border-gray-200 dark:border-gray-600">
-                    <div className="font-semibold text-gray-900 dark:text-gray-100">Metric</div>
-                  </TableHead>
-                  {metricsData.timeHeaders.map((header, index) => (
-                    <TableHead
-                      key={index}
-                      className="text-center w-32 min-w-32 max-w-32 border-r border-gray-200 dark:border-gray-600"
-                      title={header.fullDate}
-                    >
-                      <div className="font-semibold text-gray-900 dark:text-gray-100">
-                        {header.label}
-                      </div>
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {metricsData.metricDefinitions.map((metric) => (
-                  <TableRow
-                    key={metric.key}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-700"
-                  >
-                    <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium w-48 min-w-48 max-w-48 border-r border-gray-200 dark:border-gray-600">
-                      <div className="text-gray-900 dark:text-gray-100 truncate">
-                        {metric.label}
-                      </div>
-                    </TableCell>
-                    {metricsData.buckets.map((bucket, index) => (
-                      <TableCell
-                        key={index}
-                        className="text-center w-32 min-w-32 max-w-32 border-r border-gray-200 dark:border-gray-600"
+      {/* Date Picker Controls */}
+      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        <div className="flex flex-col space-y-2">
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Start Date</label>
+          <div className="relative">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    'w-[240px] justify-start text-left font-normal pr-10',
+                    !startDate && 'text-muted-foreground'
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {startDate ? format(startDate, 'PPP') : 'Pick a start date'}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-auto p-0"
+                align="start"
+              >
+                <Calendar
+                  mode="single"
+                  selected={startDate}
+                  onSelect={setStartDate}
+                />
+              </PopoverContent>
+            </Popover>
+            {startDate && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setStartDate(undefined)
+                }}
+                title="Clear start date"
+              >
+                <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col space-y-2">
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">End Date</label>
+          <div className="relative">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    'w-[240px] justify-start text-left font-normal pr-10',
+                    !endDate && 'text-muted-foreground'
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {endDate ? format(endDate, 'PPP') : 'Pick an end date'}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-auto p-0"
+                align="start"
+              >
+                <Calendar
+                  mode="single"
+                  selected={endDate}
+                  onSelect={setEndDate}
+                />
+              </PopoverContent>
+            </Popover>
+            {endDate && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setEndDate(undefined)
+                }}
+                title="Clear end date"
+              >
+                <X className="h-4 w-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col justify-end">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setStartDate(undefined)
+              setEndDate(undefined)
+            }}
+            className="w-full sm:w-auto"
+          >
+            Clear All
+          </Button>
+        </div>
+      </div>
+
+      {/* Results Section */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <div className="text-red-500 dark:text-red-400">
+            <p className="font-medium">Error loading metrics:</p>
+            <p className="text-sm mt-1">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {metricsResponse && (
+        <Tabs
+          defaultValue="chart"
+          className="w-full max-w-full"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <TabsList className="grid w-auto grid-cols-4 gap-2 bg-gray-100 dark:bg-gray-700 p-1">
+              <TabsTrigger
+                value="chart"
+                className="data-[state=active]:bg-white data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-800"
+              >
+                Chart
+              </TabsTrigger>
+              <TabsTrigger
+                value="table"
+                className="data-[state=active]:bg-white data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-800"
+              >
+                Table
+              </TabsTrigger>
+              <TabsTrigger
+                value="json"
+                className="data-[state=active]:bg-white data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-800"
+              >
+                JSON
+              </TabsTrigger>
+              <TabsTrigger
+                value="csv"
+                className="data-[state=active]:bg-white data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-800"
+              >
+                CSV
+              </TabsTrigger>
+            </TabsList>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadJSON}
+                className="flex items-center gap-2"
+              >
+                <Download className="h-4 w-4" />
+                JSON
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadCSV}
+                className="flex items-center gap-2"
+              >
+                <Download className="h-4 w-4" />
+                CSV
+              </Button>
+            </div>
+          </div>
+
+          <TabsContent
+            value="chart"
+            className="space-y-4 min-w-0"
+          >
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
+              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  Metrics Chart
+                </h4>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Time series visualization of cluster metrics
+                </p>
+              </div>
+              <div className="p-6">
+                {processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
+                  <div className="space-y-6">
+                    {/* Metric Selector */}
+                    <div className="flex items-center gap-4">
+                      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Select Metric:
+                      </label>
+                      <Select
+                        value={selectedMetric}
+                        onValueChange={setSelectedMetric}
                       >
-                        <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">
-                          {metric.formatter((bucket.data as any)[metric.key])}
-                        </div>
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-      </div>
+                        <SelectTrigger className="w-[300px]">
+                          <SelectValue placeholder="Choose a metric to visualize" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {processedData.metrics.map((metric) => (
+                            <SelectItem
+                              key={metric}
+                              value={metric}
+                            >
+                              {metric}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-      {/* Cluster Configuration */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          ⚙️ Metrics Configuration
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
-            <div className="text-sm text-gray-600 dark:text-gray-400">Kafka Version</div>
-            <div className="font-medium text-lg text-gray-900 dark:text-gray-100">
-              {cluster.metrics.kafka_version}
+                    {/* Single Chart */}
+                    {selectedMetric && (
+                      <div>
+                        <ResponsiveContainer
+                          width="100%"
+                          height={400}
+                        >
+                          <LineChart data={processedData.chartData}>
+                            <CartesianGrid
+                              strokeDasharray="3 3"
+                              className="opacity-30"
+                            />
+                            <XAxis
+                              dataKey="formattedDate"
+                              tick={{ fontSize: 12, fill: '#f9fafb' }}
+                              className="text-gray-100 dark:text-gray-100"
+                            />
+                            <YAxis
+                              tick={{ fontSize: 12, fill: '#f9fafb' }}
+                              className="text-gray-100 dark:text-gray-100"
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: 'rgb(255 255 255)',
+                                border: '1px solid rgb(229 231 235)',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                              }}
+                              labelStyle={{ color: 'rgb(55 65 81)' }}
+                              formatter={(value) => [
+                                value !== null ? value : 'No data',
+                                selectedMetric,
+                              ]}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey={selectedMetric}
+                              stroke="#3b82f6"
+                              strokeWidth={3}
+                              dot={{ r: 2, fill: '#3b82f6' }}
+                              activeDot={{ r: 4, fill: '#1d4ed8' }}
+                              connectNulls={false}
+                              name={selectedMetric}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500 dark:text-gray-400">No chart data available</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
-            <div className="text-sm text-gray-600 dark:text-gray-400">Enhanced Monitoring</div>
-            <div className="font-medium text-lg text-gray-900 dark:text-gray-100">
-              {cluster.metrics.enhanced_monitoring}
-            </div>
-          </div>
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
-            <div className="text-sm text-gray-600 dark:text-gray-400">AZ Distribution</div>
-            <div className="font-medium text-lg text-gray-900 dark:text-gray-100">
-              {cluster.metrics.broker_az_distribution}
-            </div>
-          </div>
-        </div>
+          </TabsContent>
 
-        <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900 rounded-lg transition-colors">
-          <div className="text-sm text-blue-800 dark:text-blue-200">
-            <strong>Metrics Period:</strong>{' '}
-            {new Date(cluster.metrics.start_window_date).toLocaleDateString()} to{' '}
-            {new Date(cluster.metrics.end_window_date).toLocaleDateString()}
-          </div>
-          <div className="text-sm text-blue-600 dark:text-blue-300 mt-1">
-            {metricsData.buckets.length} data points collected
-          </div>
+          <TabsContent
+            value="table"
+            className="space-y-4 min-w-0"
+          >
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
+              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Metrics</h4>
+              </div>
+              <div className="w-full overflow-hidden">
+                <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                  <Table className="min-w-full">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10 w-[200px] max-w-[200px] border-r border-gray-200 dark:border-gray-600">
+                          Metric
+                        </TableHead>
+                        {processedData.uniqueDates.map((date, index) => (
+                          <TableHead
+                            key={index}
+                            className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600"
+                          >
+                            <div className="truncate">{date}</div>
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {processedData.tableData.map((row, rowIndex) => (
+                        <TableRow
+                          key={rowIndex}
+                          className="hover:bg-gray-50 dark:hover:bg-gray-700"
+                        >
+                          <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium border-r border-gray-200 dark:border-gray-600 w-[200px] max-w-[200px]">
+                            <div
+                              className="truncate pr-2"
+                              title={row.metric}
+                            >
+                              {row.metric.replace('Cluster Aggregate - ', '')}
+                            </div>
+                          </TableCell>
+                          {row.values.map((value, valueIndex) => (
+                            <TableCell
+                              key={valueIndex}
+                              className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]"
+                            >
+                              <div className="font-mono text-sm truncate">
+                                {value !== null ? value.toFixed(2) : '-'}
+                              </div>
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent
+            value="json"
+            className="space-y-4 min-w-0"
+          >
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-w-0 max-w-full">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-gray-600 dark:text-gray-400">Raw API Response:</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    navigator.clipboard.writeText(JSON.stringify(metricsResponse, null, 2))
+                  }
+                  className="text-xs flex-shrink-0"
+                >
+                  Copy JSON
+                </Button>
+              </div>
+              <div className="w-full overflow-hidden">
+                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-white dark:bg-gray-800 p-4 rounded border max-w-full">
+                  {JSON.stringify(metricsResponse, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent
+            value="csv"
+            className="space-y-4 min-w-0"
+          >
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-w-0 max-w-full">
+              <div className="flex items-center mb-2">
+                <div className="flex-1" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigator.clipboard.writeText(processedData.csvData)}
+                  className="text-xs flex-shrink-0"
+                >
+                  Copy CSV
+                </Button>
+              </div>
+              <div className="w-full overflow-hidden">
+                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-white dark:bg-gray-800 p-4 rounded border font-mono max-w-full">
+                  {processedData.csvData}
+                </pre>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+      )}
+
+      {!metricsResponse && !error && !isLoading && (
+        <div className="text-center py-8">
+          <p className="text-gray-500 dark:text-gray-400">
+            Select dates and fetch metrics to view data for this cluster.
+          </p>
         </div>
-      </div>
+      )}
     </div>
   )
 }

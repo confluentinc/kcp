@@ -5,10 +5,20 @@ interface RegionReportProps {
   region: {
     name: string
     costs?: {
-      buckets: Array<{
-        time_period_start: string
-        time_period_end: string
-        data: Record<string, Record<string, number>>
+      results: Array<{
+        Groups: Array<{
+          Keys: string[]
+          Metrics: {
+            UnblendedCost: {
+              Amount: string
+              Unit: string
+            }
+          }
+        }>
+        TimePeriod: {
+          Start: string
+          End: string
+        }
       }>
       metadata: any
     }
@@ -20,38 +30,37 @@ interface RegionReportProps {
 }
 
 export default function RegionReport({ region }: RegionReportProps) {
-  // Calculate total region cost
+  // Calculate total region cost - updated for new data structure
   const totalRegionCost = useMemo(() => {
-    const costBuckets = region.costs?.buckets || []
-    return costBuckets.reduce((sum: number, bucket: any) => {
-      const bucketTotal = Object.values(bucket.data || {}).reduce(
-        (bucketSum: number, service: any) => {
-          return (
-            bucketSum +
-            Object.values(service || {}).reduce(
-              (serviceSum: number, cost: any) => serviceSum + (typeof cost === 'number' ? cost : 0),
-              0
-            )
-          )
-        },
-        0
-      )
-      return sum + bucketTotal
-    }, 0)
-  }, [region.costs?.buckets])
+    const costResults = region.costs?.results || []
+    return costResults.reduce((sum: number, result: any) => {
+      const resultTotal =
+        result.Groups?.reduce((groupSum: number, group: any) => {
+          const cost = parseFloat(group.Metrics?.UnblendedCost?.Amount || '0')
+          return groupSum + cost
+        }, 0) || 0
 
-  // Calculate MSK-only cost
-  const mskCost = useMemo(() => {
-    const costBuckets = region.costs?.buckets || []
-    return costBuckets.reduce((sum: number, bucket: any) => {
-      const mskService = bucket.data?.['Amazon Managed Streaming for Apache Kafka'] || {}
-      const mskTotal = Object.values(mskService).reduce(
-        (serviceSum: number, cost: any) => serviceSum + (typeof cost === 'number' ? cost : 0),
-        0
-      )
-      return sum + mskTotal
+      return sum + resultTotal
     }, 0)
-  }, [region.costs?.buckets])
+  }, [region.costs?.results])
+
+  // Calculate MSK-only cost - updated for new data structure
+  const mskCost = useMemo(() => {
+    const costResults = region.costs?.results || []
+    return costResults.reduce((sum: number, result: any) => {
+      const mskGroups =
+        result.Groups?.filter(
+          (group: any) => group.Keys?.[0] === 'Amazon Managed Streaming for Apache Kafka'
+        ) || []
+
+      const resultTotal = mskGroups.reduce((groupSum: number, group: any) => {
+        const cost = parseFloat(group.Metrics?.UnblendedCost?.Amount || '0')
+        return groupSum + cost
+      }, 0)
+
+      return sum + resultTotal
+    }, 0)
+  }, [region.costs?.results])
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
@@ -101,7 +110,7 @@ export default function RegionReport({ region }: RegionReportProps) {
           </div>
         </div>
         <div className="p-6">
-          <CostAnalysis costData={region.costs?.buckets || []} />
+          <CostAnalysis costData={region.costs?.results || []} />
         </div>
       </div>
     </div>
