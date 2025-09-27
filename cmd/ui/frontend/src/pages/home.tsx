@@ -1,19 +1,27 @@
-import { useState, useRef } from 'react'
-import Sidebar, { type Region, type Cluster } from '@/components/Sidebar'
+import { useRef } from 'react'
+import Sidebar from '@/components/Sidebar'
+import type { Region, Cluster } from '@/types'
 import ClusterReport from '@/components/ClusterReport'
 import RegionReport from '@/components/RegionReport'
 import AppHeader from '@/components/AppHeader'
+import { useAppStore } from '@/stores/appStore'
 
 export default function Home() {
-  const [regions, setRegions] = useState<Region[]>([])
-  const [selectedCluster, setSelectedCluster] = useState<{
-    cluster: Cluster
-    regionName: string
-  } | null>(null)
-  const [selectedRegion, setSelectedRegion] = useState<Region | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Global state from Zustand - using single selector to avoid multiple subscriptions
+  const {
+    regions,
+    selectedCluster,
+    selectedRegion,
+    isProcessing,
+    error,
+    setRegions,
+    setSelectedCluster,
+    setSelectedRegion,
+    setIsProcessing,
+    setError,
+  } = useAppStore()
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -21,8 +29,7 @@ export default function Home() {
 
     // Reset state
     setRegions([])
-    setSelectedCluster(null)
-    setSelectedRegion(null)
+    useAppStore.getState().clearSelection()
     setError(null)
     setIsProcessing(true)
 
@@ -63,10 +70,7 @@ export default function Home() {
             ) {
               const firstRegion = processedRegions[0]
               const firstCluster = firstRegion.clusters[0]
-              setSelectedCluster({
-                cluster: firstCluster,
-                regionName: firstRegion.name,
-              })
+              setSelectedCluster(firstCluster, firstRegion.name)
             }
           } else {
             throw new Error('Invalid response format from server')
@@ -78,8 +82,7 @@ export default function Home() {
         console.error('Error processing file:', err)
         setError(err instanceof Error ? err.message : 'Failed to process file')
         setRegions([])
-        setSelectedCluster(null)
-        setSelectedRegion(null)
+        useAppStore.getState().clearSelection()
       } finally {
         setIsProcessing(false)
       }
@@ -95,13 +98,11 @@ export default function Home() {
   }
 
   const handleClusterSelect = (cluster: Cluster, regionName: string) => {
-    setSelectedCluster({ cluster, regionName })
-    setSelectedRegion(null)
+    setSelectedCluster(cluster, regionName)
   }
 
   const handleRegionSelect = (region: Region) => {
     setSelectedRegion(region)
-    setSelectedCluster(null)
   }
 
   return (

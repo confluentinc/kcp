@@ -21,6 +21,7 @@ import {
 import { CalendarIcon, X, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { cn, downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
+import { useClusterDateFilters } from '@/stores/appStore'
 import {
   LineChart,
   Line,
@@ -43,9 +44,13 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   const [isLoading, setIsLoading] = useState(false)
   const [metricsResponse, setMetricsResponse] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
-  const [startDate, setStartDate] = useState<Date | undefined>(undefined)
-  const [endDate, setEndDate] = useState<Date | undefined>(undefined)
   const [selectedMetric, setSelectedMetric] = useState<string>('')
+
+  // Cluster-specific date state from Zustand
+  const { startDate, endDate, setStartDate, setEndDate, clearDates } = useClusterDateFilters(
+    cluster.region || 'unknown',
+    cluster.name
+  )
 
   // Process metrics data for table and CSV formats
   const processedData = useMemo(() => {
@@ -336,10 +341,7 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
         <div className="flex flex-col justify-end">
           <Button
             variant="outline"
-            onClick={() => {
-              setStartDate(undefined)
-              setEndDate(undefined)
-            }}
+            onClick={clearDates}
             className="w-full sm:w-auto"
           >
             Clear All
@@ -466,12 +468,12 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                             />
                             <XAxis
                               dataKey="formattedDate"
-                              tick={{ fontSize: 12, fill: '#f9fafb' }}
-                              className="text-gray-100 dark:text-gray-100"
+                              tick={{ fontSize: 12, fill: 'currentColor' }}
+                              className="text-gray-700 dark:text-gray-200"
                             />
                             <YAxis
-                              tick={{ fontSize: 12, fill: '#f9fafb' }}
-                              className="text-gray-100 dark:text-gray-100"
+                              tick={{ fontSize: 12, fill: 'currentColor' }}
+                              className="text-gray-700 dark:text-gray-200"
                             />
                             <Tooltip
                               contentStyle={{
