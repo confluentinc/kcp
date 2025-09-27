@@ -81,7 +81,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 	// time range of 12 months from now with monthly granularity
 	startDate := time.Now().AddDate(0, -12, 0)
 	endDate := time.Now()
-	granularity := costexplorertypes.GranularityMonthly
+	granularity := costexplorertypes.GranularityDaily
 
 	costInformation, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, granularity, tagsMap)
 	if err != nil {
