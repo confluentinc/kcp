@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import ClusterOverview from './ClusterOverview'
 import ClusterMetrics from './ClusterMetrics'
 import ClusterTopics from './ClusterTopics'
@@ -36,24 +36,6 @@ interface ClusterReportProps {
 export default function ClusterReport({ cluster, regionName, regionData }: ClusterReportProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'topics' | 'metrics'>('overview')
 
-  // MSK-only cost calculation for header - updated for new data structure
-  const mskCost = useMemo(() => {
-    const costResults = regionData?.costs?.results || []
-    return costResults.reduce((sum: number, result: any) => {
-      const mskGroups =
-        result.Groups?.filter(
-          (group: any) => group.Keys?.[0] === 'Amazon Managed Streaming for Apache Kafka'
-        ) || []
-
-      const resultTotal = mskGroups.reduce((groupSum: number, group: any) => {
-        const cost = parseFloat(group.Metrics?.UnblendedCost?.Amount || '0')
-        return groupSum + cost
-      }, 0)
-
-      return sum + resultTotal
-    }, 0)
-  }, [regionData?.costs?.results])
-
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
   const provisioned = mskConfig?.Provisioned
   const brokerInfo = provisioned?.BrokerNodeGroupInfo
@@ -70,9 +52,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
     )
   }
 
-  const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
-
   const formatDate = (dateString: string) =>
     new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -88,7 +67,9 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-colors">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">{cluster.name}</h1>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+              Cluster:&nbsp;{cluster.name}
+            </h1>
             <p className="text-lg text-gray-600 dark:text-gray-300 mt-1">
               {regionName} • {mskConfig.ClusterType || 'Unknown'} •{' '}
               {provisioned.NumberOfBrokerNodes || 0} brokers
@@ -97,12 +78,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
               Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'} •
               Version: {mskConfig.CurrentVersion || 'Unknown'}
             </p>
-          </div>
-          <div className="text-right">
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-              {formatCurrency(mskCost)}
-            </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">MSK Service Cost</p>
           </div>
         </div>
       </div>

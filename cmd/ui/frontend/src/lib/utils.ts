@@ -70,3 +70,13 @@ export function generateMetricsFilename(clusterName: string, region?: string): s
   const cleanRegion = region ? region.replace(/[^a-zA-Z0-9-_]/g, '-') : 'unknown'
   return `metrics-${cleanClusterName}-${cleanRegion}`
 }
+
+/**
+ * Generates a filename for costs downloads
+ * @param region - The region name
+ * @returns A formatted filename string
+ */
+export function generateCostsFilename(region: string): string {
+  const cleanRegion = region.replace(/[^a-zA-Z0-9-_]/g, '-')
+  return `costs-${cleanRegion}`
+}

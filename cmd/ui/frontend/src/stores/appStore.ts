@@ -8,6 +8,13 @@ interface ClusterDateFilters {
   endDate: Date | undefined
 }
 
+// Region-specific state for costs
+interface RegionState {
+  startDate: Date | undefined
+  endDate: Date | undefined
+  activeCostsTab: string
+}
+
 interface AppState {
   // Data
   regions: Region[]
@@ -15,18 +22,24 @@ interface AppState {
   // Selection state
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
+  selectedSummary: boolean
 
   // Date filters (per cluster)
   clusterDateFilters: Record<string, ClusterDateFilters> // Key: "region:cluster"
 
+  // Region-specific state for costs (per region)
+  regionState: Record<string, RegionState> // Key: "region"
+
   // UI state
   isProcessing: boolean
   error: string | null
+  activeMetricsTab: string
 
   // Actions
   setRegions: (regions: Region[]) => void
   setSelectedCluster: (cluster: Cluster, regionName: string) => void
   setSelectedRegion: (region: Region) => void
+  setSelectedSummary: () => void
   clearSelection: () => void
 
   // Date filter actions (cluster-specific)
@@ -35,9 +48,17 @@ interface AppState {
   clearClusterDates: (region: string, cluster: string) => void
   getClusterDateFilters: (region: string, cluster: string) => ClusterDateFilters
 
+  // Region-specific actions for costs
+  setRegionStartDate: (region: string, date: Date | undefined) => void
+  setRegionEndDate: (region: string, date: Date | undefined) => void
+  clearRegionDates: (region: string) => void
+  setRegionActiveCostsTab: (region: string, tab: string) => void
+  getRegionState: (region: string) => RegionState
+
   // UI actions
   setIsProcessing: (processing: boolean) => void
   setError: (error: string | null) => void
+  setActiveMetricsTab: (tab: string) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -47,9 +68,12 @@ export const useAppStore = create<AppState>()(
       regions: [],
       selectedCluster: null,
       selectedRegion: null,
+      selectedSummary: false,
       clusterDateFilters: {},
+      regionState: {},
       isProcessing: false,
       error: null,
+      activeMetricsTab: 'chart',
 
       // Data actions
       setRegions: (regions) => set({ regions }, false, 'setRegions'),
@@ -59,6 +83,7 @@ export const useAppStore = create<AppState>()(
           {
             selectedCluster: { cluster, regionName },
             selectedRegion: null,
+            selectedSummary: false,
           },
           false,
           'setSelectedCluster'
@@ -69,9 +94,21 @@ export const useAppStore = create<AppState>()(
           {
             selectedRegion: region,
             selectedCluster: null,
+            selectedSummary: false,
           },
           false,
           'setSelectedRegion'
+        ),
+
+      setSelectedSummary: () =>
+        set(
+          {
+            selectedSummary: true,
+            selectedCluster: null,
+            selectedRegion: null,
+          },
+          false,
+          'setSelectedSummary'
         ),
 
       clearSelection: () =>
@@ -79,6 +116,7 @@ export const useAppStore = create<AppState>()(
           {
             selectedCluster: null,
             selectedRegion: null,
+            selectedSummary: false,
           },
           false,
           'clearSelection'
@@ -143,14 +181,105 @@ export const useAppStore = create<AppState>()(
         return state.clusterDateFilters[key] || { startDate: undefined, endDate: undefined }
       },
 
+      // Region-specific actions for costs
+      setRegionStartDate: (region, date) => {
+        const state = get()
+        set(
+          {
+            regionState: {
+              ...state.regionState,
+              [region]: {
+                ...state.regionState[region],
+                startDate: date,
+                endDate: state.regionState[region]?.endDate,
+                activeCostsTab: state.regionState[region]?.activeCostsTab || 'chart',
+              },
+            },
+          },
+          false,
+          'setRegionStartDate'
+        )
+      },
+
+      setRegionEndDate: (region, date) => {
+        const state = get()
+        set(
+          {
+            regionState: {
+              ...state.regionState,
+              [region]: {
+                ...state.regionState[region],
+                startDate: state.regionState[region]?.startDate,
+                endDate: date,
+                activeCostsTab: state.regionState[region]?.activeCostsTab || 'chart',
+              },
+            },
+          },
+          false,
+          'setRegionEndDate'
+        )
+      },
+
+      clearRegionDates: (region) => {
+        const state = get()
+        set(
+          {
+            regionState: {
+              ...state.regionState,
+              [region]: {
+                ...state.regionState[region],
+                startDate: undefined,
+                endDate: undefined,
+                activeCostsTab: state.regionState[region]?.activeCostsTab || 'chart',
+              },
+            },
+          },
+          false,
+          'clearRegionDates'
+        )
+      },
+
+      setRegionActiveCostsTab: (region, tab) => {
+        const state = get()
+        set(
+          {
+            regionState: {
+              ...state.regionState,
+              [region]: {
+                ...state.regionState[region],
+                startDate: state.regionState[region]?.startDate,
+                endDate: state.regionState[region]?.endDate,
+                activeCostsTab: tab,
+              },
+            },
+          },
+          false,
+          'setRegionActiveCostsTab'
+        )
+      },
+
+      getRegionState: (region) => {
+        const state = get()
+        return (
+          state.regionState[region] || {
+            startDate: undefined,
+            endDate: undefined,
+            activeCostsTab: 'chart',
+          }
+        )
+      },
+
       // UI actions
       setIsProcessing: (processing: boolean) =>
         set({ isProcessing: processing }, false, 'setIsProcessing'),
 
       setError: (error: string | null) => set({ error }, false, 'setError'),
+
+      setActiveMetricsTab: (tab: string) =>
+        set({ activeMetricsTab: tab }, false, 'setActiveMetricsTab'),
     }),
     {
-      name: 'kcp-app-store', // Name for Redux DevTools
+      name: 'kcp-app-store',
     }
   )
 )
@@ -191,5 +320,32 @@ export const useClusterDateFilters = (region: string, cluster: string) => {
     setStartDate: (date: Date | undefined) => setClusterStartDate(region, cluster, date),
     setEndDate: (date: Date | undefined) => setClusterEndDate(region, cluster, date),
     clearDates: () => clearClusterDates(region, cluster),
+  }
+}
+
+// Hook to get region-specific state and actions for costs
+export const useRegionCostFilters = (region: string) => {
+  const {
+    regionState,
+    setRegionStartDate,
+    setRegionEndDate,
+    clearRegionDates,
+    setRegionActiveCostsTab,
+  } = useAppStore()
+
+  const state = regionState[region] || {
+    startDate: undefined,
+    endDate: undefined,
+    activeCostsTab: 'chart',
+  }
+
+  return {
+    startDate: state.startDate,
+    endDate: state.endDate,
+    activeCostsTab: state.activeCostsTab,
+    setStartDate: (date: Date | undefined) => setRegionStartDate(region, date),
+    setEndDate: (date: Date | undefined) => setRegionEndDate(region, date),
+    clearDates: () => clearRegionDates(region),
+    setActiveCostsTab: (tab: string) => setRegionActiveCostsTab(region, tab),
   }
 }

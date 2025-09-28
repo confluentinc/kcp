@@ -21,7 +21,7 @@ import {
 import { CalendarIcon, X, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { cn, downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
-import { useClusterDateFilters } from '@/stores/appStore'
+import { useClusterDateFilters, useAppStore } from '@/stores/appStore'
 import {
   LineChart,
   Line,
@@ -51,6 +51,10 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
     cluster.region || 'unknown',
     cluster.name
   )
+
+  // Active tab state from Zustand
+  const activeMetricsTab = useAppStore((state) => state.activeMetricsTab)
+  const setActiveMetricsTab = useAppStore((state) => state.setActiveMetricsTab)
 
   // Process metrics data for table and CSV formats
   const processedData = useMemo(() => {
@@ -208,11 +212,7 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   if (isLoading) {
     return (
       <div className="space-y-6">
-        {/* Loading Table */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-          <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-            Cluster Metrics
-          </h3>
           <div className="flex items-center justify-center h-64">
             <div className="flex flex-col items-center space-y-4">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -242,10 +242,6 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   // Main component render
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-      <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-6">
-        Cluster Metrics
-      </h3>
-
       {/* Date Picker Controls */}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
         <div className="flex flex-col space-y-2">
@@ -361,7 +357,8 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
 
       {metricsResponse && (
         <Tabs
-          defaultValue="chart"
+          value={activeMetricsTab}
+          onValueChange={setActiveMetricsTab}
           className="w-full max-w-full"
         >
           <div className="flex items-center justify-between mb-4">
@@ -418,40 +415,85 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
             className="space-y-4 min-w-0"
           >
             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
-              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                  Metrics Chart
-                </h4>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Time series visualization of cluster metrics
-                </p>
-              </div>
-              <div className="p-6">
+              <div className="p-6 rounded-lg">
                 {processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
                   <div className="space-y-6">
-                    {/* Metric Selector */}
-                    <div className="flex items-center gap-4">
-                      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        Select Metric:
-                      </label>
-                      <Select
-                        value={selectedMetric}
-                        onValueChange={setSelectedMetric}
-                      >
-                        <SelectTrigger className="w-[300px]">
-                          <SelectValue placeholder="Choose a metric to visualize" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {processedData.metrics.map((metric) => (
-                            <SelectItem
-                              key={metric}
-                              value={metric}
-                            >
-                              {metric}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {/* Metric Selector and Summary Stats */}
+                    <div className="flex items-center justify-between">
+                      {/* Left side: Metric Selector */}
+                      <div className="flex items-center gap-4">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Select Metric:
+                        </label>
+                        <Select
+                          value={selectedMetric}
+                          onValueChange={setSelectedMetric}
+                        >
+                          <SelectTrigger className="w-[300px]">
+                            <SelectValue placeholder="Choose a metric to visualize" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {processedData.metrics.map((metric) => (
+                              <SelectItem
+                                key={metric}
+                                value={metric}
+                              >
+                                {metric}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Right side: Aggregates Stats */}
+                      {selectedMetric && metricsResponse?.aggregates && (
+                        <div className="flex items-center gap-4">
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Summary:
+                          </span>
+                          {(() => {
+                            // Find the metric in the aggregates data (now uses clean metric names)
+                            const metricAggregate = metricsResponse.aggregates[selectedMetric]
+
+                            if (!metricAggregate) {
+                              return (
+                                <span className="text-sm text-gray-500 dark:text-gray-400">
+                                  No data available
+                                </span>
+                              )
+                            }
+
+                            return (
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    Min:
+                                  </span>
+                                  <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
+                                    {metricAggregate.min?.toFixed(2) ?? 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    Avg:
+                                  </span>
+                                  <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                    {metricAggregate.avg?.toFixed(2) ?? 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    Max:
+                                  </span>
+                                  <span className="text-sm font-semibold text-red-600 dark:text-red-400">
+                                    {metricAggregate.max?.toFixed(2) ?? 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      )}
                     </div>
 
                     {/* Single Chart */}
@@ -476,17 +518,22 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                               className="text-gray-700 dark:text-gray-200"
                             />
                             <Tooltip
-                              contentStyle={{
-                                backgroundColor: 'rgb(255 255 255)',
-                                border: '1px solid rgb(229 231 235)',
-                                borderRadius: '6px',
-                                fontSize: '12px',
+                              content={({ active, payload, label }) => {
+                                if (active && payload && payload.length) {
+                                  return (
+                                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
+                                      <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-1">
+                                        {label}
+                                      </p>
+                                      <p className="text-gray-900 dark:text-gray-100 text-sm">
+                                        <span className="font-medium">{selectedMetric}:</span>{' '}
+                                        {payload[0].value !== null ? payload[0].value : 'No data'}
+                                      </p>
+                                    </div>
+                                  )
+                                }
+                                return null
                               }}
-                              labelStyle={{ color: 'rgb(55 65 81)' }}
-                              formatter={(value) => [
-                                value !== null ? value : 'No data',
-                                selectedMetric,
-                              ]}
                             />
                             <Line
                               type="monotone"
@@ -517,16 +564,24 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
             className="space-y-4 min-w-0"
           >
             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
-              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Metrics</h4>
-              </div>
-              <div className="w-full overflow-hidden">
+              <div className="w-full overflow-hidden rounded-lg">
                 <div className="overflow-x-auto max-h-96 overflow-y-auto">
                   <Table className="min-w-full">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10 w-[200px] max-w-[200px] border-r border-gray-200 dark:border-gray-600">
                           Metric
+                        </TableHead>
+                        <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-gray-600">
+                          <div className="text-blue-600 dark:text-blue-400 font-semibold">Min</div>
+                        </TableHead>
+                        <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-gray-600">
+                          <div className="text-green-600 dark:text-green-400 font-semibold">
+                            Avg
+                          </div>
+                        </TableHead>
+                        <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-gray-600">
+                          <div className="text-red-600 dark:text-red-400 font-semibold">Max</div>
                         </TableHead>
                         {processedData.uniqueDates.map((date, index) => (
                           <TableHead
@@ -539,31 +594,60 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {processedData.tableData.map((row, rowIndex) => (
-                        <TableRow
-                          key={rowIndex}
-                          className="hover:bg-gray-50 dark:hover:bg-gray-700"
-                        >
-                          <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium border-r border-gray-200 dark:border-gray-600 w-[200px] max-w-[200px]">
-                            <div
-                              className="truncate pr-2"
-                              title={row.metric}
-                            >
-                              {row.metric.replace('Cluster Aggregate - ', '')}
-                            </div>
-                          </TableCell>
-                          {row.values.map((value, valueIndex) => (
-                            <TableCell
-                              key={valueIndex}
-                              className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]"
-                            >
-                              <div className="font-mono text-sm truncate">
-                                {value !== null ? value.toFixed(2) : '-'}
+                      {processedData.tableData.map((row, rowIndex) => {
+                        // Get aggregate data for this metric
+                        const cleanMetricName = row.metric.replace('Cluster Aggregate - ', '')
+                        const metricAggregate = metricsResponse?.aggregates?.[cleanMetricName]
+
+                        return (
+                          <TableRow
+                            key={rowIndex}
+                            className="hover:bg-gray-50 dark:hover:bg-gray-700"
+                          >
+                            <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium border-r border-gray-200 dark:border-gray-600 w-[200px] max-w-[200px]">
+                              <div
+                                className="truncate pr-2"
+                                title={row.metric}
+                              >
+                                {cleanMetricName}
                               </div>
                             </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
+
+                            {/* Min column */}
+                            <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[100px] min-w-[100px] max-w-[100px]">
+                              <div className="font-mono text-sm truncate text-blue-600 dark:text-blue-400 font-semibold">
+                                {metricAggregate?.min?.toFixed(2) ?? '-'}
+                              </div>
+                            </TableCell>
+
+                            {/* Avg column */}
+                            <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[100px] min-w-[100px] max-w-[100px]">
+                              <div className="font-mono text-sm truncate text-green-600 dark:text-green-400 font-semibold">
+                                {metricAggregate?.avg?.toFixed(2) ?? '-'}
+                              </div>
+                            </TableCell>
+
+                            {/* Max column */}
+                            <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[100px] min-w-[100px] max-w-[100px]">
+                              <div className="font-mono text-sm truncate text-red-600 dark:text-red-400 font-semibold">
+                                {metricAggregate?.max?.toFixed(2) ?? '-'}
+                              </div>
+                            </TableCell>
+
+                            {/* Existing date columns */}
+                            {row.values.map((value, valueIndex) => (
+                              <TableCell
+                                key={valueIndex}
+                                className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]"
+                              >
+                                <div className="font-mono text-sm truncate">
+                                  {value !== null ? value.toFixed(2) : '-'}
+                                </div>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -576,8 +660,8 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
             className="space-y-4 min-w-0"
           >
             <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-w-0 max-w-full">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-gray-600 dark:text-gray-400">Raw API Response:</p>
+              <div className="flex items-center mb-2">
+                <div className="flex-1" />
                 <Button
                   variant="outline"
                   size="sm"

@@ -34,7 +34,13 @@ export default function ClusterOverview({
   return (
     <div className="space-y-6">
       {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            {mskConfig.ClusterType || 'Unknown'}
+          </div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Cluster Type</div>
+        </div>
         <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
           <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             {provisioned.NumberOfBrokerNodes}

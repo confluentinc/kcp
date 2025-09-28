@@ -351,9 +351,10 @@ type ProcessedRegion struct {
 }
 
 type ProcessedRegionCosts struct {
-	Metadata CostMetadata    `json:"metadata"`
-	Results  []ProcessedCost `json:"results"`
-	Totals   []ServiceTotal  `json:"totals"`
+	Metadata   CostMetadata           `json:"metadata"`
+	Results    []ProcessedCost        `json:"results"`
+	Totals     []ServiceTotal         `json:"-"`
+	Aggregates map[string]interface{} `json:"aggregates"`
 }
 
 type ProcessedCost struct {
@@ -380,8 +381,9 @@ type ProcessedCluster struct {
 }
 
 type ProcessedClusterMetrics struct {
-	Metadata MetricMetadata    `json:"metadata"`
-	Metrics  []ProcessedMetric `json:"results"`
+	Metadata   MetricMetadata             `json:"metadata"`
+	Metrics    []ProcessedMetric          `json:"results"`
+	Aggregates map[string]MetricAggregate `json:"aggregates"`
 }
 
 type ProcessedMetric struct {
@@ -389,4 +391,17 @@ type ProcessedMetric struct {
 	End   string   `json:"end"`
 	Label string   `json:"label"`
 	Value *float64 `json:"value"`
+}
+
+type MetricAggregate struct {
+	Average *float64 `json:"avg"`
+	Maximum *float64 `json:"max"`
+	Minimum *float64 `json:"min"`
+}
+
+type CostAggregate struct {
+	Sum     *float64 `json:"sum"`
+	Average *float64 `json:"avg"`
+	Maximum *float64 `json:"max"`
+	Minimum *float64 `json:"min"`
 }
