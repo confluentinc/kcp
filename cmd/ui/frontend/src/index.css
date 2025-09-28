@@ -118,3 +118,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Print styles - hide sidebar and show only main content */
+@media print {
+  aside {
+    display: none !important;
+  }
+
+  main {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Ensure the summary content takes full width when printing */
+  .print\\:block {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 1rem !important;
+  }
+
+  /* Hide the export button when printing */
+  button[onclick*='handlePrint'] {
+    display: none !important;
+  }
+}

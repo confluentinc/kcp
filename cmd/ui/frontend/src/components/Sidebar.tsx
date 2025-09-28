@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import type { Cluster, Region } from '@/types'
 
@@ -26,18 +27,60 @@ export default function Sidebar({
   isProcessing = false,
   error = null,
 }: SidebarProps) {
-  // Calculate region cost totals
-  const getRegionCostTotal = (region: Region) => {
-    const costResults = region.costs?.results || []
-    return costResults.reduce((sum: number, result: any) => {
-      const resultTotal =
-        result.Groups?.reduce((groupSum: number, group: any) => {
-          const cost = parseFloat(group.Metrics?.UnblendedCost?.Amount || '0')
-          return groupSum + cost
-        }, 0) || 0
+  const [regionCostData, setRegionCostData] = useState<Record<string, number>>({})
 
-      return sum + resultTotal
-    }, 0)
+  // Fetch cost data for all regions
+  useEffect(() => {
+    if (!regions || regions.length === 0) return
+
+    const fetchAllRegionCosts = async () => {
+      try {
+        const costPromises = regions.map(async (region) => {
+          const url = `/costs/${encodeURIComponent(region.name)}`
+          const response = await fetch(url)
+
+          if (!response.ok) {
+            return { regionName: region.name, totalCost: 0 }
+          }
+
+          const data = await response.json()
+          let totalCost = 0
+
+          // Calculate total cost from API response
+          if (data?.results && Array.isArray(data.results)) {
+            data.results.forEach((cost: any) => {
+              if (
+                cost &&
+                cost.service === 'Amazon Managed Streaming for Apache Kafka' &&
+                cost.value
+              ) {
+                totalCost += parseFloat(cost.value) || 0
+              }
+            })
+          }
+
+          return { regionName: region.name, totalCost }
+        })
+
+        const results = await Promise.all(costPromises)
+        const costData: Record<string, number> = {}
+
+        results.forEach(({ regionName, totalCost }) => {
+          costData[regionName] = totalCost
+        })
+
+        setRegionCostData(costData)
+      } catch (err) {
+        console.error('Error fetching region costs for sidebar:', err)
+      }
+    }
+
+    fetchAllRegionCosts()
+  }, [regions])
+
+  // Calculate region cost totals from fetched data
+  const getRegionCostTotal = (region: Region) => {
+    return regionCostData[region.name] || 0
   }
 
   const formatCurrency = (amount: number) =>
