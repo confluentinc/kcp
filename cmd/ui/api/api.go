@@ -1,9 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
+	"os"
 	"strings"
 	"time"
 
@@ -185,6 +186,15 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "Region not found",
+			"message": err.Error(),
+		})
+	}
+
+	// write json to a file called myoutput.json
+	jsonData, _ := json.Marshal(regionCosts)
+	if err := os.WriteFile("myoutput.json", jsonData, 0644); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to write region costs to file",
 			"message": err.Error(),
 		})
 	}
