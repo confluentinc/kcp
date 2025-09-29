@@ -17,6 +17,7 @@ var (
 	stateFile string
 )
 
+
 func NewReportCmd() *cobra.Command {
 	reportCmd := &cobra.Command{
 		Use:           "report",
@@ -25,6 +26,8 @@ func NewReportCmd() *cobra.Command {
 		SilenceErrors: true,
 		PreRunE:       preRunReport,
 		RunE:          runReport,
+		// todo - just hiding this for now until we know if we want to invest the time in it or not.
+		Hidden: true,
 	}
 
 	groups := map[*pflag.FlagSet]string{}

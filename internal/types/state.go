@@ -351,18 +351,34 @@ type ProcessedRegion struct {
 }
 
 type ProcessedRegionCosts struct {
-	Metadata   CostMetadata           `json:"metadata"`
-	Results    []ProcessedCost        `json:"results"`
-	Totals     []ServiceTotal         `json:"-"`
-	Aggregates map[string]interface{} `json:"aggregates"`
+	Metadata   CostMetadata        `json:"metadata"`
+	Results    []ProcessedCost     `json:"results"`
+	Aggregates ProcessedAggregates `json:"aggregates"`
+	Totals     []ServiceTotal      `json:"-"`
+}
+
+// ProcessedAggregates represents the three specific services we query
+type ProcessedAggregates struct {
+	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
+	AmazonManagedStreamingForApacheKafka ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka"`
+	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
 }
 
 type ProcessedCost struct {
-	Start     string `json:"start"`
-	End       string `json:"end"`
-	Service   string `json:"service"`
-	UsageType string `json:"usage_type"`
-	Value     string `json:"value"`
+	Start     string                 `json:"start"`
+	End       string                 `json:"end"`
+	Service   string                 `json:"service"`
+	UsageType string                 `json:"usage_type"`
+	Values    ProcessedCostBreakdown `json:"values"`
+}
+
+type ProcessedCostBreakdown struct {
+	UnblendedCost    float64 `json:"unblended_cost"`
+	BlendedCost      float64 `json:"blended_cost"`
+	AmortizedCost    float64 `json:"amortized_cost"`
+	NetAmortizedCost float64 `json:"net_amortized_cost"`
+	NetUnblendedCost float64 `json:"net_unblended_cost"`
+	UsageQuantity    float64 `json:"usage_quantity"`
 }
 
 type ServiceTotal struct {
@@ -404,4 +420,15 @@ type CostAggregate struct {
 	Average *float64 `json:"avg"`
 	Maximum *float64 `json:"max"`
 	Minimum *float64 `json:"min"`
+}
+
+// ServiceCostAggregates represents cost aggregates for a single service
+// Uses explicit fields for each metric type instead of a map
+type ServiceCostAggregates struct {
+	UnblendedCost    map[string]any `json:"unblended_cost"`
+	BlendedCost      map[string]any `json:"blended_cost"`
+	AmortizedCost    map[string]any `json:"amortized_cost"`
+	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
+	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
+	UsageQuantity    map[string]any `json:"usage_quantity"`
 }

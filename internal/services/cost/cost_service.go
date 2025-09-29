@@ -101,6 +101,26 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 		}
 	}
 
+	metrics := []string{
+		string(costexplorertypes.MetricUnblendedCost),
+		string(costexplorertypes.MetricBlendedCost),
+		string(costexplorertypes.MetricAmortizedCost),
+		string(costexplorertypes.MetricNetAmortizedCost),
+		string(costexplorertypes.MetricNetUnblendedCost),
+		string(costexplorertypes.MetricUsageQuantity),
+	}
+
+	groupBy := []costexplorertypes.GroupDefinition{
+		{
+			Type: costexplorertypes.GroupDefinitionTypeDimension,
+			Key:  aws.String(string(costexplorertypes.MonitorDimensionService)),
+		},
+		{
+			Type: costexplorertypes.GroupDefinitionTypeDimension,
+			Key:  aws.String(string(costexplorertypes.DimensionUsageType)),
+		},
+	}
+
 	input := &costexplorer.GetCostAndUsageInput{
 		TimePeriod: &costexplorertypes.DateInterval{
 			Start: start,
@@ -108,19 +128,8 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 		},
 		Granularity: granularity,
 		Filter:      filter,
-		Metrics:     []string{"BLENDED_COST", "UNBLENDED_COST", "AMORTIZED_COST", "NET_AMORTIZED_COST", "NET_UNBLENDED_COST", "USAGE_QUANTITY"},
-		// Metrics: []string{"UNBLENDED_COST"},
-
-		GroupBy: []costexplorertypes.GroupDefinition{
-			{
-				Type: costexplorertypes.GroupDefinitionTypeDimension,
-				Key:  aws.String("SERVICE"),
-			},
-			{
-				Type: costexplorertypes.GroupDefinitionTypeDimension,
-				Key:  aws.String("USAGE_TYPE"),
-			},
-		},
+		Metrics:     metrics,
+		GroupBy:     groupBy,
 	}
 
 	// Add NextPageToken if provided for pagination

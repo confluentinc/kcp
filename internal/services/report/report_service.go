@@ -75,23 +75,47 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 			service := aws.ToString(&group.Keys[0])
 			lineItem := aws.ToString(&group.Keys[1])
 
-			// Get the UnblendedCost from metrics
-			if unblendedCost, exists := group.Metrics["UnblendedCost"]; exists && unblendedCost.Amount != nil {
-				cost := aws.ToString(unblendedCost.Amount)
+			var costBreakdown types.ProcessedCostBreakdown
 
-				processedCosts = append(processedCosts, types.ProcessedCost{
-					Start:     start,
-					End:       end,
-					Service:   service,
-					UsageType: lineItem,
-					Value:     cost,
-				})
-
-				// Parse the cost as float64 and add to service total
-				if costFloat, err := strconv.ParseFloat(cost, 64); err == nil {
-					serviceTotals[service] += costFloat
+			if metric, exists := group.Metrics["UnblendedCost"]; exists && metric.Amount != nil {
+				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
+					costBreakdown.UnblendedCost = costFloat
+					serviceTotals[service] += costFloat // Use UnblendedCost for totals
 				}
 			}
+			if metric, exists := group.Metrics["BlendedCost"]; exists && metric.Amount != nil {
+				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
+					costBreakdown.BlendedCost = costFloat
+				}
+			}
+			if metric, exists := group.Metrics["AmortizedCost"]; exists && metric.Amount != nil {
+				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
+					costBreakdown.AmortizedCost = costFloat
+				}
+			}
+			if metric, exists := group.Metrics["NetAmortizedCost"]; exists && metric.Amount != nil {
+				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
+					costBreakdown.NetAmortizedCost = costFloat
+				}
+			}
+			if metric, exists := group.Metrics["NetUnblendedCost"]; exists && metric.Amount != nil {
+				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
+					costBreakdown.NetUnblendedCost = costFloat
+				}
+			}
+			if metric, exists := group.Metrics["UsageQuantity"]; exists && metric.Amount != nil {
+				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
+					costBreakdown.UsageQuantity = costFloat
+				}
+			}
+
+			processedCosts = append(processedCosts, types.ProcessedCost{
+				Start:     start,
+				End:       end,
+				Service:   service,
+				UsageType: lineItem,
+				Values:    costBreakdown,
+			})
 		}
 	}
 

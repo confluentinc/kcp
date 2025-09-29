@@ -1,9 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
+	"os"
 	"strings"
 	"time"
 
@@ -186,6 +187,15 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
+	// write json to a file called myoutput.json
+	jsonData, _ := json.Marshal(regionCosts)
+	if err := os.WriteFile("myoutput.json", jsonData, 0644); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to write region costs to file",
+			"message": err.Error(),
+		})
+	}
+
 	return c.JSON(http.StatusOK, regionCosts)
 }
 
@@ -301,20 +311,23 @@ func calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]type
 }
 
 // calculateCostAggregates calculates totals and aggregates for cost data in nested format
-func calculateCostAggregates(costs []types.ProcessedCost) map[string]interface{} {
+func calculateCostAggregates(costs []types.ProcessedCost) types.ProcessedAggregates {
+	aggregates := types.ProcessedAggregates{}
+
 	if len(costs) == 0 {
-		return make(map[string]interface{})
+		return aggregates
 	}
 
-	// Group costs by service and usage type
+	// Initialize the service maps for unblended costs only
+	aggregates.AWSCertificateManager.UnblendedCost = make(map[string]any)
+	aggregates.AmazonManagedStreamingForApacheKafka.UnblendedCost = make(map[string]any)
+	aggregates.EC2Other.UnblendedCost = make(map[string]any)
+
+	// Group costs by service and usage type (only for unblended costs)
 	serviceUsageData := make(map[string]map[string][]float64)
 
 	for _, cost := range costs {
-		value := 0.0
-		if parsed, err := strconv.ParseFloat(cost.Value, 64); err == nil {
-			value = parsed
-		}
-
+		value := cost.Values.UnblendedCost
 		service := cost.Service
 		usageType := cost.UsageType
 
@@ -325,11 +338,8 @@ func calculateCostAggregates(costs []types.ProcessedCost) map[string]interface{}
 		serviceUsageData[service][usageType] = append(serviceUsageData[service][usageType], value)
 	}
 
-	// Build nested aggregates response
-	aggregates := make(map[string]interface{})
-
+	// Process each service and populate the struct fields
 	for service, usageTypes := range serviceUsageData {
-		serviceAggregates := make(map[string]interface{})
 		serviceTotal := 0.0
 
 		for usageType, values := range usageTypes {
@@ -353,20 +363,35 @@ func calculateCostAggregates(costs []types.ProcessedCost) map[string]interface{}
 			}
 
 			avg := sum / float64(len(values))
-
 			serviceTotal += sum
 
-			serviceAggregates[usageType] = types.CostAggregate{
+			costAggregate := types.CostAggregate{
 				Sum:     &sum,
 				Average: &avg,
 				Maximum: &max,
 				Minimum: &min,
 			}
+
+			// Assign to the correct service field
+			switch service {
+			case "AWS Certificate Manager":
+				aggregates.AWSCertificateManager.UnblendedCost[usageType] = costAggregate
+			case "Amazon Managed Streaming for Apache Kafka":
+				aggregates.AmazonManagedStreamingForApacheKafka.UnblendedCost[usageType] = costAggregate
+			case "EC2 - Other":
+				aggregates.EC2Other.UnblendedCost[usageType] = costAggregate
+			}
 		}
 
-		// Add service total (rounded)
-		serviceAggregates["total"] = (serviceTotal)
-		aggregates[service] = serviceAggregates
+		// Add service total
+		switch service {
+		case "AWS Certificate Manager":
+			aggregates.AWSCertificateManager.UnblendedCost["total"] = serviceTotal
+		case "Amazon Managed Streaming for Apache Kafka":
+			aggregates.AmazonManagedStreamingForApacheKafka.UnblendedCost["total"] = serviceTotal
+		case "EC2 - Other":
+			aggregates.EC2Other.UnblendedCost["total"] = serviceTotal
+		}
 	}
 
 	return aggregates

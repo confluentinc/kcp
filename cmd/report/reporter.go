@@ -3,7 +3,6 @@ package report
 import (
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -122,10 +121,14 @@ func (r *Reporter) addRegionCostAnalysis(md *markdown.Markdown, region types.Pro
 		}
 
 		// Parse cost string to float
-		if costFloat, err := strconv.ParseFloat(cost.Value, 64); err == nil {
-			usageTypeSummary[cost.Service][cost.UsageType] += costFloat
-			serviceTotalsFromCosts[cost.Service] += costFloat
-		}
+		// if costFloat, err := strconv.ParseFloat(cost.Values, 64); err == nil {
+		// 	usageTypeSummary[cost.Service][cost.UsageType] += costFloat
+		// 	serviceTotalsFromCosts[cost.Service] += costFloat
+		// }
+
+		// todo - using unbleded for now - if we intend to include this report command in future - we should revisit this
+		usageTypeSummary[cost.Service][cost.UsageType] += cost.Values.UnblendedCost
+		serviceTotalsFromCosts[cost.Service] += cost.Values.UnblendedCost
 	}
 
 	// Separate MSK and other services
