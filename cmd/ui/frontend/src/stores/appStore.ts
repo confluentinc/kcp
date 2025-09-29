@@ -15,6 +15,12 @@ interface RegionState {
   activeCostsTab: string
 }
 
+// Summary-specific state for date filters
+interface SummaryDateFilters {
+  startDate: Date | undefined
+  endDate: Date | undefined
+}
+
 interface AppState {
   // Data
   regions: Region[]
@@ -29,6 +35,9 @@ interface AppState {
 
   // Region-specific state for costs (per region)
   regionState: Record<string, RegionState> // Key: "region"
+
+  // Summary-specific state for date filters
+  summaryDateFilters: SummaryDateFilters
 
   // UI state
   isProcessing: boolean
@@ -55,6 +64,12 @@ interface AppState {
   setRegionActiveCostsTab: (region: string, tab: string) => void
   getRegionState: (region: string) => RegionState
 
+  // Summary-specific actions for date filters
+  setSummaryStartDate: (date: Date | undefined) => void
+  setSummaryEndDate: (date: Date | undefined) => void
+  clearSummaryDates: () => void
+  getSummaryDateFilters: () => SummaryDateFilters
+
   // UI actions
   setIsProcessing: (processing: boolean) => void
   setError: (error: string | null) => void
@@ -71,6 +86,10 @@ export const useAppStore = create<AppState>()(
       selectedSummary: false,
       clusterDateFilters: {},
       regionState: {},
+      summaryDateFilters: {
+        startDate: undefined,
+        endDate: undefined,
+      },
       isProcessing: false,
       error: null,
       activeMetricsTab: 'chart',
@@ -269,6 +288,51 @@ export const useAppStore = create<AppState>()(
         )
       },
 
+      // Summary-specific date filter actions
+      setSummaryStartDate: (date) => {
+        set(
+          (state) => ({
+            summaryDateFilters: {
+              ...state.summaryDateFilters,
+              startDate: date,
+            },
+          }),
+          false,
+          'setSummaryStartDate'
+        )
+      },
+
+      setSummaryEndDate: (date) => {
+        set(
+          (state) => ({
+            summaryDateFilters: {
+              ...state.summaryDateFilters,
+              endDate: date,
+            },
+          }),
+          false,
+          'setSummaryEndDate'
+        )
+      },
+
+      clearSummaryDates: () => {
+        set(
+          {
+            summaryDateFilters: {
+              startDate: undefined,
+              endDate: undefined,
+            },
+          },
+          false,
+          'clearSummaryDates'
+        )
+      },
+
+      getSummaryDateFilters: () => {
+        const state = get()
+        return state.summaryDateFilters
+      },
+
       // UI actions
       setIsProcessing: (processing: boolean) =>
         set({ isProcessing: processing }, false, 'setIsProcessing'),
@@ -347,5 +411,19 @@ export const useRegionCostFilters = (region: string) => {
     setEndDate: (date: Date | undefined) => setRegionEndDate(region, date),
     clearDates: () => clearRegionDates(region),
     setActiveCostsTab: (tab: string) => setRegionActiveCostsTab(region, tab),
+  }
+}
+
+// Hook to get summary-specific date filters and acciones
+export const useSummaryDateFilters = () => {
+  const { summaryDateFilters, setSummaryStartDate, setSummaryEndDate, clearSummaryDates } =
+    useAppStore()
+
+  return {
+    startDate: summaryDateFilters.startDate,
+    endDate: summaryDateFilters.endDate,
+    setStartDate: (date: Date | undefined) => setSummaryStartDate(date),
+    setEndDate: (date: Date | undefined) => setSummaryEndDate(date),
+    clearDates: () => clearSummaryDates(),
   }
 }

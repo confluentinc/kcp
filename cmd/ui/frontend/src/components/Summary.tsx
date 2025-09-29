@@ -1,7 +1,11 @@
 import { useMemo, useEffect, useState } from 'react'
-import { useRegions } from '@/stores/appStore'
-import { Download } from 'lucide-react'
+import { useRegions, useSummaryDateFilters } from '@/stores/appStore'
+import { Download, CalendarIcon, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { format } from 'date-fns'
+import { cn } from '@/lib/utils'
 
 interface CostSummaryData {
   totalCost: number
@@ -16,9 +20,37 @@ interface CostSummaryData {
 
 export default function Summary() {
   const regions = useRegions()
+  const { startDate, endDate, setStartDate, setEndDate, clearDates } = useSummaryDateFilters()
   const [regionCostData, setRegionCostData] = useState<Record<string, any>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [defaultsSet, setDefaultsSet] = useState(false)
+
+  // Set default dates from metadata when data is first loaded
+  useEffect(() => {
+    if (defaultsSet || !regionCostData || Object.keys(regionCostData).length === 0) return
+
+    // Extract date range from any region's metadata
+    for (const [, costResponse] of Object.entries(regionCostData)) {
+      if (costResponse?.metadata?.start_date && costResponse?.metadata?.end_date) {
+        const metaStartDate = new Date(costResponse.metadata.start_date)
+        const metaEndDate = new Date(costResponse.metadata.end_date)
+
+        // Only set defaults if both dates are valid and no user selection has been made
+        if (
+          !startDate &&
+          !endDate &&
+          !isNaN(metaStartDate.getTime()) &&
+          !isNaN(metaEndDate.getTime())
+        ) {
+          setStartDate(metaStartDate)
+          setEndDate(metaEndDate)
+          setDefaultsSet(true)
+          break
+        }
+      }
+    }
+  }, [regionCostData, defaultsSet, startDate, endDate])
 
   // Fetch cost data for all regions
   useEffect(() => {
@@ -30,7 +62,21 @@ export default function Summary() {
 
       try {
         const costPromises = regions.map(async (region) => {
-          const url = `/costs/${encodeURIComponent(region.name)}`
+          // Build URL with optional date parameters
+          let url = `/costs/${encodeURIComponent(region.name)}`
+          const params = new URLSearchParams()
+
+          if (startDate) {
+            params.append('startDate', startDate.toISOString())
+          }
+          if (endDate) {
+            params.append('endDate', endDate.toISOString())
+          }
+
+          if (params.toString()) {
+            url += `?${params.toString()}`
+          }
+
           const response = await fetch(url)
 
           if (!response.ok) {
@@ -58,7 +104,7 @@ export default function Summary() {
     }
 
     fetchAllRegionCosts()
-  }, [regions])
+  }, [regions, startDate, endDate])
 
   // Process all cost data across regions
   const costSummary: CostSummaryData = useMemo(() => {
@@ -224,19 +270,6 @@ export default function Summary() {
           <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">Summary</h1>
         </div>
         <div className="flex items-center gap-4">
-          {costSummary.startDate && costSummary.endDate && (
-            <div className="text-md text-gray-600 dark:text-gray-400">
-              {new Date(costSummary.startDate).toLocaleDateString('en-GB', {
-                month: '2-digit',
-                year: 'numeric',
-              })}{' '}
-              -{' '}
-              {new Date(costSummary.endDate).toLocaleDateString('en-GB', {
-                month: '2-digit',
-                year: 'numeric',
-              })}
-            </div>
-          )}
           <Button
             onClick={handlePrint}
             variant="outline"
@@ -245,6 +278,113 @@ export default function Summary() {
             <Download className="h-4 w-4 mr-2" />
             Export PDF
           </Button>
+        </div>
+      </div>
+
+      {/* Date Picker Controls */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Start Date
+            </label>
+            <div className="relative">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      'w-[240px] justify-start text-left font-normal pr-10',
+                      !startDate && 'text-muted-foreground'
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {startDate ? format(startDate, 'PPP') : 'Pick a start date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-auto p-0"
+                  align="start"
+                >
+                  <Calendar
+                    mode="single"
+                    selected={startDate}
+                    onSelect={setStartDate}
+                  />
+                </PopoverContent>
+              </Popover>
+              {startDate && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setStartDate(undefined)
+                  }}
+                  title="Clear start date"
+                >
+                  <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">End Date</label>
+            <div className="relative">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      'w-[240px] justify-start text-left font-normal pr-10',
+                      !endDate && 'text-muted-foreground'
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {endDate ? format(endDate, 'PPP') : 'Pick an end date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-auto p-0"
+                  align="start"
+                >
+                  <Calendar
+                    mode="single"
+                    selected={endDate}
+                    onSelect={setEndDate}
+                  />
+                </PopoverContent>
+              </Popover>
+              {endDate && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setEndDate(undefined)
+                  }}
+                  title="Clear end date"
+                >
+                  <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col justify-end">
+            <Button
+              variant="outline"
+              onClick={clearDates}
+              className="w-full sm:w-auto"
+            >
+              Clear All
+            </Button>
+          </div>
         </div>
       </div>
 

@@ -300,18 +300,6 @@ func calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]type
 	return aggregates
 }
 
-// roundToReasonablePrecision rounds values to avoid scientific notation
-func roundToReasonablePrecision(value float64) float64 {
-	// If the value is very small (less than 0.01 cents), treat as zero
-	if value < 0.01 {
-		return 0.0
-	}
-
-	// Round to 6 decimal places to avoid scientific notation while preserving precision
-	multiplier := 1000000.0 // 10^6
-	return float64(int(value*multiplier+0.5)) / multiplier
-}
-
 // calculateCostAggregates calculates totals and aggregates for cost data in nested format
 func calculateCostAggregates(costs []types.ProcessedCost) map[string]interface{} {
 	if len(costs) == 0 {
@@ -366,12 +354,6 @@ func calculateCostAggregates(costs []types.ProcessedCost) map[string]interface{}
 
 			avg := sum / float64(len(values))
 
-			// Round to avoid scientific notation - treat very small values as zero
-			sum = roundToReasonablePrecision(sum)
-			avg = roundToReasonablePrecision(avg)
-			min = roundToReasonablePrecision(min)
-			max = roundToReasonablePrecision(max)
-
 			serviceTotal += sum
 
 			serviceAggregates[usageType] = types.CostAggregate{
@@ -383,8 +365,7 @@ func calculateCostAggregates(costs []types.ProcessedCost) map[string]interface{}
 		}
 
 		// Add service total (rounded)
-		serviceAggregates["total"] = roundToReasonablePrecision(serviceTotal)
-
+		serviceAggregates["total"] = (serviceTotal)
 		aggregates[service] = serviceAggregates
 	}
 
