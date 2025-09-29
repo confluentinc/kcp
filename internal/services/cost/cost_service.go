@@ -35,11 +35,26 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 
 	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
 
-	input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags)
+	// Collect all results across pages
+	var allResults []costexplorertypes.ResultByTime
+	var nextToken *string
+	for {
+		input := cs.buildCostExplorerInput(region, startStr, endStr, granularity, services, tags, nextToken)
 
-	output, err := cs.client.GetCostAndUsage(ctx, input)
-	if err != nil {
-		return types.CostInformation{}, fmt.Errorf("failed to get cost and usage: %v", err)
+		output, err := cs.client.GetCostAndUsage(ctx, input)
+		if err != nil {
+			return types.CostInformation{}, fmt.Errorf("failed to get cost and usage: %v", err)
+		}
+
+		// Append results from this page
+		allResults = append(allResults, output.ResultsByTime...)
+
+		// Check if there are more pages
+		if output.NextPageToken == nil {
+			break
+		}
+
+		nextToken = output.NextPageToken
 	}
 
 	costInformation := types.CostInformation{
@@ -50,13 +65,13 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 			Tags:        tags,
 			Services:    services,
 		},
-		CostResults: output.ResultsByTime,
+		CostResults: allResults,
 	}
 
 	return costInformation, nil
 }
 
-func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string) *costexplorer.GetCostAndUsageInput {
+func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string, nextToken *string) *costexplorer.GetCostAndUsageInput {
 	filter := &costexplorertypes.Expression{
 		And: []costexplorertypes.Expression{
 			{
@@ -86,14 +101,16 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 		}
 	}
 
-	return &costexplorer.GetCostAndUsageInput{
+	input := &costexplorer.GetCostAndUsageInput{
 		TimePeriod: &costexplorertypes.DateInterval{
 			Start: start,
 			End:   end,
 		},
 		Granularity: granularity,
 		Filter:      filter,
-		Metrics:     []string{"UnblendedCost"},
+		Metrics:     []string{"BLENDED_COST", "UNBLENDED_COST", "AMORTIZED_COST", "NET_AMORTIZED_COST", "NET_UNBLENDED_COST", "USAGE_QUANTITY"},
+		// Metrics: []string{"UNBLENDED_COST"},
+
 		GroupBy: []costexplorertypes.GroupDefinition{
 			{
 				Type: costexplorertypes.GroupDefinitionTypeDimension,
@@ -105,4 +122,11 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 			},
 		},
 	}
+
+	// Add NextPageToken if provided for pagination
+	if nextToken != nil {
+		input.NextPageToken = nextToken
+	}
+
+	return input
 }
