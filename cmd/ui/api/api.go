@@ -155,7 +155,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	}
 
 	// Parse date filters and build options
-	var filterOptions []report.FilterRegionCostsOption
+	var filterOptions []report.CostFilterOption
 	if startDate != "" {
 		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{

@@ -27,24 +27,24 @@ func defaultFilterRegionCostsOptions() FilterRegionCostsOptions {
 }
 
 // FilterRegionCostsOption is a function that modifies FilterRegionCostsOptions
-type FilterRegionCostsOption func(*FilterRegionCostsOptions)
+type CostFilterOption func(*FilterRegionCostsOptions)
 
 // WithStartTime sets only the start time filter
-func WithStartTime(start time.Time) FilterRegionCostsOption {
+func WithStartTime(start time.Time) CostFilterOption {
 	return func(opts *FilterRegionCostsOptions) {
 		opts.StartTime = &start
 	}
 }
 
 // WithEndTime sets only the end time filter
-func WithEndTime(end time.Time) FilterRegionCostsOption {
+func WithEndTime(end time.Time) CostFilterOption {
 	return func(opts *FilterRegionCostsOptions) {
 		opts.EndTime = &end
 	}
 }
 
 // WithCostType sets the cost type to filter/focus on
-func WithCostType(costType string) FilterRegionCostsOption {
+func WithCostType(costType string) CostFilterOption {
 	return func(opts *FilterRegionCostsOptions) {
 		opts.CostType = costType
 	}
