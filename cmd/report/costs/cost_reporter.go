@@ -1,10 +1,8 @@
 package costs
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -66,13 +64,6 @@ func (r *CostReporter) Run() error {
 			Costs:      *regionCosts,
 		})
 	}
-
-	// todo - test - write region costs to json file
-	regionCostsJSON, err := json.Marshal(regionCostData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal region costs: %v", err)
-	}
-	os.WriteFile(fmt.Sprintf("region_costs_%s.json", time.Now().Format("2006-01-02_15-04-05")), regionCostsJSON, 0644)
 
 	fileName := fmt.Sprintf("cost_report_%s.md", time.Now().Format("2006-01-02_15-04-05"))
 	markdownReport := r.generateReport(regionCostData)

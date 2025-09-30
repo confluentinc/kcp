@@ -1,17 +1,26 @@
 package metrics
 
 import (
-	"github.com/confluentinc/kcp/cmd/report/costs"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
-	stateFile string
+	stateFile   string
+	start       string
+	end         string
+	clusterArns []string
 )
 
 func NewReportMetricsCmd() *cobra.Command {
-	reportCmd := &cobra.Command{
+	reportMetricsCmd := &cobra.Command{
 		Use:           "metrics",
 		Short:         "Generate a report of metrics for given cluster(s)",
 		Long:          "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover`",
@@ -21,37 +30,42 @@ func NewReportMetricsCmd() *cobra.Command {
 		RunE:          runReportMetrics,
 	}
 
-	// groups := map[*pflag.FlagSet]string{}
+	groups := map[*pflag.FlagSet]string{}
 
-	// requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
-	// requiredFlags.SortFlags = false
-	// requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	// reportCmd.Flags().AddFlagSet(requiredFlags)
-	// groups[requiredFlags] = "Required Flags"
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
+	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
+	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to scan (comma separated list or repeated flag)")
 
-	// reportCmd.SetUsageFunc(func(c *cobra.Command) error {
-	// 	fmt.Printf("%s\n\n", c.Short)
+	reportMetricsCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
 
-	// 	flagOrder := []*pflag.FlagSet{requiredFlags}
-	// 	groupNames := []string{"Required Flags"}
+	reportMetricsCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
 
-	// 	for i, fs := range flagOrder {
-	// 		usage := fs.FlagUsages()
-	// 		if usage != "" {
-	// 			fmt.Printf("%s:\n%s\n", groupNames[i], usage)
-	// 		}
-	// 	}
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
 
-	// 	fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
 
-	// 	return nil
-	// })
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
-	// reportCmd.MarkFlagRequired("state-file")
+		return nil
+	})
 
-	reportCmd.AddCommand(costs.NewReportCostsCmd())
+	reportMetricsCmd.MarkFlagRequired("state-file")
+	reportMetricsCmd.MarkFlagRequired("start")
+	reportMetricsCmd.MarkFlagRequired("end")
+	reportMetricsCmd.MarkFlagRequired("cluster-arn")
 
-	return reportCmd
+	return reportMetricsCmd
 }
 
 func preRunReportMetrics(cmd *cobra.Command, args []string) error {
@@ -62,28 +76,50 @@ func preRunReportMetrics(cmd *cobra.Command, args []string) error {
 }
 
 func runReportMetrics(cmd *cobra.Command, args []string) error {
+	opts, err := parseMetricReporterOpts()
+	if err != nil {
+		return fmt.Errorf("❌ failed to parse report opts: %v", err)
+	}
 
+	reportService := report.NewReportService()
+
+	metricReporter := NewMetricReporter(reportService, *opts)
+	if err := metricReporter.Run(); err != nil {
+		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+	}
 	return nil
 }
 
-// func parseReportMetricsOpts() (*ReporterMetricsOpts, error) {
-// if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-// 	return nil, fmt.Errorf("❌ state file does not exist: %s", stateFile)
-// }
+func parseMetricReporterOpts() (*MetricReporterOpts, error) {
+	startDate, err := time.Parse("2006-01-02", start)
+	if err != nil {
+		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
+	}
 
-// file, err := os.ReadFile(stateFile)
-// if err != nil {
-// 	return nil, fmt.Errorf("failed to read state file: %v", err)
-// }
+	endDate, err := time.Parse("2006-01-02", end)
+	if err != nil {
+		return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
+	}
 
-// var state types.State
-// if err := json.Unmarshal(file, &state); err != nil {
-// 	return nil, fmt.Errorf("failed to unmarshal state: %v", err)
-// }
+	if endDate.Before(startDate) {
+		return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
+	}
 
-// opts := ReporterMetricsOpts{
-// 	State: state,
-// }
+	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
+	}
 
-// 	return &opts, nil
-// }
+	state, err := types.NewStateFromFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load existing state file: %v", err)
+	}
+
+	opts := MetricReporterOpts{
+		ClusterArns: clusterArns,
+		State:       state,
+		StartDate:   startDate,
+		EndDate:     endDate,
+	}
+
+	return &opts, nil
+}
