@@ -356,7 +356,7 @@ type ProcessedRegionCosts struct {
 	Aggregates ProcessedAggregates `json:"aggregates"`
 
 	// todo - remove this??
-	Totals     []ServiceTotal      `json:"-"`
+	Totals []ServiceTotal `json:"-"`
 }
 
 // ProcessedAggregates represents the three specific services we query

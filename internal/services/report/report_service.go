@@ -10,46 +10,6 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// FilterRegionCostsOptions holds all optional parameters for filtering region costs
-type FilterRegionCostsOptions struct {
-	StartTime *time.Time
-	EndTime   *time.Time
-	CostType  string
-}
-
-// defaultFilterRegionCostsOptions returns default options with sensible defaults
-func defaultFilterRegionCostsOptions() FilterRegionCostsOptions {
-	return FilterRegionCostsOptions{
-		StartTime: nil,              // No start time filter by default
-		EndTime:   nil,              // No end time filter by default
-		CostType:  "unblended_cost", // Default to unblended cost
-	}
-}
-
-// FilterRegionCostsOption is a function that modifies FilterRegionCostsOptions
-type CostFilterOption func(*FilterRegionCostsOptions)
-
-// WithStartTime sets only the start time filter
-func WithStartTime(start time.Time) CostFilterOption {
-	return func(opts *FilterRegionCostsOptions) {
-		opts.StartTime = &start
-	}
-}
-
-// WithEndTime sets only the end time filter
-func WithEndTime(end time.Time) CostFilterOption {
-	return func(opts *FilterRegionCostsOptions) {
-		opts.EndTime = &end
-	}
-}
-
-// WithCostType sets the cost type to filter/focus on
-func WithCostType(costType string) CostFilterOption {
-	return func(opts *FilterRegionCostsOptions) {
-		opts.CostType = costType
-	}
-}
-
 type ReportService struct{}
 
 func NewReportService() *ReportService {
@@ -98,15 +58,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 }
 
 // FilterRegionCosts filters the processed state to return cost data for a specific region
-func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...CostFilterOption) (*types.ProcessedRegionCosts, error) {
-	// Apply default options
-	opts := defaultFilterRegionCostsOptions()
-
-	// Apply provided options
-	for _, option := range options {
-		option(&opts)
-	}
-
+func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
 	// Find the specified region
 	var targetRegion *types.ProcessedRegion
 	for _, r := range processedState.Regions {
@@ -122,12 +74,13 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	// Start with the region's cost data
 	regionCosts := targetRegion.Costs
 
-	// Filter costs by date range if specified
+	// If no date filters, use all costs but still calculate aggregates
 	var filteredCosts []types.ProcessedCost
-
-	for _, cost := range regionCosts.Results {
-		// Apply date filtering if specified
-		if opts.StartTime != nil || opts.EndTime != nil {
+	if startTime == nil && endTime == nil {
+		filteredCosts = regionCosts.Results
+	} else {
+		// Filter costs by date range
+		for _, cost := range regionCosts.Results {
 			// Parse the cost start time - costs use YYYY-MM-DD format
 			costStartTime, err := time.Parse("2006-01-02", cost.Start)
 			if err != nil {
@@ -141,18 +94,15 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 			}
 
 			// Apply date filters
-			if opts.StartTime != nil && costStartTime.Before(*opts.StartTime) {
+			if startTime != nil && costStartTime.Before(*startTime) {
 				continue
 			}
-			if opts.EndTime != nil && costStartTime.After(*opts.EndTime) {
+			if endTime != nil && costStartTime.After(*endTime) {
 				continue
 			}
+
+			filteredCosts = append(filteredCosts, cost)
 		}
-
-		// Note: CostType filtering could be added here in the future
-		// For now, we include all costs but the option is available for extension
-
-		filteredCosts = append(filteredCosts, cost)
 	}
 
 	// Calculate aggregates from filtered costs
@@ -182,7 +132,7 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 	}
 
 	// PHASE 1: Group all cost data by unique combinations
-	var groupedData []MetricData            // Final list of all unique combinations
+	var groupedData []*MetricData           // Final list of all unique combinations
 	dataMap := make(map[string]*MetricData) // Temporary map to find existing combinations
 
 	for _, cost := range costs {
@@ -215,7 +165,7 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 					Values:     []float64{value},
 				}
 				dataMap[key] = newData
-				groupedData = append(groupedData, *newData)
+				groupedData = append(groupedData, newData)
 			}
 		}
 	}

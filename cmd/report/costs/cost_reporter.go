@@ -1,17 +1,19 @@
 package costs
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
-	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
-	FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...report.CostFilterOption) (*types.ProcessedRegionCosts, error)
+	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
 }
 
 type CostReporterOpts struct {
@@ -19,7 +21,6 @@ type CostReporterOpts struct {
 	State     *types.State
 	StartDate time.Time
 	EndDate   time.Time
-	CostType  string
 }
 
 type RegionCostData struct {
@@ -35,7 +36,6 @@ type CostReporter struct {
 	state     *types.State
 	startDate time.Time
 	endDate   time.Time
-	costType  string
 }
 
 func NewCostReporter(reportService ReportService, markdownService markdown.Markdown, opts CostReporterOpts) *CostReporter {
@@ -46,7 +46,6 @@ func NewCostReporter(reportService ReportService, markdownService markdown.Markd
 		state:           opts.State,
 		startDate:       opts.StartDate,
 		endDate:         opts.EndDate,
-		costType:        opts.CostType,
 	}
 }
 
@@ -54,12 +53,10 @@ func (r *CostReporter) Run() error {
 	processedState := r.reportService.ProcessState(*r.state)
 	regionCostData := []RegionCostData{}
 
+	slog.Info("🔍 processing regions", "regions", r.regions, "startDate", r.startDate, "endDate", r.endDate)
+
 	for _, region := range r.regions {
-		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region,
-			report.WithStartTime(r.startDate),
-			report.WithEndTime(r.endDate),
-			report.WithCostType(r.costType),
-		)
+		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, &r.startDate, &r.endDate)
 		if err != nil {
 			return fmt.Errorf("failed to filter region costs: %v", err)
 		}
@@ -69,6 +66,13 @@ func (r *CostReporter) Run() error {
 			Costs:      *regionCosts,
 		})
 	}
+
+	// todo - test - write region costs to json file
+	regionCostsJSON, err := json.Marshal(regionCostData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal region costs: %v", err)
+	}
+	os.WriteFile(fmt.Sprintf("region_costs_%s.json", time.Now().Format("2006-01-02_15-04-05")), regionCostsJSON, 0644)
 
 	fileName := fmt.Sprintf("cost_report_%s.md", time.Now().Format("2006-01-02_15-04-05"))
 	markdownReport := r.generateReport(regionCostData)
@@ -85,11 +89,13 @@ func (r *CostReporter) generateReport(regionCostData []RegionCostData) *markdown
 	// Add main report header
 	md.AddHeading("AWS Cost Report", 1)
 
+	// Use the actual date range from the reporter parameters
+	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s",
+		r.startDate.Format("2006-01-02"),
+		r.endDate.Format("2006-01-02")))
+
 	if len(regionCostData) > 0 {
 		metadata := regionCostData[0].Costs.Metadata
-		md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s",
-			metadata.StartDate.Format("2006-01-02"),
-			metadata.EndDate.Format("2006-01-02")))
 		md.AddParagraph(fmt.Sprintf("**Granularity:** %s", metadata.Granularity))
 
 		if len(metadata.Services) > 0 {
@@ -119,50 +125,50 @@ func (r *CostReporter) generateReport(regionCostData []RegionCostData) *markdown
 func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string, regionCosts types.ProcessedRegionCosts) {
 	md.AddHeading(fmt.Sprintf("Region: %s", regionName), 2)
 
-	// Add metadata details for this region
-	metadata := regionCosts.Metadata
-	md.AddParagraph(fmt.Sprintf("**Period:** %s to %s | **Granularity:** %s",
-		metadata.StartDate.Format("2006-01-02"),
-		metadata.EndDate.Format("2006-01-02"),
-		metadata.Granularity))
-
 	// Add aggregate cost summaries for each service
-	r.addServiceAggregates(md, "AWS Certificate Manager", regionCosts.Aggregates.AWSCertificateManager)
 	r.addServiceAggregates(md, "Amazon Managed Streaming for Apache Kafka", regionCosts.Aggregates.AmazonManagedStreamingForApacheKafka)
+
 	r.addServiceAggregates(md, "EC2 - Other", regionCosts.Aggregates.EC2Other)
+
+	r.addServiceAggregates(md, "AWS Certificate Manager", regionCosts.Aggregates.AWSCertificateManager)
 }
 
 func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName string, aggregates types.ServiceCostAggregates) {
+	md.AddHeading(fmt.Sprintf("▪ %s", serviceName), 3)
+
 	// Check if this service has any cost data
 	hasData := r.hasServiceData(aggregates)
 	if !hasData {
+		md.AddParagraph("*No costs recorded for this service in the specified time period.*")
+		md.AddParagraph("---")
 		return
 	}
 
-	md.AddHeading(serviceName, 3)
-
-	// Create table for cost metrics
-	headers := []string{"Cost Type", "Usage Type", "Sum ($)", "Average ($)", "Min ($)", "Max ($)"}
-	var tableData [][]string
-
-	// Process each cost type
-	costTypes := map[string]map[string]any{
-		"Unblended Cost":     aggregates.UnblendedCost,
-		"Blended Cost":       aggregates.BlendedCost,
-		"Amortized Cost":     aggregates.AmortizedCost,
-		"Net Amortized Cost": aggregates.NetAmortizedCost,
-		"Net Unblended Cost": aggregates.NetUnblendedCost,
+	// Create separate tables for each cost type
+	costTypes := []struct {
+		name string
+		data map[string]any
+	}{
+		{"Unblended Cost", aggregates.UnblendedCost},
+		{"Blended Cost", aggregates.BlendedCost},
+		{"Amortized Cost", aggregates.AmortizedCost},
+		{"Net Amortized Cost", aggregates.NetAmortizedCost},
+		{"Net Unblended Cost", aggregates.NetUnblendedCost},
 	}
 
-	for costType, usageTypes := range costTypes {
-		if len(usageTypes) == 0 {
+	for _, costType := range costTypes {
+		if len(costType.data) == 0 {
 			continue
 		}
 
-		for usageType, aggregateData := range usageTypes {
+		md.AddHeading(costType.name, 4)
+
+		headers := []string{"Usage Type", "Sum ($)", "Average ($)", "Min ($)", "Max ($)"}
+		var tableData [][]string
+
+		for usageType, aggregateData := range costType.data {
 			if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
 				row := []string{
-					costType,
 					usageType,
 					r.formatCurrency(costAggregate.Sum),
 					r.formatCurrency(costAggregate.Average),
@@ -172,11 +178,14 @@ func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName s
 				tableData = append(tableData, row)
 			}
 		}
+
+		if len(tableData) > 0 {
+			md.AddTable(headers, tableData)
+		}
 	}
 
-	if len(tableData) > 0 {
-		md.AddTable(headers, tableData)
-	}
+	// Add separator after service section
+	md.AddParagraph("---")
 }
 
 func (r *CostReporter) hasServiceData(aggregates types.ServiceCostAggregates) bool {

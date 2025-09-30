@@ -3,7 +3,6 @@ package costs
 import (
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -19,7 +18,6 @@ var (
 	start     string
 	end       string
 	regions   []string
-	costType  string
 )
 
 func NewReportCostsCmd() *cobra.Command {
@@ -40,7 +38,6 @@ func NewReportCostsCmd() *cobra.Command {
 	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
-	requiredFlags.StringVar(&costType, "cost-type", "", "The type of cost to report (e.g. 'unblended_cost', 'blended_cost', 'amortized_cost', 'net_amortized_cost', 'net_unblended_cost')")
 
 	reportCostsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -67,7 +64,6 @@ func NewReportCostsCmd() *cobra.Command {
 	reportCostsCmd.MarkFlagRequired("start")
 	reportCostsCmd.MarkFlagRequired("end")
 	reportCostsCmd.MarkFlagRequired("region")
-	reportCostsCmd.MarkFlagRequired("cost-type")
 
 	return reportCostsCmd
 }
@@ -110,11 +106,6 @@ func parseReporterCostsOpts() (*CostReporterOpts, error) {
 		return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
 	}
 
-	costTypeValues := []string{"unblended_cost", "blended_cost", "amortized_cost", "net_amortized_cost", "net_unblended_cost"}
-	if !slices.Contains(costTypeValues, costType) {
-		return nil, fmt.Errorf("invalid cost type '%s': must be one of %v", costType, costTypeValues)
-	}
-
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
 	}
@@ -129,7 +120,6 @@ func parseReporterCostsOpts() (*CostReporterOpts, error) {
 		State:     state,
 		StartDate: startDate,
 		EndDate:   endDate,
-		CostType:  costType,
 	}
 
 	return &opts, nil
