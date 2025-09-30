@@ -5,58 +5,58 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/confluentinc/kcp/cmd/report/costs"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	rservice "github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 var (
 	stateFile string
 )
 
-
 func NewReportCmd() *cobra.Command {
 	reportCmd := &cobra.Command{
 		Use:           "report",
-		Short:         "Generate a report of the data collected by `kcp discover`",
-		Long:          "Generate a report of the data collected by `kcp discover`",
+		Short:         "Generate a report of costs for given region(s)",
+		Long:          "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`",
 		SilenceErrors: true,
-		PreRunE:       preRunReport,
-		RunE:          runReport,
-		// todo - just hiding this for now until we know if we want to invest the time in it or not.
-		Hidden: true,
+		Args:          cobra.NoArgs,
+		// PreRunE:       preRunReport,
+		// RunE:          runReport,
 	}
 
-	groups := map[*pflag.FlagSet]string{}
+	// groups := map[*pflag.FlagSet]string{}
 
-	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
-	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	reportCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
+	// requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	// requiredFlags.SortFlags = false
+	// requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
+	// reportCmd.Flags().AddFlagSet(requiredFlags)
+	// groups[requiredFlags] = "Required Flags"
 
-	reportCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+	// reportCmd.SetUsageFunc(func(c *cobra.Command) error {
+	// 	fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+	// 	flagOrder := []*pflag.FlagSet{requiredFlags}
+	// 	groupNames := []string{"Required Flags"}
 
-		for i, fs := range flagOrder {
-			usage := fs.FlagUsages()
-			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
-			}
-		}
+	// 	for i, fs := range flagOrder {
+	// 		usage := fs.FlagUsages()
+	// 		if usage != "" {
+	// 			fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+	// 		}
+	// 	}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+	// 	fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
-		return nil
-	})
+	// 	return nil
+	// })
 
-	reportCmd.MarkFlagRequired("state-file")
+	// reportCmd.MarkFlagRequired("state-file")
+
+	reportCmd.AddCommand(costs.NewReportCostsCmd())
 
 	return reportCmd
 }
