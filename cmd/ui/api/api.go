@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
@@ -142,6 +143,58 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	region := c.Param("region")
 
 	// Extract query parameters
+	startDate := c.QueryParam("startDate")
+	endDate := c.QueryParam("endDate")
+
+	// Check if we have cached state data
+	if ui.cachedState == nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": "Please upload state data via POST /upload-state first",
+		})
+	}
+
+	// Parse date filters and build options
+	var filterOptions []report.FilterRegionCostsOption
+	if startDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid start date format",
+				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
+			})
+		} else {
+			filterOptions = append(filterOptions, report.WithStartTime(parsed))
+		}
+	}
+	if endDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid end date format",
+				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
+			})
+		} else {
+			filterOptions = append(filterOptions, report.WithEndTime(parsed))
+		}
+	}
+
+	// Process the full state to get structured data
+	processedState := ui.reportService.ProcessState(*ui.cachedState)
+
+	// Filter costs by region
+	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, filterOptions...)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Region not found",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, regionCosts)
+}
+
+func (ui *UI) handleGetCosts(c echo.Context) error {
+	region := c.Param("region")
+
 	startDate := c.QueryParam("startDate")
 	endDate := c.QueryParam("endDate")
 
