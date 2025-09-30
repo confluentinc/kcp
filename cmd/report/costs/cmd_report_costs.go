@@ -80,7 +80,7 @@ func preRunReportCosts(cmd *cobra.Command, args []string) error {
 }
 
 func runReportCosts(cmd *cobra.Command, args []string) error {
-	opts, err := parseCostsReporterOpts()
+	opts, err := parseReporterCostsOpts()
 	if err != nil {
 		return fmt.Errorf("❌ failed to parse report opts: %v", err)
 	}
@@ -95,7 +95,7 @@ func runReportCosts(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseCostsReporterOpts() (*CostReporterOpts, error) {
+func parseReporterCostsOpts() (*CostReporterOpts, error) {
 	startDate, err := time.Parse("2006-01-02", start)
 	if err != nil {
 		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
