@@ -11,7 +11,7 @@ import (
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
-	FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...report.FilterRegionCostsOption) (*types.ProcessedRegionCosts, error)
+	FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...report.CostFilterOption) (*types.ProcessedRegionCosts, error)
 }
 
 type CostReporterOpts struct {
@@ -63,16 +63,16 @@ func (r *CostReporter) Run() error {
 		if err != nil {
 			return fmt.Errorf("failed to filter region costs: %v", err)
 		}
+
 		regionCostData = append(regionCostData, RegionCostData{
 			RegionName: region,
 			Costs:      *regionCosts,
 		})
 	}
 
-	if err := r.generateReport(regionCostData).Print(markdown.PrintOptions{
-		ToTerminal: false,
-		ToFile:     "report.md",
-	}); err != nil {
+	fileName := fmt.Sprintf("cost_report_%s.md", time.Now().Format("2006-01-02_15-04-05"))
+	markdownReport := r.generateReport(regionCostData)
+	if err := markdownReport.Print(markdown.PrintOptions{ToTerminal: false, ToFile: fileName}); err != nil {
 		return fmt.Errorf("failed to write markdown report: %v", err)
 	}
 
@@ -93,7 +93,8 @@ func (r *CostReporter) generateReport(regionCostData []RegionCostData) *markdown
 		md.AddParagraph(fmt.Sprintf("**Granularity:** %s", metadata.Granularity))
 
 		if len(metadata.Services) > 0 {
-			md.AddParagraph(fmt.Sprintf("**Services:** %s", fmt.Sprintf("%v", metadata.Services)))
+			md.AddParagraph("**Services:**")
+			md.AddList(metadata.Services)
 		}
 
 		if len(metadata.Tags) > 0 {

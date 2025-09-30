@@ -14,7 +14,7 @@ import (
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
-	FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...report.FilterRegionCostsOption) (*types.ProcessedRegionCosts, error)
+	FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...report.CostFilterOption) (*types.ProcessedRegionCosts, error)
 }
 
 type UICmdOpts struct {
@@ -153,7 +153,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	}
 
 	// Parse date filters and build options
-	var filterOptions []report.FilterRegionCostsOption
+	var filterOptions []report.CostFilterOption
 	if startDate != "" {
 		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
