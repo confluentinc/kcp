@@ -1,10 +1,8 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -190,15 +188,6 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
-	// write json to a file called myoutput.json
-	jsonData, _ := json.Marshal(regionCosts)
-	if err := os.WriteFile("myoutput.json", jsonData, 0644); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to write region costs to file",
-			"message": err.Error(),
-		})
-	}
-
 	return c.JSON(http.StatusOK, regionCosts)
 }
 
@@ -252,4 +241,163 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, regionCosts)
+}
+
+// calculateCostAggregates takes raw cost data and calculates statistics for each unique combination
+// of service + metric type + usage type, then organizes it into the final nested structure
+func (ui *UI) calculateCostAggregates(costs []types.ProcessedCost) types.ProcessedAggregates {
+	aggregates := types.NewProcessedAggregates()
+
+	if len(costs) == 0 {
+		return aggregates
+	}
+
+	type MetricData struct {
+		Service    string    // eg "AWS Certificate Manager"
+		MetricName string    // eg "unblended_cost"
+		UsageType  string    // eg "USE1-FreePrivateCA"
+		Values     []float64 // eg [1.50, 2.25, 0.75] - multiple cost entries over time
+	}
+
+	// PHASE 1: Group all cost data by unique combinations
+	var groupedData []MetricData            // Final list of all unique combinations
+	dataMap := make(map[string]*MetricData) // Temporary map to find existing combinations
+
+	for _, cost := range costs {
+		service := cost.Service
+		usageType := cost.UsageType
+
+		// Extract all 6 cost metrics from this single cost entry
+		metrics := map[string]float64{
+			"unblended_cost":     cost.Values.UnblendedCost,
+			"blended_cost":       cost.Values.BlendedCost,
+			"amortized_cost":     cost.Values.AmortizedCost,
+			"net_amortized_cost": cost.Values.NetAmortizedCost,
+			"net_unblended_cost": cost.Values.NetUnblendedCost,
+		}
+
+		// For each of the 6 metrics, create or update a MetricData entry
+		for metricName, value := range metrics {
+			// Create unique key: "AWS Certificate Manager|unblended_cost|USE1-FreePrivateCA"
+			key := service + "|" + metricName + "|" + usageType
+
+			if data, exists := dataMap[key]; exists {
+				// This combination already exists, add this value to the existing list
+				data.Values = append(data.Values, value)
+			} else {
+				// First time seeing this combination, create new MetricData
+				newData := &MetricData{
+					Service:    service,
+					MetricName: metricName,
+					UsageType:  usageType,
+					Values:     []float64{value},
+				}
+				dataMap[key] = newData
+				groupedData = append(groupedData, *newData)
+			}
+		}
+	}
+
+	// PHASE 2: Calculate statistics for each grouped combination
+	serviceTotals := make(map[string]float64) // Track totals per service+metric
+
+	// Process each unique combination and calculate its statistics
+	for _, data := range groupedData {
+		if len(data.Values) == 0 {
+			continue // Skip empty groups (shouldn't happen)
+		}
+
+		// Calculate sum, min, max from all values in this group
+		sum := 0.0
+		min := data.Values[0] // Start with first value
+		max := data.Values[0] // Start with first value
+
+		for _, value := range data.Values {
+			sum += value
+			if value < min {
+				min = value
+			}
+			if value > max {
+				max = value
+			}
+		}
+
+		avg := sum / float64(len(data.Values)) // Calculate average
+
+		// Create the final aggregate structure with all statistics
+		costAggregate := types.CostAggregate{
+			Sum:     &sum,
+			Average: &avg,
+			Maximum: &max,
+			Minimum: &min,
+		}
+
+		// Assign this aggregate to the correct service and metric field
+		// Example: aggregates.AWSCertificateManager.UnblendedCost["USE1-FreePrivateCA"] = costAggregate
+		switch data.Service {
+		case "AWS Certificate Manager":
+			ui.assignToServiceMetric(&aggregates.AWSCertificateManager, data.MetricName, data.UsageType, costAggregate)
+		case "Amazon Managed Streaming for Apache Kafka":
+			ui.assignToServiceMetric(&aggregates.AmazonManagedStreamingForApacheKafka, data.MetricName, data.UsageType, costAggregate)
+		case "EC2 - Other":
+			ui.assignToServiceMetric(&aggregates.EC2Other, data.MetricName, data.UsageType, costAggregate)
+		}
+
+		// Track running total for this service+metric combination
+		totalKey := data.Service + "|" + data.MetricName
+		serviceTotals[totalKey] += sum
+	}
+
+	// PHASE 3: Add service totals for each metric type
+	// serviceTotals contains keys like "AWS Certificate Manager|unblended_cost" with total values
+	for totalKey, total := range serviceTotals {
+		parts := strings.Split(totalKey, "|")
+		service := parts[0]    // "AWS Certificate Manager"
+		metricName := parts[1] // "unblended_cost"
+
+		// Assign the total to the correct service and metric field
+		// Example: aggregates.AWSCertificateManager.UnblendedCost["total"] = 2632.58
+		switch service {
+		case "AWS Certificate Manager":
+			ui.assignServiceTotal(&aggregates.AWSCertificateManager, metricName, total)
+		case "Amazon Managed Streaming for Apache Kafka":
+			ui.assignServiceTotal(&aggregates.AmazonManagedStreamingForApacheKafka, metricName, total)
+		case "EC2 - Other":
+			ui.assignServiceTotal(&aggregates.EC2Other, metricName, total)
+		}
+	}
+
+	return aggregates
+}
+
+// assignToServiceMetric assigns a cost aggregate to the correct metric field
+func (ui *UI) assignToServiceMetric(service *types.ServiceCostAggregates, metricName, usageType string, aggregate types.CostAggregate) {
+	switch metricName {
+	case "unblended_cost":
+		service.UnblendedCost[usageType] = aggregate
+	case "blended_cost":
+		service.BlendedCost[usageType] = aggregate
+	case "amortized_cost":
+		service.AmortizedCost[usageType] = aggregate
+	case "net_amortized_cost":
+		service.NetAmortizedCost[usageType] = aggregate
+	case "net_unblended_cost":
+		service.NetUnblendedCost[usageType] = aggregate
+	}
+}
+
+// assignServiceTotal assigns a service total to the correct metric field
+func (ui *UI) assignServiceTotal(service *types.ServiceCostAggregates, metricName string, total float64) {
+	switch metricName {
+	case "unblended_cost":
+		service.UnblendedCost["total"] = total
+	case "blended_cost":
+		service.BlendedCost["total"] = total
+	case "amortized_cost":
+		service.AmortizedCost["total"] = total
+	case "net_amortized_cost":
+		service.NetAmortizedCost["total"] = total
+	case "net_unblended_cost":
+		service.NetUnblendedCost["total"] = total
+	}
 }
