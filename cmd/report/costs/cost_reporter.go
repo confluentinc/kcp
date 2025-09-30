@@ -54,13 +54,12 @@ func (r *CostReporter) Run() error {
 	processedState := r.reportService.ProcessState(*r.state)
 	regionCostData := []RegionCostData{}
 
-	filterOptions := []report.FilterRegionCostsOption{}
-	filterOptions = append(filterOptions, report.WithStartTime(r.startDate))
-	filterOptions = append(filterOptions, report.WithEndTime(r.endDate))
-	filterOptions = append(filterOptions, report.WithCostType(r.costType))
-
 	for _, region := range r.regions {
-		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, filterOptions...)
+		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region,
+			report.WithStartTime(r.startDate),
+			report.WithEndTime(r.endDate),
+			report.WithCostType(r.costType),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to filter region costs: %v", err)
 		}
