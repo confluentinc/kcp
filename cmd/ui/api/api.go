@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/labstack/echo/v4"
 )
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
+	FilterRegionCosts(processedState types.ProcessedState, regionName string, options ...report.FilterRegionCostsOption) (*types.ProcessedRegionCosts, error)
 }
 
 type UICmdOpts struct {
@@ -150,8 +152,8 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
+	// Parse date filters and build options
+	var filterOptions []report.FilterRegionCostsOption
 	if startDate != "" {
 		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
@@ -159,7 +161,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
 			})
 		} else {
-			startTime = &parsed
+			filterOptions = append(filterOptions, report.WithStartTime(parsed))
 		}
 	}
 	if endDate != "" {
@@ -169,7 +171,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
 			})
 		} else {
-			endTime = &parsed
+			filterOptions = append(filterOptions, report.WithEndTime(parsed))
 		}
 	}
 
@@ -177,7 +179,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	processedState := ui.reportService.ProcessState(*ui.cachedState)
 
 	// Filter costs by region
-	regionCosts, err := ui.filterRegionCosts(processedState, region, startTime, endTime)
+	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, filterOptions...)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "Region not found",
@@ -297,221 +299,4 @@ func calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]type
 	}
 
 	return aggregates
-}
-
-// filterRegionCosts filters the processed state to return cost data for a specific region
-func (ui *UI) filterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
-	// Find the specified region
-	var targetRegion *types.ProcessedRegion
-	for _, r := range processedState.Regions {
-		if strings.EqualFold(r.Name, regionName) {
-			targetRegion = &r
-			break
-		}
-	}
-	if targetRegion == nil {
-		return nil, fmt.Errorf("region '%s' not found", regionName)
-	}
-
-	// Start with the region's cost data
-	regionCosts := targetRegion.Costs
-
-	// If no date filters, use all costs but still calculate aggregates
-	var filteredCosts []types.ProcessedCost
-	if startTime == nil && endTime == nil {
-		filteredCosts = regionCosts.Results
-	} else {
-		// Filter costs by date range
-		for _, cost := range regionCosts.Results {
-			// Parse the cost start time - costs use YYYY-MM-DD format
-			costStartTime, err := time.Parse("2006-01-02", cost.Start)
-			if err != nil {
-				// Try alternative formats if the first one fails
-				if costStartTime, err = time.Parse("2006-01-02T15:04:05Z", cost.Start); err != nil {
-					if costStartTime, err = time.Parse(time.RFC3339, cost.Start); err != nil {
-						// Skip costs with invalid timestamps
-						continue
-					}
-				}
-			}
-
-			// Apply date filters
-			if startTime != nil && costStartTime.Before(*startTime) {
-				continue
-			}
-			if endTime != nil && costStartTime.After(*endTime) {
-				continue
-			}
-
-			filteredCosts = append(filteredCosts, cost)
-		}
-	}
-
-	// Calculate aggregates from filtered costs
-	aggregates := ui.calculateCostAggregates(filteredCosts)
-
-	return &types.ProcessedRegionCosts{
-		Metadata:   regionCosts.Metadata,
-		Results:    filteredCosts,
-		Aggregates: aggregates,
-	}, nil
-}
-
-// calculateCostAggregates takes raw cost data and calculates statistics for each unique combination
-// of service + metric type + usage type, then organizes it into the final nested structure
-func (ui *UI) calculateCostAggregates(costs []types.ProcessedCost) types.ProcessedAggregates {
-	aggregates := types.NewProcessedAggregates()
-
-	if len(costs) == 0 {
-		return aggregates
-	}
-
-	type MetricData struct {
-		Service    string    // eg "AWS Certificate Manager"
-		MetricName string    // eg "unblended_cost"
-		UsageType  string    // eg "USE1-FreePrivateCA"
-		Values     []float64 // eg [1.50, 2.25, 0.75] - multiple cost entries over time
-	}
-
-	// PHASE 1: Group all cost data by unique combinations
-	var groupedData []MetricData            // Final list of all unique combinations
-	dataMap := make(map[string]*MetricData) // Temporary map to find existing combinations
-
-	for _, cost := range costs {
-		service := cost.Service
-		usageType := cost.UsageType
-
-		// Extract all 6 cost metrics from this single cost entry
-		metrics := map[string]float64{
-			"unblended_cost":     cost.Values.UnblendedCost,
-			"blended_cost":       cost.Values.BlendedCost,
-			"amortized_cost":     cost.Values.AmortizedCost,
-			"net_amortized_cost": cost.Values.NetAmortizedCost,
-			"net_unblended_cost": cost.Values.NetUnblendedCost,
-		}
-
-		// For each of the 6 metrics, create or update a MetricData entry
-		for metricName, value := range metrics {
-			// Create unique key: "AWS Certificate Manager|unblended_cost|USE1-FreePrivateCA"
-			key := service + "|" + metricName + "|" + usageType
-
-			if data, exists := dataMap[key]; exists {
-				// This combination already exists, add this value to the existing list
-				data.Values = append(data.Values, value)
-			} else {
-				// First time seeing this combination, create new MetricData
-				newData := &MetricData{
-					Service:    service,
-					MetricName: metricName,
-					UsageType:  usageType,
-					Values:     []float64{value},
-				}
-				dataMap[key] = newData
-				groupedData = append(groupedData, *newData)
-			}
-		}
-	}
-
-	// PHASE 2: Calculate statistics for each grouped combination
-	serviceTotals := make(map[string]float64) // Track totals per service+metric
-
-	// Process each unique combination and calculate its statistics
-	for _, data := range groupedData {
-		if len(data.Values) == 0 {
-			continue // Skip empty groups (shouldn't happen)
-		}
-
-		// Calculate sum, min, max from all values in this group
-		sum := 0.0
-		min := data.Values[0] // Start with first value
-		max := data.Values[0] // Start with first value
-
-		for _, value := range data.Values {
-			sum += value
-			if value < min {
-				min = value
-			}
-			if value > max {
-				max = value
-			}
-		}
-
-		avg := sum / float64(len(data.Values)) // Calculate average
-
-		// Create the final aggregate structure with all statistics
-		costAggregate := types.CostAggregate{
-			Sum:     &sum,
-			Average: &avg,
-			Maximum: &max,
-			Minimum: &min,
-		}
-
-		// Assign this aggregate to the correct service and metric field
-		// Example: aggregates.AWSCertificateManager.UnblendedCost["USE1-FreePrivateCA"] = costAggregate
-		switch data.Service {
-		case "AWS Certificate Manager":
-			ui.assignToServiceMetric(&aggregates.AWSCertificateManager, data.MetricName, data.UsageType, costAggregate)
-		case "Amazon Managed Streaming for Apache Kafka":
-			ui.assignToServiceMetric(&aggregates.AmazonManagedStreamingForApacheKafka, data.MetricName, data.UsageType, costAggregate)
-		case "EC2 - Other":
-			ui.assignToServiceMetric(&aggregates.EC2Other, data.MetricName, data.UsageType, costAggregate)
-		}
-
-		// Track running total for this service+metric combination
-		totalKey := data.Service + "|" + data.MetricName
-		serviceTotals[totalKey] += sum
-	}
-
-	// PHASE 3: Add service totals for each metric type
-	// serviceTotals contains keys like "AWS Certificate Manager|unblended_cost" with total values
-	for totalKey, total := range serviceTotals {
-		parts := strings.Split(totalKey, "|")
-		service := parts[0]    // "AWS Certificate Manager"
-		metricName := parts[1] // "unblended_cost"
-
-		// Assign the total to the correct service and metric field
-		// Example: aggregates.AWSCertificateManager.UnblendedCost["total"] = 2632.58
-		switch service {
-		case "AWS Certificate Manager":
-			ui.assignServiceTotal(&aggregates.AWSCertificateManager, metricName, total)
-		case "Amazon Managed Streaming for Apache Kafka":
-			ui.assignServiceTotal(&aggregates.AmazonManagedStreamingForApacheKafka, metricName, total)
-		case "EC2 - Other":
-			ui.assignServiceTotal(&aggregates.EC2Other, metricName, total)
-		}
-	}
-
-	return aggregates
-}
-
-// assignToServiceMetric assigns a cost aggregate to the correct metric field
-func (ui *UI) assignToServiceMetric(service *types.ServiceCostAggregates, metricName, usageType string, aggregate types.CostAggregate) {
-	switch metricName {
-	case "unblended_cost":
-		service.UnblendedCost[usageType] = aggregate
-	case "blended_cost":
-		service.BlendedCost[usageType] = aggregate
-	case "amortized_cost":
-		service.AmortizedCost[usageType] = aggregate
-	case "net_amortized_cost":
-		service.NetAmortizedCost[usageType] = aggregate
-	case "net_unblended_cost":
-		service.NetUnblendedCost[usageType] = aggregate
-	}
-}
-
-// assignServiceTotal assigns a service total to the correct metric field
-func (ui *UI) assignServiceTotal(service *types.ServiceCostAggregates, metricName string, total float64) {
-	switch metricName {
-	case "unblended_cost":
-		service.UnblendedCost["total"] = total
-	case "blended_cost":
-		service.BlendedCost["total"] = total
-	case "amortized_cost":
-		service.AmortizedCost["total"] = total
-	case "net_amortized_cost":
-		service.NetAmortizedCost["total"] = total
-	case "net_unblended_cost":
-		service.NetUnblendedCost["total"] = total
-	}
 }

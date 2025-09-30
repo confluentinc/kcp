@@ -3,8 +3,10 @@ package costs
 import (
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -38,7 +40,7 @@ func NewReportCostsCmd() *cobra.Command {
 	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
-	requiredFlags.StringVar(&costType, "cost-type", "", "The type of cost to report (e.g. 'usage', 'savings', 'reserved', 'other')")
+	requiredFlags.StringVar(&costType, "cost-type", "", "The type of cost to report (e.g. 'unblended_cost', 'blended_cost', 'amortized_cost', 'net_amortized_cost', 'net_unblended_cost')")
 
 	reportCostsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -80,12 +82,13 @@ func preRunReportCosts(cmd *cobra.Command, args []string) error {
 func runReportCosts(cmd *cobra.Command, args []string) error {
 	opts, err := parseCostsReporterOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse report opts: %v", err)
+		return fmt.Errorf("❌ failed to parse report opts: %v", err)
 	}
 
 	reportService := report.NewReportService()
+	markdownService := markdown.New()
 
-	costReporter := NewCostReporter(reportService, *opts)
+	costReporter := NewCostReporter(reportService, *markdownService, *opts)
 	if err := costReporter.Run(); err != nil {
 		return fmt.Errorf("❌ failed to scan clusters: %v", err)
 	}
@@ -95,20 +98,25 @@ func runReportCosts(cmd *cobra.Command, args []string) error {
 func parseCostsReporterOpts() (*CostReporterOpts, error) {
 	startDate, err := time.Parse("2006-01-02", start)
 	if err != nil {
-		return nil, fmt.Errorf("❌ invalid start date format '%s': expected YYYY-MM-DD", start)
+		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
 	}
 
 	endDate, err := time.Parse("2006-01-02", end)
 	if err != nil {
-		return nil, fmt.Errorf("❌ invalid end date format '%s': expected YYYY-MM-DD", end)
+		return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
 	}
 
 	if endDate.Before(startDate) {
-		return nil, fmt.Errorf("❌ end date '%s' cannot be before start date '%s'", end, start)
+		return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
+	}
+
+	costTypeValues := []string{"unblended_cost", "blended_cost", "amortized_cost", "net_amortized_cost", "net_unblended_cost"}
+	if !slices.Contains(costTypeValues, costType) {
+		return nil, fmt.Errorf("invalid cost type '%s': must be one of %v", costType, costTypeValues)
 	}
 
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("❌ state file does not exist: %s", stateFile)
+		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
 	}
 
 	state, err := types.NewStateFromFile(stateFile)

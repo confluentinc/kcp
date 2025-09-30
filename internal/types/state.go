@@ -354,6 +354,8 @@ type ProcessedRegionCosts struct {
 	Metadata   CostMetadata        `json:"metadata"`
 	Results    []ProcessedCost     `json:"results"`
 	Aggregates ProcessedAggregates `json:"aggregates"`
+
+	// todo - remove this??
 	Totals     []ServiceTotal      `json:"-"`
 }
 
