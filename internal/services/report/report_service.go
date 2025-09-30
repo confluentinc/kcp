@@ -10,46 +10,6 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// FilterRegionCostsOptions holds all optional parameters for filtering region costs
-type FilterRegionCostsOptions struct {
-	StartTime *time.Time
-	EndTime   *time.Time
-	CostType  string
-}
-
-// defaultFilterRegionCostsOptions returns default options with sensible defaults
-func defaultFilterRegionCostsOptions() FilterRegionCostsOptions {
-	return FilterRegionCostsOptions{
-		StartTime: nil,              // No start time filter by default
-		EndTime:   nil,              // No end time filter by default
-		CostType:  "unblended_cost", // Default to unblended cost
-	}
-}
-
-// FilterRegionCostsOption is a function that modifies FilterRegionCostsOptions
-type CostFilterOption func(*FilterRegionCostsOptions)
-
-// WithStartTime sets only the start time filter
-func WithStartTime(start time.Time) CostFilterOption {
-	return func(opts *FilterRegionCostsOptions) {
-		opts.StartTime = &start
-	}
-}
-
-// WithEndTime sets only the end time filter
-func WithEndTime(end time.Time) CostFilterOption {
-	return func(opts *FilterRegionCostsOptions) {
-		opts.EndTime = &end
-	}
-}
-
-// WithCostType sets the cost type to filter/focus on
-func WithCostType(costType string) CostFilterOption {
-	return func(opts *FilterRegionCostsOptions) {
-		opts.CostType = costType
-	}
-}
-
 type ReportService struct{}
 
 func NewReportService() *ReportService {

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
-	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
@@ -154,8 +153,8 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters and build options
-	var filterOptions []report.CostFilterOption
+	// Parse date filters if provided
+	var startTime, endTime *time.Time
 	if startDate != "" {
 		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
@@ -163,7 +162,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
 			})
 		} else {
-			filterOptions = append(filterOptions, report.WithStartTime(parsed))
+			startTime = &parsed
 		}
 	}
 	if endDate != "" {
@@ -173,7 +172,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
 			})
 		} else {
-			filterOptions = append(filterOptions, report.WithEndTime(parsed))
+			endTime = &parsed
 		}
 	}
 
@@ -181,7 +180,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	processedState := ui.reportService.ProcessState(*ui.cachedState)
 
 	// Filter costs by region
-	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, filterOptions...)
+	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "Region not found",
