@@ -72,6 +72,11 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 }
 
 func (cs *CostService) buildCostExplorerInput(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, tags map[string][]string, nextToken *string) *costexplorer.GetCostAndUsageInput {
+	timePeriod := &costexplorertypes.DateInterval{
+		Start: start,
+		End:   end,
+	}
+
 	filter := &costexplorertypes.Expression{
 		And: []costexplorertypes.Expression{
 			{
@@ -107,7 +112,6 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 		string(costexplorertypes.MetricAmortizedCost),
 		string(costexplorertypes.MetricNetAmortizedCost),
 		string(costexplorertypes.MetricNetUnblendedCost),
-		string(costexplorertypes.MetricUsageQuantity),
 	}
 
 	groupBy := []costexplorertypes.GroupDefinition{
@@ -122,10 +126,7 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 	}
 
 	input := &costexplorer.GetCostAndUsageInput{
-		TimePeriod: &costexplorertypes.DateInterval{
-			Start: start,
-			End:   end,
-		},
+		TimePeriod:  timePeriod,
 		Granularity: granularity,
 		Filter:      filter,
 		Metrics:     metrics,

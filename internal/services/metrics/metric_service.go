@@ -228,12 +228,28 @@ func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloud
 		EndTime:           aws.Time(endTime),
 	}
 
-	result, err := ms.client.GetMetricData(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get metric data: %w", err)
+	var allResults []cloudwatchtypes.MetricDataResult
+	var nextToken *string
+
+	for {
+		input.NextToken = nextToken
+		result, err := ms.client.GetMetricData(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get metric data: %w", err)
+		}
+
+		allResults = append(allResults, result.MetricDataResults...)
+
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
 	}
 
-	return result, nil
+	// Return a consolidated result with all metric data
+	return &cloudwatch.GetMetricDataOutput{
+		MetricDataResults: allResults,
+	}, nil
 }
 
 // Private Helper Functions - Topic Discovery

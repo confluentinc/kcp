@@ -62,7 +62,7 @@ func NewStateFromFile(stateFile string) (*State, error) {
 }
 
 func (s *State) WriteToFile(filePath string) error {
-	data, err := json.MarshalIndent(s, "", "  ")
+	data, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
 	}
@@ -364,6 +364,33 @@ type ProcessedAggregates struct {
 	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
 }
 
+// NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
+func NewProcessedAggregates() ProcessedAggregates {
+	return ProcessedAggregates{
+		AWSCertificateManager: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+		AmazonManagedStreamingForApacheKafka: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+		EC2Other: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+	}
+}
+
 type ProcessedCost struct {
 	Start     string                 `json:"start"`
 	End       string                 `json:"end"`
@@ -430,5 +457,4 @@ type ServiceCostAggregates struct {
 	AmortizedCost    map[string]any `json:"amortized_cost"`
 	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
 	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
-	UsageQuantity    map[string]any `json:"usage_quantity"`
 }
