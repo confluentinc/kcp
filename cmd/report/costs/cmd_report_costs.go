@@ -115,6 +115,7 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 		return nil, fmt.Errorf("failed to load existing state file: %v", err)
 	}
 
+
 	opts := CostReporterOpts{
 		Regions:   regions,
 		State:     state,
