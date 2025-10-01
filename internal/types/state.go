@@ -418,6 +418,8 @@ type ProcessedCluster struct {
 }
 
 type ProcessedClusterMetrics struct {
+	Region     string                     `json:"region"`
+	ClusterArn string                     `json:"cluster_arn"`
 	Metadata   MetricMetadata             `json:"metadata"`
 	Metrics    []ProcessedMetric          `json:"results"`
 	Aggregates map[string]MetricAggregate `json:"aggregates"`

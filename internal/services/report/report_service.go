@@ -120,11 +120,14 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 
 // filterClusterMetrics filters the processed state by region, clusterArn, and date range
 func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var regionName string
 	var targetCluster *types.ProcessedCluster
+
 	for _, region := range processedState.Regions {
 		for _, cluster := range region.Clusters {
 			if strings.EqualFold(cluster.Arn, clusterArn) {
 				targetCluster = &cluster
+				regionName = region.Name
 				break
 			}
 		}
@@ -165,6 +168,8 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
+		Region:     regionName,
+		ClusterArn: clusterArn,
 		Metadata:   targetCluster.ClusterMetrics.Metadata,
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,

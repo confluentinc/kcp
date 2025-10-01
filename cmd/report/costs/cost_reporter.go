@@ -21,11 +21,6 @@ type CostReporterOpts struct {
 	EndDate   time.Time
 }
 
-type RegionCostData struct {
-	RegionName string
-	Costs      types.ProcessedRegionCosts
-}
-
 type CostReporter struct {
 	reportService   ReportService
 	markdownService markdown.Markdown

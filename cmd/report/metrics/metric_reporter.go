@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -21,7 +22,6 @@ type MetricReporterOpts struct {
 	State       *types.State
 	StartDate   time.Time
 	EndDate     time.Time
-	Region      string
 }
 
 type MetricReporter struct {
@@ -31,7 +31,6 @@ type MetricReporter struct {
 	state       *types.State
 	startDate   time.Time
 	endDate     time.Time
-	region      string
 }
 
 func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *MetricReporter {
@@ -42,7 +41,6 @@ func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *Me
 		state:       opts.State,
 		startDate:   opts.StartDate,
 		endDate:     opts.EndDate,
-		region:      opts.Region,
 	}
 }
 
@@ -74,15 +72,19 @@ func (r *MetricReporter) Run() error {
 func (r *MetricReporter) generateReport(processedClusterMetrics []types.ProcessedClusterMetrics) *markdown.Markdown {
 	md := markdown.New()
 
-	// Add main report header
 	md.AddHeading("AWS Metrics Report", 1)
 
-	// Use the actual date range from the reporter parameters
 	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s",
 		r.startDate.Format("2006-01-02"),
 		r.endDate.Format("2006-01-02")))
 
-	md.AddParagraph(fmt.Sprintf("**Region:** %s", r.region))
+	regionGroups := r.groupClustersByRegion(processedClusterMetrics)
+
+	regions := make([]string, 0, len(regionGroups))
+	for region := range regionGroups {
+		regions = append(regions, region)
+	}
+	md.AddParagraph(fmt.Sprintf("**Regions:** %v", regions))
 
 	if len(processedClusterMetrics) > 0 {
 		metadata := processedClusterMetrics[0].Metadata
@@ -94,40 +96,58 @@ func (r *MetricReporter) generateReport(processedClusterMetrics []types.Processe
 
 	md.AddHorizontalRule()
 
-	// Process each cluster
-	for i, clusterMetrics := range processedClusterMetrics {
-		if i > 0 {
-			md.AddHorizontalRule()
-		}
-
-		r.addClusterSection(md, clusterMetrics)
+	for region, clusters := range regionGroups {
+		r.addRegionSection(md, region, clusters)
 	}
 
 	return md
 }
 
-func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics types.ProcessedClusterMetrics) {
-	// Find cluster name from the ARN (last part after the last slash)
-	clusterName := "Unknown"
-	for _, arn := range r.clusterArns {
-		// Simple way to extract cluster name from ARN
-		if len(arn) > 0 {
-			parts := []rune(arn)
-			for i := len(parts) - 1; i >= 0; i-- {
-				if parts[i] == '/' {
-					clusterName = string(parts[i+1:])
-					break
-				}
-			}
-			break // Use first cluster for now, we'll improve this
-		}
+func (r *MetricReporter) groupClustersByRegion(processedClusterMetrics []types.ProcessedClusterMetrics) map[string][]types.ProcessedClusterMetrics {
+	regionGroups := make(map[string][]types.ProcessedClusterMetrics)
+
+	for i, clusterMetrics := range processedClusterMetrics {
+		// Extract region from cluster ARN
+		region := r.extractRegionFromArn(r.clusterArns[i])
+		regionGroups[region] = append(regionGroups[region], clusterMetrics)
 	}
 
-	md.AddHeading(fmt.Sprintf("Cluster: %s", clusterName), 2)
+	return regionGroups
+}
+
+func (r *MetricReporter) extractRegionFromArn(arn string) string {
+	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
+	// Split on ':' and take index 3 for region
+	parts := strings.Split(arn, ":")
+	if len(parts) >= 4 {
+		return parts[3]
+	}
+	return "unknown-region"
+}
+
+func (r *MetricReporter) addRegionSection(md *markdown.Markdown, region string, clusters []types.ProcessedClusterMetrics) {
+	md.AddHeading(fmt.Sprintf("Region: %s", region), 2)
+
+	// Process each cluster in this region
+	for i, clusterMetrics := range clusters {
+		if i > 0 {
+			md.AddParagraph("---")
+		}
+		r.addClusterSection(md, clusterMetrics, region)
+	}
+
+	md.AddHorizontalRule()
+}
+
+func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics types.ProcessedClusterMetrics, region string) {
+	// Extract cluster name from ARN - we need to find the matching ARN for this region
+	clusterName := r.extractClusterNameFromRegion(region)
+
+	md.AddHeading(fmt.Sprintf("Cluster: %s", clusterName), 3)
 
 	// Add metric aggregates
 	if len(clusterMetrics.Aggregates) > 0 {
-		md.AddHeading("Metric Aggregates", 3)
+		md.AddHeading("Metric Aggregates", 4)
 
 		headers := []string{"Metric", "Average", "Maximum", "Minimum"}
 		var tableData [][]string
@@ -148,9 +168,26 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 	} else {
 		md.AddParagraph("*No metric aggregates available for this cluster.*")
 	}
+}
 
-	// Add separator after cluster section
-	md.AddParagraph("---")
+func (r *MetricReporter) extractClusterNameFromRegion(region string) string {
+	// Find the first ARN that matches this region
+	for _, arn := range r.clusterArns {
+		if r.extractRegionFromArn(arn) == region {
+			return r.extractClusterNameFromArn(arn)
+		}
+	}
+	return "Unknown"
+}
+
+func (r *MetricReporter) extractClusterNameFromArn(arn string) string {
+	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
+	// Split on '/' and take index 1 for cluster name
+	parts := strings.Split(arn, "/")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return "unknown-cluster"
 }
 
 func (r *MetricReporter) formatMetricValue(value *float64) string {
