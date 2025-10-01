@@ -12,8 +12,6 @@ import (
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
-
-	// will need to become clusterArn
 	FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
@@ -168,6 +166,9 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 	} else {
 		md.AddParagraph("*No metric aggregates available for this cluster.*")
 	}
+
+	// Add individual metric values
+	r.addIndividualMetricsSection(md, clusterMetrics.Metrics)
 }
 
 func (r *MetricReporter) extractClusterNameFromRegion(region string) string {
@@ -188,6 +189,71 @@ func (r *MetricReporter) extractClusterNameFromArn(arn string) string {
 		return parts[1]
 	}
 	return "unknown-cluster"
+}
+
+func (r *MetricReporter) addIndividualMetricsSection(md *markdown.Markdown, metrics []types.ProcessedMetric) {
+	if len(metrics) == 0 {
+		md.AddParagraph("*No individual metric data available for this cluster.*")
+		return
+	}
+
+	md.AddHeading("Individual Metric Values", 4)
+
+	// Group metrics by label (metric type)
+	metricGroups := r.groupMetricsByLabel(metrics)
+
+	for metricLabel, metricValues := range metricGroups {
+		md.AddHeading(metricLabel, 5)
+
+		if len(metricValues) == 0 {
+			md.AddParagraph("*No data points available for this metric.*")
+			continue
+		}
+
+		// Create table for this metric type
+		headers := []string{"Start Time", "End Time", "Value"}
+		var tableData [][]string
+
+		for _, metric := range metricValues {
+			startTime := r.formatTimestamp(metric.Start)
+			endTime := r.formatTimestamp(metric.End)
+			value := r.formatMetricValue(metric.Value)
+
+			row := []string{startTime, endTime, value}
+			tableData = append(tableData, row)
+		}
+
+		if len(tableData) > 0 {
+			md.AddTable(headers, tableData)
+		}
+
+		// Add some spacing between metric types
+		md.AddParagraph("")
+	}
+}
+
+func (r *MetricReporter) groupMetricsByLabel(metrics []types.ProcessedMetric) map[string][]types.ProcessedMetric {
+	groups := make(map[string][]types.ProcessedMetric)
+
+	for _, metric := range metrics {
+		groups[metric.Label] = append(groups[metric.Label], metric)
+	}
+
+	return groups
+}
+
+func (r *MetricReporter) formatTimestamp(timestamp string) string {
+	if timestamp == "" {
+		return "N/A"
+	}
+
+	// Parse the timestamp and format it in a more readable way
+	if parsedTime, err := time.Parse("2006-01-02T15:04:05Z", timestamp); err == nil {
+		return parsedTime.Format("2006-01-02 15:04:05")
+	}
+
+	// If parsing fails, return the original timestamp
+	return timestamp
 }
 
 func (r *MetricReporter) formatMetricValue(value *float64) string {
