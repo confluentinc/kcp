@@ -24,7 +24,7 @@ func NewReportCostsCmd() *cobra.Command {
 	reportCostsCmd := &cobra.Command{
 		Use:           "costs",
 		Short:         "Generate a report of costs for given region(s)",
-		Long:          "Generate a report of the costs collected by `kcp discover`",
+		Long:          "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`",
 		SilenceErrors: true,
 		PreRunE:       preRunReportCosts,
 		RunE:          runReportCosts,
@@ -37,7 +37,7 @@ func NewReportCostsCmd() *cobra.Command {
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
-	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to include in the report (comma separated list or repeated flag)")
 
 	reportCostsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -86,7 +86,7 @@ func runReportCosts(cmd *cobra.Command, args []string) error {
 
 	costReporter := NewCostReporter(reportService, *markdownService, *opts)
 	if err := costReporter.Run(); err != nil {
-		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+		return fmt.Errorf("❌ failed to report costs: %v", err)
 	}
 	return nil
 }

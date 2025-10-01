@@ -37,7 +37,7 @@ func NewReportMetricsCmd() *cobra.Command {
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
-	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to scan (comma separated list or repeated flag)")
+	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)")
 
 	reportMetricsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -85,7 +85,7 @@ func runReportMetrics(cmd *cobra.Command, args []string) error {
 
 	metricReporter := NewMetricReporter(reportService, *opts)
 	if err := metricReporter.Run(); err != nil {
-		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+		return fmt.Errorf("❌ failed to report metrics: %v", err)
 	}
 	return nil
 }
