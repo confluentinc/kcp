@@ -45,17 +45,59 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   const [error, setError] = useState<string | null>(null)
   const [selectedService, setSelectedService] = useState<string>('')
   const [selectedTableService, setSelectedTableService] = useState<string>('')
+  const [selectedCostType, setSelectedCostType] = useState<string>('unblended_cost')
+  const [defaultsSet, setDefaultsSet] = useState(false)
 
   // Region-specific state from Zustand
-  const {
-    startDate,
-    endDate,
-    activeCostsTab,
-    setStartDate,
-    setEndDate,
-    clearDates,
-    setActiveCostsTab,
-  } = useRegionCostFilters(region.name)
+  const { startDate, endDate, activeCostsTab, setStartDate, setEndDate, setActiveCostsTab } =
+    useRegionCostFilters(region.name)
+
+  // Set default dates from metadata when data is first loaded
+  useEffect(() => {
+    if (defaultsSet || !costsResponse?.metadata) return
+
+    const metaStartDate = costsResponse.metadata.start_date
+    const metaEndDate = costsResponse.metadata.end_date
+
+    // Only set defaults if both dates are valid and no user selection has been made
+    if (
+      !startDate &&
+      !endDate &&
+      metaStartDate &&
+      metaEndDate &&
+      !isNaN(new Date(metaStartDate).getTime()) &&
+      !isNaN(new Date(metaEndDate).getTime())
+    ) {
+      setStartDate(new Date(metaStartDate))
+      setEndDate(new Date(metaEndDate))
+      setDefaultsSet(true)
+    }
+  }, [costsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
+
+  // Custom reset functions that use metadata dates
+  const resetToMetadataDates = () => {
+    if (costsResponse?.metadata) {
+      const metaStartDate = costsResponse.metadata.start_date
+      const metaEndDate = costsResponse.metadata.end_date
+
+      if (metaStartDate && metaEndDate) {
+        setStartDate(new Date(metaStartDate))
+        setEndDate(new Date(metaEndDate))
+      }
+    }
+  }
+
+  const resetStartDateToMetadata = () => {
+    if (costsResponse?.metadata?.start_date) {
+      setStartDate(new Date(costsResponse.metadata.start_date))
+    }
+  }
+
+  const resetEndDateToMetadata = () => {
+    if (costsResponse?.metadata?.end_date) {
+      setEndDate(new Date(costsResponse.metadata.end_date))
+    }
+  }
 
   // Process costs data for table, CSV, and chart formats using backend aggregates
   const processedData = useMemo(() => {
@@ -81,7 +123,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     const allServices = new Set<string>()
     costs.forEach((cost: any) => {
       if (cost && cost.start && typeof cost.start === 'string') {
-        allDates.add(cost.start.split('T')[0]) // Get date part only
+        allDates.add(cost.start) // Use full date string
       }
       if (cost && cost.service) {
         allServices.add(cost.service)
@@ -95,38 +137,49 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     const serviceTotals: Record<string, number> = {}
     const usageTypeTotals: Record<string, number> = {}
 
-    // Use backend aggregates (nested structure: service -> usage_type -> {sum, avg, max, min})
+    // Use backend aggregates (nested structure: service -> cost_type -> usage_type -> {sum, avg, max, min})
+    // Filter out usage_quantity cost type
     services.forEach((service) => {
       if (aggregates[service]) {
         const serviceAggregates = aggregates[service] as Record<string, any>
 
-        // Get service total directly from backend
-        if (serviceAggregates.total !== undefined) {
-          serviceTotals[service] = serviceAggregates.total
+        // Skip usage_quantity cost type
+        if (selectedCostType === 'usage_quantity') return
+
+        // Get service total directly from the selected cost type
+        if (serviceAggregates[selectedCostType]?.total !== undefined) {
+          serviceTotals[service] = serviceAggregates[selectedCostType].total
         }
 
-        // Extract usage type totals
-        Object.keys(serviceAggregates).forEach((usageType) => {
-          if (usageType === 'total') return // Skip the service total
+        // Extract usage type totals for the selected cost type
+        if (serviceAggregates[selectedCostType]) {
+          const costTypeAggregates = serviceAggregates[selectedCostType]
+          Object.keys(costTypeAggregates).forEach((usageType) => {
+            if (usageType === 'total') return // Skip the service total
 
-          const usageTypeAggregate = serviceAggregates[usageType]
-          if (usageTypeAggregate?.sum) {
-            const usageKey = `${service}:${usageType}`
-            usageTypeTotals[usageKey] = usageTypeAggregate.sum
-          }
-        })
+            const usageTypeAggregate = costTypeAggregates[usageType]
+            if (usageTypeAggregate?.sum !== undefined) {
+              const usageKey = `${service}:${usageType}`
+              usageTypeTotals[usageKey] = usageTypeAggregate.sum
+            }
+          })
+        }
       }
     })
 
     // Group costs by service, usage type, and date for chart data
+    // Filter out usage_quantity cost type
     const costsByServiceAndUsage: Record<string, Record<string, Record<string, number>>> = {}
     costs.forEach((cost: any) => {
-      if (!cost || !cost.service || !cost.usage_type || !cost.start || !cost.value) return
+      if (!cost || !cost.service || !cost.usage_type || !cost.start || !cost.values) return
+
+      // Skip usage_quantity cost type
+      if (selectedCostType === 'usage_quantity') return
 
       const service = cost.service
       const usageType = cost.usage_type
-      const date = cost.start.split('T')[0]
-      const value = parseFloat(cost.value) || 0
+      const date = cost.start
+      const value = parseFloat(cost.values[selectedCostType]) || 0
 
       // Initialize nested structure
       if (!costsByServiceAndUsage[service]) {
@@ -177,7 +230,12 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       : tableData
 
     // Create CSV data
-    const csvHeaders = ['Service', 'Usage Type', 'Total', ...uniqueDates]
+    const csvHeaders = [
+      'Service',
+      'Usage Type',
+      `Total (${selectedCostType.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())})`,
+      ...uniqueDates,
+    ]
     const csvRows = tableData.map((row) => [
       row.service,
       row.usageType,
@@ -246,7 +304,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       services,
       serviceTotals,
     }
-  }, [costsResponse, selectedTableService])
+  }, [costsResponse, selectedTableService, selectedCostType])
 
   // Set first service as default when data loads
   useEffect(() => {
@@ -302,7 +360,6 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
         const data = await response.json()
         setCostsResponse(data)
-        console.log('Costs response:', data)
       } catch (err) {
         console.error('Error fetching costs:', err)
         setError(err instanceof Error ? err.message : 'Failed to fetch costs')
@@ -312,7 +369,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     }
 
     fetchCosts()
-  }, [isActive, region.name, startDate, endDate])
+  }, [isActive, region.name, startDate, endDate, selectedCostType])
 
   // Set default selected service when data loads
   useEffect(() => {
@@ -354,106 +411,159 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   // Main component render
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-      {/* Date Picker Controls */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
-        <div className="flex flex-col space-y-2">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Start Date</label>
-          <div className="relative">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    'w-[240px] justify-start text-left font-normal pr-10',
-                    !startDate && 'text-muted-foreground'
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {startDate ? format(startDate, 'PPP') : 'Pick a start date'}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-auto p-0"
-                align="start"
-              >
-                <Calendar
-                  mode="single"
-                  selected={startDate}
-                  onSelect={setStartDate}
-                />
-              </PopoverContent>
-            </Popover>
-            {startDate && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setStartDate(undefined)
-                }}
-                title="Clear start date"
-              >
-                <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
-              </Button>
-            )}
+      {/* Filters: Cost Type, Service, and Date Picker Controls */}
+      <div className="flex flex-col gap-4 mb-6">
+        {/* Top row: Service and Cost Type Selectors */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          {/* Service Selector */}
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Service</label>
+            <Select
+              value={selectedService}
+              onValueChange={setSelectedService}
+            >
+              <SelectTrigger className="w-[300px]">
+                <SelectValue placeholder="Select service for chart" />
+              </SelectTrigger>
+              <SelectContent>
+                {processedData.chartOptions.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Cost Type Selector */}
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Cost Type
+            </label>
+            <Select
+              value={selectedCostType}
+              onValueChange={setSelectedCostType}
+            >
+              <SelectTrigger className="w-[300px]">
+                <SelectValue placeholder="Select cost type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="unblended_cost">Unblended Cost</SelectItem>
+                <SelectItem value="blended_cost">Blended Cost</SelectItem>
+                <SelectItem value="amortized_cost">Amortized Cost</SelectItem>
+                <SelectItem value="net_amortized_cost">Net Amortized Cost</SelectItem>
+                <SelectItem value="net_unblended_cost">Net Unblended Cost</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        <div className="flex flex-col space-y-2">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">End Date</label>
-          <div className="relative">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    'w-[240px] justify-start text-left font-normal pr-10',
-                    !endDate && 'text-muted-foreground'
-                  )}
+        {/* Date Picker Controls */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Start Date
+            </label>
+            <div className="relative">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      'w-[240px] justify-start text-left font-normal pr-10',
+                      !startDate && 'text-muted-foreground'
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {startDate ? format(startDate, 'PPP') : 'Pick a start date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-auto p-0"
+                  align="start"
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {endDate ? format(endDate, 'PPP') : 'Pick an end date'}
+                  <Calendar
+                    mode="single"
+                    selected={startDate}
+                    onSelect={setStartDate}
+                  />
+                </PopoverContent>
+              </Popover>
+              {startDate && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    resetStartDateToMetadata()
+                  }}
+                  title="Reset to metadata start date"
+                >
+                  <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-auto p-0"
-                align="start"
-              >
-                <Calendar
-                  mode="single"
-                  selected={endDate}
-                  onSelect={setEndDate}
-                />
-              </PopoverContent>
-            </Popover>
-            {endDate && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setEndDate(undefined)
-                }}
-                title="Clear end date"
-              >
-                <X className="h-4 w-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
-              </Button>
-            )}
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-col justify-end">
-          <Button
-            variant="outline"
-            onClick={clearDates}
-            className="w-full sm:w-auto"
-          >
-            Clear All
-          </Button>
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">End Date</label>
+            <div className="relative">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      'w-[240px] justify-start text-left font-normal pr-10',
+                      !endDate && 'text-muted-foreground'
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {endDate ? format(endDate, 'PPP') : 'Pick an end date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-auto p-0"
+                  align="start"
+                >
+                  <Calendar
+                    mode="single"
+                    selected={endDate}
+                    onSelect={setEndDate}
+                  />
+                </PopoverContent>
+              </Popover>
+              {endDate && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    resetEndDateToMetadata()
+                  }}
+                  title="Reset to metadata end date"
+                >
+                  <X className="h-4 w-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col justify-end">
+            <Button
+              variant="outline"
+              onClick={resetToMetadataDates}
+              className="w-full sm:w-auto"
+            >
+              Reset
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -530,52 +640,28 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
               <div className="p-6 rounded-lg">
                 {processedData.chartData.length > 0 && processedData.chartOptions.length > 0 ? (
                   <div className="space-y-6">
-                    {/* Service/Usage Type Selector and Summary Stats */}
-                    <div className="flex items-center justify-between">
-                      {/* Left side: Service Selector */}
-                      <div className="flex items-center gap-4">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Select Service:
-                        </label>
-                        <Select
-                          value={selectedService}
-                          onValueChange={setSelectedService}
-                        >
-                          <SelectTrigger className="w-[400px]">
-                            <SelectValue placeholder="Choose a service to visualize all usage types" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {processedData.chartOptions.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {/* Right side: Service Total Cost */}
-                      {selectedService && (
+                    {/* Service Total Display */}
+                    {selectedService && (
+                      <div className="flex items-center justify-center mb-4">
                         <div className="flex items-center gap-4">
                           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Service Total:
+                            Service Total for {selectedService} (
+                            {selectedCostType
+                              .replace(/_/g, ' ')
+                              .replace(/\b\w/g, (l) => l.toUpperCase())}
+                            ):
                           </span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-green-600 dark:text-green-400">
-                              $
-                              {(
-                                (processedData.serviceTotals as Record<string, number>)[
-                                  selectedService
-                                ] || 0
-                              ).toFixed(2)}
-                            </span>
-                          </div>
+                          <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                            $
+                            {(
+                              (processedData.serviceTotals as Record<string, number>)[
+                                selectedService
+                              ] || 0
+                            ).toFixed(2)}
+                          </span>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                     {/* Stacked Area Chart for Usage Types */}
                     {selectedService && (
@@ -734,7 +820,10 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
               <div className="flex items-center gap-6">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500 dark:text-gray-400">Total:</span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    Total (
+                    {selectedCostType.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}):
+                  </span>
                   <span className="text-lg font-bold text-green-600 dark:text-green-400">
                     $
                     {(
@@ -761,7 +850,11 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
                         </TableHead>
                         <TableHead className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600">
                           <div className="text-green-600 dark:text-green-400 font-semibold">
-                            Total
+                            Total (
+                            {selectedCostType
+                              .replace(/_/g, ' ')
+                              .replace(/\b\w/g, (l) => l.toUpperCase())}
+                            )
                           </div>
                         </TableHead>
                         {processedData.uniqueDates.map((date, index) => (

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import ClusterOverview from './ClusterOverview'
 import ClusterMetrics from './ClusterMetrics'
 import ClusterTopics from './ClusterTopics'
 
@@ -34,7 +33,17 @@ interface ClusterReportProps {
 }
 
 export default function ClusterReport({ cluster, regionName, regionData }: ClusterReportProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'topics' | 'metrics'>('overview')
+  const [activeTab, setActiveTab] = useState<
+    | 'metrics'
+    | 'topics'
+    | 'cluster'
+    | 'auth'
+    | 'network'
+    | 'storage'
+    | 'security'
+    | 'monitoring'
+    | 'configurations'
+  >('metrics')
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
   const provisioned = mskConfig?.Provisioned
@@ -61,40 +70,95 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
       minute: '2-digit',
     })
 
+  const getStatusBadge = (enabled: boolean, label: string) => (
+    <span
+      className={`text-sm font-medium ${
+        enabled ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+      }`}
+    >
+      {label}
+    </span>
+  )
+
+  const decodeBase64 = (base64String: string) => {
+    try {
+      return atob(base64String)
+    } catch {
+      return 'Unable to decode'
+    }
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 min-w-0 w-full">
       {/* Header */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-              Cluster:&nbsp;{cluster.name}
-            </h1>
-            <p className="text-lg text-gray-600 dark:text-gray-300 mt-1">
-              {regionName} • {mskConfig.ClusterType || 'Unknown'} •{' '}
-              {provisioned.NumberOfBrokerNodes || 0} brokers
-            </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'} •
-              Version: {mskConfig.CurrentVersion || 'Unknown'}
-            </p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 transition-colors">
+        {/* Cluster Title and Key Metrics */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+                Cluster:&nbsp;{cluster.name}
+              </h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'} •
+                Version: {mskConfig.CurrentVersion || 'Unknown'}
+              </p>
+            </div>
+          </div>
+
+          {/* Key Metrics */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {mskConfig.ClusterType || 'Unknown'}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Cluster Type</div>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {provisioned.NumberOfBrokerNodes}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Broker Nodes</div>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {brokerInfo.InstanceType || 'Unknown'}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Instance Type</div>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0}GB
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Storage per Broker</div>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                {provisioned.CurrentBrokerSoftwareInfo?.KafkaVersion || 'Unknown'}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Kafka Version</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Tab Navigation */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 transition-colors min-w-0 max-w-full overflow-hidden">
+        {/* All Tabs */}
         <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="-mb-px flex space-x-8 px-6">
+          <nav className="-mb-px flex space-x-8 px-6 overflow-x-auto">
             {[
-              { id: 'overview', label: 'Overview', icon: '' },
-              { id: 'metrics', label: 'Metrics', icon: '' },
-              { id: 'topics', label: 'Topics', icon: '' },
+              { id: 'metrics', label: 'Metrics' },
+              { id: 'topics', label: 'Topics' },
+              { id: 'cluster', label: 'Cluster' },
+              { id: 'auth', label: 'Authentication' },
+              { id: 'network', label: 'Network' },
+              { id: 'storage', label: 'Storage' },
+              { id: 'security', label: 'Security' },
+              { id: 'monitoring', label: 'Monitoring & Logging' },
+              { id: 'configurations', label: 'Broker Settings' },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                     : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
@@ -106,20 +170,8 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           </nav>
         </div>
 
-        <div className="p-6 min-w-0 max-w-full overflow-hidden">
-          {/* Overview Tab */}
-          {activeTab === 'overview' && (
-            <div className="min-w-0 max-w-full">
-              <ClusterOverview
-                mskConfig={mskConfig}
-                provisioned={provisioned}
-                brokerInfo={brokerInfo}
-                regionName={regionName}
-                regionData={regionData}
-              />
-            </div>
-          )}
-
+        {/* Tab Content */}
+        <div className="p-6">
           {/* Metrics Tab */}
           {activeTab === 'metrics' && (
             <div className="min-w-0 max-w-full">
@@ -137,6 +189,388 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           {activeTab === 'topics' && (
             <div className="min-w-0 max-w-full">
               <ClusterTopics kafkaAdminInfo={cluster.kafka_admin_client_information} />
+            </div>
+          )}
+
+          {/* Cluster Configuration Tab */}
+          {activeTab === 'cluster' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
+                Cluster Configuration
+              </h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Cluster ARN:</span>
+                  <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                    {mskConfig.ClusterArn.split('/').pop()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">AZ Distribution:</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {brokerInfo.BrokerAZDistribution || 'Unknown'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Availability Zones:</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {brokerInfo.ZoneIds?.length || 0} zones
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Subnets:</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {brokerInfo.ClientSubnets?.length || 0} subnets
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Authentication Status Tab */}
+          {activeTab === 'auth' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
+                Authentication Status
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-gray-600">
+                      <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+                        Authentication Method
+                      </th>
+                      <th className="text-center py-2 font-medium text-gray-900 dark:text-gray-100">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
+                    <tr>
+                      <td className="py-2 text-gray-900 dark:text-gray-100">IAM Authentication</td>
+                      <td className="py-2 text-center">
+                        {getStatusBadge(
+                          provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false,
+                          provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled
+                            ? 'Enabled'
+                            : 'Disabled'
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 text-gray-900 dark:text-gray-100">
+                        SCRAM Authentication
+                      </td>
+                      <td className="py-2 text-center">
+                        {getStatusBadge(
+                          provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false,
+                          provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
+                            ? 'Enabled'
+                            : 'Disabled'
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 text-gray-900 dark:text-gray-100">TLS Authentication</td>
+                      <td className="py-2 text-center">
+                        {getStatusBadge(
+                          provisioned.ClientAuthentication?.Tls?.Enabled || false,
+                          provisioned.ClientAuthentication?.Tls?.Enabled ? 'Enabled' : 'Disabled'
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 text-gray-900 dark:text-gray-100">
+                        Unauthenticated Access
+                      </td>
+                      <td className="py-2 text-center">
+                        {getStatusBadge(
+                          provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false,
+                          provisioned.ClientAuthentication?.Unauthenticated?.Enabled
+                            ? 'Enabled'
+                            : 'Disabled'
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Network Configuration Tab */}
+          {activeTab === 'network' && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Network Configuration
+              </h3>
+              <div>
+                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                  Client Subnets
+                </h4>
+                <div className="space-y-2">
+                  {(brokerInfo.ClientSubnets || []).map((subnet: string, index: number) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded transition-colors"
+                    >
+                      <span className="font-mono text-sm text-gray-900 dark:text-gray-100">
+                        {subnet}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        AZ: {brokerInfo.ZoneIds?.[index] || 'Unknown'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Storage Configuration Tab */}
+          {activeTab === 'storage' && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Storage Configuration
+              </h3>
+              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">Volume Size:</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      {brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0} GB
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">Total Storage:</span>
+                    <span className="font-bold text-green-600 dark:text-green-400">
+                      {(brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0) *
+                        (provisioned.NumberOfBrokerNodes || 0)}{' '}
+                      GB
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Provisioned Throughput:
+                    </span>
+                    {getStatusBadge(
+                      brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled ||
+                        false,
+                      brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled
+                        ? 'Enabled'
+                        : 'Disabled'
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Security Configuration Tab */}
+          {activeTab === 'security' && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Security Configuration
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Authentication Methods */}
+                <div>
+                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                    Authentication Methods
+                  </h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                        IAM Authentication
+                      </span>
+                      {getStatusBadge(
+                        provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false,
+                        provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled
+                          ? 'Enabled'
+                          : 'Disabled'
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                        SCRAM Authentication
+                      </span>
+                      {getStatusBadge(
+                        provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false,
+                        provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
+                          ? 'Enabled'
+                          : 'Disabled'
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                        TLS Authentication
+                      </span>
+                      {getStatusBadge(
+                        provisioned.ClientAuthentication?.Tls?.Enabled || false,
+                        provisioned.ClientAuthentication?.Tls?.Enabled ? 'Enabled' : 'Disabled'
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                        Unauthenticated Access
+                      </span>
+                      {getStatusBadge(
+                        provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false,
+                        provisioned.ClientAuthentication?.Unauthenticated?.Enabled
+                          ? 'Enabled'
+                          : 'Disabled'
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Encryption Settings */}
+                <div>
+                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                    Encryption Settings
+                  </h4>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                        Encryption at Rest
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors p-3">
+                        <div className="text-sm text-gray-600 dark:text-gray-400">KMS Key ID:</div>
+                        <div className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors mt-1">
+                          {provisioned.EncryptionInfo?.EncryptionAtRest?.DataVolumeKMSKeyId?.split(
+                            '/'
+                          ).pop() || 'Not configured'}
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                        Encryption in Transit
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">
+                            Client-Broker:
+                          </span>
+                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                            {provisioned.EncryptionInfo?.EncryptionInTransit?.ClientBroker ||
+                              'Not configured'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">
+                            In-Cluster:
+                          </span>
+                          {getStatusBadge(
+                            provisioned.EncryptionInfo?.EncryptionInTransit?.InCluster || false,
+                            provisioned.EncryptionInfo?.EncryptionInTransit?.InCluster
+                              ? 'Enabled'
+                              : 'Disabled'
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Monitoring & Logging Tab */}
+          {activeTab === 'monitoring' && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Monitoring & Logging Configuration
+              </h3>
+              <div>
+                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                  Monitoring Configuration
+                </h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">Enhanced Monitoring:</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded">
+                      {provisioned.EnhancedMonitoring}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">CloudWatch Logs:</span>
+                    {getStatusBadge(
+                      provisioned.LoggingInfo?.BrokerLogs?.CloudWatchLogs?.Enabled || false,
+                      provisioned.LoggingInfo?.BrokerLogs?.CloudWatchLogs?.Enabled
+                        ? 'Enabled'
+                        : 'Disabled'
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">Firehose Logs:</span>
+                    {getStatusBadge(
+                      provisioned.LoggingInfo?.BrokerLogs?.Firehose?.Enabled || false,
+                      provisioned.LoggingInfo?.BrokerLogs?.Firehose?.Enabled
+                        ? 'Enabled'
+                        : 'Disabled'
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">S3 Logs:</span>
+                    {getStatusBadge(
+                      provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled || false,
+                      provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled ? 'Enabled' : 'Disabled'
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Available Configurations Tab */}
+          {activeTab === 'configurations' && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Broker Settings
+              </h3>
+              {regionData?.configurations && regionData.configurations.length > 0 ? (
+                <div className="space-y-6">
+                  {regionData.configurations.slice(0, 5).map((config: any, index: number) => (
+                    <div
+                      key={index}
+                      className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <div className="font-medium text-gray-900 dark:text-gray-100">
+                            {config.Arn.split('/').slice(-2, -1)[0]}
+                          </div>
+                          <div className="text-sm text-gray-500 dark:text-gray-400">
+                            Revision {config.Revision} • Created {formatDate(config.CreationTime)}
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">
+                          {config.Description || 'No description'}
+                        </div>
+                      </div>
+
+                      {/* Server Properties */}
+                      {config.ServerProperties && (
+                        <div className="mt-4">
+                          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">
+                            Server Properties
+                          </h4>
+                          <div className="bg-white dark:bg-gray-600 rounded-lg p-3 transition-colors">
+                            <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
+                              {decodeBase64(config.ServerProperties)}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400">
+                  No configurations available for this region.
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -4,53 +4,122 @@ import { Download, CalendarIcon, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 
 interface CostSummaryData {
-  totalCost: number
   startDate: string | null
   endDate: string | null
   regionBreakdown: Array<{
     region: string
-    cost: number
-    percentage: number
+    unblended_cost: number
+    blended_cost: number
+    amortized_cost: number
+    net_amortized_cost: number
+    net_unblended_cost: number
+  }>
+  chartData: Array<{
+    date: string
+    formattedDate: string
+    [regionName: string]: string | number
   }>
 }
 
 export default function Summary() {
   const regions = useRegions()
-  const { startDate, endDate, setStartDate, setEndDate, clearDates } = useSummaryDateFilters()
+  const { startDate, endDate, setStartDate, setEndDate } = useSummaryDateFilters()
   const [regionCostData, setRegionCostData] = useState<Record<string, any>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [defaultsSet, setDefaultsSet] = useState(false)
+  const [selectedChartCostType, setSelectedChartCostType] = useState<string>('unblended_cost')
+
+  // Get metadata dates from any region's data
+  const getMetadataDates = () => {
+    for (const [, costResponse] of Object.entries(regionCostData)) {
+      if (costResponse?.metadata?.start_date && costResponse?.metadata?.end_date) {
+        return {
+          startDate: costResponse.metadata.start_date,
+          endDate: costResponse.metadata.end_date,
+        }
+      }
+    }
+    return null
+  }
 
   // Set default dates from metadata when data is first loaded
   useEffect(() => {
     if (defaultsSet || !regionCostData || Object.keys(regionCostData).length === 0) return
 
-    // Extract date range from any region's metadata
+    // Get metadata dates from any region's data (inline to avoid dependency issues)
+    let metadataDates = null
     for (const [, costResponse] of Object.entries(regionCostData)) {
       if (costResponse?.metadata?.start_date && costResponse?.metadata?.end_date) {
-        const metaStartDate = new Date(costResponse.metadata.start_date)
-        const metaEndDate = new Date(costResponse.metadata.end_date)
-
-        // Only set defaults if both dates are valid and no user selection has been made
-        if (
-          !startDate &&
-          !endDate &&
-          !isNaN(metaStartDate.getTime()) &&
-          !isNaN(metaEndDate.getTime())
-        ) {
-          setStartDate(metaStartDate)
-          setEndDate(metaEndDate)
-          setDefaultsSet(true)
-          break
+        metadataDates = {
+          startDate: costResponse.metadata.start_date,
+          endDate: costResponse.metadata.end_date,
         }
+        break
       }
     }
-  }, [regionCostData, defaultsSet, startDate, endDate])
+
+    if (metadataDates) {
+      const metaStartDate = new Date(metadataDates.startDate)
+      const metaEndDate = new Date(metadataDates.endDate)
+
+      // Only set defaults if both dates are valid and no user selection has been made
+      if (
+        !startDate &&
+        !endDate &&
+        !isNaN(metaStartDate.getTime()) &&
+        !isNaN(metaEndDate.getTime())
+      ) {
+        setStartDate(metaStartDate)
+        setEndDate(metaEndDate)
+        setDefaultsSet(true)
+      }
+    }
+  }, [regionCostData, defaultsSet, startDate, endDate, setStartDate, setEndDate])
+
+  // Custom reset functions that use metadata dates
+  const resetToMetadataDates = () => {
+    const metadataDates = getMetadataDates()
+    if (metadataDates) {
+      setStartDate(new Date(metadataDates.startDate))
+      setEndDate(new Date(metadataDates.endDate))
+    }
+  }
+
+  const resetStartDateToMetadata = () => {
+    const metadataDates = getMetadataDates()
+    if (metadataDates) {
+      setStartDate(new Date(metadataDates.startDate))
+    }
+  }
+
+  const resetEndDateToMetadata = () => {
+    const metadataDates = getMetadataDates()
+    if (metadataDates) {
+      setEndDate(new Date(metadataDates.endDate))
+    }
+  }
 
   // Fetch cost data for all regions
   useEffect(() => {
@@ -110,23 +179,29 @@ export default function Summary() {
   const costSummary: CostSummaryData = useMemo(() => {
     if (!regionCostData || Object.keys(regionCostData).length === 0) {
       return {
-        totalCost: 0,
         startDate: null,
         endDate: null,
         regionBreakdown: [],
+        chartData: [],
       }
     }
 
-    let totalCost = 0
     let startDate: string | null = null
     let endDate: string | null = null
-    const regionCosts: Record<string, number> = {}
-    const serviceCosts: Record<string, number> = {}
-    const serviceRegionCount: Record<string, Set<string>> = {}
+    const regionCosts: Record<string, Record<string, number>> = {}
 
-    // Process each region's cost data from API responses
+    // Define the cost types we want to include
+    const costTypes = [
+      'unblended_cost',
+      'blended_cost',
+      'amortized_cost',
+      'net_amortized_cost',
+      'net_unblended_cost',
+    ]
+
+    // Process each region's cost data from API responses using aggregates
     Object.entries(regionCostData).forEach(([regionName, costResponse]) => {
-      if (!costResponse?.results || !Array.isArray(costResponse.results)) return
+      if (!costResponse?.aggregates) return
 
       // Extract date range from metadata if available
       if (costResponse.metadata) {
@@ -141,61 +216,103 @@ export default function Summary() {
         }
       }
 
-      let regionTotal = 0
+      // Initialize region costs for all cost types
+      regionCosts[regionName] = {}
+      costTypes.forEach((costType) => {
+        regionCosts[regionName][costType] = 0
+      })
 
-      // Process the cost results from the API - only Amazon Managed Streaming for Apache Kafka
+      const aggregates = costResponse.aggregates
+
+      // Process aggregates using the new structure: service -> cost_type -> usage_type -> {sum, avg, max, min}
+      // Only include Amazon Managed Streaming for Apache Kafka
+      Object.entries(aggregates).forEach(([service, serviceAggregates]: [string, any]) => {
+        // Only include Amazon Managed Streaming for Apache Kafka
+        if (service !== 'Amazon Managed Streaming for Apache Kafka') return
+
+        // Process each cost type
+        costTypes.forEach((costType) => {
+          if (serviceAggregates[costType]?.total !== undefined) {
+            regionCosts[regionName][costType] += serviceAggregates[costType].total
+          }
+        })
+      })
+    })
+
+    // Create region breakdown with all cost types
+    const regionBreakdown = Object.entries(regionCosts)
+      .map(([region, costs]) => ({
+        region,
+        unblended_cost: costs.unblended_cost || 0,
+        blended_cost: costs.blended_cost || 0,
+        amortized_cost: costs.amortized_cost || 0,
+        net_amortized_cost: costs.net_amortized_cost || 0,
+        net_unblended_cost: costs.net_unblended_cost || 0,
+      }))
+      .sort((a, b) => b.unblended_cost - a.unblended_cost) // Sort by unblended cost
+
+    // Create chart data by processing daily costs for each region
+    const dailyRegionCosts: Record<string, Record<string, Record<string, number>>> = {}
+    const allDates = new Set<string>()
+
+    // Process raw cost data to get daily costs by region
+    Object.entries(regionCostData).forEach(([regionName, costResponse]) => {
+      if (!costResponse?.results || !Array.isArray(costResponse.results)) return
+
       costResponse.results.forEach((cost: any) => {
-        if (!cost || !cost.service || !cost.value) return
+        if (!cost || !cost.start || !cost.service || !cost.values) return
 
         // Only include Amazon Managed Streaming for Apache Kafka
         if (cost.service !== 'Amazon Managed Streaming for Apache Kafka') return
 
-        const costValue = parseFloat(cost.value) || 0
-        const service = cost.service
+        const date = cost.start
+        allDates.add(date)
 
-        regionTotal += costValue
-
-        // Track service costs
-        serviceCosts[service] = (serviceCosts[service] || 0) + costValue
-
-        // Track which regions each service appears in
-        if (!serviceRegionCount[service]) {
-          serviceRegionCount[service] = new Set()
+        if (!dailyRegionCosts[date]) {
+          dailyRegionCosts[date] = {}
         }
-        serviceRegionCount[service].add(regionName)
-      })
+        if (!dailyRegionCosts[date][regionName]) {
+          dailyRegionCosts[date][regionName] = {}
+          costTypes.forEach((costType) => {
+            dailyRegionCosts[date][regionName][costType] = 0
+          })
+        }
 
-      regionCosts[regionName] = regionTotal
-      totalCost += regionTotal
+        // Add costs for each cost type
+        costTypes.forEach((costType) => {
+          const value = parseFloat(cost.values[costType]) || 0
+          dailyRegionCosts[date][regionName][costType] += value
+        })
+      })
     })
 
-    // Create region breakdown with percentages
-    const regionBreakdown = Object.entries(regionCosts)
-      .map(([region, cost]) => ({
-        region,
-        cost,
-        percentage: totalCost > 0 ? (cost / totalCost) * 100 : 0,
-      }))
-      .sort((a, b) => b.cost - a.cost)
+    // Create chart data
+    const sortedDates = Array.from(allDates).sort()
+    const chartData = sortedDates.map((date) => {
+      const dataPoint: any = {
+        date: date,
+        formattedDate: new Date(date).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+      }
 
-    // Create service breakdown with percentages
-    const serviceBreakdown = Object.entries(serviceCosts)
-      .map(([service, cost]) => ({
-        service,
-        cost,
-        percentage: totalCost > 0 ? (cost / totalCost) * 100 : 0,
-      }))
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, 10) // Top 10 services
+      // Add each region's cost for the selected cost type
+      Object.keys(regionCosts).forEach((regionName) => {
+        const regionDailyCosts = dailyRegionCosts[date]?.[regionName]
+        dataPoint[regionName] = regionDailyCosts?.[selectedChartCostType] || 0
+      })
+
+      return dataPoint
+    })
 
     return {
-      totalCost,
       startDate,
       endDate,
       regionBreakdown,
-      serviceBreakdown,
+      chartData,
     }
-  }, [regionCostData])
+  }, [regionCostData, selectedChartCostType])
 
   const formatCurrencyDetailed = (amount: number) =>
     new Intl.NumberFormat('en-US', {
@@ -267,7 +384,7 @@ export default function Summary() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">Summary</h1>
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">MSK Cost Summary</h1>
         </div>
         <div className="flex items-center gap-4">
           <Button
@@ -321,9 +438,9 @@ export default function Summary() {
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    setStartDate(undefined)
+                    resetStartDateToMetadata()
                   }}
-                  title="Clear start date"
+                  title="Reset to metadata start date"
                 >
                   <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
                 </Button>
@@ -366,9 +483,9 @@ export default function Summary() {
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    setEndDate(undefined)
+                    resetEndDateToMetadata()
                   }}
-                  title="Clear end date"
+                  title="Reset to metadata end date"
                 >
                   <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
                 </Button>
@@ -379,10 +496,10 @@ export default function Summary() {
           <div className="flex flex-col justify-end">
             <Button
               variant="outline"
-              onClick={clearDates}
+              onClick={resetToMetadataDates}
               className="w-full sm:w-auto"
             >
-              Clear All
+              Reset
             </Button>
           </div>
         </div>
@@ -402,7 +519,19 @@ export default function Summary() {
                     Region
                   </th>
                   <th className="text-right py-3 px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Cost
+                    Unblended Cost
+                  </th>
+                  <th className="text-right py-3 px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Blended Cost
+                  </th>
+                  <th className="text-right py-3 px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Amortized Cost
+                  </th>
+                  <th className="text-right py-3 px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Net Amortized Cost
+                  </th>
+                  <th className="text-right py-3 px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Net Unblended Cost
                   </th>
                 </tr>
               </thead>
@@ -416,7 +545,19 @@ export default function Summary() {
                       {region.region}
                     </td>
                     <td className="py-3 px-2 text-sm text-gray-900 dark:text-gray-100 text-right font-mono">
-                      {formatCurrencyDetailed(region.cost)}
+                      {formatCurrencyDetailed(region.unblended_cost)}
+                    </td>
+                    <td className="py-3 px-2 text-sm text-gray-900 dark:text-gray-100 text-right font-mono">
+                      {formatCurrencyDetailed(region.blended_cost)}
+                    </td>
+                    <td className="py-3 px-2 text-sm text-gray-900 dark:text-gray-100 text-right font-mono">
+                      {formatCurrencyDetailed(region.amortized_cost)}
+                    </td>
+                    <td className="py-3 px-2 text-sm text-gray-900 dark:text-gray-100 text-right font-mono">
+                      {formatCurrencyDetailed(region.net_amortized_cost)}
+                    </td>
+                    <td className="py-3 px-2 text-sm text-gray-900 dark:text-gray-100 text-right font-mono">
+                      {formatCurrencyDetailed(region.net_unblended_cost)}
                     </td>
                   </tr>
                 ))}
@@ -426,12 +567,200 @@ export default function Summary() {
                     Total
                   </td>
                   <td className="py-3 px-2 text-sm font-bold text-gray-900 dark:text-gray-100 text-right font-mono">
-                    {formatCurrencyDetailed(costSummary.totalCost)}
+                    {formatCurrencyDetailed(
+                      costSummary.regionBreakdown.reduce(
+                        (sum, region) => sum + region.unblended_cost,
+                        0
+                      )
+                    )}
+                  </td>
+                  <td className="py-3 px-2 text-sm font-bold text-gray-900 dark:text-gray-100 text-right font-mono">
+                    {formatCurrencyDetailed(
+                      costSummary.regionBreakdown.reduce(
+                        (sum, region) => sum + region.blended_cost,
+                        0
+                      )
+                    )}
+                  </td>
+                  <td className="py-3 px-2 text-sm font-bold text-gray-900 dark:text-gray-100 text-right font-mono">
+                    {formatCurrencyDetailed(
+                      costSummary.regionBreakdown.reduce(
+                        (sum, region) => sum + region.amortized_cost,
+                        0
+                      )
+                    )}
+                  </td>
+                  <td className="py-3 px-2 text-sm font-bold text-gray-900 dark:text-gray-100 text-right font-mono">
+                    {formatCurrencyDetailed(
+                      costSummary.regionBreakdown.reduce(
+                        (sum, region) => sum + region.net_amortized_cost,
+                        0
+                      )
+                    )}
+                  </td>
+                  <td className="py-3 px-2 text-sm font-bold text-gray-900 dark:text-gray-100 text-right font-mono">
+                    {formatCurrencyDetailed(
+                      costSummary.regionBreakdown.reduce(
+                        (sum, region) => sum + region.net_unblended_cost,
+                        0
+                      )
+                    )}
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      {/* Cost Over Time Chart */}
+      <div className="w-full">
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+              MSK Cost Over Time by Region
+            </h3>
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Cost Type:
+              </label>
+              <Select
+                value={selectedChartCostType}
+                onValueChange={setSelectedChartCostType}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Select cost type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unblended_cost">Unblended Cost</SelectItem>
+                  <SelectItem value="blended_cost">Blended Cost</SelectItem>
+                  <SelectItem value="amortized_cost">Amortized Cost</SelectItem>
+                  <SelectItem value="net_amortized_cost">Net Amortized Cost</SelectItem>
+                  <SelectItem value="net_unblended_cost">Net Unblended Cost</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {costSummary.chartData.length > 0 ? (
+            <div className="h-96">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+              >
+                <AreaChart
+                  data={costSummary.chartData}
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    className="opacity-30"
+                  />
+                  <XAxis
+                    dataKey="formattedDate"
+                    tick={{ fontSize: 12, fill: 'currentColor' }}
+                    className="text-gray-700 dark:text-gray-200"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 12, fill: 'currentColor' }}
+                    className="text-gray-700 dark:text-gray-200"
+                    tickFormatter={(value) => `$${value.toFixed(2)}`}
+                  />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (active && payload && payload.length > 0) {
+                        const nonZeroEntries = payload.filter(
+                          (entry) => entry.value && entry.value > 0
+                        )
+
+                        if (nonZeroEntries.length === 0) return null
+
+                        const sortedEntries = nonZeroEntries.sort(
+                          (a, b) => (b.value || 0) - (a.value || 0)
+                        )
+
+                        return (
+                          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
+                            <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
+                              {label}
+                            </p>
+                            <div className="space-y-1">
+                              {sortedEntries.map((entry, index) => (
+                                <p
+                                  key={index}
+                                  className="text-gray-900 dark:text-gray-100 text-sm flex items-center justify-between"
+                                >
+                                  <span
+                                    className="flex items-center"
+                                    style={{ color: entry.color }}
+                                  >
+                                    <span
+                                      className="inline-block w-3 h-3 rounded-full mr-2"
+                                      style={{ backgroundColor: entry.color }}
+                                    ></span>
+                                    {entry.name}:
+                                  </span>
+                                  <span className="ml-2 font-mono">
+                                    ${(entry.value || 0).toFixed(2)}
+                                  </span>
+                                </p>
+                              ))}
+                            </div>
+                            <div className="border-t border-gray-200 dark:border-gray-600 mt-2 pt-2">
+                              <p className="text-gray-900 dark:text-gray-100 text-sm font-semibold flex justify-between">
+                                <span>Total:</span>
+                                <span className="font-mono">
+                                  $
+                                  {sortedEntries
+                                    .reduce((sum, entry) => sum + (entry.value || 0), 0)
+                                    .toFixed(2)}
+                                </span>
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      }
+                      return null
+                    }}
+                  />
+                  <Legend />
+                  {costSummary.regionBreakdown.map((region, index) => {
+                    const colors = [
+                      '#3b82f6', // blue
+                      '#ef4444', // red
+                      '#10b981', // green
+                      '#f59e0b', // yellow
+                      '#8b5cf6', // purple
+                      '#06b6d4', // cyan
+                      '#f97316', // orange
+                      '#84cc16', // lime
+                      '#ec4899', // pink
+                      '#6366f1', // indigo
+                    ]
+                    const color = colors[index % colors.length]
+
+                    return (
+                      <Area
+                        key={region.region}
+                        type="monotone"
+                        dataKey={region.region}
+                        stackId="1"
+                        stroke={color}
+                        fill={color}
+                        fillOpacity={0.6}
+                        strokeWidth={1}
+                        name={region.region}
+                      />
+                    )
+                  })}
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500 dark:text-gray-400">No chart data available</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

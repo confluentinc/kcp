@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import type { Cluster, Region } from '@/types'
 
@@ -27,68 +26,6 @@ export default function Sidebar({
   isProcessing = false,
   error = null,
 }: SidebarProps) {
-  const [regionCostData, setRegionCostData] = useState<Record<string, number>>({})
-
-  // Fetch cost data for all regions
-  useEffect(() => {
-    if (!regions || regions.length === 0) return
-
-    const fetchAllRegionCosts = async () => {
-      try {
-        const costPromises = regions.map(async (region) => {
-          const url = `/costs/${encodeURIComponent(region.name)}`
-          const response = await fetch(url)
-
-          if (!response.ok) {
-            return { regionName: region.name, totalCost: 0 }
-          }
-
-          const data = await response.json()
-          let totalCost = 0
-
-          // Calculate total cost from API response
-          if (data?.results && Array.isArray(data.results)) {
-            data.results.forEach((cost: any) => {
-              if (
-                cost &&
-                cost.service === 'Amazon Managed Streaming for Apache Kafka' &&
-                cost.value
-              ) {
-                totalCost += parseFloat(cost.value) || 0
-              }
-            })
-          }
-
-          return { regionName: region.name, totalCost }
-        })
-
-        const results = await Promise.all(costPromises)
-        const costData: Record<string, number> = {}
-
-        results.forEach(({ regionName, totalCost }) => {
-          costData[regionName] = totalCost
-        })
-
-        setRegionCostData(costData)
-      } catch (err) {
-        console.error('Error fetching region costs for sidebar:', err)
-      }
-    }
-
-    fetchAllRegionCosts()
-  }, [regions])
-
-  // Calculate region cost totals from fetched data
-  const getRegionCostTotal = (region: Region) => {
-    return regionCostData[region.name] || 0
-  }
-
-  const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 0,
-    }).format(amount)
   return (
     <aside className="w-80 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0 h-screen flex flex-col transition-colors">
       <div className="p-4 flex flex-col h-full">
@@ -150,7 +87,6 @@ export default function Sidebar({
                   <div className="ml-4 space-y-2">
                     {regions.map((region) => {
                       const isRegionSelected = selectedRegion?.name === region.name
-                      const regionCostTotal = getRegionCostTotal(region)
 
                       return (
                         <div
@@ -183,9 +119,6 @@ export default function Sidebar({
                               <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                                 ({region.clusters?.length || 0})
                               </span>
-                            </div>
-                            <div className="text-xs font-medium text-green-600 dark:text-green-400 whitespace-nowrap ml-2">
-                              {formatCurrency(regionCostTotal)}
                             </div>
                           </button>
 

@@ -45,9 +45,10 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   const [metricsResponse, setMetricsResponse] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<string>('')
+  const [defaultsSet, setDefaultsSet] = useState(false)
 
   // Cluster-specific date state from Zustand
-  const { startDate, endDate, setStartDate, setEndDate, clearDates } = useClusterDateFilters(
+  const { startDate, endDate, setStartDate, setEndDate } = useClusterDateFilters(
     cluster.region || 'unknown',
     cluster.name
   )
@@ -55,6 +56,53 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   // Active tab state from Zustand
   const activeMetricsTab = useAppStore((state) => state.activeMetricsTab)
   const setActiveMetricsTab = useAppStore((state) => state.setActiveMetricsTab)
+
+  // Set default dates from metadata when data is first loaded
+  useEffect(() => {
+    if (defaultsSet || !metricsResponse?.metadata) return
+
+    const metaStartDate = metricsResponse.metadata.start_window_date
+    const metaEndDate = metricsResponse.metadata.end_window_date
+
+    // Only set defaults if both dates are valid and no user selection has been made
+    if (
+      !startDate &&
+      !endDate &&
+      metaStartDate &&
+      metaEndDate &&
+      !isNaN(new Date(metaStartDate).getTime()) &&
+      !isNaN(new Date(metaEndDate).getTime())
+    ) {
+      setStartDate(new Date(metaStartDate))
+      setEndDate(new Date(metaEndDate))
+      setDefaultsSet(true)
+    }
+  }, [metricsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
+
+  // Custom reset functions that use metadata dates
+  const resetToMetadataDates = () => {
+    if (metricsResponse?.metadata) {
+      const metaStartDate = metricsResponse.metadata.start_window_date
+      const metaEndDate = metricsResponse.metadata.end_window_date
+
+      if (metaStartDate && metaEndDate) {
+        setStartDate(new Date(metaStartDate))
+        setEndDate(new Date(metaEndDate))
+      }
+    }
+  }
+
+  const resetStartDateToMetadata = () => {
+    if (metricsResponse?.metadata?.start_window_date) {
+      setStartDate(new Date(metricsResponse.metadata.start_window_date))
+    }
+  }
+
+  const resetEndDateToMetadata = () => {
+    if (metricsResponse?.metadata?.end_window_date) {
+      setEndDate(new Date(metricsResponse.metadata.end_window_date))
+    }
+  }
 
   // Process metrics data for table and CSV formats
   const processedData = useMemo(() => {
@@ -279,9 +327,9 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  setStartDate(undefined)
+                  resetStartDateToMetadata()
                 }}
-                title="Clear start date"
+                title="Reset to default start date"
               >
                 <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
               </Button>
@@ -324,9 +372,9 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  setEndDate(undefined)
+                  resetEndDateToMetadata()
                 }}
-                title="Clear end date"
+                title="Reset to default end date"
               >
                 <X className="h-4 w-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
               </Button>
@@ -337,10 +385,10 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
         <div className="flex flex-col justify-end">
           <Button
             variant="outline"
-            onClick={clearDates}
+            onClick={resetToMetadataDates}
             className="w-full sm:w-auto"
           >
-            Clear All
+            Reset All
           </Button>
         </div>
       </div>
