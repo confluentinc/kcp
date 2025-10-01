@@ -17,6 +17,9 @@ var (
 	start       string
 	end         string
 	clusterArns []string
+
+	// todo - do we want this?
+	region string
 )
 
 func NewReportMetricsCmd() *cobra.Command {

@@ -40,6 +40,7 @@ func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *Me
 		state:       opts.State,
 		startDate:   opts.StartDate,
 		endDate:     opts.EndDate,
+		region:      opts.Region,
 	}
 }
 
