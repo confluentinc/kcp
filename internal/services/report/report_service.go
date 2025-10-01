@@ -339,7 +339,6 @@ func (rs *ReportService) assignServiceTotal(service *types.ServiceCostAggregates
 
 func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
 	var processedCosts []types.ProcessedCost
-	serviceTotals := make(map[string]float64)
 
 	for _, result := range region.Costs.CostResults {
 		if result.TimePeriod == nil {
@@ -362,7 +361,6 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 			if metric, exists := group.Metrics["UnblendedCost"]; exists && metric.Amount != nil {
 				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
 					costBreakdown.UnblendedCost = costFloat
-					serviceTotals[service] += costFloat // Use UnblendedCost for totals
 				}
 			}
 			if metric, exists := group.Metrics["BlendedCost"]; exists && metric.Amount != nil {
@@ -385,11 +383,6 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 					costBreakdown.NetUnblendedCost = costFloat
 				}
 			}
-			if metric, exists := group.Metrics["UsageQuantity"]; exists && metric.Amount != nil {
-				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
-					costBreakdown.UsageQuantity = costFloat
-				}
-			}
 
 			processedCosts = append(processedCosts, types.ProcessedCost{
 				Start:     start,
@@ -401,19 +394,9 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 		}
 	}
 
-	// Convert service totals to the required format
-	var totals []types.ServiceTotal
-	for service, total := range serviceTotals {
-		totals = append(totals, types.ServiceTotal{
-			Service: service,
-			Total:   strconv.FormatFloat(total, 'f', -1, 64),
-		})
-	}
-
 	return types.ProcessedRegionCosts{
 		Metadata: region.Costs.CostMetadata,
 		Results:  processedCosts,
-		Totals:   totals,
 	}
 }
 

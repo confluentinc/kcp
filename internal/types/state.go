@@ -354,9 +354,6 @@ type ProcessedRegionCosts struct {
 	Metadata   CostMetadata        `json:"metadata"`
 	Results    []ProcessedCost     `json:"results"`
 	Aggregates ProcessedAggregates `json:"aggregates"`
-
-	// todo - remove this??
-	Totals []ServiceTotal `json:"-"`
 }
 
 // ProcessedAggregates represents the three specific services we query
@@ -407,12 +404,6 @@ type ProcessedCostBreakdown struct {
 	AmortizedCost    float64 `json:"amortized_cost"`
 	NetAmortizedCost float64 `json:"net_amortized_cost"`
 	NetUnblendedCost float64 `json:"net_unblended_cost"`
-	UsageQuantity    float64 `json:"usage_quantity"`
-}
-
-type ServiceTotal struct {
-	Service string `json:"service"`
-	Total   string `json:"total"`
 }
 
 // ProcessedCluster contains the complete cluster data with flattened metrics
