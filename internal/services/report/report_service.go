@@ -109,6 +109,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	aggregates := rs.calculateCostAggregates(filteredCosts)
 
 	return &types.ProcessedRegionCosts{
+		Region:     regionName,
 		Metadata:   regionCosts.Metadata,
 		Results:    filteredCosts,
 		Aggregates: aggregates,
@@ -118,29 +119,19 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 // TODO we should ask for clusterArn instead of clusterName
 
 // filterClusterMetrics filters the processed state by region, clusterArn, and date range
-func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, regionName, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	// Find the specified region
-	var targetRegion *types.ProcessedRegion
-	for _, r := range processedState.Regions {
-		if strings.EqualFold(r.Name, regionName) {
-			targetRegion = &r
-			break
+func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var targetCluster *types.ProcessedCluster
+	for _, region := range processedState.Regions {
+		for _, cluster := range region.Clusters {
+			if strings.EqualFold(cluster.Arn, clusterArn) {
+				targetCluster = &cluster
+				break
+			}
 		}
-	}
-	if targetRegion == nil {
-		return nil, fmt.Errorf("region '%s' not found", regionName)
 	}
 
-	// Find the specified cluster within the region
-	var targetCluster *types.ProcessedCluster
-	for _, c := range targetRegion.Clusters {
-		if strings.EqualFold(c.Arn, clusterArn) {
-			targetCluster = &c
-			break
-		}
-	}
 	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in region '%s'", clusterArn, regionName)
+		return nil, fmt.Errorf("cluster '%s' not found", clusterArn)
 	}
 
 	var filteredMetrics []types.ProcessedMetric

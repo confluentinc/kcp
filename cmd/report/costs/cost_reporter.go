@@ -51,7 +51,7 @@ func (r *CostReporter) Run() error {
 	slog.Info("🔍 processing regions", "regions", r.regions, "startDate", r.startDate, "endDate", r.endDate)
 
 	processedState := r.reportService.ProcessState(*r.state)
-	regionCostData := []RegionCostData{}
+	regionCostData := []types.ProcessedRegionCosts{}
 
 	for _, region := range r.regions {
 		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, &r.startDate, &r.endDate)
@@ -59,10 +59,7 @@ func (r *CostReporter) Run() error {
 			return fmt.Errorf("failed to filter region costs: %v", err)
 		}
 
-		regionCostData = append(regionCostData, RegionCostData{
-			RegionName: region,
-			Costs:      *regionCosts,
-		})
+		regionCostData = append(regionCostData, *regionCosts)
 	}
 
 	fileName := fmt.Sprintf("cost_report_%s.md", time.Now().Format("2006-01-02_15-04-05"))
@@ -74,7 +71,7 @@ func (r *CostReporter) Run() error {
 	return nil
 }
 
-func (r *CostReporter) generateReport(regionCostData []RegionCostData) *markdown.Markdown {
+func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCosts) *markdown.Markdown {
 	md := markdown.New()
 
 	// Add main report header
@@ -86,7 +83,7 @@ func (r *CostReporter) generateReport(regionCostData []RegionCostData) *markdown
 		r.endDate.Format("2006-01-02")))
 
 	if len(regionCostData) > 0 {
-		metadata := regionCostData[0].Costs.Metadata
+		metadata := regionCostData[0].Metadata
 		md.AddParagraph(fmt.Sprintf("**Granularity:** %s", metadata.Granularity))
 
 		if len(metadata.Services) > 0 {
@@ -107,7 +104,7 @@ func (r *CostReporter) generateReport(regionCostData []RegionCostData) *markdown
 			md.AddHorizontalRule()
 		}
 
-		r.addRegionSection(md, regionData.RegionName, regionData.Costs)
+		r.addRegionSection(md, regionData.Region, regionData)
 	}
 
 	return md

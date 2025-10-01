@@ -351,6 +351,7 @@ type ProcessedRegion struct {
 }
 
 type ProcessedRegionCosts struct {
+	Region     string              `json:"region"`
 	Metadata   CostMetadata        `json:"metadata"`
 	Results    []ProcessedCost     `json:"results"`
 	Aggregates ProcessedAggregates `json:"aggregates"`
