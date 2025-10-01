@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
@@ -138,10 +137,8 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 }
 
 func (ui *UI) handleGetCosts(c echo.Context) error {
-	// Extract path parameter
 	region := c.Param("region")
 
-	// Extract query parameters
 	startDate := c.QueryParam("startDate")
 	endDate := c.QueryParam("endDate")
 
