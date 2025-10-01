@@ -115,6 +115,69 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	}, nil
 }
 
+// filterMetrics filters the processed state by region, cluster, and date range
+func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	// Find the specified region
+	var targetRegion *types.ProcessedRegion
+	for _, r := range processedState.Regions {
+		if strings.EqualFold(r.Name, regionName) {
+			targetRegion = &r
+			break
+		}
+	}
+	if targetRegion == nil {
+		return nil, fmt.Errorf("region '%s' not found", regionName)
+	}
+
+	// Find the specified cluster within the region
+	var targetCluster *types.ProcessedCluster
+	for _, c := range targetRegion.Clusters {
+		if strings.EqualFold(c.Name, clusterName) {
+			targetCluster = &c
+			break
+		}
+	}
+	if targetCluster == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in region '%s'", clusterName, regionName)
+	}
+
+	var filteredMetrics []types.ProcessedMetric
+
+	// If no date filters, use all metrics
+	if startTime == nil && endTime == nil {
+		filteredMetrics = targetCluster.ClusterMetrics.Metrics
+	} else {
+		// Filter metrics by date range
+		for _, metric := range targetCluster.ClusterMetrics.Metrics {
+			// Parse the metric start time
+			metricStartTime, err := time.Parse("2006-01-02T15:04:05Z", metric.Start)
+			if err != nil {
+				// Skip metrics with invalid timestamps
+				continue
+			}
+
+			// Apply date filters
+			if startTime != nil && metricStartTime.Before(*startTime) {
+				continue
+			}
+			if endTime != nil && metricStartTime.After(*endTime) {
+				continue
+			}
+
+			filteredMetrics = append(filteredMetrics, metric)
+		}
+	}
+
+	// Calculate aggregates from filtered metrics
+	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+
+	return &types.ProcessedClusterMetrics{
+		Metadata:   targetCluster.ClusterMetrics.Metadata,
+		Metrics:    filteredMetrics,
+		Aggregates: aggregates,
+	}, nil
+}
+
 // calculateCostAggregates takes raw cost data and calculates statistics for each unique combination
 // of service + metric type + usage type, then organizes it into the final nested structure
 func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) types.ProcessedAggregates {
@@ -408,4 +471,52 @@ func (rs *ReportService) flattenMetrics(cluster types.DiscoveredCluster) types.P
 		Metrics:  processedMetrics,
 		Metadata: cluster.ClusterMetrics.MetricMetadata,
 	}
+}
+
+// calculateMetricsAggregates calculates avg, max, min aggregates for each metric type
+func (rs *ReportService) calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
+	// Group metrics by label (metric type)
+	metricsByLabel := make(map[string][]float64)
+
+	for _, metric := range metrics {
+		if metric.Value != nil {
+			// Remove "Cluster Aggregate - " prefix if present
+			cleanLabel := strings.TrimPrefix(metric.Label, "Cluster Aggregate - ")
+			metricsByLabel[cleanLabel] = append(metricsByLabel[cleanLabel], *metric.Value)
+		}
+	}
+
+	// Calculate aggregates for each metric type
+	aggregates := make(map[string]types.MetricAggregate)
+
+	for label, values := range metricsByLabel {
+		if len(values) == 0 {
+			continue
+		}
+
+		// Calculate min, max, sum for average
+		min := values[0]
+		max := values[0]
+		sum := 0.0
+
+		for _, value := range values {
+			if value < min {
+				min = value
+			}
+			if value > max {
+				max = value
+			}
+			sum += value
+		}
+
+		avg := sum / float64(len(values))
+
+		aggregates[label] = types.MetricAggregate{
+			Average: &avg,
+			Maximum: &max,
+			Minimum: &min,
+		}
+	}
+
+	return aggregates
 }
