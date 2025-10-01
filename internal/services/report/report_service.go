@@ -115,6 +115,71 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	}, nil
 }
 
+// TODO we should ask for clusterArn instead of clusterName
+
+// filterClusterMetrics filters the processed state by region, clusterArn, and date range
+func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, regionName, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	// Find the specified region
+	var targetRegion *types.ProcessedRegion
+	for _, r := range processedState.Regions {
+		if strings.EqualFold(r.Name, regionName) {
+			targetRegion = &r
+			break
+		}
+	}
+	if targetRegion == nil {
+		return nil, fmt.Errorf("region '%s' not found", regionName)
+	}
+
+	// Find the specified cluster within the region
+	var targetCluster *types.ProcessedCluster
+	for _, c := range targetRegion.Clusters {
+		if strings.EqualFold(c.Arn, clusterArn) {
+			targetCluster = &c
+			break
+		}
+	}
+	if targetCluster == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in region '%s'", clusterArn, regionName)
+	}
+
+	var filteredMetrics []types.ProcessedMetric
+
+	// If no date filters, use all metrics
+	if startTime == nil && endTime == nil {
+		filteredMetrics = targetCluster.ClusterMetrics.Metrics
+	} else {
+		// Filter metrics by date range
+		for _, metric := range targetCluster.ClusterMetrics.Metrics {
+			// Parse the metric start time
+			metricStartTime, err := time.Parse("2006-01-02T15:04:05Z", metric.Start)
+			if err != nil {
+				// Skip metrics with invalid timestamps
+				continue
+			}
+
+			// Apply date filters
+			if startTime != nil && metricStartTime.Before(*startTime) {
+				continue
+			}
+			if endTime != nil && metricStartTime.After(*endTime) {
+				continue
+			}
+
+			filteredMetrics = append(filteredMetrics, metric)
+		}
+	}
+
+	// Calculate aggregates from filtered metrics
+	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+
+	return &types.ProcessedClusterMetrics{
+		Metadata:   targetCluster.ClusterMetrics.Metadata,
+		Metrics:    filteredMetrics,
+		Aggregates: aggregates,
+	}, nil
+}
+
 // filterMetrics filters the processed state by region, cluster, and date range
 func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	// Find the specified region

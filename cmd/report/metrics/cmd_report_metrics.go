@@ -17,6 +17,9 @@ var (
 	start       string
 	end         string
 	clusterArns []string
+
+	// todo - do we want this?
+	region string
 )
 
 func NewReportMetricsCmd() *cobra.Command {
@@ -38,6 +41,7 @@ func NewReportMetricsCmd() *cobra.Command {
 	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)")
+	requiredFlags.StringVar(&region, "region", "", "The AWS region the clusters from are located in")
 
 	reportMetricsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -64,6 +68,7 @@ func NewReportMetricsCmd() *cobra.Command {
 	reportMetricsCmd.MarkFlagRequired("start")
 	reportMetricsCmd.MarkFlagRequired("end")
 	reportMetricsCmd.MarkFlagRequired("cluster-arn")
+	reportMetricsCmd.MarkFlagRequired("region")
 
 	return reportMetricsCmd
 }

@@ -48,10 +48,10 @@ func NewCostReporter(reportService ReportService, markdownService markdown.Markd
 }
 
 func (r *CostReporter) Run() error {
+	slog.Info("🔍 processing regions", "regions", r.regions, "startDate", r.startDate, "endDate", r.endDate)
+
 	processedState := r.reportService.ProcessState(*r.state)
 	regionCostData := []RegionCostData{}
-
-	slog.Info("🔍 processing regions", "regions", r.regions, "startDate", r.startDate, "endDate", r.endDate)
 
 	for _, region := range r.regions {
 		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, &r.startDate, &r.endDate)
