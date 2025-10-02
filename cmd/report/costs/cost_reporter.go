@@ -91,6 +91,9 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 		}
 	}
 
+	// Add cost summary section
+	r.addCostSummary(md, regionCostData)
+
 	md.AddHorizontalRule()
 
 	// Process each region
@@ -127,48 +130,84 @@ func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName s
 		return
 	}
 
-	// Create separate tables for each cost type
-	costTypes := []struct {
-		name string
-		data map[string]any
-	}{
-		{"Unblended Cost", aggregates.UnblendedCost},
-		{"Blended Cost", aggregates.BlendedCost},
-		{"Amortized Cost", aggregates.AmortizedCost},
-		{"Net Amortized Cost", aggregates.NetAmortizedCost},
-		{"Net Unblended Cost", aggregates.NetUnblendedCost},
-	}
-
-	for _, costType := range costTypes {
-		if len(costType.data) == 0 {
-			continue
-		}
-
-		md.AddHeading(costType.name, 4)
-
-		headers := []string{"Usage Type", "Sum ($)", "Average ($)", "Min ($)", "Max ($)"}
-		var tableData [][]string
-
-		for usageType, aggregateData := range costType.data {
-			if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
-				row := []string{
-					usageType,
-					r.formatCurrency(costAggregate.Sum),
-					r.formatCurrency(costAggregate.Average),
-					r.formatCurrency(costAggregate.Minimum),
-					r.formatCurrency(costAggregate.Maximum),
-				}
-				tableData = append(tableData, row)
-			}
-		}
-
-		if len(tableData) > 0 {
-			md.AddTable(headers, tableData)
-		}
-	}
+	// Create a single comprehensive table with all cost types
+	r.addServiceCostTable(md, aggregates)
 
 	// Add separator after service section
 	md.AddParagraph("---")
+}
+
+func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates types.ServiceCostAggregates) {
+	// Collect all unique usage types across all cost types
+	usageTypes := make(map[string]bool)
+
+	costTypeMaps := []map[string]any{
+		aggregates.UnblendedCost,
+		aggregates.BlendedCost,
+		aggregates.AmortizedCost,
+		aggregates.NetAmortizedCost,
+		aggregates.NetUnblendedCost,
+	}
+
+	for _, costMap := range costTypeMaps {
+		for usageType := range costMap {
+			usageTypes[usageType] = true
+		}
+	}
+
+	if len(usageTypes) == 0 {
+		return
+	}
+
+	// Create table headers
+	headers := []string{"Usage Type", "Unblended ($)", "Blended ($)", "Amortized ($)", "Net Amortized ($)", "Net Unblended ($)"}
+	var tableData [][]string
+
+	// Create rows for each usage type
+	columnTotals := make([]float64, 5) // Track totals for each cost type column
+
+	for usageType := range usageTypes {
+		row := []string{usageType}
+
+		// Add cost values for each cost type
+		costTypes := []map[string]any{
+			aggregates.UnblendedCost,
+			aggregates.BlendedCost,
+			aggregates.AmortizedCost,
+			aggregates.NetAmortizedCost,
+			aggregates.NetUnblendedCost,
+		}
+
+		for i, costMap := range costTypes {
+			if aggregateData, exists := costMap[usageType]; exists {
+				if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
+					value := 0.0
+					if costAggregate.Sum != nil {
+						value = *costAggregate.Sum
+						columnTotals[i] += value
+					}
+					row = append(row, r.formatCurrencyValue(value))
+				} else {
+					row = append(row, "0.00")
+				}
+			} else {
+				row = append(row, "0.00")
+			}
+		}
+
+		tableData = append(tableData, row)
+	}
+
+	// Add total row at the bottom
+	if len(tableData) > 0 {
+		totalRow := []string{"**Total**"}
+		for _, total := range columnTotals {
+			totalRow = append(totalRow, fmt.Sprintf("**%.2f**", total))
+		}
+		tableData = append(tableData, totalRow)
+
+		md.AddTable(headers, tableData)
+	}
 }
 
 func (r *CostReporter) hasServiceData(aggregates types.ServiceCostAggregates) bool {
@@ -179,9 +218,83 @@ func (r *CostReporter) hasServiceData(aggregates types.ServiceCostAggregates) bo
 		len(aggregates.NetUnblendedCost) > 0
 }
 
+func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []types.ProcessedRegionCosts) {
+	md.AddHeading("Cost Summary", 2)
+
+	// Calculate totals for each cost type
+	costTypeNames := []string{"Unblended", "Blended", "Amortized", "Net Amortized", "Net Unblended"}
+	overallTotals := make([]float64, len(costTypeNames))
+	var summaryData [][]string
+
+	for _, regionData := range regionCostData {
+		regionTotals := r.calculateRegionTotalsAllTypes(regionData)
+
+		row := []string{regionData.Region}
+		for i, total := range regionTotals {
+			row = append(row, r.formatCurrencyValue(total))
+			overallTotals[i] += total
+		}
+		summaryData = append(summaryData, row)
+	}
+
+	// Add overall totals row
+	overallRow := []string{"**Overall Total**"}
+	for _, total := range overallTotals {
+		overallRow = append(overallRow, fmt.Sprintf("**%.2f**", total))
+	}
+	summaryData = append(summaryData, overallRow)
+
+	// Create headers
+	headers := []string{"Region", "Unblended ($)", "Blended ($)", "Amortized ($)", "Net Amortized ($)", "Net Unblended ($)"}
+	md.AddTable(headers, summaryData)
+	md.AddParagraph("")
+}
+
+func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedRegionCosts) []float64 {
+	// Return totals for: Unblended, Blended, Amortized, Net Amortized, Net Unblended
+	totals := make([]float64, 5)
+
+	services := []types.ServiceCostAggregates{
+		regionData.Aggregates.AmazonManagedStreamingForApacheKafka,
+		regionData.Aggregates.EC2Other,
+		regionData.Aggregates.AWSCertificateManager,
+	}
+
+	for _, service := range services {
+		costMaps := []map[string]any{
+			service.UnblendedCost,
+			service.BlendedCost,
+			service.AmortizedCost,
+			service.NetAmortizedCost,
+			service.NetUnblendedCost,
+		}
+
+		for i, costMap := range costMaps {
+			for _, aggregateData := range costMap {
+				if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
+					if costAggregate.Sum != nil {
+						totals[i] += *costAggregate.Sum
+					}
+				}
+			}
+		}
+	}
+
+	return totals
+}
+
+func (r *CostReporter) calculateRegionTotal(regionData types.ProcessedRegionCosts) float64 {
+	totals := r.calculateRegionTotalsAllTypes(regionData)
+	return totals[0] // Return unblended cost total
+}
+
 func (r *CostReporter) formatCurrency(value *float64) string {
 	if value == nil {
 		return "N/A"
 	}
 	return fmt.Sprintf("%.2f", *value)
+}
+
+func (r *CostReporter) formatCurrencyValue(value float64) string {
+	return fmt.Sprintf("%.2f", value)
 }
