@@ -94,14 +94,8 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 	// Add cost summary section
 	r.addCostSummary(md, regionCostData)
 
-	md.AddHorizontalRule()
-
 	// Process each region
-	for i, regionData := range regionCostData {
-		if i > 0 {
-			md.AddHorizontalRule()
-		}
-
+	for _, regionData := range regionCostData {
 		r.addRegionSection(md, regionData.Region, regionData)
 	}
 
@@ -110,6 +104,8 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 
 func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string, regionCosts types.ProcessedRegionCosts) {
 	md.AddHeading(fmt.Sprintf("Region: %s", regionName), 2)
+	md.AddParagraph(fmt.Sprintf("*Detailed cost breakdown for %s region*", regionName))
+	md.AddParagraph("")
 
 	// Add aggregate cost summaries for each service
 	r.addServiceAggregates(md, "Amazon Managed Streaming for Apache Kafka", regionCosts.Aggregates.AmazonManagedStreamingForApacheKafka)
@@ -117,6 +113,10 @@ func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string
 	r.addServiceAggregates(md, "EC2 - Other", regionCosts.Aggregates.EC2Other)
 
 	r.addServiceAggregates(md, "AWS Certificate Manager", regionCosts.Aggregates.AWSCertificateManager)
+
+	md.AddParagraph("")
+	md.AddParagraph("---")
+	md.AddParagraph("")
 }
 
 func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName string, aggregates types.ServiceCostAggregates) {
@@ -126,15 +126,13 @@ func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName s
 	hasData := r.hasServiceData(aggregates)
 	if !hasData {
 		md.AddParagraph("*No costs recorded for this service in the specified time period.*")
-		md.AddParagraph("---")
+		md.AddParagraph("")
 		return
 	}
 
 	// Create a single comprehensive table with all cost types
 	r.addServiceCostTable(md, aggregates)
-
-	// Add separator after service section
-	md.AddParagraph("---")
+	md.AddParagraph("")
 }
 
 func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates types.ServiceCostAggregates) {
@@ -186,7 +184,7 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 						value = *costAggregate.Sum
 						columnTotals[i] += value
 					}
-					row = append(row, r.formatCurrencyValue(value))
+					row = append(row, r.formatCurrency(&value))
 				} else {
 					row = append(row, "0.00")
 				}
@@ -220,6 +218,8 @@ func (r *CostReporter) hasServiceData(aggregates types.ServiceCostAggregates) bo
 
 func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []types.ProcessedRegionCosts) {
 	md.AddHeading("Cost Summary", 2)
+	md.AddParagraph("*Overview of total costs across all regions and cost types*")
+	md.AddParagraph("")
 
 	// Calculate totals for each cost type
 	costTypeNames := []string{"Unblended", "Blended", "Amortized", "Net Amortized", "Net Unblended"}
@@ -231,7 +231,7 @@ func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []ty
 
 		row := []string{regionData.Region}
 		for i, total := range regionTotals {
-			row = append(row, r.formatCurrencyValue(total))
+			row = append(row, r.formatCurrency(&total))
 			overallTotals[i] += total
 		}
 		summaryData = append(summaryData, row)
@@ -247,6 +247,8 @@ func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []ty
 	// Create headers
 	headers := []string{"Region", "Unblended ($)", "Blended ($)", "Amortized ($)", "Net Amortized ($)", "Net Unblended ($)"}
 	md.AddTable(headers, summaryData)
+	md.AddParagraph("")
+	md.AddParagraph("---")
 	md.AddParagraph("")
 }
 
@@ -283,18 +285,9 @@ func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedR
 	return totals
 }
 
-func (r *CostReporter) calculateRegionTotal(regionData types.ProcessedRegionCosts) float64 {
-	totals := r.calculateRegionTotalsAllTypes(regionData)
-	return totals[0] // Return unblended cost total
-}
-
 func (r *CostReporter) formatCurrency(value *float64) string {
 	if value == nil {
 		return "N/A"
 	}
 	return fmt.Sprintf("%.2f", *value)
-}
-
-func (r *CostReporter) formatCurrencyValue(value float64) string {
-	return fmt.Sprintf("%.2f", value)
 }
