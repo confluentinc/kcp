@@ -311,3 +311,7 @@ func (r *CostReporter) formatCurrency(value *float64) string {
 	}
 	return fmt.Sprintf("%.2f", *value)
 }
+
+func (r *CostReporter) formatCurrencyValue(value float64) string {
+	return fmt.Sprintf("%.2f", value)
+}
