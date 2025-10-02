@@ -17,8 +17,8 @@ type ReportService interface {
 type CostReporterOpts struct {
 	Regions   []string
 	State     *types.State
-	StartDate time.Time
-	EndDate   time.Time
+	StartDate *time.Time
+	EndDate   *time.Time
 }
 
 type CostReporter struct {
@@ -27,18 +27,19 @@ type CostReporter struct {
 
 	regions   []string
 	state     *types.State
-	startDate time.Time
-	endDate   time.Time
+	startDate *time.Time
+	endDate   *time.Time
 }
 
 func NewCostReporter(reportService ReportService, markdownService markdown.Markdown, opts CostReporterOpts) *CostReporter {
 	return &CostReporter{
 		reportService:   reportService,
 		markdownService: markdownService,
-		regions:         opts.Regions,
-		state:           opts.State,
-		startDate:       opts.StartDate,
-		endDate:         opts.EndDate,
+
+		regions:   opts.Regions,
+		state:     opts.State,
+		startDate: opts.StartDate,
+		endDate:   opts.EndDate,
 	}
 }
 
@@ -49,7 +50,7 @@ func (r *CostReporter) Run() error {
 	regionCostData := []types.ProcessedRegionCosts{}
 
 	for _, region := range r.regions {
-		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, &r.startDate, &r.endDate)
+		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, r.startDate, r.endDate)
 		if err != nil {
 			return fmt.Errorf("failed to filter region costs: %v", err)
 		}
@@ -68,10 +69,8 @@ func (r *CostReporter) Run() error {
 
 func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCosts) *markdown.Markdown {
 	md := markdown.New()
-
 	// Add main report header
 	md.AddHeading("AWS Cost Report", 1)
-
 	// Use the actual date range from the reporter parameters
 	md.AddParagraph(fmt.Sprintf("**Report Period:** %s to %s",
 		r.startDate.Format("2006-01-02"),
@@ -149,7 +148,10 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 
 	for _, costMap := range costTypeMaps {
 		for usageType := range costMap {
-			usageTypes[usageType] = true
+			// Skip the "total" key as it's a service-level aggregate, not a usage type
+			if usageType != "total" {
+				usageTypes[usageType] = true
+			}
 		}
 	}
 
@@ -162,8 +164,6 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 	var tableData [][]string
 
 	// Create rows for each usage type
-	columnTotals := make([]float64, 5) // Track totals for each cost type column
-
 	for usageType := range usageTypes {
 		row := []string{usageType}
 
@@ -176,13 +176,12 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 			aggregates.NetUnblendedCost,
 		}
 
-		for i, costMap := range costTypes {
+		for _, costMap := range costTypes {
 			if aggregateData, exists := costMap[usageType]; exists {
 				if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
 					value := 0.0
 					if costAggregate.Sum != nil {
 						value = *costAggregate.Sum
-						columnTotals[i] += value
 					}
 					row = append(row, r.formatCurrency(&value))
 				} else {
@@ -196,14 +195,33 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 		tableData = append(tableData, row)
 	}
 
-	// Add total row at the bottom
+	// Add total row using the backend-calculated totals
 	if len(tableData) > 0 {
 		totalRow := []string{"**Total**"}
-		for _, total := range columnTotals {
-			totalRow = append(totalRow, fmt.Sprintf("**%.2f**", total))
-		}
-		tableData = append(tableData, totalRow)
 
+		// Use the "total" values directly from the backend
+		costTypes := []map[string]any{
+			aggregates.UnblendedCost,
+			aggregates.BlendedCost,
+			aggregates.AmortizedCost,
+			aggregates.NetAmortizedCost,
+			aggregates.NetUnblendedCost,
+		}
+
+		for _, costMap := range costTypes {
+			if totalData, exists := costMap["total"]; exists {
+				// The "total" key contains a float64, not a CostAggregate
+				if total, ok := totalData.(float64); ok {
+					totalRow = append(totalRow, fmt.Sprintf("**%.2f**", total))
+				} else {
+					totalRow = append(totalRow, "**0.00**")
+				}
+			} else {
+				totalRow = append(totalRow, "**0.00**")
+			}
+		}
+
+		tableData = append(tableData, totalRow)
 		md.AddTable(headers, tableData)
 	}
 }
