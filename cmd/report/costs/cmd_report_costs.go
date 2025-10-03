@@ -131,8 +131,11 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 		}
 	}
 
-	// if still not start and end dates, use the state file
+	// default to the start and end date from cost metadata in state file
 	if startDate == nil && endDate == nil {
+		if len(state.Regions) == 0 {
+			return nil, fmt.Errorf("no regions found in state file")
+		}
 		startDate = &state.Regions[0].Costs.CostMetadata.StartDate
 		endDate = &state.Regions[0].Costs.CostMetadata.EndDate
 	}
