@@ -64,6 +64,7 @@ func NewReportMetricsCmd() *cobra.Command {
 	reportMetricsCmd.MarkFlagRequired("start")
 	reportMetricsCmd.MarkFlagRequired("end")
 	reportMetricsCmd.MarkFlagRequired("cluster-arn")
+	reportMetricsCmd.MarkFlagRequired("region")
 
 	return reportMetricsCmd
 }

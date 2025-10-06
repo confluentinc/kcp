@@ -35,18 +35,24 @@ func NewReportCostsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
-	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to include in the report (comma separated list or repeated flag)")
 
 	reportCostsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
+	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	reportCostsCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
 	reportCostsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -61,9 +67,9 @@ func NewReportCostsCmd() *cobra.Command {
 	})
 
 	reportCostsCmd.MarkFlagRequired("state-file")
-	reportCostsCmd.MarkFlagRequired("start")
-	reportCostsCmd.MarkFlagRequired("end")
 	reportCostsCmd.MarkFlagRequired("region")
+	// optional but if one is provided, the other must be provided
+	reportCostsCmd.MarkFlagsRequiredTogether("start", "end")
 
 	return reportCostsCmd
 }
@@ -92,20 +98,6 @@ func runReportCosts(cmd *cobra.Command, args []string) error {
 }
 
 func parseCostReporterOpts() (*CostReporterOpts, error) {
-	startDate, err := time.Parse("2006-01-02", start)
-	if err != nil {
-		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
-	}
-
-	endDate, err := time.Parse("2006-01-02", end)
-	if err != nil {
-		return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
-	}
-
-	if endDate.Before(startDate) {
-		return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
-	}
-
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
 	}
@@ -115,6 +107,38 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 		return nil, fmt.Errorf("failed to load existing state file: %v", err)
 	}
 
+	// start and end date are optional
+	var startDate, endDate *time.Time
+	if start != "" {
+		parsed, err := time.Parse("2006-01-02", start)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
+		}
+		startDate = &parsed
+	}
+
+	if end != "" {
+		parsed, err := time.Parse("2006-01-02", end)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
+		}
+		endDate = &parsed
+	}
+
+	if startDate != nil && endDate != nil {
+		if endDate.Before(*startDate) {
+			return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
+		}
+	}
+
+	// default to the start and end date from cost metadata in state file
+	if startDate == nil && endDate == nil {
+		if len(state.Regions) == 0 {
+			return nil, fmt.Errorf("no regions found in state file")
+		}
+		startDate = &state.Regions[0].Costs.CostMetadata.StartDate
+		endDate = &state.Regions[0].Costs.CostMetadata.EndDate
+	}
 
 	opts := CostReporterOpts{
 		Regions:   regions,

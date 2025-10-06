@@ -109,8 +109,69 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	aggregates := rs.calculateCostAggregates(filteredCosts)
 
 	return &types.ProcessedRegionCosts{
+		Region:     regionName,
 		Metadata:   regionCosts.Metadata,
 		Results:    filteredCosts,
+		Aggregates: aggregates,
+	}, nil
+}
+
+// TODO we should ask for clusterArn instead of clusterName
+
+// filterClusterMetrics filters the processed state by region, clusterArn, and date range
+func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var regionName string
+	var targetCluster *types.ProcessedCluster
+
+	for _, region := range processedState.Regions {
+		for _, cluster := range region.Clusters {
+			if strings.EqualFold(cluster.Arn, clusterArn) {
+				targetCluster = &cluster
+				regionName = region.Name
+				break
+			}
+		}
+	}
+
+	if targetCluster == nil {
+		return nil, fmt.Errorf("cluster '%s' not found", clusterArn)
+	}
+
+	var filteredMetrics []types.ProcessedMetric
+
+	// If no date filters, use all metrics
+	if startTime == nil && endTime == nil {
+		filteredMetrics = targetCluster.ClusterMetrics.Metrics
+	} else {
+		// Filter metrics by date range
+		for _, metric := range targetCluster.ClusterMetrics.Metrics {
+			// Parse the metric start time
+			metricStartTime, err := time.Parse("2006-01-02T15:04:05Z", metric.Start)
+			if err != nil {
+				// Skip metrics with invalid timestamps
+				continue
+			}
+
+			// Apply date filters
+			if startTime != nil && metricStartTime.Before(*startTime) {
+				continue
+			}
+			if endTime != nil && metricStartTime.After(*endTime) {
+				continue
+			}
+
+			filteredMetrics = append(filteredMetrics, metric)
+		}
+	}
+
+	// Calculate aggregates from filtered metrics
+	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+
+	return &types.ProcessedClusterMetrics{
+		Region:     regionName,
+		ClusterArn: clusterArn,
+		Metadata:   targetCluster.ClusterMetrics.Metadata,
+		Metrics:    filteredMetrics,
 		Aggregates: aggregates,
 	}, nil
 }
