@@ -15,12 +15,23 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-var Metrics = []string{
+var BrokerLevelMetrics = []string{
 	"BytesInPerSec",
 	"BytesOutPerSec",
 	"MessagesInPerSec",
 	"KafkaDataLogsDiskUsed",
 	"RemoteLogSizeBytes",
+	"PartitionCount",
+}
+
+var ClusterLevelMetrics = []string{
+	"GlobalPartitionCount",
+}
+
+var ServerlessLevelMetrics = []string{
+	"BytesInPerSec",
+	"BytesOutPerSec",
+	"MessagesInPerSec",
 }
 
 type MetricService struct {
@@ -32,20 +43,19 @@ func NewMetricService(client *cloudwatch.Client) *MetricService {
 }
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
-func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
+func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
 	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
-	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
-	// }
 
-	// // todo how to use this?
-	// _ = globalMetrics
+	if cluster.Provisioned == nil {
+		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
+	}
 
 	brokerAZDistribution := aws.String(string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution))
 	kafkaVersion := aws.ToString(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
 	enhancedMonitoring := string(cluster.Provisioned.EnhancedMonitoring)
 	numberOfBrokerNodes := int(*cluster.Provisioned.NumberOfBrokerNodes)
+	instanceType := aws.ToString(cluster.Provisioned.BrokerNodeGroupInfo.InstanceType)
+	tieredStorage := cluster.Provisioned.StorageMode == kafkatypes.StorageModeTiered
 
 	metricsMetadata := types.MetricMetadata{
 		ClusterType:          string(cluster.ClusterType),
@@ -55,18 +65,31 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		StartWindowDate:      timeWindow.StartTime.Format(time.RFC3339),
 		EndWindowDate:        timeWindow.EndTime.Format(time.RFC3339),
 		Period:               timeWindow.Period,
+
+		FollowerFetching: followerFetching,
+		InstanceType:     instanceType,
+		TieredStorage:    tieredStorage,
 	}
 
-	queries := ms.buildMetricQueries(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
+	brokerQueries := ms.buildBrokerMetricQueries(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
 
-	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
+	brokerQueryResult, err := ms.executeMetricQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
 
+	clusterQueries := ms.buildClusterMetricQueries(*cluster.ClusterName, timeWindow.Period)
+	clusterQueryResult, err := ms.executeMetricQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime)
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine broker and cluster metric results
+	combinedResults := append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...)
+
 	clusterMetrics := types.ClusterMetrics{
 		MetricMetadata: metricsMetadata,
-		Results:        queryResult.MetricDataResults,
+		Results:        combinedResults,
 	}
 
 	return &clusterMetrics, nil
@@ -75,13 +98,10 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
 func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
 	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
-	// globalMetrics, err := ms.getGlobalMetrics(ctx, *cluster.ClusterName, startTime, endTime)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to get global metrics: %v", err)
-	// }
 
-	// // TODO: do we want this?
-	// _ = globalMetrics
+	if cluster.Serverless == nil {
+		return nil, fmt.Errorf("cluster %s has no serverless configuration", aws.ToString(cluster.ClusterName))
+	}
 
 	metricsMetadata := types.MetricMetadata{
 		ClusterType:     string(cluster.ClusterType),
@@ -123,10 +143,10 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 
 // Private Helper Functions - Query Building
 
-func (ms *MetricService) buildMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 
-	for metricIndex, metricName := range Metrics {
+	for metricIndex, metricName := range BrokerLevelMetrics {
 		var metricIDs []string
 
 		// brokerIDs are 1-indexed
@@ -171,10 +191,38 @@ func (ms *MetricService) buildMetricQueries(brokers int, clusterName string, per
 	return queries
 }
 
+func (ms *MetricService) buildClusterMetricQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+	var queries []cloudwatchtypes.MetricDataQuery
+
+	for _, metricName := range ClusterLevelMetrics {
+		metricID := fmt.Sprintf("m_%s", strings.ToLower(metricName))
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id: aws.String(metricID),
+			MetricStat: &cloudwatchtypes.MetricStat{
+				Metric: &cloudwatchtypes.Metric{
+					Namespace:  aws.String("AWS/Kafka"),
+					MetricName: aws.String(metricName),
+					Dimensions: []cloudwatchtypes.Dimension{
+						{
+							Name:  aws.String("Cluster Name"),
+							Value: aws.String(clusterName),
+						},
+					},
+				},
+				Period: aws.Int32(period),
+				Stat:   aws.String("Average"),
+			},
+			ReturnData: aws.Bool(true),
+		})
+	}
+
+	return queries
+}
+
 func (ms *MetricService) buildServerlessMetricQueries(topics []string, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 
-	for metricIndex, metricName := range Metrics {
+	for metricIndex, metricName := range ServerlessLevelMetrics {
 		var metricIDs []string
 
 		// Create individual queries for each topic

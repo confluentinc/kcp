@@ -298,13 +298,16 @@ type ClusterMetrics struct {
 
 type MetricMetadata struct {
 	ClusterType          string `json:"cluster_type"`
-	FollowerFetching     bool   `json:"follower_fetching"`
-	BrokerAzDistribution string `json:"broker_az_distribution"`
 	KafkaVersion         string `json:"kafka_version"`
+	BrokerAzDistribution string `json:"broker_az_distribution"`
 	EnhancedMonitoring   string `json:"enhanced_monitoring"`
 	StartWindowDate      string `json:"start_window_date"`
 	EndWindowDate        string `json:"end_window_date"`
 	Period               int32  `json:"period"`
+
+	FollowerFetching bool   `json:"follower_fetching"`
+	InstanceType     string `json:"instance_type"`
+	TieredStorage    bool   `json:"tiered_storage"`
 }
 
 type CloudWatchTimeWindow struct {
