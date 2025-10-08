@@ -31,7 +31,7 @@ type ClusterDiscovererMSKService interface {
 }
 
 type ClusterDiscovererMetricService interface {
-	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error)
+	ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error)
 	ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error)
 }
 
@@ -365,22 +365,20 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		return nil, fmt.Errorf("failed to calculate time window: %v", err)
 	}
 
-	var clusterMetric *types.ClusterMetrics
+	var clusterMetrics *types.ClusterMetrics
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		clusterMetric, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, timeWindow)
+		clusterMetrics, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, *followerFetching, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}
 	} else {
-		clusterMetric, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, timeWindow)
+		clusterMetrics, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
 		}
 	}
 
-	clusterMetric.MetricMetadata.FollowerFetching = aws.ToBool(followerFetching)
-
-	return clusterMetric, nil
+	return clusterMetrics, nil
 }
 
 func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
