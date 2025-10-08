@@ -65,7 +65,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	}
 
 	clusterVolumeSizeGB := int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
-	storageQuery := ms.buildBrokerStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
+	storageQuery := ms.buildStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
 	storageQueryResult, err := ms.executeMetricQuery(ctx, storageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
@@ -186,7 +186,7 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 	return queries
 }
 
-func (ms *MetricService) buildBrokerStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
+func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 	var metricIDs []string
 
