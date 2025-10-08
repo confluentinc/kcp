@@ -138,7 +138,9 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 		"MessagesInPerSec",
 		"RemoteLogSizeBytes",
 		"PartitionCount",
+		"ClientConnectionCount",
 	}
+
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for metricIndex, metricName := range metrics {
@@ -243,6 +245,7 @@ func (ms *MetricService) buildClusterMetricQueries(clusterName string, period in
 	var metrics = []string{
 		"GlobalPartitionCount",
 	}
+
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for _, metricName := range metrics {
@@ -276,6 +279,7 @@ func (ms *MetricService) buildServerlessMetricQueries(topics []string, clusterNa
 		"BytesOutPerSec",
 		"MessagesInPerSec",
 	}
+
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for metricIndex, metricName := range metrics {
