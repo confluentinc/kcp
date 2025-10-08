@@ -20,9 +20,11 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ReferenceArea,
 } from 'recharts'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
+import { useChartZoom } from '@/lib/useChartZoom'
 
 interface CostSummaryData {
   startDate: string | null
@@ -104,6 +106,7 @@ export default function Summary() {
     if (metadataDates) {
       setStartDate(new Date(metadataDates.startDate))
       setEndDate(new Date(metadataDates.endDate))
+      resetZoom() // Reset chart zoom when dates are reset
     }
   }
 
@@ -111,6 +114,7 @@ export default function Summary() {
     const metadataDates = getMetadataDates()
     if (metadataDates) {
       setStartDate(new Date(metadataDates.startDate))
+      resetZoom() // Reset chart zoom when start date is reset
     }
   }
 
@@ -118,6 +122,7 @@ export default function Summary() {
     const metadataDates = getMetadataDates()
     if (metadataDates) {
       setEndDate(new Date(metadataDates.endDate))
+      resetZoom() // Reset chart zoom when end date is reset
     }
   }
 
@@ -289,12 +294,14 @@ export default function Summary() {
     // Create chart data
     const sortedDates = Array.from(allDates).sort()
     const chartData = sortedDates.map((date) => {
+      const dateObj = new Date(date)
       const dataPoint: any = {
         date: date,
-        formattedDate: new Date(date).toLocaleDateString('en-US', {
+        formattedDate: dateObj.toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
         }),
+        epochTime: dateObj.getTime(),
       }
 
       // Add each region's cost for the selected cost type
@@ -313,6 +320,33 @@ export default function Summary() {
       chartData,
     }
   }, [regionCostData, selectedChartCostType])
+
+  // Initialize zoom functionality
+  const {
+    data: zoomData,
+    left,
+    right,
+    refAreaLeft,
+    refAreaRight,
+    handleMouseDown,
+    handleMouseMove,
+    zoom,
+    resetZoom,
+    updateData,
+  } = useChartZoom({
+    initialData: costSummary.chartData,
+    dataKey: 'epochTime',
+    isNumericAxis: true,
+    onDateRangeChange: (startDate, endDate) => {
+      setStartDate(startDate)
+      setEndDate(endDate)
+    },
+  })
+
+  // Update zoom data when costSummary changes
+  useEffect(() => {
+    updateData(costSummary.chartData)
+  }, [costSummary.chartData, updateData])
 
   const formatCurrencyDetailed = (amount: number) =>
     new Intl.NumberFormat('en-US', {
@@ -643,21 +677,37 @@ export default function Summary() {
           </div>
 
           {costSummary.chartData.length > 0 ? (
-            <div className="h-96">
+            <div
+              className="h-96"
+              style={{ userSelect: 'none' }}
+            >
               <ResponsiveContainer
                 width="100%"
                 height="100%"
               >
                 <AreaChart
-                  data={costSummary.chartData}
+                  data={zoomData}
                   margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={zoom}
                 >
                   <CartesianGrid
                     strokeDasharray="3 3"
                     className="opacity-30"
                   />
                   <XAxis
-                    dataKey="formattedDate"
+                    allowDataOverflow
+                    dataKey="epochTime"
+                    domain={[left, right]}
+                    type="number"
+                    scale="time"
+                    tickFormatter={(value) =>
+                      new Date(value).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                      })
+                    }
                     tick={{ fontSize: 12, fill: 'currentColor' }}
                     className="text-gray-700 dark:text-gray-200"
                   />
@@ -753,6 +803,14 @@ export default function Summary() {
                       />
                     )
                   })}
+
+                  {refAreaLeft && refAreaRight ? (
+                    <ReferenceArea
+                      x1={refAreaLeft}
+                      x2={refAreaRight}
+                      strokeOpacity={0.3}
+                    />
+                  ) : null}
                 </AreaChart>
               </ResponsiveContainer>
             </div>

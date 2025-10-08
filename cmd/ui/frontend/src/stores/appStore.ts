@@ -21,6 +21,19 @@ interface SummaryDateFilters {
   endDate: Date | undefined
 }
 
+interface WorkloadData {
+  [clusterKey: string]: {
+    avgIngressThroughput: string
+    peakIngressThroughput: string
+    avgEgressThroughput: string
+    peakEgressThroughput: string
+    retentionDays: string
+    partitions: string
+    replicationFactor: string
+    localRetentionHours: string
+  }
+}
+
 interface AppState {
   // Data
   regions: Region[]
@@ -29,6 +42,11 @@ interface AppState {
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
   selectedSummary: boolean
+  selectedTCOInputs: boolean
+  preselectedMetric: string | null
+
+  // TCO Inputs data
+  tcoWorkloadData: WorkloadData
 
   // Date filters (per cluster)
   clusterDateFilters: Record<string, ClusterDateFilters> // Key: "region:cluster"
@@ -46,10 +64,19 @@ interface AppState {
 
   // Actions
   setRegions: (regions: Region[]) => void
-  setSelectedCluster: (cluster: Cluster, regionName: string) => void
+  setSelectedCluster: (cluster: Cluster, regionName: string, preselectedMetric?: string) => void
   setSelectedRegion: (region: Region) => void
   setSelectedSummary: () => void
+  setSelectedTCOInputs: () => void
   clearSelection: () => void
+
+  // TCO Actions
+  setTCOWorkloadValue: (
+    clusterKey: string,
+    field: keyof WorkloadData[string],
+    value: string
+  ) => void
+  initializeTCOData: (clusters: Array<{ name: string; regionName: string; key: string }>) => void
 
   // Date filter actions (cluster-specific)
   setClusterStartDate: (region: string, cluster: string, date: Date | undefined) => void
@@ -84,6 +111,9 @@ export const useAppStore = create<AppState>()(
       selectedCluster: null,
       selectedRegion: null,
       selectedSummary: false,
+      selectedTCOInputs: false,
+      preselectedMetric: null,
+      tcoWorkloadData: {},
       clusterDateFilters: {},
       regionState: {},
       summaryDateFilters: {
@@ -97,12 +127,14 @@ export const useAppStore = create<AppState>()(
       // Data actions
       setRegions: (regions) => set({ regions }, false, 'setRegions'),
 
-      setSelectedCluster: (cluster, regionName) =>
+      setSelectedCluster: (cluster, regionName, preselectedMetric) =>
         set(
           {
             selectedCluster: { cluster, regionName },
             selectedRegion: null,
             selectedSummary: false,
+            selectedTCOInputs: false,
+            preselectedMetric: preselectedMetric || null,
           },
           false,
           'setSelectedCluster'
@@ -114,6 +146,8 @@ export const useAppStore = create<AppState>()(
             selectedRegion: region,
             selectedCluster: null,
             selectedSummary: false,
+            selectedTCOInputs: false,
+            preselectedMetric: null,
           },
           false,
           'setSelectedRegion'
@@ -125,9 +159,24 @@ export const useAppStore = create<AppState>()(
             selectedSummary: true,
             selectedCluster: null,
             selectedRegion: null,
+            selectedTCOInputs: false,
+            preselectedMetric: null,
           },
           false,
           'setSelectedSummary'
+        ),
+
+      setSelectedTCOInputs: () =>
+        set(
+          {
+            selectedTCOInputs: true,
+            selectedCluster: null,
+            selectedRegion: null,
+            selectedSummary: false,
+            preselectedMetric: null,
+          },
+          false,
+          'setSelectedTCOInputs'
         ),
 
       clearSelection: () =>
@@ -136,6 +185,8 @@ export const useAppStore = create<AppState>()(
             selectedCluster: null,
             selectedRegion: null,
             selectedSummary: false,
+            selectedTCOInputs: false,
+            preselectedMetric: null,
           },
           false,
           'clearSelection'
@@ -341,6 +392,45 @@ export const useAppStore = create<AppState>()(
 
       setActiveMetricsTab: (tab: string) =>
         set({ activeMetricsTab: tab }, false, 'setActiveMetricsTab'),
+
+      // TCO Actions
+      setTCOWorkloadValue: (clusterKey: string, field: keyof WorkloadData[string], value: string) =>
+        set(
+          (state) => ({
+            tcoWorkloadData: {
+              ...state.tcoWorkloadData,
+              [clusterKey]: {
+                ...state.tcoWorkloadData[clusterKey],
+                [field]: value,
+              },
+            },
+          }),
+          false,
+          'setTCOWorkloadValue'
+        ),
+
+      initializeTCOData: (clusters: Array<{ name: string; regionName: string; key: string }>) =>
+        set(
+          (state) => {
+            const newData: WorkloadData = {}
+            clusters.forEach((cluster) => {
+              // Keep existing data if it exists, otherwise initialize with zeros
+              newData[cluster.key] = state.tcoWorkloadData[cluster.key] || {
+                avgIngressThroughput: '',
+                peakIngressThroughput: '',
+                avgEgressThroughput: '',
+                peakEgressThroughput: '',
+                retentionDays: '',
+                partitions: '1000',
+                replicationFactor: '3',
+                localRetentionHours: '',
+              }
+            })
+            return { tcoWorkloadData: newData }
+          },
+          false,
+          'initializeTCOData'
+        ),
     }),
     {
       name: 'kcp-app-store',

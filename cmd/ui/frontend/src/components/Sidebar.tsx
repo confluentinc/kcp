@@ -7,9 +7,11 @@ interface SidebarProps {
   onClusterSelect: (cluster: Cluster, regionName: string) => void
   onRegionSelect: (region: Region) => void
   onSummarySelect: () => void
+  onTCOInputsSelect: () => void
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
   selectedSummary: boolean
+  selectedTCOInputs: boolean
   isProcessing?: boolean
   error?: string | null
 }
@@ -20,9 +22,11 @@ export default function Sidebar({
   onClusterSelect,
   onRegionSelect,
   onSummarySelect,
+  onTCOInputsSelect,
   selectedCluster,
   selectedRegion,
   selectedSummary,
+  selectedTCOInputs,
   isProcessing = false,
   error = null,
 }: SidebarProps) {
@@ -154,6 +158,35 @@ export default function Sidebar({
                       )
                     })}
                   </div>
+                </div>
+
+                {/* TCO Inputs Section */}
+                <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+                  <button
+                    onClick={onTCOInputsSelect}
+                    className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
+                      selectedTCOInputs
+                        ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2 min-w-0 flex-1">
+                      <div
+                        className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                          selectedTCOInputs ? 'bg-blue-600' : 'bg-gray-500'
+                        }`}
+                      ></div>
+                      <h4
+                        className={`text-sm font-medium whitespace-nowrap ${
+                          selectedTCOInputs
+                            ? 'text-blue-900 dark:text-blue-100'
+                            : 'text-gray-800 dark:text-gray-200'
+                        }`}
+                      >
+                        TCO Inputs
+                      </h4>
+                    </div>
+                  </button>
                 </div>
               </div>
             </div>

@@ -4,6 +4,7 @@ import type { Region, Cluster } from '@/types'
 import ClusterReport from '@/components/ClusterReport'
 import RegionReport from '@/components/RegionReport'
 import Summary from '@/components/Summary'
+import TCOInputs from '@/components/TCOInputs'
 import AppHeader from '@/components/AppHeader'
 import { useAppStore } from '@/stores/appStore'
 
@@ -16,12 +17,14 @@ export default function Home() {
     selectedCluster,
     selectedRegion,
     selectedSummary,
+    selectedTCOInputs,
     isProcessing,
     error,
     setRegions,
     setSelectedCluster,
     setSelectedRegion,
     setSelectedSummary,
+    setSelectedTCOInputs,
     setIsProcessing,
     setError,
   } = useAppStore()
@@ -106,6 +109,10 @@ export default function Home() {
     setSelectedSummary()
   }
 
+  const handleTCOInputsSelect = () => {
+    setSelectedTCOInputs()
+  }
+
   return (
     <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-gray-900 transition-colors">
       <AppHeader />
@@ -117,9 +124,11 @@ export default function Home() {
           onClusterSelect={handleClusterSelect}
           onRegionSelect={handleRegionSelect}
           onSummarySelect={handleSummarySelect}
+          onTCOInputsSelect={handleTCOInputsSelect}
           selectedCluster={selectedCluster}
           selectedRegion={selectedRegion}
           selectedSummary={selectedSummary}
+          selectedTCOInputs={selectedTCOInputs}
           isProcessing={isProcessing}
           error={error}
         />
@@ -136,6 +145,8 @@ export default function Home() {
           <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
             {selectedSummary ? (
               <Summary />
+            ) : selectedTCOInputs ? (
+              <TCOInputs />
             ) : selectedCluster ? (
               <ClusterReport
                 cluster={selectedCluster.cluster}
