@@ -255,7 +255,7 @@ Scan multiple MSK clusters at the Kafka level using the generated assets of the 
 ```shell
 kcp scan clusters \
   --state-file kcp-state.json \
-  --credentials-yaml cluster-credentials.yaml
+  --credentials-file cluster-credentials.yaml
 ```
 
 **Output:**
