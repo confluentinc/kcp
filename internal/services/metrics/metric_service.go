@@ -43,8 +43,8 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		BrokerAzDistribution: *brokerAZDistribution,
 		KafkaVersion:         kafkaVersion,
 		EnhancedMonitoring:   enhancedMonitoring,
-		StartWindowDate:      timeWindow.StartTime.Format(time.RFC3339),
-		EndWindowDate:        timeWindow.EndTime.Format(time.RFC3339),
+		StartDate:            timeWindow.StartTime,
+		EndDate:              timeWindow.EndTime,
 		Period:               timeWindow.Period,
 
 		FollowerFetching: followerFetching,
@@ -92,10 +92,10 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	}
 
 	metricsMetadata := types.MetricMetadata{
-		ClusterType:     string(cluster.ClusterType),
-		StartWindowDate: timeWindow.StartTime.Format(time.RFC3339),
-		EndWindowDate:   timeWindow.EndTime.Format(time.RFC3339),
-		Period:          timeWindow.Period,
+		ClusterType: string(cluster.ClusterType),
+		StartDate:   timeWindow.StartTime,
+		EndDate:     timeWindow.EndTime,
+		Period:      timeWindow.Period,
 	}
 
 	// Get all topics for this cluster
