@@ -44,7 +44,7 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 
 ## Documentation
 
-The docs for the latest release are available [here](https://github.com/confluentinc/kcp/tree/latest/docs)
+The docs for the latest release are available [here](https://github.com/confluentinc/kcp/releases/latest)
 
 ## Development
 
