@@ -23,41 +23,47 @@ export default function ClusterOverview({
 
   const getStatusBadge = (enabled: boolean, label: string) => (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-900 dark:text-gray-100 ${
-        enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+      className={`text-sm font-medium ${
+        enabled ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
       }`}
     >
-      {enabled ? '✅' : '❌'} {label}
+      {label}
     </span>
   )
 
   return (
     <div className="space-y-6">
       {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-blue-50 dark:bg-blue-900 rounded-lg p-4 transition-colors">
-          <div className="text-2xl font-bold text-blue-600 dark:text-blue-300">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            {mskConfig.ClusterType || 'Unknown'}
+          </div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Cluster Type</div>
+        </div>
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             {provisioned.NumberOfBrokerNodes}
           </div>
-          <div className="text-sm text-blue-800 dark:text-blue-200">Broker Nodes</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Broker Nodes</div>
         </div>
-        <div className="bg-green-50 dark:bg-green-900 rounded-lg p-4 transition-colors">
-          <div className="text-2xl font-bold text-green-600 dark:text-green-300">
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             {brokerInfo.InstanceType || 'Unknown'}
           </div>
-          <div className="text-sm text-green-800 dark:text-green-200">Instance Type</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Instance Type</div>
         </div>
-        <div className="bg-purple-50 dark:bg-purple-900 rounded-lg p-4 transition-colors">
-          <div className="text-2xl font-bold text-purple-600 dark:text-purple-300">
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             {brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0}GB
           </div>
-          <div className="text-sm text-purple-800 dark:text-purple-200">Storage per Broker</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Storage per Broker</div>
         </div>
-        <div className="bg-orange-50 dark:bg-orange-900 rounded-lg p-4 transition-colors">
-          <div className="text-2xl font-bold text-orange-600 dark:text-orange-300">
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             {provisioned.CurrentBrokerSoftwareInfo?.KafkaVersion || 'Unknown'}
           </div>
-          <div className="text-sm text-orange-800 dark:text-orange-200">Kafka Version</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Kafka Version</div>
         </div>
       </div>
 
@@ -105,23 +111,61 @@ export default function ClusterOverview({
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
             Authentication Status
           </h3>
-          <div className="space-y-2">
-            {getStatusBadge(
-              provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false,
-              'IAM Authentication'
-            )}
-            {getStatusBadge(
-              provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false,
-              'SCRAM Authentication'
-            )}
-            {getStatusBadge(
-              provisioned.ClientAuthentication?.Tls?.Enabled || false,
-              'TLS Authentication'
-            )}
-            {getStatusBadge(
-              provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false,
-              'Unauthenticated Access'
-            )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-600">
+                  <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+                    Authentication Method
+                  </th>
+                  <th className="text-center py-2 font-medium text-gray-900 dark:text-gray-100">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
+                <tr>
+                  <td className="py-2 text-gray-900 dark:text-gray-100">IAM Authentication</td>
+                  <td className="py-2 text-center">
+                    {getStatusBadge(
+                      provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false,
+                      provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled ? 'Enabled' : 'Disabled'
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 text-gray-900 dark:text-gray-100">SCRAM Authentication</td>
+                  <td className="py-2 text-center">
+                    {getStatusBadge(
+                      provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false,
+                      provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
+                        ? 'Enabled'
+                        : 'Disabled'
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 text-gray-900 dark:text-gray-100">TLS Authentication</td>
+                  <td className="py-2 text-center">
+                    {getStatusBadge(
+                      provisioned.ClientAuthentication?.Tls?.Enabled || false,
+                      provisioned.ClientAuthentication?.Tls?.Enabled ? 'Enabled' : 'Disabled'
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 text-gray-900 dark:text-gray-100">Unauthenticated Access</td>
+                  <td className="py-2 text-center">
+                    {getStatusBadge(
+                      provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false,
+                      provisioned.ClientAuthentication?.Unauthenticated?.Enabled
+                        ? 'Enabled'
+                        : 'Disabled'
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -129,7 +173,7 @@ export default function ClusterOverview({
       {/* Network Configuration */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          🌐 Network Configuration
+          Network Configuration
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -194,7 +238,7 @@ export default function ClusterOverview({
       {/* Security Configuration */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          🔐 Security Configuration
+          Security Configuration
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Authentication Methods */}
@@ -287,7 +331,7 @@ export default function ClusterOverview({
       {/* Monitoring Configuration */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          📈 Monitoring & Logging Configuration
+          Monitoring & Logging Configuration
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Monitoring Settings */}
@@ -357,7 +401,7 @@ export default function ClusterOverview({
       {regionData?.configurations && regionData.configurations.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-            📋 Available Configurations
+            Available Configurations
           </h3>
           <div className="space-y-3">
             {regionData.configurations.slice(0, 5).map((config: any, index: number) => (

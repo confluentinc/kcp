@@ -7,11 +7,14 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
 )
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
+	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
+	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -19,22 +22,24 @@ type UICmdOpts struct {
 }
 
 type UI struct {
-	port          string
 	reportService ReportService
+
+	port        string
+	cachedState *types.State // Cache the uploaded state for metrics filtering
 }
 
 func NewUI(reportService ReportService, opts UICmdOpts) *UI {
 	return &UI{
 		port:          opts.Port,
 		reportService: reportService,
+		cachedState:   nil,
 	}
 }
 
 func (ui *UI) Run() error {
-	fmt.Println("Running UI...")
-
 	e := echo.New()
 	e.HideBanner = true
+	e.HidePort = true
 
 	frontend.RegisterHandlers(e)
 
@@ -47,16 +52,20 @@ func (ui *UI) Run() error {
 		})
 	})
 
-	e.POST("/state", ui.handleState)
+	e.POST("/upload-state", ui.handleUploadState)
+	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
+	e.GET("/costs/:region", ui.handleGetCosts)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
-	fmt.Printf("Starting UI server on %s\n", serverAddr)
+	fullURL := fmt.Sprintf("http://%s", serverAddr)
+	fmt.Printf("\nkcp ui is available at %s\n", color.New(color.FgGreen).Sprint(fullURL))
+
 	e.Logger.Fatal(e.Start(serverAddr))
 
 	return nil
 }
 
-func (ui *UI) handleState(c echo.Context) error {
+func (ui *UI) handleUploadState(c echo.Context) error {
 	var state types.State
 
 	if err := c.Bind(&state); err != nil {
@@ -66,7 +75,115 @@ func (ui *UI) handleState(c echo.Context) error {
 		})
 	}
 
+	// Cache the state for metrics filtering
+	ui.cachedState = &state
+
 	processedState := ui.reportService.ProcessState(state)
 
 	return c.JSON(http.StatusOK, processedState)
+}
+
+func (ui *UI) handleGetMetrics(c echo.Context) error {
+	region := c.Param("region")
+	cluster := c.Param("cluster")
+
+	startDate := c.QueryParam("startDate")
+	endDate := c.QueryParam("endDate")
+
+	// Check if we have cached state data
+	if ui.cachedState == nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": "Please upload state data via POST /state first",
+		})
+	}
+
+	// Parse date filters if provided
+	var startTime, endTime *time.Time
+	if startDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid start date format",
+				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
+			})
+		} else {
+			startTime = &parsed
+		}
+	}
+	if endDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid end date format",
+				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
+			})
+		} else {
+			endTime = &parsed
+		}
+	}
+
+	// Process the full state to get structured data
+	processedState := ui.reportService.ProcessState(*ui.cachedState)
+
+	// Filter by region and cluster
+	filteredMetrics, err := ui.reportService.FilterMetrics(processedState, region, cluster, startTime, endTime)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
+func (ui *UI) handleGetCosts(c echo.Context) error {
+	region := c.Param("region")
+
+	startDate := c.QueryParam("startDate")
+	endDate := c.QueryParam("endDate")
+
+	// Check if we have cached state data
+	if ui.cachedState == nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": "Please upload state data via POST /upload-state first",
+		})
+	}
+
+	// Parse date filters if provided
+	var startTime, endTime *time.Time
+	if startDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid start date format",
+				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
+			})
+		} else {
+			startTime = &parsed
+		}
+	}
+	if endDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid end date format",
+				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
+			})
+		} else {
+			endTime = &parsed
+		}
+	}
+
+	// Process the full state to get structured data
+	processedState := ui.reportService.ProcessState(*ui.cachedState)
+
+	// Filter costs by region
+	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, startTime, endTime)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Region not found",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, regionCosts)
 }
