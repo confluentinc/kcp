@@ -7,9 +7,11 @@ interface SidebarProps {
   onClusterSelect: (cluster: Cluster, regionName: string) => void
   onRegionSelect: (region: Region) => void
   onSummarySelect: () => void
+  onTCOInputsSelect: () => void
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
   selectedSummary: boolean
+  selectedTCOInputs: boolean
   isProcessing?: boolean
   error?: string | null
 }
@@ -20,9 +22,11 @@ export default function Sidebar({
   onClusterSelect,
   onRegionSelect,
   onSummarySelect,
+  onTCOInputsSelect,
   selectedCluster,
   selectedRegion,
   selectedSummary,
+  selectedTCOInputs,
   isProcessing = false,
   error = null,
 }: SidebarProps) {
@@ -52,8 +56,37 @@ export default function Sidebar({
           <div className="flex-1 flex flex-col min-h-0 mt-4">
             <div className="border-t border-gray-200 pt-4 flex-1 flex flex-col min-h-0">
               <div className="flex-1 space-y-3 overflow-y-auto pr-2 border border-gray-200 dark:border-gray-600 rounded-lg p-3 bg-white dark:bg-gray-700 min-h-0 transition-colors">
-                {/* Summary Section */}
+                {/* TCO Inputs Section */}
                 <div className="space-y-2">
+                  <button
+                    onClick={onTCOInputsSelect}
+                    className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
+                      selectedTCOInputs
+                        ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2 min-w-0 flex-1">
+                      <div
+                        className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                          selectedTCOInputs ? 'bg-blue-600' : 'bg-gray-500'
+                        }`}
+                      ></div>
+                      <h4
+                        className={`text-base font-medium whitespace-nowrap ${
+                          selectedTCOInputs
+                            ? 'text-blue-900 dark:text-blue-100'
+                            : 'text-gray-800 dark:text-gray-200'
+                        }`}
+                      >
+                        TCO Inputs
+                      </h4>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Summary Section */}
+                <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
                   <button
                     onClick={onSummarySelect}
                     className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
@@ -69,7 +102,7 @@ export default function Sidebar({
                         }`}
                       ></div>
                       <h4
-                        className={`text-sm font-medium whitespace-nowrap ${
+                        className={`text-base font-medium whitespace-nowrap ${
                           selectedSummary
                             ? 'text-blue-900 dark:text-blue-100'
                             : 'text-gray-800 dark:text-gray-200'
@@ -77,9 +110,6 @@ export default function Sidebar({
                       >
                         Summary
                       </h4>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                        ({regions.reduce((sum, r) => sum + (r.clusters?.length || 0), 0)} clusters)
-                      </span>
                     </div>
                   </button>
 
@@ -108,7 +138,7 @@ export default function Sidebar({
                                 }`}
                               ></div>
                               <h5
-                                className={`text-xs font-medium whitespace-nowrap ${
+                                className={`text-sm font-medium whitespace-nowrap ${
                                   isRegionSelected
                                     ? 'text-blue-900 dark:text-blue-100'
                                     : 'text-gray-700 dark:text-gray-300'
@@ -116,9 +146,6 @@ export default function Sidebar({
                               >
                                 {region.name}
                               </h5>
-                              <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                                ({region.clusters?.length || 0})
-                              </span>
                             </div>
                           </button>
 
@@ -132,7 +159,7 @@ export default function Sidebar({
                                 <button
                                   key={cluster.name}
                                   onClick={() => onClusterSelect(cluster, region.name)}
-                                  className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors ${
+                                  className={`w-full text-left px-2 py-1 text-sm rounded-sm transition-colors ${
                                     isSelected
                                       ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-700'
                                       : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'

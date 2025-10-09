@@ -22,6 +22,7 @@ import { CalendarIcon, X, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { cn, downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
 import { useRegionCostFilters } from '@/stores/appStore'
+import { useChartZoom } from '@/lib/useChartZoom'
 import {
   AreaChart,
   Area,
@@ -30,6 +31,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceArea,
 } from 'recharts'
 
 interface RegionCostsProps {
@@ -83,6 +85,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       if (metaStartDate && metaEndDate) {
         setStartDate(new Date(metaStartDate))
         setEndDate(new Date(metaEndDate))
+        resetZoom() // Reset chart zoom when dates are reset
       }
     }
   }
@@ -90,12 +93,14 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   const resetStartDateToMetadata = () => {
     if (costsResponse?.metadata?.start_date) {
       setStartDate(new Date(costsResponse.metadata.start_date))
+      resetZoom() // Reset chart zoom when start date is reset
     }
   }
 
   const resetEndDateToMetadata = () => {
     if (costsResponse?.metadata?.end_date) {
       setEndDate(new Date(costsResponse.metadata.end_date))
+      resetZoom() // Reset chart zoom when end date is reset
     }
   }
 
@@ -248,12 +253,14 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
     // Create chart data (dates with both service totals and individual usage types)
     const chartData = uniqueDates.map((date) => {
+      const dateObj = new Date(date)
       const dataPoint: any = {
         date: date,
-        formattedDate: new Date(date).toLocaleDateString('en-US', {
+        formattedDate: dateObj.toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
         }),
+        epochTime: dateObj.getTime(),
       }
 
       // Add service-level aggregates
@@ -305,6 +312,33 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       serviceTotals,
     }
   }, [costsResponse, selectedTableService, selectedCostType])
+
+  // Initialize zoom functionality
+  const {
+    data: zoomData,
+    left,
+    right,
+    refAreaLeft,
+    refAreaRight,
+    handleMouseDown,
+    handleMouseMove,
+    zoom,
+    resetZoom,
+    updateData,
+  } = useChartZoom({
+    initialData: processedData.chartData,
+    dataKey: 'epochTime',
+    isNumericAxis: true,
+    onDateRangeChange: (startDate, endDate) => {
+      setStartDate(startDate)
+      setEndDate(endDate)
+    },
+  })
+
+  // Update zoom data when processedData changes
+  useEffect(() => {
+    updateData(processedData.chartData)
+  }, [processedData.chartData, updateData])
 
   // Set first service as default when data loads
   useEffect(() => {
@@ -377,21 +411,6 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       setSelectedService(processedData.chartOptions[0].value)
     }
   }, [processedData.chartOptions, selectedService])
-
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-          <div className="flex items-center justify-center h-64">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-              <p className="text-gray-500 dark:text-gray-400">Processing costs data...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   // Show error state
   if (error) {
@@ -665,18 +684,33 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
                     {/* Stacked Area Chart for Usage Types */}
                     {selectedService && (
-                      <div>
+                      <div style={{ userSelect: 'none' }}>
                         <ResponsiveContainer
                           width="100%"
                           height={400}
                         >
-                          <AreaChart data={processedData.chartData}>
+                          <AreaChart
+                            data={zoomData}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={zoom}
+                          >
                             <CartesianGrid
                               strokeDasharray="3 3"
                               className="opacity-30"
                             />
                             <XAxis
-                              dataKey="formattedDate"
+                              allowDataOverflow
+                              dataKey="epochTime"
+                              domain={[left, right]}
+                              type="number"
+                              scale="time"
+                              tickFormatter={(value) =>
+                                new Date(value).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                })
+                              }
                               tick={{ fontSize: 12, fill: 'currentColor' }}
                               className="text-gray-700 dark:text-gray-200"
                             />
@@ -685,7 +719,11 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
                               className="text-gray-700 dark:text-gray-200"
                             />
                             <Tooltip
-                              cursor={{ stroke: '#8884d8', strokeWidth: 2, strokeDasharray: '5 5' }}
+                              cursor={{
+                                stroke: '#8884d8',
+                                strokeWidth: 2,
+                                strokeDasharray: '5 5',
+                              }}
                               content={({ active, payload, label }) => {
                                 if (active && payload && payload.length > 0) {
                                   // Show all non-zero usage types in the tooltip
@@ -703,7 +741,9 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
                                   return (
                                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg max-w-xs">
                                       <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
-                                        {label}
+                                        {label
+                                          ? format(new Date(label), 'MMM dd, yyyy HH:mm')
+                                          : 'Unknown Date'}
                                       </p>
                                       <div className="space-y-1">
                                         {sortedEntries.map((entry, index) => (
@@ -774,6 +814,14 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
                                   />
                                 )
                               })}
+
+                            {refAreaLeft && refAreaRight ? (
+                              <ReferenceArea
+                                x1={refAreaLeft}
+                                x2={refAreaRight}
+                                strokeOpacity={0.3}
+                              />
+                            ) : null}
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>

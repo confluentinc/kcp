@@ -9,6 +9,8 @@ interface ClusterReportProps {
       metadata: {
         cluster_type: string
         follower_fetching: boolean
+        tiered_storage: boolean
+        instance_type: string
         broker_az_distribution: string
         kafka_version: string
         enhanced_monitoring: string
@@ -107,7 +109,7 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           </div>
 
           {/* Key Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {mskConfig.ClusterType || 'Unknown'}
@@ -119,18 +121,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                 {provisioned.NumberOfBrokerNodes}
               </div>
               <div className="text-sm text-gray-600 dark:text-gray-400">Broker Nodes</div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                {brokerInfo.InstanceType || 'Unknown'}
-              </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Instance Type</div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                {brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0}GB
-              </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Storage per Broker</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
@@ -200,9 +190,22 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
               </h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Cluster ARN:</span>
-                  <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
-                    {mskConfig.ClusterArn.split('/').pop()}
+                  <span className="text-gray-600 dark:text-gray-400">Instance Type:</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {brokerInfo.InstanceType || 'Unknown'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Storage per Broker (GB):</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Total Storage (GB):</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {(brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0) *
+                      (provisioned.NumberOfBrokerNodes || 0)}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -214,13 +217,43 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                 <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">Availability Zones:</span>
                   <span className="font-medium text-gray-900 dark:text-gray-100">
-                    {brokerInfo.ZoneIds?.length || 0} zones
+                    {brokerInfo.ZoneIds?.length || 0}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Subnets:</span>
-                  <span className="font-medium text-gray-900 dark:text-gray-100">
-                    {brokerInfo.ClientSubnets?.length || 0} subnets
+                  <span className="text-gray-600 dark:text-gray-400">Follower Fetching:</span>
+                  <span className="font-medium">
+                    {cluster.metrics?.metadata?.follower_fetching !== undefined ? (
+                      <span
+                        className={`${
+                          cluster.metrics.metadata.follower_fetching
+                            ? 'text-green-600 dark:text-green-400'
+                            : 'text-red-600 dark:text-red-400'
+                        }`}
+                      >
+                        {cluster.metrics.metadata.follower_fetching ? '✓' : '✗'}
+                      </span>
+                    ) : (
+                      <span className="text-gray-500 dark:text-gray-400">Unknown</span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Tiered Storage:</span>
+                  <span className="font-medium">
+                    {cluster.metrics?.metadata?.tiered_storage !== undefined ? (
+                      <span
+                        className={`${
+                          cluster.metrics.metadata.tiered_storage
+                            ? 'text-green-600 dark:text-green-400'
+                            : 'text-red-600 dark:text-red-400'
+                        }`}
+                      >
+                        {cluster.metrics.metadata.tiered_storage ? '✓' : '✗'}
+                      </span>
+                    ) : (
+                      <span className="text-gray-500 dark:text-gray-400">Unknown</span>
+                    )}
                   </span>
                 </div>
               </div>
