@@ -25,7 +25,7 @@ import (
 var RootCmd = &cobra.Command{
 	Use:   "kcp",
 	Short: "A CLI tool for kafka cluster planning and migration",
-	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud.",
+	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + getDocURL(),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if build_info.Version == "dev" {
 			fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
@@ -43,6 +43,8 @@ var RootCmd = &cobra.Command{
 
 	},
 }
+
+
 
 func init() {
 	cobra.EnableTraverseRunHooks = true
@@ -80,6 +82,14 @@ type PrettyHandlerOptions struct {
 type PrettyHandler struct {
 	slog.Handler
 	l *log.Logger
+}
+
+func getDocURL() string {
+	if build_info.Version == "dev" {
+		return "https://github.com/confluentinc/kcp/tree/latest/docs"
+	}
+	return "https://github.com/confluentinc/kcp/tree/v" + build_info.Version + "/docs"
+
 }
 
 func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
