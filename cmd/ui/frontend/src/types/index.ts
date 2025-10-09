@@ -6,6 +6,7 @@ export interface Cluster {
       cluster_type: string
       follower_fetching: boolean
       tiered_storage: boolean
+      instance_type: string
       broker_az_distribution: string
       kafka_version: string
       enhanced_monitoring: string
