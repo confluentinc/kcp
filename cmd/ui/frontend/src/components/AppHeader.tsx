@@ -36,7 +36,7 @@ export default function AppHeader() {
     >
       <HeaderSection position="left">
         <img
-          src="/images/logo.svg"
+          src={darkMode ? '/images/logo-light.svg' : '/images/logo-dark.svg'}
           alt="KCP Logo"
           className="h-6 w-6"
         />

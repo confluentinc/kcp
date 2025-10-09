@@ -1,19 +1,33 @@
-import { useState, useRef } from 'react'
-import Sidebar, { type Region, type Cluster } from '@/components/Sidebar'
+import { useRef } from 'react'
+import Sidebar from '@/components/Sidebar'
+import type { Region, Cluster } from '@/types'
 import ClusterReport from '@/components/ClusterReport'
 import RegionReport from '@/components/RegionReport'
+import Summary from '@/components/Summary'
+import TCOInputs from '@/components/TCOInputs'
 import AppHeader from '@/components/AppHeader'
+import { useAppStore } from '@/stores/appStore'
 
 export default function Home() {
-  const [regions, setRegions] = useState<Region[]>([])
-  const [selectedCluster, setSelectedCluster] = useState<{
-    cluster: Cluster
-    regionName: string
-  } | null>(null)
-  const [selectedRegion, setSelectedRegion] = useState<Region | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Global state from Zustand - using single selector to avoid multiple subscriptions
+  const {
+    regions,
+    selectedCluster,
+    selectedRegion,
+    selectedSummary,
+    selectedTCOInputs,
+    isProcessing,
+    error,
+    setRegions,
+    setSelectedCluster,
+    setSelectedRegion,
+    setSelectedSummary,
+    setSelectedTCOInputs,
+    setIsProcessing,
+    setError,
+  } = useAppStore()
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -21,8 +35,7 @@ export default function Home() {
 
     // Reset state
     setRegions([])
-    setSelectedCluster(null)
-    setSelectedRegion(null)
+    useAppStore.getState().clearSelection()
     setError(null)
     setIsProcessing(true)
 
@@ -35,8 +48,8 @@ export default function Home() {
         console.log(parsed)
         // Validate that we have a Discovery object with regions
         if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
-          // Call the /state endpoint to process the discovery data
-          const response = await fetch('/state', {
+          // Call the /upload-state endpoint to process the discovery data
+          const response = await fetch('/upload-state', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -55,18 +68,9 @@ export default function Home() {
             const processedRegions = result.regions
             setRegions(processedRegions)
 
-            // Auto-select first cluster if available
-            if (
-              processedRegions.length > 0 &&
-              processedRegions[0].clusters &&
-              processedRegions[0].clusters.length > 0
-            ) {
-              const firstRegion = processedRegions[0]
-              const firstCluster = firstRegion.clusters[0]
-              setSelectedCluster({
-                cluster: firstCluster,
-                regionName: firstRegion.name,
-              })
+            // Auto-select Summary if regions are available
+            if (processedRegions.length > 0) {
+              setSelectedSummary()
             }
           } else {
             throw new Error('Invalid response format from server')
@@ -78,8 +82,7 @@ export default function Home() {
         console.error('Error processing file:', err)
         setError(err instanceof Error ? err.message : 'Failed to process file')
         setRegions([])
-        setSelectedCluster(null)
-        setSelectedRegion(null)
+        useAppStore.getState().clearSelection()
       } finally {
         setIsProcessing(false)
       }
@@ -95,13 +98,19 @@ export default function Home() {
   }
 
   const handleClusterSelect = (cluster: Cluster, regionName: string) => {
-    setSelectedCluster({ cluster, regionName })
-    setSelectedRegion(null)
+    setSelectedCluster(cluster, regionName)
   }
 
   const handleRegionSelect = (region: Region) => {
     setSelectedRegion(region)
-    setSelectedCluster(null)
+  }
+
+  const handleSummarySelect = () => {
+    setSelectedSummary()
+  }
+
+  const handleTCOInputsSelect = () => {
+    setSelectedTCOInputs()
   }
 
   return (
@@ -114,13 +123,17 @@ export default function Home() {
           regions={regions}
           onClusterSelect={handleClusterSelect}
           onRegionSelect={handleRegionSelect}
+          onSummarySelect={handleSummarySelect}
+          onTCOInputsSelect={handleTCOInputsSelect}
           selectedCluster={selectedCluster}
           selectedRegion={selectedRegion}
+          selectedSummary={selectedSummary}
+          selectedTCOInputs={selectedTCOInputs}
           isProcessing={isProcessing}
           error={error}
         />
 
-        <main className="flex flex-1 p-4 w-full">
+        <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
           <input
             ref={fileInputRef}
             type="file"
@@ -129,8 +142,12 @@ export default function Home() {
             className="hidden"
           />
 
-          <div className="mx-auto space-y-6 w-full">
-            {selectedCluster ? (
+          <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
+            {selectedSummary ? (
+              <Summary />
+            ) : selectedTCOInputs ? (
+              <TCOInputs />
+            ) : selectedCluster ? (
               <ClusterReport
                 cluster={selectedCluster.cluster}
                 regionName={selectedCluster.regionName}
