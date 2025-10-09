@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
+import { Modal } from '@/components/ui/modal'
 import { useAppStore } from '@/stores/appStore'
 import { ExternalLink } from 'lucide-react'
+import ClusterMetrics from './ClusterMetrics'
 
 export default function TCOInputs() {
-  const { regions, tcoWorkloadData, setTCOWorkloadValue, initializeTCOData, setSelectedCluster } =
-    useAppStore()
+  const { regions, tcoWorkloadData, setTCOWorkloadValue, initializeTCOData } = useAppStore()
 
   // Get all clusters from all regions
   const allClusters = useMemo(() => {
@@ -23,6 +24,19 @@ export default function TCOInputs() {
   }, [regions])
 
   const [copySuccess, setCopySuccess] = useState(false)
+
+  // Modal state for ClusterMetrics
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean
+    cluster: { name: string; region: string } | null
+    preselectedMetric: string | null
+    workloadAssumption: string | null
+  }>({
+    isOpen: false,
+    cluster: null,
+    preselectedMetric: null,
+    workloadAssumption: null,
+  })
 
   // Initialize TCO data when clusters change
   useEffect(() => {
@@ -45,10 +59,10 @@ export default function TCOInputs() {
     setTCOWorkloadValue(clusterKey, field, value)
   }
 
-  // Navigate to cluster metrics with preselected metric
-  const handleNavigateToMetrics = (
+  // Open modal with cluster metrics and preselected metric
+  const handleOpenMetricsModal = (
     clusterKey: string,
-    metricType: 'ingress' | 'egress' | 'partitions'
+    metricType: 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
   ) => {
     const cluster = allClusters.find((c) => c.key === clusterKey)
     if (!cluster) return
@@ -59,17 +73,51 @@ export default function TCOInputs() {
 
     if (clusterObj && region) {
       let preselectedMetric: string
-      if (metricType === 'ingress') {
-        preselectedMetric = 'BytesInPerSec'
-      } else if (metricType === 'egress') {
-        preselectedMetric = 'BytesOutPerSec'
-      } else if (metricType === 'partitions') {
-        preselectedMetric = 'GlobalPartitionCount'
-      } else {
-        preselectedMetric = 'BytesInPerSec' // fallback
+      let workloadAssumption: string
+
+      switch (metricType) {
+        case 'avg-ingress':
+          preselectedMetric = 'BytesInPerSec'
+          workloadAssumption = 'Avg Ingress Throughput (MB/s)'
+          break
+        case 'peak-ingress':
+          preselectedMetric = 'BytesInPerSec'
+          workloadAssumption = 'Peak Ingress Throughput (MB/s)'
+          break
+        case 'avg-egress':
+          preselectedMetric = 'BytesOutPerSec'
+          workloadAssumption = 'Avg Egress Throughput (MB/s)'
+          break
+        case 'peak-egress':
+          preselectedMetric = 'BytesOutPerSec'
+          workloadAssumption = 'Peak Egress Throughput (MB/s)'
+          break
+        case 'partitions':
+          preselectedMetric = 'GlobalPartitionCount'
+          workloadAssumption = 'Partitions'
+          break
+        default:
+          preselectedMetric = 'BytesInPerSec'
+          workloadAssumption = 'Ingress Throughput'
       }
-      setSelectedCluster(clusterObj, region.name, preselectedMetric)
+
+      setModalState({
+        isOpen: true,
+        cluster: { name: clusterObj.name, region: region.name },
+        preselectedMetric,
+        workloadAssumption,
+      })
     }
+  }
+
+  // Close modal
+  const handleCloseModal = () => {
+    setModalState({
+      isOpen: false,
+      cluster: null,
+      preselectedMetric: null,
+      workloadAssumption: null,
+    })
   }
 
   const generateCSV = () => {
@@ -190,7 +238,7 @@ export default function TCOInputs() {
                         placeholder="0.00"
                       />
                       <Button
-                        onClick={() => handleNavigateToMetrics(cluster.key, 'ingress')}
+                        onClick={() => handleOpenMetricsModal(cluster.key, 'avg-ingress')}
                         variant="outline"
                         size="sm"
                         className="h-8 w-8 p-0 flex-shrink-0"
@@ -223,7 +271,7 @@ export default function TCOInputs() {
                         placeholder="0.00"
                       />
                       <Button
-                        onClick={() => handleNavigateToMetrics(cluster.key, 'ingress')}
+                        onClick={() => handleOpenMetricsModal(cluster.key, 'peak-ingress')}
                         variant="outline"
                         size="sm"
                         className="h-8 w-8 p-0 flex-shrink-0"
@@ -256,7 +304,7 @@ export default function TCOInputs() {
                         placeholder="0.00"
                       />
                       <Button
-                        onClick={() => handleNavigateToMetrics(cluster.key, 'egress')}
+                        onClick={() => handleOpenMetricsModal(cluster.key, 'avg-egress')}
                         variant="outline"
                         size="sm"
                         className="h-8 w-8 p-0 flex-shrink-0"
@@ -289,7 +337,7 @@ export default function TCOInputs() {
                         placeholder="0.00"
                       />
                       <Button
-                        onClick={() => handleNavigateToMetrics(cluster.key, 'egress')}
+                        onClick={() => handleOpenMetricsModal(cluster.key, 'peak-egress')}
                         variant="outline"
                         size="sm"
                         className="h-8 w-8 p-0 flex-shrink-0"
@@ -357,7 +405,7 @@ export default function TCOInputs() {
                         placeholder="1000"
                       />
                       <Button
-                        onClick={() => handleNavigateToMetrics(cluster.key, 'partitions')}
+                        onClick={() => handleOpenMetricsModal(cluster.key, 'partitions')}
                         variant="outline"
                         size="sm"
                         className="h-8 w-8 p-0 flex-shrink-0"
@@ -533,6 +581,23 @@ export default function TCOInputs() {
           {generateCSV()}
         </pre>
       </div>
+
+      {/* Cluster Metrics Modal */}
+      <Modal
+        isOpen={modalState.isOpen}
+        onClose={handleCloseModal}
+        title={`Metrics - ${modalState.cluster?.name || 'Cluster'}`}
+      >
+        {modalState.cluster && (
+          <ClusterMetrics
+            cluster={modalState.cluster}
+            isActive={modalState.isOpen}
+            inModal={true}
+            modalPreselectedMetric={modalState.preselectedMetric || undefined}
+            modalWorkloadAssumption={modalState.workloadAssumption || undefined}
+          />
+        )}
+      </Modal>
     </div>
   )
 }

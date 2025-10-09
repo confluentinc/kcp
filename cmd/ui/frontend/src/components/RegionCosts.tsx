@@ -412,21 +412,6 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     }
   }, [processedData.chartOptions, selectedService])
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-          <div className="flex items-center justify-center h-64">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-              <p className="text-gray-500 dark:text-gray-400">Processing costs data...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   // Show error state
   if (error) {
     return (
@@ -756,7 +741,9 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
                                   return (
                                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg max-w-xs">
                                       <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
-                                        {label}
+                                        {label
+                                          ? format(new Date(label), 'MMM dd, yyyy HH:mm')
+                                          : 'Unknown Date'}
                                       </p>
                                       <div className="space-y-1">
                                         {sortedEntries.map((entry, index) => (

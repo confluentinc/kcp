@@ -48,7 +48,6 @@ export default function Summary() {
   const regions = useRegions()
   const { startDate, endDate, setStartDate, setEndDate } = useSummaryDateFilters()
   const [regionCostData, setRegionCostData] = useState<Record<string, any>>({})
-  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [defaultsSet, setDefaultsSet] = useState(false)
   const [selectedChartCostType, setSelectedChartCostType] = useState<string>('unblended_cost')
@@ -131,7 +130,6 @@ export default function Summary() {
     if (!regions || regions.length === 0) return
 
     const fetchAllRegionCosts = async () => {
-      setIsLoading(true)
       setError(null)
 
       try {
@@ -172,8 +170,6 @@ export default function Summary() {
       } catch (err) {
         console.error('Error fetching region costs:', err)
         setError(err instanceof Error ? err.message : 'Failed to fetch cost data')
-      } finally {
-        setIsLoading(false)
       }
     }
 
@@ -358,25 +354,6 @@ export default function Summary() {
 
   const handlePrint = () => {
     window.print()
-  }
-
-  // Show loading state
-  if (isLoading) {
-    return (
-      <div className="p-6 space-y-8">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-2">
-            Cost Analysis Summary
-          </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-400">
-            Loading cost data for all regions...
-          </p>
-        </div>
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-        </div>
-      </div>
-    )
   }
 
   // Show error state
@@ -732,7 +709,9 @@ export default function Summary() {
                         return (
                           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
                             <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
-                              {label}
+                              {label
+                                ? format(new Date(label), 'MMM dd, yyyy HH:mm')
+                                : 'Unknown Date'}
                             </p>
                             <div className="space-y-1">
                               {sortedEntries.map((entry, index) => (

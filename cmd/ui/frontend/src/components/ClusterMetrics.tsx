@@ -40,9 +40,18 @@ interface ClusterMetricsProps {
     region?: string
   }
   isActive?: boolean
+  inModal?: boolean
+  modalPreselectedMetric?: string
+  modalWorkloadAssumption?: string
 }
 
-export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProps) {
+export default function ClusterMetrics({
+  cluster,
+  isActive,
+  inModal = false,
+  modalPreselectedMetric,
+  modalWorkloadAssumption,
+}: ClusterMetricsProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [metricsResponse, setMetricsResponse] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
@@ -65,29 +74,55 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
     return mbPerSec.toFixed(5)
   }
 
+  // Map metric names to workload assumption names
+  const getWorkloadAssumptionName = (metricName: string): string => {
+    switch (metricName) {
+      case 'BytesInPerSec':
+        return 'Ingress Throughput'
+      case 'BytesOutPerSec':
+        return 'Egress Throughput'
+      case 'GlobalPartitionCount':
+        return 'Partitions'
+      default:
+        return 'Metric'
+    }
+  }
+
+  // Map modal workload assumption to TCO field
+  const getTCOFieldFromWorkloadAssumption = (workloadAssumption: string): string => {
+    switch (workloadAssumption) {
+      case 'Avg Ingress Throughput (MB/s)':
+        return 'avgIngressThroughput'
+      case 'Peak Ingress Throughput (MB/s)':
+        return 'peakIngressThroughput'
+      case 'Avg Egress Throughput (MB/s)':
+        return 'avgEgressThroughput'
+      case 'Peak Egress Throughput (MB/s)':
+        return 'peakEgressThroughput'
+      case 'Partitions':
+        return 'partitions'
+      default:
+        return 'avgIngressThroughput' // fallback
+    }
+  }
+
   // Handle transferring values to TCO inputs
-  const handleTransferToTCO = (
-    field:
-      | 'avgIngressThroughput'
-      | 'peakIngressThroughput'
-      | 'avgEgressThroughput'
-      | 'peakEgressThroughput'
-      | 'retentionDays'
-      | 'partitions',
-    value: number
-  ) => {
+  const handleTransferToTCO = (value: number, statType: 'min' | 'avg' | 'max') => {
     const clusterKey = `${cluster.region || 'unknown'}:${cluster.name}`
 
-    // Convert bytes to MB for throughput metrics, but use raw value for partitions and retention days
+    // Determine the TCO field based on the modal workload assumption
+    const tcoField = modalWorkloadAssumption
+      ? getTCOFieldFromWorkloadAssumption(modalWorkloadAssumption)
+      : 'avgIngressThroughput'
+
+    // Convert bytes to MB for throughput metrics, but use raw value for partitions
     const convertedValue =
-      field === 'partitions' || field === 'retentionDays'
-        ? Math.round(value).toString()
-        : convertBytesToMB(value)
+      tcoField === 'partitions' ? Math.round(value).toString() : convertBytesToMB(value)
 
-    setTCOWorkloadValue(clusterKey, field, convertedValue)
+    setTCOWorkloadValue(clusterKey, tcoField as any, convertedValue)
 
-    // Show success feedback
-    setTransferSuccess(field)
+    // Show success feedback with stat type
+    setTransferSuccess(`${tcoField}-${statType}`)
     setTimeout(() => setTransferSuccess(null), 500)
   }
 
@@ -326,10 +361,18 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
     fetchMetrics()
   }, [isActive, cluster.name, cluster.region, startDate, endDate])
 
-  // Set default selected metric when data loads, or use preselected metric (only once)
+  // Set default selected metric when data loads, prioritizing modal preselected metric
   useEffect(() => {
     if (processedData.metrics.length > 0) {
+      // In modal mode, always use the modal preselected metric if provided
       if (
+        inModal &&
+        modalPreselectedMetric &&
+        processedData.metrics.includes(modalPreselectedMetric)
+      ) {
+        setSelectedMetric(modalPreselectedMetric)
+      } else if (
+        !inModal &&
         preselectedMetric &&
         processedData.metrics.includes(preselectedMetric) &&
         !hasUsedPreselectedMetric
@@ -340,22 +383,14 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
         setSelectedMetric(processedData.metrics[0])
       }
     }
-  }, [processedData.metrics, selectedMetric, preselectedMetric, hasUsedPreselectedMetric])
-
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-          <div className="flex items-center justify-center h-64">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-              <p className="text-gray-500 dark:text-gray-400">Processing metrics data...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  }, [
+    processedData.metrics,
+    selectedMetric,
+    preselectedMetric,
+    hasUsedPreselectedMetric,
+    inModal,
+    modalPreselectedMetric,
+  ])
 
   // Show error state
   if (error) {
@@ -553,30 +588,42 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                   <div className="space-y-6">
                     {/* Metric Selector and Summary Stats */}
                     <div className="flex items-center justify-between">
-                      {/* Left side: Metric Selector */}
-                      <div className="flex items-center gap-4">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Select Metric:
-                        </label>
-                        <Select
-                          value={selectedMetric}
-                          onValueChange={setSelectedMetric}
-                        >
-                          <SelectTrigger className="w-[300px]">
-                            <SelectValue placeholder="Choose a metric to visualize" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {processedData.metrics.map((metric) => (
-                              <SelectItem
-                                key={metric}
-                                value={metric}
-                              >
-                                {metric}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {/* Left side: Metric Selector (hidden in modal mode) */}
+                      {!inModal && (
+                        <div className="flex items-center gap-4">
+                          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Select Metric:
+                          </label>
+                          <Select
+                            value={selectedMetric}
+                            onValueChange={setSelectedMetric}
+                          >
+                            <SelectTrigger className="w-[300px]">
+                              <SelectValue placeholder="Choose a metric to visualize" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {processedData.metrics.map((metric) => (
+                                <SelectItem
+                                  key={metric}
+                                  value={metric}
+                                >
+                                  {metric}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {/* In modal mode, show the selected metric as a title */}
+                      {inModal && selectedMetric && (
+                        <div className="flex items-center gap-4">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                            {selectedMetric} -{' '}
+                            {modalWorkloadAssumption || getWorkloadAssumptionName(selectedMetric)}
+                          </h3>
+                        </div>
+                      )}
 
                       {/* Right side: Aggregates Stats */}
                       {selectedMetric && metricsResponse?.aggregates && (
@@ -605,7 +652,29 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                                       {metricAggregate.min?.toFixed(2) ?? 'N/A'}
                                     </span>
                                   </div>
-                                  <div className="w-24"></div> {/* Spacer for alignment */}
+                                  <div className="ml-4">
+                                    {inModal &&
+                                    metricAggregate.min !== null &&
+                                    metricAggregate.min !== undefined ? (
+                                      <Button
+                                        onClick={() =>
+                                          handleTransferToTCO(metricAggregate.min, 'min')
+                                        }
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 w-36 text-xs"
+                                      >
+                                        <span className="flex items-center justify-center gap-1">
+                                          {transferSuccess?.includes('-min') && (
+                                            <span className="text-green-600">✓</span>
+                                          )}
+                                          Use as TCO Input
+                                        </span>
+                                      </Button>
+                                    ) : (
+                                      <div className="w-36"></div>
+                                    )}
+                                  </div>
                                 </div>
 
                                 {/* AVG Row */}
@@ -619,57 +688,26 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                                     </span>
                                   </div>
                                   <div className="ml-4">
-                                    {(selectedMetric.toLowerCase().includes('bytesinpersec') ||
-                                      selectedMetric.toLowerCase().includes('bytesoutpersec')) &&
+                                    {inModal &&
                                     metricAggregate.avg !== null &&
                                     metricAggregate.avg !== undefined ? (
                                       <Button
-                                        onClick={() => {
-                                          const field = selectedMetric
-                                            .toLowerCase()
-                                            .includes('bytesinpersec')
-                                            ? 'avgIngressThroughput'
-                                            : 'avgEgressThroughput'
-                                          handleTransferToTCO(field, metricAggregate.avg)
-                                        }}
+                                        onClick={() =>
+                                          handleTransferToTCO(metricAggregate.avg, 'avg')
+                                        }
                                         variant="outline"
                                         size="sm"
                                         className="h-6 w-36 text-xs"
                                       >
                                         <span className="flex items-center justify-center gap-1">
-                                          {transferSuccess ===
-                                            (selectedMetric.toLowerCase().includes('bytesinpersec')
-                                              ? 'avgIngressThroughput'
-                                              : 'avgEgressThroughput') && (
+                                          {transferSuccess?.includes('-avg') && (
                                             <span className="text-green-600">✓</span>
                                           )}
-                                          {selectedMetric.toLowerCase().includes('bytesinpersec')
-                                            ? 'Set TCO Avg Ingress'
-                                            : 'Set TCO Avg Egress'}
-                                        </span>
-                                      </Button>
-                                    ) : selectedMetric
-                                        .toLowerCase()
-                                        .includes('globalpartitioncount') &&
-                                      metricAggregate.avg !== null &&
-                                      metricAggregate.avg !== undefined ? (
-                                      <Button
-                                        onClick={() => {
-                                          handleTransferToTCO('partitions', metricAggregate.avg)
-                                        }}
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-6 w-36 text-xs"
-                                      >
-                                        <span className="flex items-center justify-center gap-1">
-                                          {transferSuccess === 'partitions' && (
-                                            <span className="text-green-600">✓</span>
-                                          )}
-                                          Set TCO Partitions
+                                          Use as TCO Input
                                         </span>
                                       </Button>
                                     ) : (
-                                      <div className="w-36"></div> /* Spacer for alignment */
+                                      <div className="w-36"></div>
                                     )}
                                   </div>
                                 </div>
@@ -685,57 +723,26 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                                     </span>
                                   </div>
                                   <div className="ml-4">
-                                    {(selectedMetric.toLowerCase().includes('bytesinpersec') ||
-                                      selectedMetric.toLowerCase().includes('bytesoutpersec')) &&
+                                    {inModal &&
                                     metricAggregate.max !== null &&
                                     metricAggregate.max !== undefined ? (
                                       <Button
-                                        onClick={() => {
-                                          const field = selectedMetric
-                                            .toLowerCase()
-                                            .includes('bytesinpersec')
-                                            ? 'peakIngressThroughput'
-                                            : 'peakEgressThroughput'
-                                          handleTransferToTCO(field, metricAggregate.max)
-                                        }}
+                                        onClick={() =>
+                                          handleTransferToTCO(metricAggregate.max, 'max')
+                                        }
                                         variant="outline"
                                         size="sm"
                                         className="h-6 w-36 text-xs"
                                       >
                                         <span className="flex items-center justify-center gap-1">
-                                          {transferSuccess ===
-                                            (selectedMetric.toLowerCase().includes('bytesinpersec')
-                                              ? 'peakIngressThroughput'
-                                              : 'peakEgressThroughput') && (
+                                          {transferSuccess?.includes('-max') && (
                                             <span className="text-green-600">✓</span>
                                           )}
-                                          {selectedMetric.toLowerCase().includes('bytesinpersec')
-                                            ? 'Set TCO Peak Ingress'
-                                            : 'Set TCO Peak Egress'}
-                                        </span>
-                                      </Button>
-                                    ) : selectedMetric
-                                        .toLowerCase()
-                                        .includes('globalpartitioncount') &&
-                                      metricAggregate.max !== null &&
-                                      metricAggregate.max !== undefined ? (
-                                      <Button
-                                        onClick={() => {
-                                          handleTransferToTCO('partitions', metricAggregate.max)
-                                        }}
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-6 w-36 text-xs"
-                                      >
-                                        <span className="flex items-center justify-center gap-1">
-                                          {transferSuccess === 'partitions' && (
-                                            <span className="text-green-600">✓</span>
-                                          )}
-                                          Set TCO Partitions
+                                          Use as TCO Input
                                         </span>
                                       </Button>
                                     ) : (
-                                      <div className="w-36"></div> /* Spacer for alignment */
+                                      <div className="w-36"></div>
                                     )}
                                   </div>
                                 </div>
@@ -788,7 +795,9 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                                   return (
                                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
                                       <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-1">
-                                        {label}
+                                        {label
+                                          ? format(new Date(label), 'MMM dd, yyyy HH:mm')
+                                          : 'Unknown Date'}
                                       </p>
                                       <p className="text-gray-900 dark:text-gray-100 text-sm">
                                         <span className="font-medium">{selectedMetric}:</span>{' '}
