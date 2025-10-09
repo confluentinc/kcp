@@ -556,54 +556,70 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
             </div>
           )}
 
-          {/* Available Configurations Tab */}
+          {/* Cluster Configuration Tab */}
           {activeTab === 'configurations' && (
             <div className="space-y-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 Broker Settings
               </h3>
-              {regionData?.configurations && regionData.configurations.length > 0 ? (
-                <div className="space-y-6">
-                  {regionData.configurations.slice(0, 5).map((config: any, index: number) => (
-                    <div
-                      key={index}
-                      className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors"
-                    >
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <div className="font-medium text-gray-900 dark:text-gray-100">
-                            {config.Arn.split('/').slice(-2, -1)[0]}
-                          </div>
-                          <div className="text-sm text-gray-500 dark:text-gray-400">
-                            Revision {config.Revision} • Created {formatDate(config.CreationTime)}
-                          </div>
-                        </div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400">
-                          {config.Description || 'No description'}
-                        </div>
-                      </div>
+              {(() => {
+                // Get the cluster's configuration ARN
+                const clusterConfigArn = provisioned?.CurrentBrokerSoftwareInfo?.ConfigurationArn
 
-                      {/* Server Properties */}
-                      {config.ServerProperties && (
-                        <div className="mt-4">
-                          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">
-                            Server Properties
-                          </h4>
-                          <div className="bg-white dark:bg-gray-600 rounded-lg p-3 transition-colors">
-                            <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
-                              {decodeBase64(config.ServerProperties)}
-                            </pre>
+                // Find the matching configuration in region configurations
+                const clusterConfig = regionData?.configurations?.find(
+                  (config: any) => config.Arn === clusterConfigArn
+                )
+
+                if (clusterConfig) {
+                  return (
+                    <div className="space-y-6">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <div className="font-medium text-gray-900 dark:text-gray-100">
+                              {clusterConfig.Arn.split('/').slice(-2, -1)[0]}
+                            </div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400">
+                              Revision {clusterConfig.Revision} • Created{' '}
+                              {formatDate(clusterConfig.CreationTime)}
+                            </div>
+                          </div>
+                          <div className="text-sm text-gray-600 dark:text-gray-400">
+                            {clusterConfig.Description || 'No description'}
                           </div>
                         </div>
-                      )}
+
+                        {/* Server Properties */}
+                        {clusterConfig.ServerProperties && (
+                          <div className="mt-4">
+                            <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">
+                              Server Properties
+                            </h4>
+                            <div className="bg-white dark:bg-gray-600 rounded-lg p-3 transition-colors">
+                              <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
+                                {decodeBase64(clusterConfig.ServerProperties)}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400">
-                  No configurations available for this region.
-                </p>
-              )}
+                  )
+                } else if (clusterConfigArn) {
+                  return (
+                    <p className="text-gray-500 dark:text-gray-400">
+                      Configuration not found for ARN: {clusterConfigArn}
+                    </p>
+                  )
+                } else {
+                  return (
+                    <p className="text-gray-500 dark:text-gray-400">
+                      No configuration ARN found for this cluster.
+                    </p>
+                  )
+                }
+              })()}
             </div>
           )}
         </div>
