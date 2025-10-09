@@ -149,33 +149,38 @@ export default function Sidebar({
                             </div>
                           </button>
 
-                          {/* Clusters under each region */}
+                          {/* Clusters under each region - only show provisioned clusters */}
                           <div className="ml-4 space-y-1">
-                            {(region.clusters || []).map((cluster) => {
-                              const isSelected =
-                                selectedCluster?.cluster.name === cluster.name &&
-                                selectedCluster?.regionName === region.name
-                              return (
-                                <button
-                                  key={cluster.name}
-                                  onClick={() => onClusterSelect(cluster, region.name)}
-                                  className={`w-full text-left px-2 py-1 text-sm rounded-sm transition-colors ${
-                                    isSelected
-                                      ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-700'
-                                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
-                                  }`}
-                                >
-                                  <div className="flex items-center space-x-2">
-                                    <div
-                                      className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                                        isSelected ? 'bg-blue-500' : 'bg-gray-400'
-                                      }`}
-                                    ></div>
-                                    <span className="truncate">{cluster.name}</span>
-                                  </div>
-                                </button>
+                            {(region.clusters || [])
+                              .filter(
+                                (cluster) =>
+                                  cluster.aws_client_information?.msk_cluster_config?.Provisioned
                               )
-                            })}
+                              .map((cluster) => {
+                                const isSelected =
+                                  selectedCluster?.cluster.name === cluster.name &&
+                                  selectedCluster?.regionName === region.name
+                                return (
+                                  <button
+                                    key={cluster.name}
+                                    onClick={() => onClusterSelect(cluster, region.name)}
+                                    className={`w-full text-left px-2 py-1 text-sm rounded-sm transition-colors ${
+                                      isSelected
+                                        ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-700'
+                                        : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
+                                    }`}
+                                  >
+                                    <div className="flex items-center space-x-2">
+                                      <div
+                                        className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                                          isSelected ? 'bg-blue-500' : 'bg-gray-400'
+                                        }`}
+                                      ></div>
+                                      <span className="truncate">{cluster.name}</span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
                           </div>
                         </div>
                       )
