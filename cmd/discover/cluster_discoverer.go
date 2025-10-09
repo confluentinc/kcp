@@ -27,7 +27,7 @@ type ClusterDiscovererMSKService interface {
 	ListScramSecrets(ctx context.Context, clusterArn string, maxResults int32) ([]string, error)
 	GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error)
 	GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
-	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error)
+	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (bool, error)
 }
 
 type ClusterDiscovererMetricService interface {
@@ -367,7 +367,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 
 	var clusterMetrics *types.ClusterMetrics
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
-		clusterMetrics, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, *followerFetching, timeWindow)
+		clusterMetrics, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, followerFetching, timeWindow)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
 		}

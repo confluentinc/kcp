@@ -226,7 +226,6 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 	var expressionParts []string
 	for _, metricID := range metricIDs {
 		expressionParts = append(expressionParts, fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
-		slog.Info("🔍 expression part", "expressionPart", fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
 	}
 
 	expression := strings.Join(expressionParts, " + ")
