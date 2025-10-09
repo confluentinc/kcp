@@ -33,8 +33,8 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse UI cmd opts: %v", err)
 	}
 
-	ui := api.NewUI(report.NewReportService(), *opts)
-
+	reportService := report.NewReportService()
+	ui := api.NewUI(reportService, *opts)
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
 	}

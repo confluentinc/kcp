@@ -62,7 +62,7 @@ func NewStateFromFile(stateFile string) (*State, error) {
 }
 
 func (s *State) WriteToFile(filePath string) error {
-	data, err := json.MarshalIndent(s, "", "  ")
+	data, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
 	}
@@ -297,14 +297,17 @@ type ClusterMetrics struct {
 }
 
 type MetricMetadata struct {
-	ClusterType          string `json:"cluster_type"`
-	FollowerFetching     bool   `json:"follower_fetching"`
-	BrokerAzDistribution string `json:"broker_az_distribution"`
-	KafkaVersion         string `json:"kafka_version"`
-	EnhancedMonitoring   string `json:"enhanced_monitoring"`
-	StartWindowDate      string `json:"start_window_date"`
-	EndWindowDate        string `json:"end_window_date"`
-	Period               int32  `json:"period"`
+	ClusterType          string    `json:"cluster_type"`
+	KafkaVersion         string    `json:"kafka_version"`
+	BrokerAzDistribution string    `json:"broker_az_distribution"`
+	EnhancedMonitoring   string    `json:"enhanced_monitoring"`
+	StartDate            time.Time `json:"start_date"`
+	EndDate              time.Time `json:"end_date"`
+	Period               int32     `json:"period"`
+
+	FollowerFetching bool   `json:"follower_fetching"`
+	InstanceType     string `json:"instance_type"`
+	TieredStorage    bool   `json:"tiered_storage"`
 }
 
 type CloudWatchTimeWindow struct {
@@ -351,22 +354,60 @@ type ProcessedRegion struct {
 }
 
 type ProcessedRegionCosts struct {
-	Metadata CostMetadata    `json:"metadata"`
-	Results  []ProcessedCost `json:"results"`
-	Totals   []ServiceTotal  `json:"totals"`
+	Region     string              `json:"region"`
+	Metadata   CostMetadata        `json:"metadata"`
+	Results    []ProcessedCost     `json:"results"`
+	Aggregates ProcessedAggregates `json:"aggregates"`
+}
+
+// ProcessedAggregates represents the three specific services we query
+type ProcessedAggregates struct {
+	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
+	AmazonManagedStreamingForApacheKafka ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka"`
+	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
+}
+
+// NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
+func NewProcessedAggregates() ProcessedAggregates {
+	return ProcessedAggregates{
+		AWSCertificateManager: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+		AmazonManagedStreamingForApacheKafka: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+		EC2Other: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+	}
 }
 
 type ProcessedCost struct {
-	Start     string `json:"start"`
-	End       string `json:"end"`
-	Service   string `json:"service"`
-	UsageType string `json:"usage_type"`
-	Value     string `json:"value"`
+	Start     string                 `json:"start"`
+	End       string                 `json:"end"`
+	Service   string                 `json:"service"`
+	UsageType string                 `json:"usage_type"`
+	Values    ProcessedCostBreakdown `json:"values"`
 }
 
-type ServiceTotal struct {
-	Service string `json:"service"`
-	Total   string `json:"total"`
+type ProcessedCostBreakdown struct {
+	UnblendedCost    float64 `json:"unblended_cost"`
+	BlendedCost      float64 `json:"blended_cost"`
+	AmortizedCost    float64 `json:"amortized_cost"`
+	NetAmortizedCost float64 `json:"net_amortized_cost"`
+	NetUnblendedCost float64 `json:"net_unblended_cost"`
 }
 
 // ProcessedCluster contains the complete cluster data with flattened metrics
@@ -380,8 +421,11 @@ type ProcessedCluster struct {
 }
 
 type ProcessedClusterMetrics struct {
-	Metadata MetricMetadata    `json:"metadata"`
-	Metrics  []ProcessedMetric `json:"results"`
+	Region     string                     `json:"region"`
+	ClusterArn string                     `json:"cluster_arn"`
+	Metadata   MetricMetadata             `json:"metadata"`
+	Metrics    []ProcessedMetric          `json:"results"`
+	Aggregates map[string]MetricAggregate `json:"aggregates"`
 }
 
 type ProcessedMetric struct {
@@ -389,4 +433,27 @@ type ProcessedMetric struct {
 	End   string   `json:"end"`
 	Label string   `json:"label"`
 	Value *float64 `json:"value"`
+}
+
+type MetricAggregate struct {
+	Average *float64 `json:"avg"`
+	Maximum *float64 `json:"max"`
+	Minimum *float64 `json:"min"`
+}
+
+type CostAggregate struct {
+	Sum     *float64 `json:"sum"`
+	Average *float64 `json:"avg"`
+	Maximum *float64 `json:"max"`
+	Minimum *float64 `json:"min"`
+}
+
+// ServiceCostAggregates represents cost aggregates for a single service
+// Uses explicit fields for each metric type instead of a map
+type ServiceCostAggregates struct {
+	UnblendedCost    map[string]any `json:"unblended_cost"`
+	BlendedCost      map[string]any `json:"blended_cost"`
+	AmortizedCost    map[string]any `json:"amortized_cost"`
+	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
+	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
 }

@@ -31,7 +31,7 @@ func NewScanClustersCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&credentialsYaml, "credentials-yaml", "", "The credentials YAML file used for authenticating to the MSK cluster(s).")
+	requiredFlags.StringVar(&credentialsYaml, "credentials-file", "", "The credentials YAML file used for authenticating to the MSK cluster(s).")
 	clustersCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -54,7 +54,7 @@ func NewScanClustersCmd() *cobra.Command {
 	})
 
 	clustersCmd.MarkFlagRequired("state-file")
-	clustersCmd.MarkFlagRequired("credentials-yaml")
+	clustersCmd.MarkFlagRequired("credentials-file")
 
 	return clustersCmd
 }

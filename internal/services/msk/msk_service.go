@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )
@@ -31,12 +30,12 @@ func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string
 	return brokers, nil
 }
 
-func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (*bool, error) {
+func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (bool, error) {
 	if cluster.Provisioned == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn == nil ||
 		cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationRevision == nil {
-		return nil, nil
+		return false, nil
 	}
 
 	configurationArn := cluster.Provisioned.CurrentBrokerSoftwareInfo.ConfigurationArn
@@ -49,7 +48,7 @@ func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster ka
 
 	revision, err := ms.client.DescribeConfigurationRevision(ctx, describeConfigurationRevisionInput)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe configuration revision: %v", err)
+		return false, fmt.Errorf("failed to describe configuration revision: %v", err)
 	}
 
 	serverProperties := revision.ServerProperties
@@ -59,9 +58,9 @@ func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster ka
 	propertiesText := string(serverProperties)
 
 	if strings.Contains(propertiesText, "replica.selector.class=org.apache.kafka.common.replica.RackAwareReplicaSelector") {
-		return aws.Bool(true), nil
+		return true, nil
 	}
-	return aws.Bool(false), nil
+	return false, nil
 }
 
 func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
