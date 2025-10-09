@@ -233,7 +233,7 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 	queries = append(queries, cloudwatchtypes.MetricDataQuery{
 		Id:         aws.String("e_total_local_storage_usage_gb"),
 		Expression: aws.String(expression),
-		Label:      aws.String("Cluster Aggregate - Total Local Storage Usage GB"),
+		Label:      aws.String("Cluster Aggregate - TotalLocalStorageUsage(GB)"),
 		ReturnData: aws.Bool(true),
 	})
 
