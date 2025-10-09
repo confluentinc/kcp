@@ -1,7 +1,5 @@
 # KCP CLI
 
-- [Overview](#overview)
-- [Development](#development)
 - [Getting Started](#getting-started)
   - [Installation](#installation)
   - [Authentication](#authentication)

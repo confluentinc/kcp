@@ -42,7 +42,7 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 | **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud. |
 | **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.             |
 
-## Documentation
+### Documentation
 
 The docs for the latest release are available [here](https://github.com/confluentinc/kcp/releases/latest)
 
