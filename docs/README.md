@@ -7,6 +7,8 @@
     - [`kcp discover`](#kcp-discover)
     - [`kcp scan`](#kcp-scan)
     - [`kcp report`](#kcp-report)
+      - [`kcp report costs`](#kcp-report-costs)
+      - [`kcp report metrics`](#kcp-report-metrics)
     - [`kcp create-asset`](#kcp-create-asset)
 
 # Getting Started
@@ -52,7 +54,7 @@ The migration process follows these general steps:
 
 1. **Initialize the environment**: Set up the CLI and configure your environment.
 2. **Scan clusters**: Discover and analyze your Kafka deployment.
-3. **Generate reports**: Produce reports on the cost and metrics of the MSK cluster.
+3. **Generate reports**: Produce cost and metrics reports for your MSK clusters using `kcp report costs` and `kcp report metrics`.
 4. **Generate migration assets**: Create the necessary infrastructure and scripts.
 5. **Execute migration**: Perform the actual migration process.
 
@@ -267,16 +269,87 @@ export S3_URI=<folder-in-s3>
 
 ### `kcp report`
 
-This command uses the state file to generate a report that summarizes the information about each region and its clusters.
+The `kcp report` command generates reports based on the data collected by `kcp discover`. It includes the following sub-commands:
+
+- `costs`
+- `metrics`
+
+---
+
+#### `kcp report costs`
+
+Generate a cost report for given region(s) based on the data collected by `kcp discover`.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
+- `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag)
+
+**Optional Arguments**:
+
+- `--start`: Inclusive start date for cost report (YYYY-MM-DD)
+- `--end`: Exclusive end date for cost report (YYYY-MM-DD)
 
 **Example Usage**
 
 ```shell
-kcp report --state-file kcp-state.json
+kcp report costs \
+  --state-file kcp-state.json \
+  --region us-east-1 \
+  --region eu-west-3
+```
+
+or
+
+```shell
+kcp report costs \
+  --state-file kcp-state.json \
+  --region us-east-1,eu-west-3 \
+  --start 2024-01-01 \
+  --end 2024-01-31
 ```
 
 **Output:**
-The command generates a `report.md` file - summarizing information about each region and its clusters.
+The command generates a `cost_report_YYYY-MM-DD_HH-MM-SS.md` file containing cost analysis for the specified regions and time period.
+
+---
+
+#### `kcp report metrics`
+
+Generate a metrics report for given cluster(s) based on the data collected by `kcp discover`.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
+- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)
+
+**Optional Arguments**:
+
+- `--start`: Inclusive start date for metrics report (YYYY-MM-DD)
+- `--end`: Exclusive end date for metrics report (YYYY-MM-DD)
+
+**Example Usage**
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/def456 
+```
+
+or
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/def456 \
+  --start 2024-01-01 \
+  --end 2024-01-31
+```
+
+**Output:**
+The command generates a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file containing metrics analysis for the specified clusters and time period.
 
 
 ---
