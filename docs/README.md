@@ -6,8 +6,19 @@
   - [kcp Commands](#kcp-commands)
     - [`kcp discover`](#kcp-discover)
     - [`kcp scan`](#kcp-scan)
+      - [`kcp scan clusters`](#kcp-scan-clusters)
+      - [`kcp scan client-inventory`](#kcp-scan-client-inventory)
     - [`kcp report`](#kcp-report)
+      - [`kcp report costs`](#kcp-report-costs)
+      - [`kcp report metrics`](#kcp-report-metrics)
     - [`kcp create-asset`](#kcp-create-asset)
+      - [`kcp create-asset bastion-host`](#kcp-create-asset-bastion-host)
+      - [`kcp create-asset migrate-acls`](#kcp-create-asset-migrate-acls)
+      - [`kcp create-asset migration-infra`](#kcp-create-asset-migration-infra)
+      - [`kcp create-asset migration-scripts`](#kcp-create-asset-migration-scripts)
+      - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
+    - [`kcp ui`](#kcp-ui)
+    - [`kcp update`](#kcp-update)
 
 # Getting Started
 
@@ -52,7 +63,7 @@ The migration process follows these general steps:
 
 1. **Initialize the environment**: Set up the CLI and configure your environment.
 2. **Scan clusters**: Discover and analyze your Kafka deployment.
-3. **Generate reports**: Produce reports on the cost and metrics of the MSK cluster.
+3. **Generate reports**: Produce cost and metrics reports for your MSK clusters using `kcp report costs` and `kcp report metrics`.
 4. **Generate migration assets**: Create the necessary infrastructure and scripts.
 5. **Execute migration**: Perform the actual migration process.
 
@@ -125,7 +136,8 @@ This command requires the following permissions:
         "kafka:DescribeConfigurationRevision",
         "kafka:DescribeReplicator",
         "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector"
+        "kafkaconnect:DescribeConnector",
+        "ec2:DescribeSubnets"
       ],
       "Resource": "*"
     },
@@ -267,24 +279,89 @@ export S3_URI=<folder-in-s3>
 
 ### `kcp report`
 
-The kcp report commands use the state file to generate a reports that summarizes the cost and metrics information for regions and clusters.
+The `kcp report` command generates reports based on the data collected by `kcp discover`. It includes the following sub-commands:
 
-
-The `kcp report` command includes the following subcommands
-
-- `metrics`
 - `costs`
+- `metrics`
+
+---
+
+#### `kcp report costs`
+
+Generate a cost report for given region(s) based on the data collected by `kcp discover`.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
+- `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag)
+
+**Optional Arguments**:
+
+- `--start`: Inclusive start date for cost report (YYYY-MM-DD)
+- `--end`: Exclusive end date for cost report (YYYY-MM-DD)
 
 **Example Usage**
 
 `kcp report costs`
 
 ```shell
-kcp report costs --state-file kcp-state.json --region eu-west-3 --start 2025-08-01 --end 2025-09-01 
+kcp report costs \
+  --state-file kcp-state.json \
+  --region us-east-1 \
+  --region eu-west-3
+```
+
+or
+
+```shell
+kcp report costs \
+  --state-file kcp-state.json \
+  --region us-east-1,eu-west-3 \
+  --start 2024-01-01 \
+  --end 2024-01-31
 ```
 
 **Output:**
-The command generates a `cost_report_YYYY-MM-DD_hh-mm-ss.md.md` file - presenting the cost information for the region.
+The command generates a `cost_report_YYYY-MM-DD_HH-MM-SS.md` file containing cost analysis for the specified regions and time period.
+
+---
+
+#### `kcp report metrics`
+
+Generate a metrics report for given cluster(s) based on the data collected by `kcp discover`.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
+- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)
+
+**Optional Arguments**:
+
+- `--start`: Inclusive start date for metrics report (YYYY-MM-DD)
+- `--end`: Exclusive end date for metrics report (YYYY-MM-DD)
+
+**Example Usage**
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/def456 
+```
+
+or
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/def456 \
+  --start 2024-01-01 \
+  --end 2024-01-31
+```
+
+**Output:**
+The command generates a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file containing metrics analysis for the specified clusters and time period.
 
 `kcp report metrics`
 
@@ -1055,22 +1132,78 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 ---
 
-### `kcp update`
+### `kcp ui`
 
-This command will update the kcp binary to the latest version by downloading latest release from GitHub and installing it.
+This command starts a web-based user interface for visualizing and analyzing your MSK cluster data. The UI provides an interactive dashboard for exploring costs, metrics, and cluster information from your `kcp-state.json` file.
+
+**Optional Arguments**:
+
+- `--port`, `-p`: Port to run the UI server on (default: 5556)
 
 **Example Usage**
 
 ```shell
-kcp update
+# Start UI on default port (5556)
+kcp ui
+
+# Start UI on custom port
+kcp ui --port 8080
+kcp ui -p 3000
 ```
+
+**Features**:
+- **Interactive Dashboard**: Web-based interface for exploring cluster data
+- **State File Upload**: Upload and analyze your `kcp-state.json` file through the browser
+- **Cost Analysis**: Visual cost reports and breakdowns by region
+- **Metrics Visualization**: Interactive charts and graphs for cluster metrics
+- **Cluster Reports**: Detailed cluster information and configuration analysis
+- **TCO Calculator**: Total Cost of Ownership analysis and projections
+- **Dark/Light Mode**: Modern UI with theme support
+
+**Access**:
+Once started, the UI will be available at `http://localhost:<port>` (default: `http://localhost:5556`). The command will display the exact URL when the server starts.
+
+**Workflow**:
+1. Run `kcp discover` to generate your `kcp-state.json` file
+2. Start the UI with `kcp ui`
+3. Upload your state file through the web interface
+4. Explore costs, metrics, and cluster data visually
+
+>[!NOTE]
+> The UI runs locally and does not send your data to external servers. All analysis is performed on your local machine.
+
+---
+
+### `kcp update`
+
+This command updates the kcp binary to the latest version by downloading the latest release from GitHub and installing it. The command automatically creates a backup of the current binary and can rollback on failure.
 
 **Optional Arguments**:
 
 - `--force`: Force update without user confirmation
 - `--check-only`: Only check for updates, don't install
 
+**Example Usage**
+
+```shell
+# Update to latest version (with confirmation prompt)
+kcp update
+
+# Force update without confirmation
+kcp update --force
+
+# Check for updates without installing
+kcp update --check-only
+```
+
+**Behavior**:
+- Automatically detects the current version and compares with the latest GitHub release
+- Creates a backup of the current binary before updating
+- Prompts for confirmation unless `--force` is used
+- Automatically rolls back on update failure
+- Skips update check for development versions unless `--force` is specified
+
 >[!NOTE]
-> This will require sudo to update the binary.
+> This command may require sudo permissions to update the binary, depending on the installation location.
 
 ---
