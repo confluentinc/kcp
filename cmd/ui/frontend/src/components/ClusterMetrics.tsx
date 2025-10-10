@@ -180,7 +180,7 @@ export default function ClusterMetrics({
   }
 
   const resetEndDateToMetadata = () => {
-    if (metricsResponse?.metadata?.end__date) {
+    if (metricsResponse?.metadata?.end_date) {
       setEndDate(new Date(metricsResponse.metadata.end_date))
       resetZoom() // Reset chart zoom when end date is reset
     }
