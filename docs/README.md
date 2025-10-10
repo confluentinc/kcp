@@ -277,6 +277,8 @@ The `kcp report` command includes the following subcommands
 
 **Example Usage**
 
+`kcp report costs`
+
 ```shell
 kcp report costs --state-file kcp-state.json --region eu-west-3 --start 2025-08-01 --end 2025-09-01 
 ```
@@ -284,7 +286,7 @@ kcp report costs --state-file kcp-state.json --region eu-west-3 --start 2025-08-
 **Output:**
 The command generates a `cost_report_YYYY-MM-DD_hh-mm-ss.md.md` file - presenting the cost information for the region.
 
-**Example Usage**
+`kcp report metrics`
 
 ```shell
 kcp report metrics --state-file kcp-state.json --cluster-arn  <CLUSTER-ARN> --start 2025-08-01 --end 2025-09-01 
