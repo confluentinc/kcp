@@ -14,8 +14,8 @@ interface ClusterReportProps {
         broker_az_distribution: string
         kafka_version: string
         enhanced_monitoring: string
-        start_window_date: string
-        end_window_date: string
+        start_date: string
+        end_date: string
         period: number // Period in seconds
       }
       results: Array<{
