@@ -89,7 +89,8 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 
 		if len(metadata.Services) > 0 {
 			md.AddParagraph("**Services:**")
-			md.AddList(metadata.Services)
+			// only show Amazon Managed Streaming for Apache Kafka
+			md.AddList([]string{"Amazon Managed Streaming for Apache Kafka"})
 		}
 
 		if len(metadata.Tags) > 0 {
@@ -115,10 +116,6 @@ func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string
 
 	// Add aggregate cost summaries for each service
 	r.addServiceAggregates(md, "Amazon Managed Streaming for Apache Kafka", regionCosts.Aggregates.AmazonManagedStreamingForApacheKafka)
-
-	r.addServiceAggregates(md, "EC2 - Other", regionCosts.Aggregates.EC2Other)
-
-	r.addServiceAggregates(md, "AWS Certificate Manager", regionCosts.Aggregates.AWSCertificateManager)
 
 	md.AddParagraph("")
 	md.AddParagraph("---")
@@ -283,8 +280,6 @@ func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedR
 
 	services := []types.ServiceCostAggregates{
 		regionData.Aggregates.AmazonManagedStreamingForApacheKafka,
-		regionData.Aggregates.EC2Other,
-		regionData.Aggregates.AWSCertificateManager,
 	}
 
 	for _, service := range services {
