@@ -6,10 +6,18 @@
   - [kcp Commands](#kcp-commands)
     - [`kcp discover`](#kcp-discover)
     - [`kcp scan`](#kcp-scan)
+      - [`kcp scan clusters`](#kcp-scan-clusters)
+      - [`kcp scan client-inventory`](#kcp-scan-client-inventory)
     - [`kcp report`](#kcp-report)
       - [`kcp report costs`](#kcp-report-costs)
       - [`kcp report metrics`](#kcp-report-metrics)
     - [`kcp create-asset`](#kcp-create-asset)
+      - [`kcp create-asset bastion-host`](#kcp-create-asset-bastion-host)
+      - [`kcp create-asset migrate-acls`](#kcp-create-asset-migrate-acls)
+      - [`kcp create-asset migration-infra`](#kcp-create-asset-migration-infra)
+      - [`kcp create-asset migration-scripts`](#kcp-create-asset-migration-scripts)
+      - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
+    - [`kcp update`](#kcp-update)
 
 # Getting Started
 
@@ -1090,20 +1098,34 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 ### `kcp update`
 
-This command will update the kcp binary to the latest version by downloading latest release from GitHub and installing it.
-
-**Example Usage**
-
-```shell
-kcp update
-```
+This command updates the kcp binary to the latest version by downloading the latest release from GitHub and installing it. The command automatically creates a backup of the current binary and can rollback on failure.
 
 **Optional Arguments**:
 
 - `--force`: Force update without user confirmation
 - `--check-only`: Only check for updates, don't install
 
+**Example Usage**
+
+```shell
+# Update to latest version (with confirmation prompt)
+kcp update
+
+# Force update without confirmation
+kcp update --force
+
+# Check for updates without installing
+kcp update --check-only
+```
+
+**Behavior**:
+- Automatically detects the current version and compares with the latest GitHub release
+- Creates a backup of the current binary before updating
+- Prompts for confirmation unless `--force` is used
+- Automatically rolls back on update failure
+- Skips update check for development versions unless `--force` is specified
+
 >[!NOTE]
-> This will require sudo to update the binary.
+> This command may require sudo permissions to update the binary, depending on the installation location.
 
 ---
