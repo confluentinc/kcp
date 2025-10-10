@@ -17,6 +17,7 @@
       - [`kcp create-asset migration-infra`](#kcp-create-asset-migration-infra)
       - [`kcp create-asset migration-scripts`](#kcp-create-asset-migration-scripts)
       - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
+    - [`kcp ui`](#kcp-ui)
     - [`kcp update`](#kcp-update)
 
 # Getting Started
@@ -1093,6 +1094,48 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 > [!NOTE]
 > A `README.md` is generated in the `reverse-proxy` directory to further assist in setting up the reverse proxy on your local machine to view the private networked Confluent Cloud cluster.
+
+---
+
+### `kcp ui`
+
+This command starts a web-based user interface for visualizing and analyzing your MSK cluster data. The UI provides an interactive dashboard for exploring costs, metrics, and cluster information from your `kcp-state.json` file.
+
+**Optional Arguments**:
+
+- `--port`, `-p`: Port to run the UI server on (default: 5556)
+
+**Example Usage**
+
+```shell
+# Start UI on default port (5556)
+kcp ui
+
+# Start UI on custom port
+kcp ui --port 8080
+kcp ui -p 3000
+```
+
+**Features**:
+- **Interactive Dashboard**: Web-based interface for exploring cluster data
+- **State File Upload**: Upload and analyze your `kcp-state.json` file through the browser
+- **Cost Analysis**: Visual cost reports and breakdowns by region
+- **Metrics Visualization**: Interactive charts and graphs for cluster metrics
+- **Cluster Reports**: Detailed cluster information and configuration analysis
+- **TCO Calculator**: Total Cost of Ownership analysis and projections
+- **Dark/Light Mode**: Modern UI with theme support
+
+**Access**:
+Once started, the UI will be available at `http://localhost:<port>` (default: `http://localhost:5556`). The command will display the exact URL when the server starts.
+
+**Workflow**:
+1. Run `kcp discover` to generate your `kcp-state.json` file
+2. Start the UI with `kcp ui`
+3. Upload your state file through the web interface
+4. Explore costs, metrics, and cluster data visually
+
+>[!NOTE]
+> The UI runs locally and does not send your data to external servers. All analysis is performed on your local machine.
 
 ---
 
