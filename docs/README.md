@@ -267,17 +267,31 @@ export S3_URI=<folder-in-s3>
 
 ### `kcp report`
 
-This command uses the state file to generate a report that summarizes the information about each region and its clusters.
+The kcp report commands use the state file to generate a reports that summarizes the cost and metrics information for regions and clusters.
+
+
+The `kcp report` command includes the following subcommands
+
+- `metrics`
+- `costs`
 
 **Example Usage**
 
 ```shell
-kcp report --state-file kcp-state.json
+kcp report costs --state-file kcp-state.json --region eu-west-3 --start 2025-08-01 --end 2025-09-01 
 ```
 
 **Output:**
-The command generates a `report.md` file - summarizing information about each region and its clusters.
+The command generates a `cost_report_YYYY-MM-DD_hh-mm-ss.md.md` file - presenting the cost information for the region.
 
+**Example Usage**
+
+```shell
+kcp report metrics --state-file kcp-state.json --cluster-arn  <CLUSTER-ARN> --start 2025-08-01 --end 2025-09-01 
+```
+
+**Output:**
+The command generates a `metric_report_YYYY-MM-DD_hh-mm-ss.md.md` file - presenting metric information for the cluster.
 
 ---
 
