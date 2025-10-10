@@ -370,7 +370,7 @@ kcp report metrics --state-file kcp-state.json --cluster-arn  <CLUSTER-ARN> --st
 ```
 
 **Output:**
-The command generates a `metric_report_YYYY-MM-DD_hh-mm-ss.md.md` file - presenting metric information for the cluster.
+The command generates a `metric_report_YYYY-MM-DD_hh-mm-ss.md` file - presenting metric information for the cluster.
 
 ---
 
