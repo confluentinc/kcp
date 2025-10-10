@@ -140,8 +140,8 @@ export default function ClusterMetrics({
   useEffect(() => {
     if (defaultsSet || !metricsResponse?.metadata) return
 
-    const metaStartDate = metricsResponse.metadata.start_window_date
-    const metaEndDate = metricsResponse.metadata.end_window_date
+    const metaStartDate = metricsResponse.metadata.start_date
+    const metaEndDate = metricsResponse.metadata.end_date
 
     // Only set defaults if both dates are valid and no user selection has been made
     if (
@@ -161,8 +161,8 @@ export default function ClusterMetrics({
   // Custom reset functions that use metadata dates
   const resetToMetadataDates = () => {
     if (metricsResponse?.metadata) {
-      const metaStartDate = metricsResponse.metadata.start_window_date
-      const metaEndDate = metricsResponse.metadata.end_window_date
+      const metaStartDate = metricsResponse.metadata.start_date
+      const metaEndDate = metricsResponse.metadata.end_date
 
       if (metaStartDate && metaEndDate) {
         setStartDate(new Date(metaStartDate))
@@ -173,15 +173,15 @@ export default function ClusterMetrics({
   }
 
   const resetStartDateToMetadata = () => {
-    if (metricsResponse?.metadata?.start_window_date) {
-      setStartDate(new Date(metricsResponse.metadata.start_window_date))
+    if (metricsResponse?.metadata?.start_date) {
+      setStartDate(new Date(metricsResponse.metadata.start_date))
       resetZoom() // Reset chart zoom when start date is reset
     }
   }
 
   const resetEndDateToMetadata = () => {
-    if (metricsResponse?.metadata?.end_window_date) {
-      setEndDate(new Date(metricsResponse.metadata.end_window_date))
+    if (metricsResponse?.metadata?.end__date) {
+      setEndDate(new Date(metricsResponse.metadata.end_date))
       resetZoom() // Reset chart zoom when end date is reset
     }
   }
