@@ -52,6 +52,8 @@ The docs for the latest release are available [here](https://github.com/confluen
 
 - Go 1.24+
 - Make
+- Node
+- Yarn
 
 ```bash
 # Clone the repository
