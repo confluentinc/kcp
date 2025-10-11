@@ -1,6 +1,6 @@
 name: kcp
 lang: go
-lang_version: 1.24.7
+lang_version: 1.24.8
 git:
   enable: true
 codeowners:
