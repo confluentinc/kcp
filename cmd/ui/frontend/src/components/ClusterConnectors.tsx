@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 interface Connector {
   connector_arn: string
   connector_name: string
@@ -39,8 +37,6 @@ interface ClusterConnectorsProps {
 }
 
 export default function ClusterConnectors({ connectors }: ClusterConnectorsProps) {
-  const [selectedConnector, setSelectedConnector] = useState<Connector | null>(null)
-
   const formatDate = (dateString: string) =>
     new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -49,26 +45,6 @@ export default function ClusterConnectors({ connectors }: ClusterConnectorsProps
       hour: '2-digit',
       minute: '2-digit',
     })
-
-  const getStatusBadge = (state: string) => {
-    const statusColors = {
-      RUNNING: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-      FAILED: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-      CREATING: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-      UPDATING: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-      DELETING: 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200',
-    }
-
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-          statusColors[state as keyof typeof statusColors] || statusColors.FAILED
-        }`}
-      >
-        {state}
-      </span>
-    )
-  }
 
   if (!connectors || connectors.length === 0) {
     return (
@@ -205,21 +181,19 @@ export default function ClusterConnectors({ connectors }: ClusterConnectorsProps
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.entries(connector.connector_configuration).map(
-                        ([key, value], index) => (
-                          <tr
-                            key={key}
-                            className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-600">
-                              {key}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 font-mono break-all border-b border-l border-gray-200 dark:border-gray-600">
-                              {value}
-                            </td>
-                          </tr>
-                        )
-                      )}
+                      {Object.entries(connector.connector_configuration).map(([key, value]) => (
+                        <tr
+                          key={key}
+                          className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-600">
+                            {key}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 font-mono break-all border-b border-l border-gray-200 dark:border-gray-600">
+                            {value}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>

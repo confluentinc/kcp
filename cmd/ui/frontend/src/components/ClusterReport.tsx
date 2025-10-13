@@ -28,7 +28,7 @@ interface ClusterReportProps {
       }>
     }
     aws_client_information: {
-      msk_cluster_config: any
+      msk_cluster_config?: any
       connectors?: any[]
     }
     kafka_admin_client_information?: any
