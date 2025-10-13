@@ -21,8 +21,14 @@ export interface Cluster {
       value: number | null
     }>
   }
-  aws_client_information: any
-  kafka_admin_client_information: any
+  aws_client_information: {
+    msk_cluster_config?: any
+    connectors?: any[]
+  }
+  kafka_admin_client_information: {
+    acls?: any[]
+    [key: string]: any
+  }
   timestamp?: string
 }
 
