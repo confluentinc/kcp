@@ -178,7 +178,7 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 		connectorStatuses = make(map[string]string)
 	}
 
-	var connectors []types.SelfManagedConnector
+	connectors := []types.SelfManagedConnector{}
 	for connectorKey, configJSON := range connectorConfigs {
 		// Parse the JSON config into a map
 		var configMap map[string]interface{}
