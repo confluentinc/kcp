@@ -36,11 +36,9 @@ func NewReportCostsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to include in the report (comma separated list or repeated flag)")
-
 	reportCostsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	// Optional flags.
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")

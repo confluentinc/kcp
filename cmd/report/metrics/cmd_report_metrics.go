@@ -35,18 +35,22 @@ func NewReportMetricsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
-	requiredFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
 	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)")
-
 	reportMetricsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
+	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	reportMetricsCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
 
 	reportMetricsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -61,10 +65,9 @@ func NewReportMetricsCmd() *cobra.Command {
 	})
 
 	reportMetricsCmd.MarkFlagRequired("state-file")
-	reportMetricsCmd.MarkFlagRequired("start")
-	reportMetricsCmd.MarkFlagRequired("end")
 	reportMetricsCmd.MarkFlagRequired("cluster-arn")
-	reportMetricsCmd.MarkFlagRequired("region")
+	// optional but if one is provided, the other must be provided
+	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end")
 
 	return reportMetricsCmd
 }
@@ -92,20 +95,6 @@ func runReportMetrics(cmd *cobra.Command, args []string) error {
 }
 
 func parseMetricReporterOpts() (*MetricReporterOpts, error) {
-	startDate, err := time.Parse("2006-01-02", start)
-	if err != nil {
-		return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
-	}
-
-	endDate, err := time.Parse("2006-01-02", end)
-	if err != nil {
-		return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
-	}
-
-	if endDate.Before(startDate) {
-		return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
-	}
-
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
 	}
@@ -113,6 +102,44 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load existing state file: %v", err)
+	}
+
+	// start and end date are optional
+	var startDate, endDate *time.Time
+	if start != "" {
+		parsed, err := time.Parse("2006-01-02", start)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start date format '%s': expected YYYY-MM-DD", start)
+		}
+		startDate = &parsed
+	}
+
+	if end != "" {
+		parsed, err := time.Parse("2006-01-02", end)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end date format '%s': expected YYYY-MM-DD", end)
+		}
+		endDate = &parsed
+	}
+
+	if startDate != nil && endDate != nil {
+		if endDate.Before(*startDate) {
+			return nil, fmt.Errorf("end date '%s' cannot be before start date '%s'", end, start)
+		}
+	}
+
+	// default to the start and end date from metrics metadata in state file
+	if startDate == nil && endDate == nil {
+		if len(state.Regions) == 0 {
+			return nil, fmt.Errorf("no regions found in state file")
+		}
+
+		if len(state.Regions[0].Clusters) == 0 {
+			return nil, fmt.Errorf("no clusters found in state file")
+		}
+
+		startDate = &state.Regions[0].Clusters[0].ClusterMetrics.MetricMetadata.StartDate
+		endDate = &state.Regions[0].Clusters[0].ClusterMetrics.MetricMetadata.EndDate
 	}
 
 	opts := MetricReporterOpts{

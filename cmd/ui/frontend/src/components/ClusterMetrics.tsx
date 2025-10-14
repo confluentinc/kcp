@@ -22,6 +22,7 @@ import { CalendarIcon, X, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { cn, downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/appStore'
+import { useChartZoom } from '@/lib/useChartZoom'
 import {
   LineChart,
   Line,
@@ -30,6 +31,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceArea,
 } from 'recharts'
 
 interface ClusterMetricsProps {
@@ -38,14 +40,91 @@ interface ClusterMetricsProps {
     region?: string
   }
   isActive?: boolean
+  inModal?: boolean
+  modalPreselectedMetric?: string
+  modalWorkloadAssumption?: string
 }
 
-export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProps) {
+export default function ClusterMetrics({
+  cluster,
+  isActive,
+  inModal = false,
+  modalPreselectedMetric,
+  modalWorkloadAssumption,
+}: ClusterMetricsProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [metricsResponse, setMetricsResponse] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<string>('')
   const [defaultsSet, setDefaultsSet] = useState(false)
+
+  // Get TCO store actions and preselected metric
+  const { setTCOWorkloadValue, preselectedMetric } = useAppStore()
+  const [hasUsedPreselectedMetric, setHasUsedPreselectedMetric] = useState(false)
+  const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
+
+  // Reset preselected metric flag when cluster changes
+  useEffect(() => {
+    setHasUsedPreselectedMetric(false)
+  }, [cluster.name, cluster.region])
+
+  // Convert bytes/sec to MB/s
+  const convertBytesToMB = (bytesPerSec: number): string => {
+    const mbPerSec = bytesPerSec / (1024 * 1024)
+    return mbPerSec.toFixed(5)
+  }
+
+  // Map metric names to workload assumption names
+  const getWorkloadAssumptionName = (metricName: string): string => {
+    switch (metricName) {
+      case 'BytesInPerSec':
+        return 'Ingress Throughput'
+      case 'BytesOutPerSec':
+        return 'Egress Throughput'
+      case 'GlobalPartitionCount':
+        return 'Partitions'
+      default:
+        return 'Metric'
+    }
+  }
+
+  // Map modal workload assumption to TCO field
+  const getTCOFieldFromWorkloadAssumption = (workloadAssumption: string): string => {
+    switch (workloadAssumption) {
+      case 'Avg Ingress Throughput (MB/s)':
+        return 'avgIngressThroughput'
+      case 'Peak Ingress Throughput (MB/s)':
+        return 'peakIngressThroughput'
+      case 'Avg Egress Throughput (MB/s)':
+        return 'avgEgressThroughput'
+      case 'Peak Egress Throughput (MB/s)':
+        return 'peakEgressThroughput'
+      case 'Partitions':
+        return 'partitions'
+      default:
+        return 'avgIngressThroughput' // fallback
+    }
+  }
+
+  // Handle transferring values to TCO inputs
+  const handleTransferToTCO = (value: number, statType: 'min' | 'avg' | 'max') => {
+    const clusterKey = `${cluster.region || 'unknown'}:${cluster.name}`
+
+    // Determine the TCO field based on the modal workload assumption
+    const tcoField = modalWorkloadAssumption
+      ? getTCOFieldFromWorkloadAssumption(modalWorkloadAssumption)
+      : 'avgIngressThroughput'
+
+    // Convert bytes to MB for throughput metrics, but use raw value for partitions
+    const convertedValue =
+      tcoField === 'partitions' ? Math.round(value).toString() : convertBytesToMB(value)
+
+    setTCOWorkloadValue(clusterKey, tcoField as any, convertedValue)
+
+    // Show success feedback with stat type
+    setTransferSuccess(`${tcoField}-${statType}`)
+    setTimeout(() => setTransferSuccess(null), 500)
+  }
 
   // Cluster-specific date state from Zustand
   const { startDate, endDate, setStartDate, setEndDate } = useClusterDateFilters(
@@ -61,8 +140,8 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   useEffect(() => {
     if (defaultsSet || !metricsResponse?.metadata) return
 
-    const metaStartDate = metricsResponse.metadata.start_window_date
-    const metaEndDate = metricsResponse.metadata.end_window_date
+    const metaStartDate = metricsResponse.metadata.start_date
+    const metaEndDate = metricsResponse.metadata.end_date
 
     // Only set defaults if both dates are valid and no user selection has been made
     if (
@@ -82,25 +161,28 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
   // Custom reset functions that use metadata dates
   const resetToMetadataDates = () => {
     if (metricsResponse?.metadata) {
-      const metaStartDate = metricsResponse.metadata.start_window_date
-      const metaEndDate = metricsResponse.metadata.end_window_date
+      const metaStartDate = metricsResponse.metadata.start_date
+      const metaEndDate = metricsResponse.metadata.end_date
 
       if (metaStartDate && metaEndDate) {
         setStartDate(new Date(metaStartDate))
         setEndDate(new Date(metaEndDate))
+        resetZoom() // Reset chart zoom when dates are reset
       }
     }
   }
 
   const resetStartDateToMetadata = () => {
-    if (metricsResponse?.metadata?.start_window_date) {
-      setStartDate(new Date(metricsResponse.metadata.start_window_date))
+    if (metricsResponse?.metadata?.start_date) {
+      setStartDate(new Date(metricsResponse.metadata.start_date))
+      resetZoom() // Reset chart zoom when start date is reset
     }
   }
 
   const resetEndDateToMetadata = () => {
-    if (metricsResponse?.metadata?.end_window_date) {
-      setEndDate(new Date(metricsResponse.metadata.end_window_date))
+    if (metricsResponse?.metadata?.end_date) {
+      setEndDate(new Date(metricsResponse.metadata.end_date))
+      resetZoom() // Reset chart zoom when end date is reset
     }
   }
 
@@ -159,12 +241,14 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
 
     // Create chart data
     const chartData = uniqueDates.map((date) => {
+      const dateObj = new Date(date)
       const dataPoint: any = {
         date: date,
-        formattedDate: new Date(date).toLocaleDateString('en-US', {
+        formattedDate: dateObj.toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
         }),
+        epochTime: dateObj.getTime(),
       }
 
       Object.keys(metricsByLabel).forEach((label) => {
@@ -186,6 +270,33 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
       ),
     }
   }, [metricsResponse])
+
+  // Initialize zoom functionality
+  const {
+    data: zoomData,
+    left,
+    right,
+    refAreaLeft,
+    refAreaRight,
+    handleMouseDown,
+    handleMouseMove,
+    zoom,
+    resetZoom,
+    updateData,
+  } = useChartZoom({
+    initialData: processedData.chartData,
+    dataKey: 'epochTime',
+    isNumericAxis: true,
+    onDateRangeChange: (startDate, endDate) => {
+      setStartDate(startDate)
+      setEndDate(endDate)
+    },
+  })
+
+  // Update zoom data when processedData changes
+  useEffect(() => {
+    updateData(processedData.chartData)
+  }, [processedData.chartData, updateData])
 
   const handleDownloadCSV = () => {
     const filename = generateMetricsFilename(cluster.name, cluster.region)
@@ -250,27 +361,36 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
     fetchMetrics()
   }, [isActive, cluster.name, cluster.region, startDate, endDate])
 
-  // Set default selected metric when data loads
+  // Set default selected metric when data loads, prioritizing modal preselected metric
   useEffect(() => {
-    if (processedData.metrics.length > 0 && !selectedMetric) {
-      setSelectedMetric(processedData.metrics[0])
+    if (processedData.metrics.length > 0) {
+      // In modal mode, always use the modal preselected metric if provided
+      if (
+        inModal &&
+        modalPreselectedMetric &&
+        processedData.metrics.includes(modalPreselectedMetric)
+      ) {
+        setSelectedMetric(modalPreselectedMetric)
+      } else if (
+        !inModal &&
+        preselectedMetric &&
+        processedData.metrics.includes(preselectedMetric) &&
+        !hasUsedPreselectedMetric
+      ) {
+        setSelectedMetric(preselectedMetric)
+        setHasUsedPreselectedMetric(true)
+      } else if (!selectedMetric) {
+        setSelectedMetric(processedData.metrics[0])
+      }
     }
-  }, [processedData.metrics, selectedMetric])
-
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
-          <div className="flex items-center justify-center h-64">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-              <p className="text-gray-500 dark:text-gray-400">Processing metrics data...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  }, [
+    processedData.metrics,
+    selectedMetric,
+    preselectedMetric,
+    hasUsedPreselectedMetric,
+    inModal,
+    modalPreselectedMetric,
+  ])
 
   // Show error state
   if (error) {
@@ -388,7 +508,7 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
             onClick={resetToMetadataDates}
             className="w-full sm:w-auto"
           >
-            Reset All
+            Reset
           </Button>
         </div>
       </div>
@@ -468,37 +588,46 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                   <div className="space-y-6">
                     {/* Metric Selector and Summary Stats */}
                     <div className="flex items-center justify-between">
-                      {/* Left side: Metric Selector */}
-                      <div className="flex items-center gap-4">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Select Metric:
-                        </label>
-                        <Select
-                          value={selectedMetric}
-                          onValueChange={setSelectedMetric}
-                        >
-                          <SelectTrigger className="w-[300px]">
-                            <SelectValue placeholder="Choose a metric to visualize" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {processedData.metrics.map((metric) => (
-                              <SelectItem
-                                key={metric}
-                                value={metric}
-                              >
-                                {metric}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {/* Left side: Metric Selector (hidden in modal mode) */}
+                      {!inModal && (
+                        <div className="flex items-center gap-4">
+                          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Select Metric:
+                          </label>
+                          <Select
+                            value={selectedMetric}
+                            onValueChange={setSelectedMetric}
+                          >
+                            <SelectTrigger className="w-[300px]">
+                              <SelectValue placeholder="Choose a metric to visualize" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {processedData.metrics.map((metric) => (
+                                <SelectItem
+                                  key={metric}
+                                  value={metric}
+                                >
+                                  {metric}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {/* In modal mode, show the selected metric as a title */}
+                      {inModal && selectedMetric && (
+                        <div className="flex items-center gap-4">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                            {selectedMetric} -{' '}
+                            {modalWorkloadAssumption || getWorkloadAssumptionName(selectedMetric)}
+                          </h3>
+                        </div>
+                      )}
 
                       {/* Right side: Aggregates Stats */}
                       {selectedMetric && metricsResponse?.aggregates && (
-                        <div className="flex items-center gap-4">
-                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Summary:
-                          </span>
+                        <div className="space-y-1">
                           {(() => {
                             // Find the metric in the aggregates data (now uses clean metric names)
                             const metricAggregate = metricsResponse.aggregates[selectedMetric]
@@ -512,32 +641,112 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                             }
 
                             return (
-                              <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    Min:
-                                  </span>
-                                  <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
-                                    {metricAggregate.min?.toFixed(2) ?? 'N/A'}
-                                  </span>
+                              <>
+                                {/* MIN Row */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300 uppercase w-8">
+                                      MIN
+                                    </span>
+                                    <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
+                                      {metricAggregate.min?.toFixed(2) ?? 'N/A'}
+                                    </span>
+                                  </div>
+                                  <div className="ml-4">
+                                    {inModal &&
+                                    metricAggregate.min !== null &&
+                                    metricAggregate.min !== undefined ? (
+                                      <Button
+                                        onClick={() =>
+                                          handleTransferToTCO(metricAggregate.min, 'min')
+                                        }
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 w-36 text-xs"
+                                      >
+                                        <span className="flex items-center justify-center gap-1">
+                                          {transferSuccess?.includes('-min') && (
+                                            <span className="text-green-600">✓</span>
+                                          )}
+                                          Use as TCO Input
+                                        </span>
+                                      </Button>
+                                    ) : (
+                                      <div className="w-36"></div>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    Avg:
-                                  </span>
-                                  <span className="text-sm font-semibold text-green-600 dark:text-green-400">
-                                    {metricAggregate.avg?.toFixed(2) ?? 'N/A'}
-                                  </span>
+
+                                {/* AVG Row */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300 uppercase w-8">
+                                      AVG
+                                    </span>
+                                    <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                      {metricAggregate.avg?.toFixed(2) ?? 'N/A'}
+                                    </span>
+                                  </div>
+                                  <div className="ml-4">
+                                    {inModal &&
+                                    metricAggregate.avg !== null &&
+                                    metricAggregate.avg !== undefined ? (
+                                      <Button
+                                        onClick={() =>
+                                          handleTransferToTCO(metricAggregate.avg, 'avg')
+                                        }
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 w-36 text-xs"
+                                      >
+                                        <span className="flex items-center justify-center gap-1">
+                                          {transferSuccess?.includes('-avg') && (
+                                            <span className="text-green-600">✓</span>
+                                          )}
+                                          Use as TCO Input
+                                        </span>
+                                      </Button>
+                                    ) : (
+                                      <div className="w-36"></div>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    Max:
-                                  </span>
-                                  <span className="text-sm font-semibold text-red-600 dark:text-red-400">
-                                    {metricAggregate.max?.toFixed(2) ?? 'N/A'}
-                                  </span>
+
+                                {/* MAX Row */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300 uppercase w-8">
+                                      MAX
+                                    </span>
+                                    <span className="text-sm font-semibold text-red-600 dark:text-red-400">
+                                      {metricAggregate.max?.toFixed(2) ?? 'N/A'}
+                                    </span>
+                                  </div>
+                                  <div className="ml-4">
+                                    {inModal &&
+                                    metricAggregate.max !== null &&
+                                    metricAggregate.max !== undefined ? (
+                                      <Button
+                                        onClick={() =>
+                                          handleTransferToTCO(metricAggregate.max, 'max')
+                                        }
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 w-36 text-xs"
+                                      >
+                                        <span className="flex items-center justify-center gap-1">
+                                          {transferSuccess?.includes('-max') && (
+                                            <span className="text-green-600">✓</span>
+                                          )}
+                                          Use as TCO Input
+                                        </span>
+                                      </Button>
+                                    ) : (
+                                      <div className="w-36"></div>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
+                              </>
                             )
                           })()}
                         </div>
@@ -546,18 +755,33 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
 
                     {/* Single Chart */}
                     {selectedMetric && (
-                      <div>
+                      <div style={{ userSelect: 'none' }}>
                         <ResponsiveContainer
                           width="100%"
                           height={400}
                         >
-                          <LineChart data={processedData.chartData}>
+                          <LineChart
+                            data={zoomData}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={zoom}
+                          >
                             <CartesianGrid
                               strokeDasharray="3 3"
                               className="opacity-30"
                             />
                             <XAxis
-                              dataKey="formattedDate"
+                              allowDataOverflow
+                              dataKey="epochTime"
+                              domain={[left, right]}
+                              type="number"
+                              scale="time"
+                              tickFormatter={(value) =>
+                                new Date(value).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                })
+                              }
                               tick={{ fontSize: 12, fill: 'currentColor' }}
                               className="text-gray-700 dark:text-gray-200"
                             />
@@ -571,7 +795,9 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                                   return (
                                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
                                       <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-1">
-                                        {label}
+                                        {label
+                                          ? format(new Date(label), 'MMM dd, yyyy HH:mm')
+                                          : 'Unknown Date'}
                                       </p>
                                       <p className="text-gray-900 dark:text-gray-100 text-sm">
                                         <span className="font-medium">{selectedMetric}:</span>{' '}
@@ -593,6 +819,14 @@ export default function ClusterMetrics({ cluster, isActive }: ClusterMetricsProp
                               connectNulls={false}
                               name={selectedMetric}
                             />
+
+                            {refAreaLeft && refAreaRight ? (
+                              <ReferenceArea
+                                x1={refAreaLeft}
+                                x2={refAreaRight}
+                                strokeOpacity={0.3}
+                              />
+                            ) : null}
                           </LineChart>
                         </ResponsiveContainer>
                       </div>

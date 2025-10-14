@@ -7,6 +7,7 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
 )
 
@@ -38,6 +39,7 @@ func NewUI(reportService ReportService, opts UICmdOpts) *UI {
 func (ui *UI) Run() error {
 	e := echo.New()
 	e.HideBanner = true
+	e.HidePort = true
 
 	frontend.RegisterHandlers(e)
 
@@ -55,7 +57,9 @@ func (ui *UI) Run() error {
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
-	fmt.Printf("Starting UI server on %s\n", serverAddr)
+	fullURL := fmt.Sprintf("http://%s", serverAddr)
+	fmt.Printf("\nkcp ui is available at %s\n", color.New(color.FgGreen).Sprint(fullURL))
+
 	e.Logger.Fatal(e.Start(serverAddr))
 
 	return nil

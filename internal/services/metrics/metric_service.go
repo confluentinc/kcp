@@ -43,8 +43,8 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		BrokerAzDistribution: *brokerAZDistribution,
 		KafkaVersion:         kafkaVersion,
 		EnhancedMonitoring:   enhancedMonitoring,
-		StartWindowDate:      timeWindow.StartTime.Format(time.RFC3339),
-		EndWindowDate:        timeWindow.EndTime.Format(time.RFC3339),
+		StartDate:            timeWindow.StartTime,
+		EndDate:              timeWindow.EndTime,
 		Period:               timeWindow.Period,
 
 		FollowerFetching: followerFetching,
@@ -92,10 +92,10 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	}
 
 	metricsMetadata := types.MetricMetadata{
-		ClusterType:     string(cluster.ClusterType),
-		StartWindowDate: timeWindow.StartTime.Format(time.RFC3339),
-		EndWindowDate:   timeWindow.EndTime.Format(time.RFC3339),
-		Period:          timeWindow.Period,
+		ClusterType: string(cluster.ClusterType),
+		StartDate:   timeWindow.StartTime,
+		EndDate:     timeWindow.EndTime,
+		Period:      timeWindow.Period,
 	}
 
 	// Get all topics for this cluster
@@ -138,7 +138,9 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 		"MessagesInPerSec",
 		"RemoteLogSizeBytes",
 		"PartitionCount",
+		"ClientConnectionCount",
 	}
+
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for metricIndex, metricName := range metrics {
@@ -224,7 +226,6 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 	var expressionParts []string
 	for _, metricID := range metricIDs {
 		expressionParts = append(expressionParts, fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
-		slog.Info("🔍 expression part", "expressionPart", fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
 	}
 
 	expression := strings.Join(expressionParts, " + ")
@@ -232,7 +233,7 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 	queries = append(queries, cloudwatchtypes.MetricDataQuery{
 		Id:         aws.String("e_total_local_storage_usage_gb"),
 		Expression: aws.String(expression),
-		Label:      aws.String("Cluster Aggregate - Total Local Storage Usage GB"),
+		Label:      aws.String("Cluster Aggregate - TotalLocalStorageUsage(GB)"),
 		ReturnData: aws.Bool(true),
 	})
 
@@ -243,6 +244,7 @@ func (ms *MetricService) buildClusterMetricQueries(clusterName string, period in
 	var metrics = []string{
 		"GlobalPartitionCount",
 	}
+
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for _, metricName := range metrics {
@@ -276,6 +278,7 @@ func (ms *MetricService) buildServerlessMetricQueries(topics []string, clusterNa
 		"BytesOutPerSec",
 		"MessagesInPerSec",
 	}
+
 	var queries []cloudwatchtypes.MetricDataQuery
 
 	for metricIndex, metricName := range metrics {
