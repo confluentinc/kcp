@@ -11,7 +11,9 @@ import (
 )
 
 var (
-	stateFile string
+	stateFile          string
+	url                string
+	useUnauthenticated bool
 )
 
 func NewScanSchemaRegistryCmd() *cobra.Command {
@@ -20,6 +22,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 		Short:         "Scan schema registry for information",
 		Long:          "Scan schema registry for information",
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanSchemaRegistry,
 		RunE:          runScanSchemaRegistry,
 	}
@@ -29,14 +32,22 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
+	requiredFlags.StringVar(&url, "url", "", "The URL of the schema registry to scan.")
 	schemaRegistryCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	// Authentication flags.
+	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
+	authFlags.SortFlags = false
+	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
+	schemaRegistryCmd.Flags().AddFlagSet(authFlags)
+	groups[authFlags] = "Authentication Flags"
 
 	schemaRegistryCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags}
+		groupNames := []string{"Required Flags", "Authentication Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -51,6 +62,11 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	})
 
 	schemaRegistryCmd.MarkFlagRequired("state-file")
+	schemaRegistryCmd.MarkFlagRequired("url")
+
+	// will have more auth flags later
+	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated")
+	schemaRegistryCmd.MarkFlagsOneRequired("use-unauthenticated")
 
 	return schemaRegistryCmd
 }
@@ -80,6 +96,7 @@ func parseScanSchemaRegistryOpts() (*SchemaRegistryScannerOpts, error) {
 	}
 	opts := SchemaRegistryScannerOpts{
 		State: *state,
+		Url:   url,
 	}
 
 	return &opts, nil
