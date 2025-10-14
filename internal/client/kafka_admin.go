@@ -149,6 +149,8 @@ type KafkaAdmin interface {
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
+	GetAllMessagesWithKeyFilter(topicName string, keyPrefix string) (map[string]string, error)
+	GetConnectorStatusMessages(topicName string) (map[string]string, error)
 	Close() error
 }
 
@@ -325,6 +327,195 @@ func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
 
 func (k *KafkaAdminClient) Close() error {
 	return k.admin.Close()
+}
+
+// GetAllMessagesWithKeyFilter retrieves all messages from a specific topic across all partitions
+// that have keys starting with the specified prefix
+// Returns a map of connector names to their configuration JSON strings
+func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPrefix string) (map[string]string, error) {
+	consumer, err := sarama.NewConsumer(k.brokerAddresses, k.saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer: %w", err)
+	}
+	defer consumer.Close()
+
+	partitions, err := consumer.Partitions(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get partitions for topic %s: %w", topicName, err)
+	}
+
+	if len(partitions) == 0 {
+		return nil, fmt.Errorf("topic %s has no partitions", topicName)
+	}
+
+	controller, err := k.admin.Controller()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get controller: %w", err)
+	}
+
+	connectorConfigs := make(map[string]string)
+
+	// Process each partition
+	for _, partition := range partitions {
+		// Get oldest offset
+		oldestReq := &sarama.OffsetRequest{
+			Version: 1,
+		}
+		oldestReq.AddBlock(topicName, partition, sarama.OffsetOldest, 1)
+
+		oldestResp, err := controller.GetAvailableOffsets(oldestReq)
+		if err != nil {
+			continue // Skip this partition if we can't get offsets
+		}
+
+		oldestBlock := oldestResp.GetBlock(topicName, partition)
+		if oldestBlock == nil || len(oldestBlock.Offsets) == 0 {
+			continue
+		}
+		oldestOffset := oldestBlock.Offsets[0]
+
+		// Get newest offset
+		newestReq := &sarama.OffsetRequest{
+			Version: 1,
+		}
+		newestReq.AddBlock(topicName, partition, sarama.OffsetNewest, 1)
+
+		newestResp, err := controller.GetAvailableOffsets(newestReq)
+		if err != nil {
+			continue // Skip this partition if we can't get offsets
+		}
+
+		newestBlock := newestResp.GetBlock(topicName, partition)
+		if newestBlock == nil || len(newestBlock.Offsets) == 0 {
+			continue
+		}
+		newestOffset := newestBlock.Offsets[0]
+
+		if newestOffset <= oldestOffset {
+			continue // No messages in this partition
+		}
+
+		// Create a partition consumer for the entire range
+		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, oldestOffset)
+		if err != nil {
+			continue // Skip this partition if we can't consume it
+		}
+
+		// Consume messages until we reach the newest offset
+		messageCount := 0
+	consumeLoop:
+		for messageCount < int(newestOffset-oldestOffset) {
+			select {
+			case msg := <-partitionConsumer.Messages():
+				if msg != nil {
+					messageCount++
+					if len(msg.Key) > 0 {
+						keyStr := string(msg.Key)
+						// Check if the key starts with the prefix
+						if len(keyStr) >= len(keyPrefix) && keyStr[:len(keyPrefix)] == keyPrefix {
+							// Use the full key as the connector name
+							connectorConfigs[keyStr] = string(msg.Value)
+						}
+					}
+				}
+			case err := <-partitionConsumer.Errors():
+				if err != nil {
+					// Log the error but continue with other partitions
+					break consumeLoop
+				}
+			case <-time.After(10 * time.Second):
+				// Timeout after 10 seconds per partition
+				break consumeLoop
+			}
+		}
+
+		partitionConsumer.Close()
+	}
+
+	return connectorConfigs, nil
+}
+
+// GetConnectorStatusMessages retrieves status messages from the connect-status topic
+// by consuming the last 1000 messages from each partition and tracking the most recent status
+// for each connector based on message timestamp
+func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[string]string, error) {
+	consumer, err := sarama.NewConsumer(k.brokerAddresses, k.saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer: %w", err)
+	}
+	defer consumer.Close()
+
+	partitions, err := consumer.Partitions(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get partitions for topic %s: %w", topicName, err)
+	}
+
+	if len(partitions) == 0 {
+		return nil, fmt.Errorf("topic %s has no partitions", topicName)
+	}
+
+	// Map to store the latest status for each connector
+	connectorStatuses := make(map[string]string)
+	// Map to track the latest timestamp for each connector
+	connectorTimestamps := make(map[string]int64)
+
+	// Process each partition
+	for _, partition := range partitions {
+		// Start consuming from the oldest available offset
+		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, sarama.OffsetOldest)
+		if err != nil {
+			continue // Skip this partition if we can't consume it
+		}
+
+		messagesRead := 0
+		timeout := time.After(5 * time.Second)
+
+	partitionLoop:
+		for {
+			select {
+			case msg := <-partitionConsumer.Messages():
+				if msg != nil {
+					messagesRead++
+
+					if len(msg.Key) > 0 {
+						keyStr := string(msg.Key)
+
+						// Check if the key starts with "status-connector-"
+						if len(keyStr) >= 17 && keyStr[:17] == "status-connector-" {
+							connectorName := keyStr[17:]
+
+							// Get message timestamp
+							var msgTimestamp int64
+							if msg.Timestamp.IsZero() {
+								msgTimestamp = int64(msg.Offset)
+							} else {
+								msgTimestamp = msg.Timestamp.UnixMilli()
+							}
+
+							// Only update if this is a newer message
+							if existingTimestamp, exists := connectorTimestamps[connectorName]; !exists || msgTimestamp > existingTimestamp {
+								connectorStatuses[connectorName] = string(msg.Value)
+								connectorTimestamps[connectorName] = msgTimestamp
+							}
+						}
+					}
+
+					// Limit to 1000 messages per partition to avoid consuming too much
+					if messagesRead >= 1000 {
+						break partitionLoop
+					}
+				}
+			case <-partitionConsumer.Errors():
+				break partitionLoop
+			case <-timeout:
+				break partitionLoop
+			}
+		}
+
+		partitionConsumer.Close()
+	}
+
+	return connectorStatuses, nil
 }
 
 // NewKafkaAdmin creates a new Kafka admin client for the given broker addresses and region

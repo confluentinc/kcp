@@ -452,3 +452,136 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 		})
 	}
 }
+
+func TestKafkaService_scanSelfManagedConnectors(t *testing.T) {
+	tests := []struct {
+		name           string
+		topics         []types.TopicDetails
+		mockClient     *mocks.MockKafkaAdmin
+		expectedResult []types.SelfManagedConnector
+		expectError    bool
+	}{
+		{
+			name: "connect-configs topic does not exist",
+			topics: []types.TopicDetails{
+				{Name: "orders", Partitions: 3, ReplicationFactor: 2},
+				{Name: "users", Partitions: 1, ReplicationFactor: 1},
+			},
+			mockClient: &mocks.MockKafkaAdmin{
+				GetAllMessagesWithKeyFilterFunc: func(topicName string, keyPrefix string) (map[string]string, error) {
+					return nil, errors.New("should not be called")
+				},
+			},
+			expectedResult: []types.SelfManagedConnector{},
+			expectError:    false,
+		},
+		{
+			name: "connect-configs topic exists and has connector messages",
+			topics: []types.TopicDetails{
+				{Name: "connect-configs", Partitions: 1, ReplicationFactor: 1},
+				{Name: "connect-status", Partitions: 1, ReplicationFactor: 1},
+				{Name: "users", Partitions: 3, ReplicationFactor: 2},
+				{Name: "orders", Partitions: 3, ReplicationFactor: 2},
+			},
+			mockClient: &mocks.MockKafkaAdmin{
+				GetAllMessagesWithKeyFilterFunc: func(topicName string, keyPrefix string) (map[string]string, error) {
+					if topicName == "connect-configs" && keyPrefix == "connector-" {
+						return map[string]string{
+							"connector-datagen-connector-users":  `{"connector.class":"io.confluent.kafka.connect.datagen.DatagenConnector","tasks.max":"1"}`,
+							"connector-datagen-connector-orders": `{"connector.class":"io.confluent.kafka.connect.datagen.DatagenConnector","tasks.max":"2"}`,
+						}, nil
+					}
+					return nil, errors.New("unexpected parameters")
+				},
+				GetConnectorStatusMessagesFunc: func(topicName string) (map[string]string, error) {
+					if topicName == "connect-status" {
+						return map[string]string{
+							"datagen-connector-users": `{"state":"RUNNING","worker_id":"10.0.1.119:8083"}`,
+							"datagen-connector-orders": `{"state":"PAUSED","worker_id":"10.0.1.119:8083"}`,
+						}, nil
+					}
+					return nil, errors.New("unexpected parameters")
+				},
+			},
+			expectedResult: []types.SelfManagedConnector{
+				{
+					Name:        "datagen-connector-users",
+					State:       "RUNNING",
+					ConnectHost: "10.0.1.119:8083",
+					Config: map[string]interface{}{
+						"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+						"tasks.max":       "1",
+					},
+				},
+				{
+					Name:        "datagen-connector-orders",
+					State:       "UNASSIGNED",
+					ConnectHost: "10.0.1.119:8083",
+					Config: map[string]interface{}{
+						"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+						"tasks.max":       "2",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "connect-configs topic exists but no connector messages",
+			topics: []types.TopicDetails{
+				{Name: "connect-configs", Partitions: 1, ReplicationFactor: 1},
+			},
+			mockClient: &mocks.MockKafkaAdmin{
+				GetAllMessagesWithKeyFilterFunc: func(topicName string, keyPrefix string) (map[string]string, error) {
+					return nil, errors.New("no messages found with key prefix 'connector-' in topic connect-configs")
+				},
+			},
+			expectedResult: nil,
+			expectError:    true,
+		},
+		{
+			name: "connect-configs topic exists but fails to read due to ACL issue",
+			topics: []types.TopicDetails{
+				{Name: "connect-configs", Partitions: 1, ReplicationFactor: 1},
+			},
+			mockClient: &mocks.MockKafkaAdmin{
+				GetAllMessagesWithKeyFilterFunc: func(topicName string, keyPrefix string) (map[string]string, error) {
+					return nil, errors.New("failed to start consuming partition: Cluster authorization failed")
+				},
+			},
+			expectedResult: nil,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := &KafkaService{
+				client:     tt.mockClient,
+				authType:   types.AuthTypeIAM,
+				clusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc-123",
+			}
+
+			result, err := ks.scanSelfManagedConnectors(tt.topics)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, len(tt.expectedResult), len(result))
+
+				// Check each connector (order-independent)
+				expectedMap := make(map[string]types.SelfManagedConnector)
+				for _, connector := range tt.expectedResult {
+					expectedMap[connector.Name] = connector
+				}
+
+				for _, actualConnector := range result {
+					expectedConnector, exists := expectedMap[actualConnector.Name]
+					assert.True(t, exists, "Unexpected connector name: %s", actualConnector.Name)
+					assert.Equal(t, expectedConnector.Config, actualConnector.Config)
+				}
+			}
+		})
+	}
+}
