@@ -3,6 +3,7 @@ package scan
 import (
 	"github.com/confluentinc/kcp/cmd/scan/client_inventory"
 	"github.com/confluentinc/kcp/cmd/scan/clusters"
+	"github.com/confluentinc/kcp/cmd/scan/schema_registry"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +19,7 @@ func NewScanCmd() *cobra.Command {
 	scanCmd.AddCommand(
 		client_inventory.NewScanClientInventoryCmd(),
 		clusters.NewScanClustersCmd(),
+		schema_registry.NewScanSchemaRegistryCmd(),
 	)
 
 	return scanCmd
