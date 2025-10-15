@@ -84,10 +84,6 @@ var ConnectorMap = map[string]ConnectorMapping{
 		PluginName:    "CloudWatchMetricsSink",
 		ConnectorType: "Sink",
 	},
-	"io.confluent.connect.collibra.CollibraSinkConnector": {
-		PluginName:    "CollibraSink",
-		ConnectorType: "Sink",
-	},
 	"com.azure.cosmos.kafka.connect.sink.CosmosDBSinkConnector": {
 		PluginName:    "CosmosDbSink",
 		ConnectorType: "Sink",
@@ -366,10 +362,6 @@ var ConnectorMap = map[string]ConnectorMapping{
 	},
 	"io.confluent.connect.sqs.source.SqsSourceConnector": {
 		PluginName:    "SqsSource",
-		ConnectorType: "Source",
-	},
-	"io.confluent.connect.tibco.TibcoSourceConnector": {
-		PluginName:    "TIBCOSource",
 		ConnectorType: "Source",
 	},
 	"io.confluent.connect.zendesk.ZendeskSourceConnector": {
