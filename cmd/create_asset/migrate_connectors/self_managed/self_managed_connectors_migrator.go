@@ -51,40 +51,40 @@ type MigrateSelfManagedConnectorOpts struct {
 }
 
 type SelfManagedConnectorMigrator struct {
-	environmentId string
-	clusterId     string
+	EnvironmentId string
+	ClusterId     string
 
-	ccApiKey    string
-	ccApiSecret string
+	CcApiKey    string
+	CcApiSecret string
 
-	connectors []types.SelfManagedConnector
-	outputDir  string
+	Connectors []types.SelfManagedConnector
+	OutputDir  string
 }
 
 func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *SelfManagedConnectorMigrator {
 	return &SelfManagedConnectorMigrator{
-		environmentId: opts.EnvironmentId,
-		clusterId:     opts.ClusterId,
-		ccApiKey:      opts.CcApiKey,
-		ccApiSecret:   opts.CcApiSecret,
-		connectors:    opts.Connectors,
-		outputDir:     opts.OutputDir,
+		EnvironmentId: opts.EnvironmentId,
+		ClusterId:     opts.ClusterId,
+		CcApiKey:      opts.CcApiKey,
+		CcApiSecret:   opts.CcApiSecret,
+		Connectors:    opts.Connectors,
+		OutputDir:     opts.OutputDir,
 	}
 }
 
 func (mc *SelfManagedConnectorMigrator) Run() error {
-	if len(mc.connectors) == 0 {
-		fmt.Println("No connectors found to migrate")
+	if len(mc.Connectors) == 0 {
+		slog.Warn("⚠️ No self-managed connectors found to migrate for the MSK cluster.")
 		return nil
 	}
 
-	if mc.outputDir != "" {
-		if err := os.MkdirAll(mc.outputDir, 0755); err != nil {
-			return fmt.Errorf("failed to create output directory %s: %w", mc.outputDir, err)
+	if mc.OutputDir != "" {
+		if err := os.MkdirAll(mc.OutputDir, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory %s: %w", mc.OutputDir, err)
 		}
 	}
 
-	slog.Info(fmt.Sprintf("Found %d connector(s) to migrate", len(mc.connectors)))
+	slog.Info(fmt.Sprintf("Found %d connector(s) to migrate", len(mc.Connectors)))
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {
@@ -98,7 +98,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	for _, connector := range mc.connectors {
+	for _, connector := range mc.Connectors {
 		translatedConfig, warnings, err := mc.translateConnectorConfig(connector)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("❌ Failed to translate connector %s: %v", connector.Name, err))
@@ -110,7 +110,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		}
 
 		filename := fmt.Sprintf("%s-connector.tf", connector.Name)
-		filepath := filepath.Join(mc.outputDir, filename)
+		filepath := filepath.Join(mc.OutputDir, filename)
 
 		file, err := os.Create(filepath)
 		if err != nil {
@@ -120,8 +120,8 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 
 		templateData := TemplateData{
 			ConnectorName:   connector.Name,
-			EnvironmentId:   mc.environmentId,
-			ClusterId:       mc.clusterId,
+			EnvironmentId:   mc.EnvironmentId,
+			ClusterId:       mc.ClusterId,
 			ConnectorConfig: translatedConfig,
 			Warnings:        warnings,
 		}
@@ -133,7 +133,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		slog.Info(fmt.Sprintf("✅ Generated: %s", filename))
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully generated connector files for %d connectors in %s", len(mc.connectors), mc.outputDir))
+	slog.Info(fmt.Sprintf("✅ Successfully generated connector files for %d connectors in %s", len(mc.Connectors), mc.OutputDir))
 
 	return nil
 }
@@ -141,7 +141,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types.SelfManagedConnector) (map[string]any, []Warning, error) {
 	connectorClass, ok := connector.Config["properties"].(map[string]any)["connector.class"].(string)
 	if !ok {
-		return nil, nil, fmt.Errorf("connector.class not found in config")
+		return nil, nil, fmt.Errorf("'connector.class' not found in config")
 	}
 
 	pluginName, err := connector_utils.InferPluginName(connectorClass)
@@ -151,8 +151,8 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 
 	url := fmt.Sprintf(
 		"https://api.confluent.cloud/connect/v1/environments/%s/clusters/%s/connector-plugins/%s/config/translate",
-		mc.environmentId,
-		mc.clusterId,
+		mc.EnvironmentId,
+		mc.ClusterId,
 		pluginName,
 	)
 
@@ -173,7 +173,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 
 	req.Header.Set("Content-Type", "application/json")
 
-	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", mc.ccApiKey, mc.ccApiSecret)))
+	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", mc.CcApiKey, mc.CcApiSecret)))
 	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", auth))
 
 	client := &http.Client{}
