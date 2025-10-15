@@ -6,13 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/confluentinc/kcp/internal/types"
 	connector_utils "github.com/confluentinc/kcp/internal/utils"
@@ -22,10 +22,11 @@ import (
 var assetsFs embed.FS
 
 type TemplateData struct {
-	ConnectorName      string
-	EnvironmentId      string
-	ClusterId          string
-	ConnectorConfig    map[string]interface{}
+	ConnectorName   string
+	EnvironmentId   string
+	ClusterId       string
+	ConnectorConfig map[string]interface{}
+	Warnings        []Warning
 }
 
 type TranslateResponse struct {
@@ -52,10 +53,12 @@ type MigrateSelfManagedConnectorOpts struct {
 type SelfManagedConnectorMigrator struct {
 	environmentId string
 	clusterId     string
-	ccApiKey      string
-	ccApiSecret   string
-	connectors    []types.SelfManagedConnector
-	outputDir     string
+
+	ccApiKey    string
+	ccApiSecret string
+
+	connectors []types.SelfManagedConnector
+	outputDir  string
 }
 
 func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *SelfManagedConnectorMigrator {
@@ -75,14 +78,13 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		return nil
 	}
 
-	// Create output directory if it doesn't exist
 	if mc.outputDir != "" {
 		if err := os.MkdirAll(mc.outputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %s: %w", mc.outputDir, err)
 		}
 	}
 
-	fmt.Printf("Found %d connector(s) to migrate\n\n", len(mc.connectors))
+	slog.Info(fmt.Sprintf("Found %d connector(s) to migrate", len(mc.connectors)))
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {
@@ -96,29 +98,16 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	for i, connector := range mc.connectors {
-		fmt.Printf("-------------------- Connector %d/%d: %s --------------------\n", i+1, len(mc.connectors), connector.Name)
-
+	for _, connector := range mc.connectors {
 		translatedConfig, warnings, err := mc.translateConnectorConfig(connector)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Failed to translate connector %s: %v\n\n", connector.Name, err))
+			slog.Warn(fmt.Sprintf("❌ Failed to translate connector %s: %v", connector.Name, err))
 			continue
 		}
 
 		if len(warnings) > 0 {
-			slog.Info(fmt.Sprintf("Warnings for connector %s:", connector.Name))
-			for _, warning := range warnings {
-				slog.Info(fmt.Sprintf("  - %s: %s", warning.Field, warning.Message))
-			}
+			slog.Info(fmt.Sprintf("⚠️ %d validation warnings for connector %s", len(warnings), connector.Name))
 		}
-
-		configJSON, err := json.MarshalIndent(translatedConfig, "", "  ")
-		if err != nil {
-			slog.Warn(fmt.Sprintf("Failed to marshal translated config: %v\n\n", err))
-			continue
-		}
-
-		slog.Debug(fmt.Sprintf("Translated Configuration:\n%s\n\n", string(configJSON)))
 
 		filename := fmt.Sprintf("%s-connector.tf", connector.Name)
 		filepath := filepath.Join(mc.outputDir, filename)
@@ -130,17 +119,18 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		defer file.Close()
 
 		templateData := TemplateData{
-			ConnectorName:      connector.Name,
-			EnvironmentId:      mc.environmentId,
-			ClusterId:          mc.clusterId,
-			ConnectorConfig:    translatedConfig,
+			ConnectorName:   connector.Name,
+			EnvironmentId:   mc.environmentId,
+			ClusterId:       mc.clusterId,
+			ConnectorConfig: translatedConfig,
+			Warnings:        warnings,
 		}
 
 		if err := tmpl.Execute(file, templateData); err != nil {
 			return fmt.Errorf("failed to execute template for connector %s: %w", connector.Name, err)
 		}
 
-		fmt.Printf("✅ Generated: %s\n\n", filename)
+		slog.Info(fmt.Sprintf("✅ Generated: %s", filename))
 	}
 
 	slog.Info(fmt.Sprintf("✅ Successfully generated connector files for %d connectors in %s", len(mc.connectors), mc.outputDir))
@@ -148,8 +138,8 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	return nil
 }
 
-func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types.SelfManagedConnector) (map[string]interface{}, []Warning, error) {
-	connectorClass, ok := connector.Config["properties"].(map[string]interface{})["connector.class"].(string)
+func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types.SelfManagedConnector) (map[string]any, []Warning, error) {
+	connectorClass, ok := connector.Config["properties"].(map[string]any)["connector.class"].(string)
 	if !ok {
 		return nil, nil, fmt.Errorf("connector.class not found in config")
 	}
@@ -167,7 +157,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 	)
 
 	actualConfig := connector.Config
-	if properties, ok := connector.Config["properties"].(map[string]interface{}); ok {
+	if properties, ok := connector.Config["properties"].(map[string]any); ok {
 		actualConfig = properties
 	}
 

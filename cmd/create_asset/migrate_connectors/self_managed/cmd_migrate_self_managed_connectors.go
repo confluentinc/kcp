@@ -105,6 +105,10 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
 	}
 
+	if outputDir == "" {
+		outputDir = fmt.Sprintf("%s-connectors", utils.ExtractClusterNameFromArn(clusterArn))
+	}
+
 	var state types.State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
