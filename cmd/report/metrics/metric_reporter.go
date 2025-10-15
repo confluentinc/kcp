@@ -9,6 +9,7 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ReportService interface {
@@ -182,20 +183,10 @@ func (r *MetricReporter) extractClusterNameFromRegion(region string) string {
 	// Find the first ARN that matches this region
 	for _, arn := range r.clusterArns {
 		if r.extractRegionFromArn(arn) == region {
-			return r.extractClusterNameFromArn(arn)
+			return utils.ExtractClusterNameFromArn(arn)
 		}
 	}
 	return "Unknown"
-}
-
-func (r *MetricReporter) extractClusterNameFromArn(arn string) string {
-	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
-	// Split on '/' and take index 1 for cluster name
-	parts := strings.Split(arn, "/")
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return "unknown-cluster"
 }
 
 func (r *MetricReporter) addIndividualMetricsSection(md *markdown.Markdown, metrics []types.ProcessedMetric) {

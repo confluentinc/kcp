@@ -273,10 +273,22 @@ type ConnectorSummary struct {
 	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
+type SelfManagedConnector struct {
+	Name        string                 `json:"name"`
+	Config      map[string]interface{} `json:"config"`
+	State       string                 `json:"state,omitempty"`
+	ConnectHost string                 `json:"connect_host,omitempty"`
+}
+
+type SelfManagedConnectors struct {
+	Connectors []SelfManagedConnector `json:"connectors"`
+}
+
 type KafkaAdminClientInformation struct {
-	ClusterID string  `json:"cluster_id"`
-	Topics    *Topics `json:"topics"`
-	Acls      []Acls  `json:"acls"`
+	ClusterID             string                 `json:"cluster_id"`
+	Topics                *Topics                `json:"topics"`
+	Acls                  []Acls                 `json:"acls"`
+	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`
 }
 
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
@@ -287,6 +299,12 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 	c.Topics = &Topics{
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
+}
+
+func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
+	c.SelfManagedConnectors = &SelfManagedConnectors{
+		Connectors: connectors,
 	}
 }
 
