@@ -27,6 +27,7 @@ resource "confluent_connector" "{{.ConnectorName | lower}}" {
   }
 
   config_nonsensitive = {
+    "name" = "{{.ConnectorName | lower}}"
 {{range $key, $value := .ConnectorConfig}}    "{{$key}}" = "{{$value}}"
 {{end}}  }
 }
