@@ -3,6 +3,8 @@ package schema_registry
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/services/schema_registry"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
@@ -36,7 +38,6 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	// Authentication flags.
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
@@ -82,10 +83,21 @@ func preRunScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 	opts, err := parseScanSchemaRegistryOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse scan schema registry opts: %v", err)
+		return fmt.Errorf("❌ failed to parse scan schema registry opts: %v", err)
 	}
 
-	_ = opts
+	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, client.WithUnauthenticated())
+	if err != nil {
+		return fmt.Errorf("❌ failed to create schema registry client: %v", err)
+	}
+
+	schemaRegistryService := schema_registry.NewSchemaRegistryService(schemaRegistryClient)
+
+	schemaRegistryScanner := NewSchemaRegistryScanner(schemaRegistryService, *opts)
+	if err := schemaRegistryScanner.Run(); err != nil {
+		return fmt.Errorf("❌ failed to scan schema registry: %v", err)
+	}
+
 	return nil
 }
 
