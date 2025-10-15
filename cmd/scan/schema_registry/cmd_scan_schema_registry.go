@@ -86,8 +86,12 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("❌ failed to parse scan schema registry opts: %v", err)
 	}
 
-	// later on will have more auth options
-	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, client.WithUnauthenticated())
+	authOption, err := getAuthOptionFromFlags()
+	if err != nil {
+		return fmt.Errorf("❌ failed to get auth option: %v", err)
+	}
+
+	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, authOption)
 	if err != nil {
 		return fmt.Errorf("❌ failed to create schema registry client: %v", err)
 	}
@@ -114,4 +118,14 @@ func parseScanSchemaRegistryOpts() (*SchemaRegistryScannerOpts, error) {
 	}
 
 	return &opts, nil
+}
+
+func getAuthOptionFromFlags() (client.SchemaRegistryOption, error) {
+	switch {
+	case useUnauthenticated:
+		return client.WithUnauthenticated(), nil
+
+	default:
+		return nil, fmt.Errorf("no authentication method specified")
+	}
 }
