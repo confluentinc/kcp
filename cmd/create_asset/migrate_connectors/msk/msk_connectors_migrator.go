@@ -105,8 +105,10 @@ func (mc *MskConnectorMigrator) Run() error {
 			continue
 		}
 
-		if len(warnings) > 0 {
-			slog.Info(fmt.Sprintf("⚠️ %d validation warnings for connector %s", len(warnings), connector.ConnectorName))
+		if warnings != nil {
+			if len(warnings) > 0 {
+				slog.Info(fmt.Sprintf("⚠️ %d validation warnings for connector %s", len(warnings), connector.ConnectorName))
+			}
 		}
 
 		filename := fmt.Sprintf("%s-connector.tf", connector.ConnectorName)
