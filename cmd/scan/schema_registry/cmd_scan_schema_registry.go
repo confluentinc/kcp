@@ -16,6 +16,9 @@ var (
 	stateFile          string
 	url                string
 	useUnauthenticated bool
+	useBasicAuth       bool
+	username           string
+	password           string
 )
 
 func NewScanSchemaRegistryCmd() *cobra.Command {
@@ -29,26 +32,25 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 		RunE:          runScanSchemaRegistry,
 	}
 
-	groups := map[*pflag.FlagSet]string{}
-
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&url, "url", "", "The URL of the schema registry to scan.")
 	schemaRegistryCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
 
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
+	authFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use Basic Authentication")
+	authFlags.StringVar(&username, "username", "", "The username to use for Basic Authentication")
+	authFlags.StringVar(&password, "password", "", "The password to use for Basic Authentication")
 	schemaRegistryCmd.Flags().AddFlagSet(authFlags)
-	groups[authFlags] = "Authentication Flags"
 
 	schemaRegistryCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags}
-		groupNames := []string{"Required Flags", "Authentication Flags"}
+		groupNames := []string{"Required Flags", "Authentication Flags (provide one of the following)"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -65,9 +67,9 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd.MarkFlagRequired("state-file")
 	schemaRegistryCmd.MarkFlagRequired("url")
 
-	// will have more auth flags later
-	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated")
-	schemaRegistryCmd.MarkFlagsOneRequired("use-unauthenticated")
+	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated", "use-basic-auth")
+	schemaRegistryCmd.MarkFlagsOneRequired("use-unauthenticated", "use-basic-auth")
+	schemaRegistryCmd.MarkFlagsRequiredTogether("use-basic-auth", "username", "password")
 
 	return schemaRegistryCmd
 }
@@ -124,6 +126,11 @@ func getAuthOptionFromFlags() (client.SchemaRegistryOption, error) {
 	switch {
 	case useUnauthenticated:
 		return client.WithUnauthenticated(), nil
+	case useBasicAuth:
+		if username == "" || password == "" {
+			return nil, fmt.Errorf("username and password are required for basic authentication")
+		}
+		return client.WithBasicAuth(username, password), nil
 
 	default:
 		return nil, fmt.Errorf("no authentication method specified")
