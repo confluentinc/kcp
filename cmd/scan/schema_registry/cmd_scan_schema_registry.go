@@ -108,8 +108,9 @@ func parseScanSchemaRegistryOpts() (*SchemaRegistryScannerOpts, error) {
 		return nil, fmt.Errorf("failed to load existing state file: %v", err)
 	}
 	opts := SchemaRegistryScannerOpts{
-		State: *state,
-		Url:   url,
+		StateFile: stateFile,
+		State:     *state,
+		Url:       url,
 	}
 
 	return &opts, nil

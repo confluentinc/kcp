@@ -39,7 +39,7 @@ func (srs *SchemaRegistryScanner) Run() error {
 	slog.Info("🚀 starting schema registry scanner")
 	subjects, err := srs.SchemaRegistryService.ExportAllSubjects()
 	if err != nil {
-		return fmt.Errorf("❌ failed to export all subjects: %v", err)
+		return fmt.Errorf("failed to export all subjects: %v", err)
 	}
 
 	schemaInformation := types.SchemaInformation{
@@ -50,7 +50,7 @@ func (srs *SchemaRegistryScanner) Run() error {
 	srs.State.Schemas = schemaInformation
 
 	if err := srs.State.PersistStateFile(srs.StateFile); err != nil {
-		return fmt.Errorf("❌ failed to save schema registry state: %v", err)
+		return fmt.Errorf("failed to save schema registry state: %v", err)
 	}
 
 	return nil
