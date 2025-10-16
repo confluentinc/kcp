@@ -20,36 +20,39 @@ func NewSchemaRegistryService(client schemaregistry.Client) *SchemaRegistryServi
 func (sr *SchemaRegistryService) ExportAllSubjects() ([]types.Subject, error) {
 	subjects := []types.Subject{}
 
-	allSubjects, err := sr.client.GetAllSubjects()
+	subjectNames, err := sr.client.GetAllSubjects()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all subjects: %v", err)
 	}
 
-	for _, subjectName := range allSubjects {
-		latest, err := sr.GetLatestSchema(subjectName)
+	for _, subjectName := range subjectNames {
+		latest, err := sr.client.GetLatestSchemaMetadata(subjectName)
 		if err != nil {
 			continue
 		}
 
-		versions, err := sr.GetAllSubjectVersions(subjectName)
+		versionNumbers, err := sr.client.GetAllVersions(subjectName)
 		if err != nil {
 			continue
+		}
+
+		versions := []schemaregistry.SchemaMetadata{}
+		for _, version := range versionNumbers {
+			schema, err := sr.client.GetSchemaMetadata(subjectName, version)
+			if err != nil {
+				continue
+			}
+			versions = append(versions, schema)
 		}
 
 		subjects = append(subjects, types.Subject{
-			Name:     subjectName,
-			Versions: versions,
-			Latest:   latest,
+			Name:       subjectName,
+			// todo not working at moment
+			SchemaType: string(latest.SchemaType),
+			Versions:   versions,
+			Latest:     latest,
 		})
 	}
 
 	return subjects, nil
-}
-
-func (sr *SchemaRegistryService) GetAllSubjectVersions(subject string) ([]int, error) {
-	return sr.client.GetAllVersions(subject)
-}
-
-func (sr *SchemaRegistryService) GetLatestSchema(subject string) (schemaregistry.SchemaMetadata, error) {
-	return sr.client.GetLatestSchemaMetadata(subject)
 }

@@ -21,10 +21,10 @@ import (
 // State represents the raw input data structure (kcp-state.json file)
 // This is what gets fed INTO the frontend/API for processing
 type State struct {
-	Regions      []DiscoveredRegion `json:"regions"`
-	Schemas      SchemaInformation  `json:"schemas"`
-	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
-	Timestamp    time.Time          `json:"timestamp"`
+	Regions          []DiscoveredRegion          `json:"regions"`
+	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
+	Timestamp        time.Time                   `json:"timestamp"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -338,15 +338,18 @@ type KcpBuildInfo struct {
 	Date    string `json:"date"`
 }
 
-type SchemaInformation struct {
+type SchemaRegistryInformation struct {
+	// ID       string    `json:"id"`
+	Type     string    `json:"type"`
 	URL      string    `json:"url"`
 	Subjects []Subject `json:"subjects"`
 }
 
 type Subject struct {
-	Name     string                        `json:"name"`
-	Versions []int                         `json:"versions"`
-	Latest   schemaregistry.SchemaMetadata `json:"latest_schema"`
+	Name       string                          `json:"name"`
+	SchemaType string                          `json:"schema_type"`
+	Versions   []schemaregistry.SchemaMetadata `json:"versions"`
+	Latest     schemaregistry.SchemaMetadata   `json:"latest_schema"`
 }
 
 // ProcessedState represents the transformed output data structure

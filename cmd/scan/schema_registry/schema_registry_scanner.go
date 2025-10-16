@@ -42,12 +42,13 @@ func (srs *SchemaRegistryScanner) Run() error {
 		return fmt.Errorf("failed to export all subjects: %v", err)
 	}
 
-	schemaInformation := types.SchemaInformation{
+	schemaRegistryInformation := types.SchemaRegistryInformation{
+		Type:     "confluent",
 		URL:      srs.Url,
 		Subjects: subjects,
 	}
 
-	srs.State.Schemas = schemaInformation
+	srs.State.SchemaRegistries = append(srs.State.SchemaRegistries, schemaRegistryInformation)
 
 	if err := srs.State.PersistStateFile(srs.StateFile); err != nil {
 		return fmt.Errorf("failed to save schema registry state: %v", err)
