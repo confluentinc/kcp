@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
@@ -21,6 +22,7 @@ import (
 // This is what gets fed INTO the frontend/API for processing
 type State struct {
 	Regions      []DiscoveredRegion `json:"regions"`
+	Schemas      SchemaInformation  `json:"schemas"`
 	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
 	Timestamp    time.Time          `json:"timestamp"`
 }
@@ -334,6 +336,17 @@ type KcpBuildInfo struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
 	Date    string `json:"date"`
+}
+
+type SchemaInformation struct {
+	URL      string    `json:"url"`
+	Subjects []Subject `json:"subjects"`
+}
+
+type Subject struct {
+	Name     string                        `json:"name"`
+	Versions []int                         `json:"versions"`
+	Latest   schemaregistry.SchemaMetadata `json:"latest_schema"`
 }
 
 // ProcessedState represents the transformed output data structure
