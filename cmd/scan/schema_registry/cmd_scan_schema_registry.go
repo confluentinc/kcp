@@ -25,7 +25,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd := &cobra.Command{
 		Use:           "schema-registry",
 		Short:         "Scan schema registry for information",
-		Long:          "Scan schema registry for information",
+		Long:          "Scan schema registry for information including all subjects, their versions, and latest schema metadata.",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanSchemaRegistry,
