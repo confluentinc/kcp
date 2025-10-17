@@ -76,3 +76,14 @@ func GetClusterByArn(state *types.State, clusterArn string) (*types.DiscoveredCl
 
 	return nil, fmt.Errorf("cluster with ARN %s not found in discovery data", clusterArn)
 }
+
+func ExtractClusterNameFromArn(arn string) string {
+	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
+	// Split on '/' and take index 1 for cluster name
+	parts := strings.Split(arn, "/")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	
+	return "unknown-cluster"
+}
