@@ -454,21 +454,17 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 		return nil, fmt.Errorf("topic %s has no partitions", topicName)
 	}
 
-	// Map to store the latest status for each connector
 	connectorStatuses := make(map[string]string)
-	// Map to track the latest timestamp for each connector
 	connectorTimestamps := make(map[string]int64)
 
-	// Process each partition
 	for _, partition := range partitions {
-		// Start consuming from the oldest available offset
 		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, sarama.OffsetOldest)
 		if err != nil {
 			continue // Skip this partition if we can't consume it
 		}
 
 		messagesRead := 0
-		timeout := time.After(5 * time.Second)
+		timeout := time.After(120 * time.Second)
 
 	partitionLoop:
 		for {
@@ -498,11 +494,6 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 								connectorTimestamps[connectorName] = msgTimestamp
 							}
 						}
-					}
-
-					// Limit to 1000 messages per partition to avoid consuming too much
-					if messagesRead >= 1000 {
-						break partitionLoop
 					}
 				}
 			case <-partitionConsumer.Errors():
