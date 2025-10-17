@@ -45,10 +45,14 @@ func (sr *SchemaRegistryService) ExportAllSubjects() ([]types.Subject, error) {
 			versions = append(versions, schema)
 		}
 
+		schemaType := string(latest.SchemaType)
+		if latest.SchemaType == "" {
+			schemaType = "AVRO"
+		}
+
 		subjects = append(subjects, types.Subject{
 			Name:       subjectName,
-			// todo not working at moment
-			SchemaType: string(latest.SchemaType),
+			SchemaType: schemaType,
 			Versions:   versions,
 			Latest:     latest,
 		})
