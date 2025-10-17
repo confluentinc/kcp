@@ -3,6 +3,9 @@ import ClusterMetrics from './ClusterMetrics'
 import ClusterTopics from './ClusterTopics'
 import ClusterConnectors from './ClusterConnectors'
 import ClusterACLs from './ClusterACLs'
+import Wizard from './Wizard'
+import { Modal } from './ui/modal'
+import { Button } from './ui/button'
 
 interface ClusterReportProps {
   cluster: {
@@ -41,6 +44,7 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
   const [activeTab, setActiveTab] = useState<
     'metrics' | 'topics' | 'connectors' | 'cluster' | 'acls'
   >('cluster')
+  const [isWizardOpen, setIsWizardOpen] = useState(false)
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
   const provisioned = mskConfig?.Provisioned
@@ -101,6 +105,13 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                 Version: {mskConfig.CurrentVersion || 'Unknown'}
               </p>
             </div>
+            <Button
+              onClick={() => setIsWizardOpen(true)}
+              variant="default"
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Create Migration Infrastructure
+            </Button>
           </div>
 
           {/* Key Metrics */}
@@ -628,6 +639,15 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           )}
         </div>
       </div>
+
+      {/* Migration Wizard Modal */}
+      <Modal
+        isOpen={isWizardOpen}
+        onClose={() => setIsWizardOpen(false)}
+        title={`Create Migration Infrastructure - ${cluster.name}`}
+      >
+        <Wizard />
+      </Modal>
     </div>
   )
 }

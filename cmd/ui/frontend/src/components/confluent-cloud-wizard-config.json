@@ -1,0 +1,308 @@
+{
+  "id": "confluent-cloud-wizard",
+  "title": "Confluent Cloud Setup Wizard",
+  "description": "Configure your Confluent Cloud environment and cluster",
+  "xstateMachine": {
+    "id": "wizard",
+    "initial": "environment-question",
+    "context": {
+      "stepData": {},
+      "allData": {},
+      "currentStep": "environment-question"
+    },
+    "states": {
+      "environment-question": {
+        "meta": {
+          "title": "Existing Confluent Cloud Environment",
+          "description": "Do you have an existing Confluent Cloud environment you'd like to use?",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "hasExistingEnvironment": {
+                "type": "boolean",
+                "title": "I have an existing Confluent Cloud environment",
+                "default": false
+              }
+            },
+            "required": ["hasExistingEnvironment"]
+          },
+          "uiSchema": {
+            "hasExistingEnvironment": {
+              "ui:widget": "radio"
+            }
+          }
+        },
+        "on": {
+          "NEXT": [
+            {
+              "target": "create-environment",
+              "guard": "hasNoExistingEnvironment",
+              "actions": "saveStepData"
+            },
+            {
+              "target": "get-environment-id",
+              "guard": "hasExistingEnvironment",
+              "actions": "saveStepData"
+            }
+          ]
+        }
+      },
+      "get-environment-id": {
+        "meta": {
+          "title": "Existing Environment Details",
+          "description": "Enter your existing Confluent Cloud environment ID",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "environmentId": {
+                "type": "string",
+                "title": "Environment ID",
+                "description": "Your Confluent Cloud environment ID"
+              }
+            },
+            "required": ["environmentId"]
+          },
+          "uiSchema": {
+            "environmentId": {
+              "ui:placeholder": "e.g., env-12345"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "cluster-question",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "environment-question"
+          }
+        }
+      },
+      "create-environment": {
+        "meta": {
+          "title": "Create Confluent Cloud Environment",
+          "description": "Enter details for your new Confluent Cloud environment",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "environmentName": {
+                "type": "string",
+                "title": "Environment Name",
+                "description": "Name for your new Confluent Cloud environment"
+              }
+            },
+            "required": ["environmentName"]
+          },
+          "uiSchema": {
+            "environmentName": {
+              "ui:placeholder": "e.g., production-env"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "cluster-question",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "environment-question"
+          }
+        }
+      },
+      "cluster-question": {
+        "meta": {
+          "title": "Existing Confluent Cloud Cluster",
+          "description": "Do you have an existing Confluent Cloud cluster you'd like to use?",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "hasExistingCluster": {
+                "type": "boolean",
+                "title": "I have an existing Confluent Cloud cluster",
+                "default": false
+              }
+            },
+            "required": ["hasExistingCluster"]
+          },
+          "uiSchema": {
+            "hasExistingCluster": {
+              "ui:widget": "radio"
+            }
+          }
+        },
+        "on": {
+          "NEXT": [
+            {
+              "target": "get-cluster-details",
+              "guard": "hasExistingCluster",
+              "actions": "saveStepData"
+            },
+            {
+              "target": "create-cluster",
+              "guard": "hasNoExistingCluster",
+              "actions": "saveStepData"
+            }
+          ],
+          "BACK": [
+            {
+              "target": "create-environment",
+              "guard": "cameFromCreateEnvironment"
+            },
+            {
+              "target": "get-environment-id",
+              "guard": "cameFromGetEnvironmentId"
+            },
+            {
+              "target": "environment-question"
+            }
+          ]
+        }
+      },
+      "get-cluster-details": {
+        "meta": {
+          "title": "Existing Cluster Details",
+          "description": "Enter your existing Confluent Cloud cluster details and credentials",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "clusterId": {
+                "type": "string",
+                "title": "Cluster ID",
+                "description": "Your Confluent Cloud cluster ID"
+              },
+              "kafkaApiKey": {
+                "type": "string",
+                "title": "Kafka API Key",
+                "description": "Kafka API key for authentication"
+              },
+              "kafkaApiSecret": {
+                "type": "string",
+                "title": "Kafka API Secret",
+                "description": "Kafka API secret for authentication"
+              }
+            },
+            "required": ["clusterId", "kafkaApiKey", "kafkaApiSecret"]
+          },
+          "uiSchema": {
+            "clusterId": {
+              "ui:placeholder": "e.g., lkc-12345"
+            },
+            "kafkaApiKey": {
+              "ui:placeholder": "e.g., ABCDEFGHIJKLMNOP"
+            },
+            "kafkaApiSecret": {
+              "ui:widget": "password",
+              "ui:placeholder": "Enter your Kafka API secret"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "review",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "cluster-question"
+          }
+        }
+      },
+      "create-cluster": {
+        "meta": {
+          "title": "Create Confluent Cloud Cluster",
+          "description": "Enter details for your new Confluent Cloud cluster",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "clusterName": {
+                "type": "string",
+                "title": "Cluster Name",
+                "description": "Name for your new Confluent Cloud cluster"
+              },
+              "clusterType": {
+                "type": "string",
+                "enum": ["basic", "standard", "dedicated"],
+                "title": "Cluster Type",
+                "description": "Select the type of cluster"
+              }
+            },
+            "required": ["clusterName", "clusterType"]
+          },
+          "uiSchema": {
+            "clusterName": {
+              "ui:placeholder": "e.g., production-cluster"
+            },
+            "clusterType": {
+              "ui:widget": "select"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "review",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "cluster-question"
+          }
+        }
+      },
+      "review": {
+        "meta": {
+          "title": "Review Configuration",
+          "description": "Review your Confluent Cloud configuration",
+          "type": "review",
+          "summaryFields": [
+            "hasExistingEnvironment",
+            "environmentId",
+            "environmentName",
+            "hasExistingCluster",
+            "clusterId",
+            "kafkaApiKey",
+            "clusterName",
+            "clusterType"
+          ]
+        },
+        "on": {
+          "SUBMIT": {
+            "target": "complete",
+            "actions": "saveStepData"
+          },
+          "BACK": [
+            {
+              "target": "get-cluster-details",
+              "guard": "cameFromGetClusterDetails"
+            },
+            {
+              "target": "create-cluster",
+              "guard": "cameFromCreateCluster"
+            },
+            {
+              "target": "cluster-question"
+            }
+          ]
+        }
+      },
+      "complete": {
+        "type": "final",
+        "meta": {
+          "title": "Configuration Complete",
+          "message": "Your Confluent Cloud configuration is ready to be processed...",
+          "apiEndpoint": "/api/confluent-cloud/setup"
+        }
+      }
+    }
+  },
+  "guards": {
+    "hasExistingEnvironment": "event && event.data && event.data.hasExistingEnvironment === true",
+    "hasNoExistingEnvironment": "event && event.data && event.data.hasExistingEnvironment === false",
+    "hasExistingCluster": "event && event.data && event.data.hasExistingCluster === true",
+    "hasNoExistingCluster": "event && event.data && event.data.hasExistingCluster === false",
+    "cameFromCreateEnvironment": "context && context.previousStep === 'create-environment'",
+    "cameFromGetEnvironmentId": "context && context.previousStep === 'get-environment-id'",
+    "cameFromGetClusterDetails": "context && context.previousStep === 'get-cluster-details'",
+    "cameFromCreateCluster": "context && context.previousStep === 'create-cluster'"
+  },
+  "actions": {
+    "saveStepData": "assign({ stepData: (context, event) => ({ ...context.stepData, [event.stepId]: event.data }), allData: (context, event) => ({ ...context.allData, [event.stepId]: event.data }), previousStep: (context, event) => event.stepId })"
+  }
+}

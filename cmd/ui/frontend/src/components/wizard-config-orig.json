@@ -1,0 +1,346 @@
+{
+  "id": "terraform-infrastructure-wizard",
+  "title": "Infrastructure Setup Wizard",
+  "description": "Configure your infrastructure for Terraform generation",
+  "xstateMachine": {
+    "id": "wizard",
+    "initial": "environment",
+    "context": {
+      "stepData": {},
+      "allData": {},
+      "currentStep": "environment"
+    },
+    "states": {
+      "environment": {
+        "meta": {
+          "title": "Environment Selection",
+          "description": "Choose your deployment environment",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "environment": {
+                "type": "string",
+                "enum": ["development", "staging", "production"],
+                "title": "Environment Type",
+                "description": "Select the environment for your infrastructure"
+              }
+            },
+            "required": ["environment"]
+          },
+          "uiSchema": {
+            "environment": {
+              "ui:widget": "select",
+              "ui:placeholder": "Choose an environment..."
+            }
+          }
+        },
+        "on": {
+          "NEXT": [
+            {
+              "target": "basic-config",
+              "guard": "isEnvironmentDevelopment",
+              "actions": "saveStepData"
+            },
+            {
+              "target": "advanced-config",
+              "guard": "isEnvironmentStaging",
+              "actions": "saveStepData"
+            },
+            {
+              "target": "security-config",
+              "guard": "isEnvironmentProduction",
+              "actions": "saveStepData"
+            },
+            {
+              "target": "basic-config",
+              "actions": "saveStepData"
+            }
+          ]
+        }
+      },
+      "basic-config": {
+        "meta": {
+          "title": "Basic Configuration",
+          "description": "Configure basic infrastructure settings for development",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "projectName": {
+                "type": "string",
+                "title": "Project Name",
+                "description": "Name of your project"
+              },
+              "region": {
+                "type": "string",
+                "enum": ["us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"],
+                "title": "AWS Region",
+                "description": "Select the AWS region for deployment"
+              },
+              "enableLogging": {
+                "type": "boolean",
+                "title": "Enable Basic Logging",
+                "description": "Enable CloudWatch logging",
+                "default": false
+              }
+            },
+            "required": ["projectName", "region"]
+          },
+          "uiSchema": {
+            "region": {
+              "ui:widget": "select"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "database-config",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "environment"
+          }
+        }
+      },
+      "advanced-config": {
+        "meta": {
+          "title": "Advanced Configuration",
+          "description": "Configure advanced infrastructure settings for staging",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "projectName": {
+                "type": "string",
+                "title": "Project Name",
+                "description": "Name of your project"
+              },
+              "region": {
+                "type": "string",
+                "enum": ["us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"],
+                "title": "AWS Region",
+                "description": "Select the AWS region for deployment"
+              },
+              "enableMonitoring": {
+                "type": "boolean",
+                "title": "Enable CloudWatch Monitoring",
+                "description": "Enable comprehensive monitoring",
+                "default": false
+              },
+              "backupRetention": {
+                "type": "integer",
+                "title": "Backup Retention (days)",
+                "description": "Number of days to retain backups",
+                "minimum": 1,
+                "maximum": 365,
+                "default": 30
+              },
+              "enableAutoScaling": {
+                "type": "boolean",
+                "title": "Enable Auto Scaling",
+                "description": "Enable automatic scaling based on load",
+                "default": false
+              }
+            },
+            "required": ["projectName", "region"]
+          },
+          "uiSchema": {
+            "region": {
+              "ui:widget": "select"
+            },
+            "backupRetention": {
+              "ui:widget": "updown"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "database-config",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "environment"
+          }
+        }
+      },
+      "security-config": {
+        "meta": {
+          "title": "Security Configuration",
+          "description": "Configure security settings for production",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "projectName": {
+                "type": "string",
+                "title": "Project Name",
+                "description": "Name of your project"
+              },
+              "region": {
+                "type": "string",
+                "enum": ["us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"],
+                "title": "AWS Region",
+                "description": "Select the AWS region for deployment"
+              },
+              "enableEncryption": {
+                "type": "boolean",
+                "title": "Enable Encryption at Rest",
+                "description": "Enable encryption for all data at rest",
+                "default": false
+              },
+              "complianceLevel": {
+                "type": "string",
+                "enum": ["standard", "high", "maximum"],
+                "title": "Compliance Level",
+                "description": "Select the compliance level required"
+              },
+              "auditLogging": {
+                "type": "boolean",
+                "title": "Enable Audit Logging",
+                "description": "Enable comprehensive audit logging",
+                "default": false
+              },
+              "enableWAF": {
+                "type": "boolean",
+                "title": "Enable Web Application Firewall",
+                "description": "Enable WAF protection",
+                "default": false
+              }
+            },
+            "required": ["projectName", "region", "complianceLevel"]
+          },
+          "uiSchema": {
+            "region": {
+              "ui:widget": "select"
+            },
+            "complianceLevel": {
+              "ui:widget": "select"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "database-config",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "environment"
+          }
+        }
+      },
+      "database-config": {
+        "meta": {
+          "title": "Database Configuration",
+          "description": "Configure your database settings",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "databaseType": {
+                "type": "string",
+                "enum": ["postgresql", "mysql", "mongodb", "redis"],
+                "title": "Database Type",
+                "description": "Select the type of database to deploy"
+              },
+              "instanceSize": {
+                "type": "string",
+                "enum": ["small", "medium", "large", "xlarge"],
+                "title": "Instance Size",
+                "description": "Select the instance size for your database"
+              },
+              "enableBackups": {
+                "type": "boolean",
+                "title": "Enable Automated Backups",
+                "description": "Enable automated daily backups",
+                "default": false
+              },
+              "multiAZ": {
+                "type": "boolean",
+                "title": "Multi-AZ Deployment",
+                "description": "Deploy across multiple availability zones",
+                "default": false
+              }
+            },
+            "required": ["databaseType", "instanceSize"]
+          },
+          "uiSchema": {
+            "databaseType": {
+              "ui:widget": "select"
+            },
+            "instanceSize": {
+              "ui:widget": "select"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "review",
+            "actions": "saveStepData"
+          },
+          "BACK": [
+            {
+              "target": "basic-config",
+              "guard": "cameFromBasicConfig"
+            },
+            {
+              "target": "advanced-config",
+              "guard": "cameFromAdvancedConfig"
+            },
+            {
+              "target": "security-config",
+              "guard": "cameFromSecurityConfig"
+            }
+          ]
+        }
+      },
+      "review": {
+        "meta": {
+          "title": "Review Configuration",
+          "description": "Review your configuration before generating Terraform",
+          "type": "review",
+          "summaryFields": [
+            "environment",
+            "projectName",
+            "region",
+            "enableLogging",
+            "enableMonitoring",
+            "backupRetention",
+            "enableAutoScaling",
+            "enableEncryption",
+            "complianceLevel",
+            "auditLogging",
+            "enableWAF",
+            "databaseType",
+            "instanceSize",
+            "enableBackups",
+            "multiAZ"
+          ]
+        },
+        "on": {
+          "SUBMIT": {
+            "target": "complete",
+            "actions": "saveStepData"
+          },
+          "BACK": {
+            "target": "database-config"
+          }
+        }
+      },
+      "complete": {
+        "type": "final",
+        "meta": {
+          "title": "Configuration Complete",
+          "message": "Your Terraform configuration is being generated...",
+          "apiEndpoint": "/api/generate-terraform"
+        }
+      }
+    }
+  },
+  "guards": {
+    "isEnvironmentDevelopment": "event && event.data && event.data.environment === 'development'",
+    "isEnvironmentStaging": "event && event.data && event.data.environment === 'staging'",
+    "isEnvironmentProduction": "event && event.data && event.data.environment === 'production'",
+    "cameFromBasicConfig": "context && context.previousStep === 'basic-config'",
+    "cameFromAdvancedConfig": "context && context.previousStep === 'advanced-config'",
+    "cameFromSecurityConfig": "context && context.previousStep === 'security-config'"
+  },
+  "actions": {
+    "saveStepData": "assign({ stepData: (context, event) => ({ ...context.stepData, [event.stepId]: event.data }), allData: (context, event) => ({ ...context.allData, [event.stepId]: event.data }), previousStep: (context, event) => event.stepId })"
+  }
+}
