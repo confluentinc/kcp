@@ -8,6 +8,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/labstack/echo/v4"
 	"github.com/zclconf/go-cty/cty"
@@ -16,9 +17,16 @@ import (
 type TerraformFiles struct {
 	MainTf      string `json:"main_tf"`
 	ProvidersTf string `json:"providers_tf"`
-	VersionsTf  string `json:"versions_tf"`
 	VariablesTf string `json:"variables_tf"`
-	OutputsTf   string `json:"outputs_tf"`
+}
+
+type WizardRequest struct {
+	NeedsEnvironment bool   `json:"needsEnvironment"`
+	EnvironmentName  string `json:"environmentName"`
+	EnvironmentId    string `json:"environmentId"`
+	NeedsCluster     bool   `json:"needsCluster"`
+	ClusterName      string `json:"clusterName"`
+	ClusterType      string `json:"clusterType"`
 }
 
 type ReportService interface {
@@ -95,27 +103,61 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 }
 
 func (ui *UI) handlePostAssets(c echo.Context) error {
-	// Generate main.tf
-	mainTf := ui.generateMainTf()
+	// Bind the wizard JSON payload
+	var req WizardRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	// Validate required fields based on what user needs
+	if !req.NeedsEnvironment && !req.NeedsCluster {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid configuration",
+			"message": "At least an environment or cluster must be configured",
+		})
+	}
+
+	if req.NeedsEnvironment {
+		if req.EnvironmentName == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Missing required fields",
+				"message": "environmentName is required when creating a new environment",
+			})
+		}
+		// When creating environment, cluster info is also required (based on wizard flow)
+		if req.ClusterName == "" || req.ClusterType == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Missing required fields",
+				"message": "clusterName and clusterType are required when creating a new environment",
+			})
+		}
+	}
+
+	if req.NeedsCluster && !req.NeedsEnvironment {
+		if req.ClusterName == "" || req.ClusterType == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Missing required fields",
+				"message": "clusterName and clusterType are required when creating a new cluster",
+			})
+		}
+	}
+
+	// Generate main.tf with the wizard data
+	mainTf := ui.generateMainTf(req)
 
 	// Generate providers.tf
 	providersTf := ui.generateProvidersTf()
 
-	// Generate versions.tf
-	versionsTf := ui.generateVersionsTf()
-
 	// Generate variables.tf
 	variablesTf := ui.generateVariablesTf()
-
-	// Generate outputs.tf
-	outputsTf := ui.generateOutputsTf()
 
 	terraformFiles := TerraformFiles{
 		MainTf:      mainTf,
 		ProvidersTf: providersTf,
-		VersionsTf:  versionsTf,
 		VariablesTf: variablesTf,
-		OutputsTf:   outputsTf,
 	}
 
 	return c.JSON(http.StatusCreated, terraformFiles)
@@ -226,169 +268,275 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	return c.JSON(http.StatusOK, regionCosts)
 }
 
+// tokensForTemplate creates properly formatted tokens for a template string (string with ${} interpolations)
+func tokensForTemplate(template string) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOQuote, Bytes: []byte(`"`)},
+		&hclwrite.Token{Type: hclsyntax.TokenQuotedLit, Bytes: []byte(template)},
+		&hclwrite.Token{Type: hclsyntax.TokenCQuote, Bytes: []byte(`"`)},
+	}
+}
+
 // generateMainTf generates the main.tf file content using HCL v2
-func (ui *UI) generateMainTf() string {
+func (ui *UI) generateMainTf(req WizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	// Random string resource for suffixes
-	randomStringBlock := rootBody.AppendNewBlock("resource", []string{"random_string", "suffix"})
-	randomStringBody := randomStringBlock.Body()
-	randomStringBody.SetAttributeValue("length", cty.NumberIntVal(4))
-	randomStringBody.SetAttributeValue("special", cty.BoolVal(false))
-	randomStringBody.SetAttributeValue("numeric", cty.BoolVal(false))
-	randomStringBody.SetAttributeValue("upper", cty.BoolVal(false))
+	// Confluent Environment (create if needed, otherwise use data source)
+	if req.NeedsEnvironment {
+		environmentBlock := hclwrite.NewBlock("resource", []string{"confluent_environment", "environment"})
+		environmentBlock.Body().SetAttributeValue("display_name", cty.StringVal(req.EnvironmentName))
+		environmentBlock.Body().AppendNewline()
 
-	// Confluent Environment
-	environmentBlock := rootBody.AppendNewBlock("resource", []string{"confluent_environment", "environment"})
-	environmentBody := environmentBlock.Body()
-	environmentBody.SetAttributeValue("display_name", cty.StringVal("var.confluent_cloud_environment_name"))
+		streamGovernanceBlock := hclwrite.NewBlock("stream_governance", nil)
+		streamGovernanceBlock.Body().SetAttributeValue("package", cty.StringVal("ADVANCED")) // TODO: We can ask the user if they want essentials or advanced?
+		environmentBlock.Body().AppendBlock(streamGovernanceBlock)
 
-	streamGovernanceBlock := environmentBody.AppendNewBlock("stream_governance", nil)
-	streamGovernanceBody := streamGovernanceBlock.Body()
-	streamGovernanceBody.SetAttributeValue("package", cty.StringVal("ADVANCED"))
+		rootBody.AppendBlock(environmentBlock)
+		rootBody.AppendNewline()
+	} else {
+		// Use existing environment via data source
+		environmentDataBlock := hclwrite.NewBlock("data", []string{"confluent_environment", "environment"})
+		environmentDataBlock.Body().SetAttributeValue("id", cty.StringVal(req.EnvironmentId))
 
-	// Confluent Kafka Cluster
-	clusterBlock := rootBody.AppendNewBlock("resource", []string{"confluent_kafka_cluster", "cluster"})
-	clusterBody := clusterBlock.Body()
-	clusterBody.SetAttributeValue("display_name", cty.StringVal("var.confluent_cloud_cluster_name"))
-	clusterBody.SetAttributeValue("availability", cty.StringVal("SINGLE_ZONE"))
-	clusterBody.SetAttributeValue("cloud", cty.StringVal("var.confluent_cloud_provider"))
-	clusterBody.SetAttributeValue("region", cty.StringVal("var.confluent_cloud_region"))
+		rootBody.AppendBlock(environmentDataBlock)
+		rootBody.AppendNewline()
+	}
 
-	dedicatedBlock := clusterBody.AppendNewBlock("dedicated", nil)
-	dedicatedBody := dedicatedBlock.Body()
-	dedicatedBody.SetAttributeValue("cku", cty.NumberIntVal(1))
+	// Confluent Kafka Cluster (create if needed, otherwise use data source)
+	if req.NeedsCluster || req.NeedsEnvironment {
+		clusterBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_cluster", "cluster"})
+		clusterBlock.Body().SetAttributeValue("display_name", cty.StringVal(req.ClusterName))
+		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("SINGLE_ZONE"))
+		clusterBlock.Body().SetAttributeValue("cloud", cty.StringVal("AWS"))
+		// TODO: Keep a list of regions in the wizard or elsewhere for regions - May need to consider single-zone vs multi-zone vs enterprise vs dedicated availability.
+		clusterBlock.Body().SetAttributeValue("region", cty.StringVal("us-east-1"))
+		clusterBlock.Body().AppendNewline()
 
-	environmentRefBlock := clusterBody.AppendNewBlock("environment", nil)
-	environmentRefBody := environmentRefBlock.Body()
-	environmentRefBody.SetAttributeValue("id", cty.StringVal("confluent_environment.environment.id"))
+		if req.ClusterType == "dedicated" {
+			dedicatedBlock := clusterBlock.Body().AppendNewBlock("dedicated", nil)
+			dedicatedBlock.Body().SetAttributeValue("cku", cty.NumberIntVal(1))
+		}
+
+		clusterBlock.Body().AppendNewline()
+		environmentRefBlock := hclwrite.NewBlock("environment", nil)
+		if req.NeedsEnvironment {
+			environmentRefBlock.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_environment.environment.id")}})
+		} else {
+			environmentRefBlock.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_environment.environment.id")}})
+		}
+
+		clusterBlock.Body().AppendBlock(environmentRefBlock)
+		rootBody.AppendBlock(clusterBlock)
+		rootBody.AppendNewline()
+	}
+
+	// Path not supported until we ask for the PNI question.
+	// else {
+	// 	// Use existing cluster via data source
+	// 	clusterDataBlock := rootBody.AppendNewBlock("data", []string{"confluent_kafka_cluster", "cluster"})
+	// 	clusterDataBody := clusterDataBlock.Body()
+	// 	clusterDataBody.SetAttributeValue("id", cty.StringVal("var.confluent_cloud_cluster_id"))
+	// 	environmentRefBlock := clusterDataBody.AppendNewBlock("environment", nil)
+	// 	environmentRefBody := environmentRefBlock.Body()
+	// 	environmentRefBody.SetAttributeValue("id", cty.StringVal("data.confluent_environment.environment.id"))
+	// }
 
 	// Schema Registry data source
-	schemaRegistryDataBlock := rootBody.AppendNewBlock("data", []string{"confluent_schema_registry_cluster", "schema_registry"})
-	schemaRegistryDataBody := schemaRegistryDataBlock.Body()
-	environmentDataBlock := schemaRegistryDataBody.AppendNewBlock("environment", nil)
-	environmentDataBody := environmentDataBlock.Body()
-	environmentDataBody.SetAttributeValue("id", cty.StringVal("confluent_environment.environment.id"))
-	schemaRegistryDataBody.SetAttributeValue("depends_on", cty.ListVal([]cty.Value{cty.StringVal("confluent_api_key.app-manager-kafka-api-key")}))
+	schemaRegistryDataBlock := hclwrite.NewBlock("data", []string{"confluent_schema_registry_cluster", "schema_registry"})
+	environmentSRBlock := hclwrite.NewBlock("environment", nil)
+	if req.NeedsEnvironment {
+		environmentSRBlock.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_environment.environment.id")}})
+	} else {
+		environmentSRBlock.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_environment.environment.id")}})
+	}
+	schemaRegistryDataBlock.Body().AppendBlock(environmentSRBlock)
+	schemaRegistryDataBlock.Body().AppendNewline()
+	schemaRegistryDataBlock.Body().SetAttributeRaw("depends_on", hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key")},
+		&hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")},
+	})
+
+	rootBody.AppendBlock(schemaRegistryDataBlock)
+	rootBody.AppendNewline()
 
 	// Service Account
-	serviceAccountBlock := rootBody.AppendNewBlock("resource", []string{"confluent_service_account", "app-manager"})
-	serviceAccountBody := serviceAccountBlock.Body()
-	serviceAccountBody.SetAttributeValue("display_name", cty.StringVal("app-manager-${random_string.suffix.result}"))
-	serviceAccountBody.SetAttributeValue("description", cty.StringVal("Service account to manage the ${var.confluent_cloud_environment_name} environment."))
+	serviceAccountBlock := hclwrite.NewBlock("resource", []string{"confluent_service_account", "app-manager"})
+	serviceAccountBlock.Body().SetAttributeValue("display_name", cty.StringVal("app-manager"))
+	serviceAccountBlock.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Service account to manage the %s environment.", req.EnvironmentName)))
+
+	rootBody.AppendBlock(serviceAccountBlock)
+	rootBody.AppendNewline()
 
 	// Role Bindings
-	roleBinding1Block := rootBody.AppendNewBlock("resource", []string{"confluent_role_binding", "subject-resource-owner"})
-	roleBinding1Body := roleBinding1Block.Body()
-	roleBinding1Body.SetAttributeValue("principal", cty.StringVal("User:${confluent_service_account.app-manager.id}"))
-	roleBinding1Body.SetAttributeValue("role_name", cty.StringVal("ResourceOwner"))
-	roleBinding1Body.SetAttributeValue("crn_pattern", cty.StringVal("${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"))
+	roleBinding1Block := hclwrite.NewBlock("resource", []string{"confluent_role_binding", "subject-resource-owner"})
+	roleBinding1Block.Body().SetAttributeRaw("principal", tokensForTemplate("User:${confluent_service_account.app-manager.id}"))
+	roleBinding1Block.Body().SetAttributeValue("role_name", cty.StringVal("ResourceOwner"))
+	roleBinding1Block.Body().SetAttributeRaw("crn_pattern", tokensForTemplate("${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"))
 
-	roleBinding2Block := rootBody.AppendNewBlock("resource", []string{"confluent_role_binding", "app-manager-kafka-cluster-admin"})
-	roleBinding2Body := roleBinding2Block.Body()
-	roleBinding2Body.SetAttributeValue("principal", cty.StringVal("User:${confluent_service_account.app-manager.id}"))
-	roleBinding2Body.SetAttributeValue("role_name", cty.StringVal("CloudClusterAdmin"))
-	roleBinding2Body.SetAttributeValue("crn_pattern", cty.StringVal("confluent_kafka_cluster.cluster.rbac_crn"))
+	rootBody.AppendBlock(roleBinding1Block)
+	rootBody.AppendNewline()
 
-	roleBinding3Block := rootBody.AppendNewBlock("resource", []string{"confluent_role_binding", "app-manager-kafka-data-steward"})
-	roleBinding3Body := roleBinding3Block.Body()
-	roleBinding3Body.SetAttributeValue("principal", cty.StringVal("User:${confluent_service_account.app-manager.id}"))
-	roleBinding3Body.SetAttributeValue("role_name", cty.StringVal("DataSteward"))
-	roleBinding3Body.SetAttributeValue("crn_pattern", cty.StringVal("confluent_environment.environment.resource_name"))
+	roleBinding2Block := hclwrite.NewBlock("resource", []string{"confluent_role_binding", "app-manager-kafka-cluster-admin"})
+	roleBinding2Block.Body().SetAttributeRaw("principal", tokensForTemplate("User:${confluent_service_account.app-manager.id}"))
+	roleBinding2Block.Body().SetAttributeValue("role_name", cty.StringVal("CloudClusterAdmin"))
+	roleBinding2Block.Body().SetAttributeRaw("crn_pattern", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.rbac_crn")}})
+
+	rootBody.AppendBlock(roleBinding2Block)
+	rootBody.AppendNewline()
+
+	roleBinding3Block := hclwrite.NewBlock("resource", []string{"confluent_role_binding", "app-manager-kafka-data-steward"})
+	roleBinding3Block.Body().SetAttributeRaw("principal", tokensForTemplate("User:${confluent_service_account.app-manager.id}"))
+	roleBinding3Block.Body().SetAttributeValue("role_name", cty.StringVal("DataSteward"))
+	if req.NeedsEnvironment {
+		roleBinding3Block.Body().SetAttributeRaw("crn_pattern", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_environment.environment.resource_name")}})
+	} else {
+		roleBinding3Block.Body().SetAttributeRaw("crn_pattern", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_environment.environment.resource_name")}})
+	}
+
+	rootBody.AppendBlock(roleBinding3Block)
+	rootBody.AppendNewline()
 
 	// Kafka ACLs
-	acl1Block := rootBody.AppendNewBlock("resource", []string{"confluent_kafka_acl", "app-manager-create-on-cluster"})
-	acl1Body := acl1Block.Body()
-	kafkaCluster1Block := acl1Body.AppendNewBlock("kafka_cluster", nil)
-	kafkaCluster1Body := kafkaCluster1Block.Body()
-	kafkaCluster1Body.SetAttributeValue("id", cty.StringVal("confluent_kafka_cluster.cluster.id"))
-	acl1Body.SetAttributeValue("resource_type", cty.StringVal("CLUSTER"))
-	acl1Body.SetAttributeValue("resource_name", cty.StringVal("kafka-cluster"))
-	acl1Body.SetAttributeValue("pattern_type", cty.StringVal("LITERAL"))
-	acl1Body.SetAttributeValue("principal", cty.StringVal("User:${confluent_service_account.app-manager.id}"))
-	acl1Body.SetAttributeValue("host", cty.StringVal("*"))
-	acl1Body.SetAttributeValue("operation", cty.StringVal("CREATE"))
-	acl1Body.SetAttributeValue("permission", cty.StringVal("ALLOW"))
-	acl1Body.SetAttributeValue("rest_endpoint", cty.StringVal("confluent_kafka_cluster.cluster.rest_endpoint"))
-	credentials1Block := acl1Body.AppendNewBlock("credentials", nil)
-	credentials1Body := credentials1Block.Body()
-	credentials1Body.SetAttributeValue("key", cty.StringVal("confluent_api_key.app-manager-kafka-api-key.id"))
-	credentials1Body.SetAttributeValue("secret", cty.StringVal("confluent_api_key.app-manager-kafka-api-key.secret"))
+	acl1Block := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", "app-manager-create-on-cluster"})
+	kafkaCluster1Block := hclwrite.NewBlock("kafka_cluster", nil)
+	kafkaCluster1Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.id")}})
+	acl1Block.Body().AppendBlock(kafkaCluster1Block)
+	acl1Block.Body().AppendNewline()
 
-	acl2Block := rootBody.AppendNewBlock("resource", []string{"confluent_kafka_acl", "app-manager-describe-on-cluster"})
-	acl2Body := acl2Block.Body()
-	kafkaCluster2Block := acl2Body.AppendNewBlock("kafka_cluster", nil)
-	kafkaCluster2Body := kafkaCluster2Block.Body()
-	kafkaCluster2Body.SetAttributeValue("id", cty.StringVal("confluent_kafka_cluster.cluster.id"))
-	acl2Body.SetAttributeValue("resource_type", cty.StringVal("CLUSTER"))
-	acl2Body.SetAttributeValue("resource_name", cty.StringVal("kafka-cluster"))
-	acl2Body.SetAttributeValue("pattern_type", cty.StringVal("LITERAL"))
-	acl2Body.SetAttributeValue("principal", cty.StringVal("User:${confluent_service_account.app-manager.id}"))
-	acl2Body.SetAttributeValue("host", cty.StringVal("*"))
-	acl2Body.SetAttributeValue("operation", cty.StringVal("DESCRIBE"))
-	acl2Body.SetAttributeValue("permission", cty.StringVal("ALLOW"))
-	acl2Body.SetAttributeValue("rest_endpoint", cty.StringVal("confluent_kafka_cluster.cluster.rest_endpoint"))
-	credentials2Block := acl2Body.AppendNewBlock("credentials", nil)
-	credentials2Body := credentials2Block.Body()
-	credentials2Body.SetAttributeValue("key", cty.StringVal("confluent_api_key.app-manager-kafka-api-key.id"))
-	credentials2Body.SetAttributeValue("secret", cty.StringVal("confluent_api_key.app-manager-kafka-api-key.secret"))
+	acl1Block.Body().SetAttributeValue("resource_type", cty.StringVal("CLUSTER"))
+	acl1Block.Body().SetAttributeValue("resource_name", cty.StringVal("kafka-cluster"))
+	acl1Block.Body().SetAttributeValue("pattern_type", cty.StringVal("LITERAL"))
+	acl1Block.Body().SetAttributeRaw("principal", tokensForTemplate("User:${confluent_service_account.app-manager.id}"))
+	acl1Block.Body().SetAttributeValue("host", cty.StringVal("*"))
+	acl1Block.Body().SetAttributeValue("operation", cty.StringVal("CREATE"))
+	acl1Block.Body().SetAttributeValue("permission", cty.StringVal("ALLOW"))
+	acl1Block.Body().SetAttributeRaw("rest_endpoint", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.rest_endpoint")}})
+	acl1Block.Body().AppendNewline()
 
-	acl3Block := rootBody.AppendNewBlock("resource", []string{"confluent_kafka_acl", "app-manager-read-all-consumer-groups"})
-	acl3Body := acl3Block.Body()
-	kafkaCluster3Block := acl3Body.AppendNewBlock("kafka_cluster", nil)
-	kafkaCluster3Body := kafkaCluster3Block.Body()
-	kafkaCluster3Body.SetAttributeValue("id", cty.StringVal("confluent_kafka_cluster.cluster.id"))
-	acl3Body.SetAttributeValue("resource_type", cty.StringVal("GROUP"))
-	acl3Body.SetAttributeValue("resource_name", cty.StringVal("*"))
-	acl3Body.SetAttributeValue("pattern_type", cty.StringVal("PREFIXED"))
-	acl3Body.SetAttributeValue("principal", cty.StringVal("User:${confluent_service_account.app-manager.id}"))
-	acl3Body.SetAttributeValue("host", cty.StringVal("*"))
-	acl3Body.SetAttributeValue("operation", cty.StringVal("READ"))
-	acl3Body.SetAttributeValue("permission", cty.StringVal("ALLOW"))
-	acl3Body.SetAttributeValue("rest_endpoint", cty.StringVal("confluent_kafka_cluster.cluster.rest_endpoint"))
-	credentials3Block := acl3Body.AppendNewBlock("credentials", nil)
-	credentials3Body := credentials3Block.Body()
-	credentials3Body.SetAttributeValue("key", cty.StringVal("confluent_api_key.app-manager-kafka-api-key.id"))
-	credentials3Body.SetAttributeValue("secret", cty.StringVal("confluent_api_key.app-manager-kafka-api-key.secret"))
+	credentials1Block := hclwrite.NewBlock("credentials", nil)
+	credentials1Block.Body().SetAttributeRaw("key", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key.id")}})
+	credentials1Block.Body().SetAttributeRaw("secret", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key.secret")}})
+	acl1Block.Body().AppendBlock(credentials1Block)
+
+	rootBody.AppendBlock(acl1Block)
+	rootBody.AppendNewline()
+
+	acl2Block := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", "app-manager-describe-on-cluster"})
+	kafkaCluster2Block := hclwrite.NewBlock("kafka_cluster", nil)
+	kafkaCluster2Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.id")}})
+	acl2Block.Body().AppendBlock(kafkaCluster2Block)
+	acl2Block.Body().AppendNewline()
+
+	acl2Block.Body().SetAttributeValue("resource_type", cty.StringVal("CLUSTER"))
+	acl2Block.Body().SetAttributeValue("resource_name", cty.StringVal("kafka-cluster"))
+	acl2Block.Body().SetAttributeValue("pattern_type", cty.StringVal("LITERAL"))
+	acl2Block.Body().SetAttributeRaw("principal", tokensForTemplate("User:${confluent_service_account.app-manager.id}"))
+	acl2Block.Body().SetAttributeValue("host", cty.StringVal("*"))
+	acl2Block.Body().SetAttributeValue("operation", cty.StringVal("DESCRIBE"))
+	acl2Block.Body().SetAttributeValue("permission", cty.StringVal("ALLOW"))
+	acl2Block.Body().SetAttributeRaw("rest_endpoint", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.rest_endpoint")}})
+	acl2Block.Body().AppendNewline()
+
+	credentials2Block := hclwrite.NewBlock("credentials", nil)
+	credentials2Block.Body().SetAttributeRaw("key", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key.id")}})
+	credentials2Block.Body().SetAttributeRaw("secret", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key.secret")}})
+	acl2Block.Body().AppendBlock(credentials2Block)
+
+	rootBody.AppendBlock(acl2Block)
+	rootBody.AppendNewline()
+
+	acl3Block := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", "app-manager-read-all-consumer-groups"})
+	kafkaCluster3Block := hclwrite.NewBlock("kafka_cluster", nil)
+	kafkaCluster3Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.id")}})
+	acl3Block.Body().AppendBlock(kafkaCluster3Block)
+	acl3Block.Body().AppendNewline()
+
+	acl3Block.Body().SetAttributeValue("resource_type", cty.StringVal("GROUP"))
+	acl3Block.Body().SetAttributeValue("resource_name", cty.StringVal("*"))
+	acl3Block.Body().SetAttributeValue("pattern_type", cty.StringVal("PREFIXED"))
+	acl3Block.Body().SetAttributeRaw("principal", tokensForTemplate("User:${confluent_service_account.app-manager.id}"))
+	acl3Block.Body().SetAttributeValue("host", cty.StringVal("*"))
+	acl3Block.Body().SetAttributeValue("operation", cty.StringVal("READ"))
+	acl3Block.Body().SetAttributeValue("permission", cty.StringVal("ALLOW"))
+	acl3Block.Body().SetAttributeRaw("rest_endpoint", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.rest_endpoint")}})
+	acl3Block.Body().AppendNewline()
+
+	credentials3Block := hclwrite.NewBlock("credentials", nil)
+	credentials3Block.Body().SetAttributeRaw("key", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key.id")}})
+	credentials3Block.Body().SetAttributeRaw("secret", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_api_key.app-manager-kafka-api-key.secret")}})
+	acl3Block.Body().AppendBlock(credentials3Block)
+
+	rootBody.AppendBlock(acl3Block)
+	rootBody.AppendNewline()
 
 	// API Keys
-	apiKey1Block := rootBody.AppendNewBlock("resource", []string{"confluent_api_key", "env-manager-schema-registry-api-key"})
-	apiKey1Body := apiKey1Block.Body()
-	apiKey1Body.SetAttributeValue("display_name", cty.StringVal("env-manager-schema-registry-api-key-${random_string.suffix.result}"))
-	apiKey1Body.SetAttributeValue("description", cty.StringVal("Schema Registry API Key that is owned by the ${var.confluent_cloud_environment_name} environment."))
-	owner1Block := apiKey1Body.AppendNewBlock("owner", nil)
-	owner1Body := owner1Block.Body()
-	owner1Body.SetAttributeValue("id", cty.StringVal("confluent_service_account.app-manager.id"))
-	owner1Body.SetAttributeValue("api_version", cty.StringVal("confluent_service_account.app-manager.api_version"))
-	owner1Body.SetAttributeValue("kind", cty.StringVal("confluent_service_account.app-manager.kind"))
-	managedResource1Block := apiKey1Body.AppendNewBlock("managed_resource", nil)
-	managedResource1Body := managedResource1Block.Body()
-	managedResource1Body.SetAttributeValue("id", cty.StringVal("data.confluent_schema_registry_cluster.schema_registry.id"))
-	managedResource1Body.SetAttributeValue("api_version", cty.StringVal("data.confluent_schema_registry_cluster.schema_registry.api_version"))
-	managedResource1Body.SetAttributeValue("kind", cty.StringVal("data.confluent_schema_registry_cluster.schema_registry.kind"))
-	environmentApiKey1Block := managedResource1Body.AppendNewBlock("environment", nil)
-	environmentApiKey1Body := environmentApiKey1Block.Body()
-	environmentApiKey1Body.SetAttributeValue("id", cty.StringVal("confluent_environment.environment.id"))
+	apiKey1Block := hclwrite.NewBlock("resource", []string{"confluent_api_key", "env-manager-schema-registry-api-key"})
+	apiKey1Block.Body().SetAttributeValue("display_name", cty.StringVal("env-manager-schema-registry-api-key"))
+	apiKey1Block.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Schema Registry API Key that is owned by the %s environment.", req.EnvironmentName)))
+	apiKey1Block.Body().AppendNewline()
 
-	apiKey2Block := rootBody.AppendNewBlock("resource", []string{"confluent_api_key", "app-manager-kafka-api-key"})
-	apiKey2Body := apiKey2Block.Body()
-	apiKey2Body.SetAttributeValue("display_name", cty.StringVal("app-manager-kafka-api-key-${random_string.suffix.result}"))
-	apiKey2Body.SetAttributeValue("description", cty.StringVal("Kafka API Key that has been created by the ${var.confluent_cloud_environment_name} environment."))
-	owner2Block := apiKey2Body.AppendNewBlock("owner", nil)
-	owner2Body := owner2Block.Body()
-	owner2Body.SetAttributeValue("id", cty.StringVal("confluent_service_account.app-manager.id"))
-	owner2Body.SetAttributeValue("api_version", cty.StringVal("confluent_service_account.app-manager.api_version"))
-	owner2Body.SetAttributeValue("kind", cty.StringVal("confluent_service_account.app-manager.kind"))
-	managedResource2Block := apiKey2Body.AppendNewBlock("managed_resource", nil)
-	managedResource2Body := managedResource2Block.Body()
-	managedResource2Body.SetAttributeValue("id", cty.StringVal("confluent_kafka_cluster.cluster.id"))
-	managedResource2Body.SetAttributeValue("api_version", cty.StringVal("confluent_kafka_cluster.cluster.api_version"))
-	managedResource2Body.SetAttributeValue("kind", cty.StringVal("confluent_kafka_cluster.cluster.kind"))
-	environmentApiKey2Block := managedResource2Body.AppendNewBlock("environment", nil)
-	environmentApiKey2Body := environmentApiKey2Block.Body()
-	environmentApiKey2Body.SetAttributeValue("id", cty.StringVal("confluent_environment.environment.id"))
-	apiKey2Body.SetAttributeValue("depends_on", cty.ListVal([]cty.Value{cty.StringVal("confluent_role_binding.app-manager-kafka-cluster-admin")}))
+	owner1Block := hclwrite.NewBlock("owner", nil)
+	owner1Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_service_account.app-manager.id")}})
+	owner1Block.Body().SetAttributeRaw("api_version", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_service_account.app-manager.api_version")}})
+	owner1Block.Body().SetAttributeRaw("kind", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_service_account.app-manager.kind")}})
+	apiKey1Block.Body().AppendBlock(owner1Block)
+	apiKey1Block.Body().AppendNewline()
+
+	managedResource1Block := hclwrite.NewBlock("managed_resource", nil)
+	managedResource1Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_schema_registry_cluster.schema_registry.id")}})
+	managedResource1Block.Body().SetAttributeRaw("api_version", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_schema_registry_cluster.schema_registry.api_version")}})
+	managedResource1Block.Body().SetAttributeRaw("kind", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_schema_registry_cluster.schema_registry.kind")}})
+
+	environmentApiKey1Block := hclwrite.NewBlock("environment", nil)
+	if req.NeedsEnvironment {
+		environmentApiKey1Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_environment.environment.id")}})
+	} else {
+		environmentApiKey1Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_environment.environment.id")}})
+	}
+	managedResource1Block.Body().AppendBlock(environmentApiKey1Block)
+	apiKey1Block.Body().AppendBlock(managedResource1Block)
+
+	rootBody.AppendBlock(apiKey1Block)
+	rootBody.AppendNewline()
+
+	apiKey2Block := hclwrite.NewBlock("resource", []string{"confluent_api_key", "app-manager-kafka-api-key"})
+	apiKey2Block.Body().SetAttributeValue("display_name", cty.StringVal("app-manager-kafka-api-key"))
+	apiKey2Block.Body().SetAttributeValue("description", cty.StringVal(fmt.Sprintf("Kafka API Key that has been created by the %s environment.", req.EnvironmentName)))
+	apiKey2Block.Body().AppendNewline()
+
+	owner2Block := hclwrite.NewBlock("owner", nil)
+	owner2Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_service_account.app-manager.id")}})
+	owner2Block.Body().SetAttributeRaw("api_version", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_service_account.app-manager.api_version")}})
+	owner2Block.Body().SetAttributeRaw("kind", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_service_account.app-manager.kind")}})
+	apiKey2Block.Body().AppendBlock(owner2Block)
+	apiKey2Block.Body().AppendNewline()
+
+	managedResource2Block := hclwrite.NewBlock("managed_resource", nil)
+	managedResource2Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.id")}})
+	managedResource2Block.Body().SetAttributeRaw("api_version", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.api_version")}})
+	managedResource2Block.Body().SetAttributeRaw("kind", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_kafka_cluster.cluster.kind")}})
+	managedResource2Block.Body().AppendNewline()
+
+	environmentApiKey2Block := hclwrite.NewBlock("environment", nil)
+	if req.NeedsEnvironment {
+		environmentApiKey2Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_environment.environment.id")}})
+	} else {
+		environmentApiKey2Block.Body().SetAttributeRaw("id", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("data.confluent_environment.environment.id")}})
+	}
+	managedResource2Block.Body().AppendBlock(environmentApiKey2Block)
+	apiKey2Block.Body().AppendBlock(managedResource2Block)
+	apiKey2Block.Body().AppendNewline()
+
+	apiKey2Block.Body().SetAttributeRaw("depends_on", hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("confluent_role_binding.app-manager-kafka-cluster-admin")},
+		&hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")},
+	})
+
+	rootBody.AppendBlock(apiKey2Block)
+	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
@@ -407,50 +555,18 @@ func (ui *UI) generateProvidersTf() string {
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
 	// Confluent provider
-	confluentProviderBlock := requiredProvidersBody.AppendNewBlock("confluent", nil)
-	confluentProviderBody := confluentProviderBlock.Body()
-	confluentProviderBody.SetAttributeValue("source", cty.StringVal("confluentinc/confluent"))
-	confluentProviderBody.SetAttributeValue("version", cty.StringVal("2.23.0"))
+	requiredProvidersBody.SetAttributeValue("confluent", cty.ObjectVal(map[string]cty.Value{
+		"source":  cty.StringVal("confluentinc/confluent"),
+		"version": cty.StringVal("2.50.0"),
+	}))
 
-	// Random provider
-	randomProviderBlock := requiredProvidersBody.AppendNewBlock("random", nil)
-	randomProviderBody := randomProviderBlock.Body()
-	randomProviderBody.SetAttributeValue("source", cty.StringVal("hashicorp/random"))
-	randomProviderBody.SetAttributeValue("version", cty.StringVal("3.7.2"))
+	rootBody.AppendNewline()
 
 	// Provider block
 	providerBlock := rootBody.AppendNewBlock("provider", []string{"confluent"})
 	providerBody := providerBlock.Body()
-	providerBody.SetAttributeValue("cloud_api_key", cty.StringVal("var.confluent_cloud_api_key"))
-	providerBody.SetAttributeValue("cloud_api_secret", cty.StringVal("var.confluent_cloud_api_secret"))
-
-	return string(f.Bytes())
-}
-
-// generateVersionsTf generates the versions.tf file content using HCL v2
-func (ui *UI) generateVersionsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	// Terraform block
-	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-	terraformBody := terraformBlock.Body()
-
-	// Required providers block
-	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-	requiredProvidersBody := requiredProvidersBlock.Body()
-
-	// Confluent provider
-	confluentProviderBlock := requiredProvidersBody.AppendNewBlock("confluent", nil)
-	confluentProviderBody := confluentProviderBlock.Body()
-	confluentProviderBody.SetAttributeValue("source", cty.StringVal("confluentinc/confluent"))
-	confluentProviderBody.SetAttributeValue("version", cty.StringVal("2.23.0"))
-
-	// Random provider
-	randomProviderBlock := requiredProvidersBody.AppendNewBlock("random", nil)
-	randomProviderBody := randomProviderBlock.Body()
-	randomProviderBody.SetAttributeValue("source", cty.StringVal("hashicorp/random"))
-	randomProviderBody.SetAttributeValue("version", cty.StringVal("3.7.2"))
+	providerBody.SetAttributeRaw("cloud_api_key", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("var.confluent_cloud_api_key")}})
+	providerBody.SetAttributeRaw("cloud_api_secret", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("var.confluent_cloud_api_secret")}})
 
 	return string(f.Bytes())
 }
@@ -460,63 +576,25 @@ func (ui *UI) generateVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	// Define all variables - matching confluent_cloud module
+	// Define base variables
 	variables := []struct {
 		name        string
 		description string
 		sensitive   bool
 	}{
-		{"confluent_cloud_api_key", "", true},
-		{"confluent_cloud_api_secret", "", true},
-		{"confluent_cloud_region", "", false},
-		{"confluent_cloud_provider", "", false},
-		{"confluent_cloud_environment_name", "", false},
-		{"confluent_cloud_cluster_name", "", false},
+		{"confluent_cloud_api_key", "Confluent Cloud API Key", true},
+		{"confluent_cloud_api_secret", "Confluent Cloud API Secret", true},
 	}
 
 	for _, v := range variables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.name})
 		variableBody := variableBlock.Body()
-		variableBody.SetAttributeValue("type", cty.StringVal("string"))
+		variableBody.SetAttributeRaw("type", hclwrite.Tokens{&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("string")}})
 		if v.description != "" {
 			variableBody.SetAttributeValue("description", cty.StringVal(v.description))
 		}
 		if v.sensitive {
 			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
-		}
-	}
-
-	return string(f.Bytes())
-}
-
-// generateOutputsTf generates the outputs.tf file content using HCL v2
-func (ui *UI) generateOutputsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	// Define all outputs - actual resource values
-	outputs := []struct {
-		name      string
-		value     string
-		sensitive bool
-	}{
-		{"confluent_cloud_cluster_rest_endpoint", "confluent_kafka_cluster.cluster.rest_endpoint", false},
-		{"confluent_cloud_cluster_id", "confluent_kafka_cluster.cluster.id", false},
-		{"confluent_cloud_cluster_api_key", "confluent_api_key.app-manager-kafka-api-key.id", true},
-		{"confluent_cloud_cluster_api_key_secret", "confluent_api_key.app-manager-kafka-api-key.secret", true},
-		{"confluent_cloud_cluster_bootstrap_endpoint", "confluent_kafka_cluster.cluster.bootstrap_endpoint", false},
-		{"confluent_cloud_environment_id", "confluent_environment.environment.id", false},
-		{"confluent_cloud_schema_registry_endpoint", "data.confluent_schema_registry_cluster.schema_registry.http_endpoint", false},
-		{"confluent_cloud_schema_registry_api_key", "confluent_api_key.env-manager-schema-registry-api-key.id", true},
-		{"confluent_cloud_schema_registry_api_key_secret", "confluent_api_key.env-manager-schema-registry-api-key.secret", true},
-	}
-
-	for _, o := range outputs {
-		outputBlock := rootBody.AppendNewBlock("output", []string{o.name})
-		outputBody := outputBlock.Body()
-		outputBody.SetAttributeValue("value", cty.StringVal(o.value))
-		if o.sensitive {
-			outputBody.SetAttributeValue("sensitive", cty.BoolVal(true))
 		}
 	}
 

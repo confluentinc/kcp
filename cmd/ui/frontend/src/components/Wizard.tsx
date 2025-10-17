@@ -30,9 +30,7 @@ interface WizardConfig {
 interface TerraformFiles {
   main_tf: string
   providers_tf: string
-  versions_tf: string
   variables_tf: string
-  outputs_tf: string
 }
 
 export default function Wizard() {
@@ -217,11 +215,16 @@ export default function Wizard() {
   const handleSubmitToAPI = async () => {
     try {
       setIsLoading(true)
+      
+      // Get all the wizard data and send it to the API
+      const wizardData = getFlattenedData()
+      
       const response = await fetch('/assets', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify(wizardData),
       })
 
       if (response.ok) {
@@ -294,33 +297,11 @@ export default function Wizard() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                    versions.tf
-                  </label>
-                  <textarea
-                    readOnly
-                    value={terraformFiles.versions_tf}
-                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
                     variables.tf
                   </label>
                   <textarea
                     readOnly
                     value={terraformFiles.variables_tf}
-                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                    outputs.tf
-                  </label>
-                  <textarea
-                    readOnly
-                    value={terraformFiles.outputs_tf}
                     className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
                   />
                 </div>
