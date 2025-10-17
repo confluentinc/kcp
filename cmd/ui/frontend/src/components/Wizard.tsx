@@ -27,11 +27,23 @@ interface WizardConfig {
   actions: Record<string, string>
 }
 
+interface TerraformFiles {
+  main_tf: string
+  providers_tf: string
+  versions_tf: string
+  variables_tf: string
+  outputs_tf: string
+}
+
 export default function Wizard() {
   const config = wizardConfig as unknown as WizardConfig
 
   // Store form data in component state as a backup
   const [componentFormData, setComponentFormData] = useState<Record<string, any>>({})
+
+  // Store terraform files from API response
+  const [terraformFiles, setTerraformFiles] = useState<TerraformFiles | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
   // Create XState machine from JSON configuration
   const wizardMachine = useMemo(() => {
@@ -170,55 +182,162 @@ export default function Wizard() {
     })
   }
 
+  // Helper function to flatten nested step data
+  const getFlattenedData = () => {
+    const flattened: Record<string, any> = {}
+
+    // Try allData first
+    Object.entries(state.context.allData || {}).forEach(([, stepData]: [string, any]) => {
+      if (stepData && typeof stepData === 'object') {
+        Object.assign(flattened, stepData)
+      }
+    })
+
+    // Fallback to stepData if allData is empty
+    if (Object.keys(flattened).length === 0) {
+      Object.entries(state.context.stepData || {}).forEach(([, stepData]: [string, any]) => {
+        if (stepData && typeof stepData === 'object') {
+          Object.assign(flattened, stepData)
+        }
+      })
+    }
+
+    // Final fallback to component form data
+    if (Object.keys(flattened).length === 0) {
+      Object.entries(componentFormData || {}).forEach(([, stepData]: [string, any]) => {
+        if (stepData && typeof stepData === 'object') {
+          Object.assign(flattened, stepData)
+        }
+      })
+    }
+
+    return flattened
+  }
+
   const handleSubmitToAPI = async () => {
     try {
-      const apiEndpoint = currentStateMeta.apiEndpoint || '/api/generate-terraform'
-      const response = await fetch(apiEndpoint, {
+      setIsLoading(true)
+      const response = await fetch('/assets', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(state.context.allData),
       })
 
       if (response.ok) {
-        await response.json()
-        alert('Configuration submitted successfully!')
+        const files = (await response.json()) as TerraformFiles
+        setTerraformFiles(files)
       } else {
-        throw new Error('Failed to submit configuration')
+        throw new Error('Failed to generate Terraform files')
       }
     } catch (error) {
       console.error('API Error:', error)
-      alert('Error submitting configuration')
+      alert('Error generating Terraform files')
+    } finally {
+      setIsLoading(false)
     }
   }
 
   // Handle final state
   if (state.matches('complete')) {
     return (
-      <div className="max-w-2xl mx-auto p-6 space-y-6">
-        <div className="text-center space-y-4">
-          <h2 className="text-2xl font-bold text-green-600 dark:text-green-400">
-            {currentStateMeta.title || 'Complete'}
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            {currentStateMeta.message || 'Configuration complete'}
-          </p>
-
-          <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-            <h3 className="font-semibold mb-2 text-gray-900 dark:text-gray-100">
-              Configuration Summary:
-            </h3>
-            <pre className="text-sm text-left overflow-auto text-gray-800 dark:text-gray-200">
-              {JSON.stringify(state.context.allData, null, 2)}
-            </pre>
+      <div className="max-w-4xl mx-auto p-6 space-y-6">
+        <div className="space-y-4">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold text-green-600 dark:text-green-400">
+              {currentStateMeta.title || 'Complete'}
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400">
+              {currentStateMeta.message || 'Configuration complete'}
+            </p>
           </div>
+
+          {!terraformFiles && (
+            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+              <h3 className="font-semibold mb-2 text-gray-900 dark:text-gray-100">
+                Configuration Summary:
+              </h3>
+              <pre className="text-sm text-left overflow-auto text-gray-800 dark:text-gray-200">
+                {JSON.stringify(getFlattenedData(), null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {terraformFiles && (
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                Generated Terraform Files
+              </h3>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                    main.tf
+                  </label>
+                  <textarea
+                    readOnly
+                    value={terraformFiles.main_tf}
+                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                    providers.tf
+                  </label>
+                  <textarea
+                    readOnly
+                    value={terraformFiles.providers_tf}
+                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                    versions.tf
+                  </label>
+                  <textarea
+                    readOnly
+                    value={terraformFiles.versions_tf}
+                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                    variables.tf
+                  </label>
+                  <textarea
+                    readOnly
+                    value={terraformFiles.variables_tf}
+                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                    outputs.tf
+                  </label>
+                  <textarea
+                    readOnly
+                    value={terraformFiles.outputs_tf}
+                    className="w-full h-64 p-3 font-mono text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <Button
             onClick={handleSubmitToAPI}
             className="w-full"
+            disabled={isLoading}
           >
-            Submit Configuration
+            {isLoading
+              ? 'Generating...'
+              : terraformFiles
+              ? 'Regenerate Terraform Files'
+              : 'Generate Terraform Files'}
           </Button>
         </div>
       </div>
@@ -227,37 +346,8 @@ export default function Wizard() {
 
   // Handle review state
   if (currentStateMeta.type === 'review') {
-    // Try both allData and stepData
-    const allDataFlattened: Record<string, any> = {}
-    Object.entries(state.context.allData || {}).forEach(([, stepData]: [string, any]) => {
-      if (stepData && typeof stepData === 'object') {
-        Object.assign(allDataFlattened, stepData)
-      }
-    })
-
-    const stepDataFlattened: Record<string, any> = {}
-    Object.entries(state.context.stepData || {}).forEach(([, stepData]: [string, any]) => {
-      if (stepData && typeof stepData === 'object') {
-        Object.assign(stepDataFlattened, stepData)
-      }
-    })
-
-    // Also try component form data as fallback
-    const componentDataFlattened: Record<string, any> = {}
-    Object.entries(componentFormData || {}).forEach(([, stepData]: [string, any]) => {
-      if (stepData && typeof stepData === 'object') {
-        Object.assign(componentDataFlattened, stepData)
-      }
-    })
-
-    // Use whichever has data - prefer XState data, fallback to component data
-    let flattenedData = allDataFlattened
-    if (Object.keys(flattenedData).length === 0) {
-      flattenedData = stepDataFlattened
-    }
-    if (Object.keys(flattenedData).length === 0) {
-      flattenedData = componentDataFlattened
-    }
+    // Get flattened data using helper function
+    const flattenedData = getFlattenedData()
 
     // Build summary from configured fields
     const summaryFields = currentStateMeta.summaryFields || []
