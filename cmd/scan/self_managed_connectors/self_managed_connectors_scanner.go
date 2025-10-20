@@ -69,7 +69,7 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) *Sel
 
 func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectTlsAuth) (*http.Client, error) {
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 15 * time.Second,
 	}
 
 	// Only configure TLS if using TLS client certificate authentication

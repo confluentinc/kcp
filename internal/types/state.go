@@ -277,7 +277,6 @@ type SelfManagedConnector struct {
 	Name        string                 `json:"name"`
 	Config      map[string]interface{} `json:"config"`
 	State       string                 `json:"state,omitempty"`
-	ConnectHost string                 `json:"connect_host,omitempty"`
 }
 
 type SelfManagedConnectors struct {

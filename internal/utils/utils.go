@@ -74,7 +74,7 @@ func GetClusterByArn(state *types.State, clusterArn string) (*types.DiscoveredCl
 		}
 	}
 
-	return nil, fmt.Errorf("cluster with ARN %s not found in discovery data", clusterArn)
+	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
 }
 
 func ExtractClusterNameFromArn(arn string) string {
