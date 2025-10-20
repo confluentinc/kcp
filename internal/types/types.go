@@ -62,6 +62,26 @@ func AllAuthTypes() []string {
 	}
 }
 
+type ConnectAuthMethod string
+
+const (
+	ConnectAuthMethodSaslScram       ConnectAuthMethod = "SASL/SCRAM"
+	ConnectAuthMethodTls             ConnectAuthMethod = "TLS"
+	ConnectAuthMethodUnauthenticated ConnectAuthMethod = "Unauthenticated"
+)
+
+type ConnectSaslScramAuth struct {
+	Username string
+	Password string
+}
+
+type ConnectTlsAuth struct {
+	CACert     string
+	ClientCert string
+	ClientKey  string
+}
+
+
 type MigrationInfraType int
 
 const (
