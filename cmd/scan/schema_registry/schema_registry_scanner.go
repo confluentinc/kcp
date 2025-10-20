@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type SchemaRegistryScannerService interface {
-	ExportAllSubjects() ([]types.Subject, error)
+	GetDefaultCompatibility() (schemaregistry.Compatibility, error)
+	GetAllSubjectsWithVersions() ([]types.Subject, error)
 }
 
 type SchemaRegistryScannerOpts struct {
@@ -37,18 +39,36 @@ func NewSchemaRegistryScanner(schemaRegistryService SchemaRegistryScannerService
 
 func (srs *SchemaRegistryScanner) Run() error {
 	slog.Info("🚀 starting schema registry scanner")
-	subjects, err := srs.SchemaRegistryService.ExportAllSubjects()
+
+	defaultCompatibility, err := srs.SchemaRegistryService.GetDefaultCompatibility()
+	if err != nil {
+		return fmt.Errorf("failed to get default compatibility: %v", err)
+	}
+
+	subjects, err := srs.SchemaRegistryService.GetAllSubjectsWithVersions()
 	if err != nil {
 		return fmt.Errorf("failed to export all subjects: %v", err)
 	}
 
 	schemaRegistryInformation := types.SchemaRegistryInformation{
-		Type:     "confluent",
-		URL:      srs.Url,
-		Subjects: subjects,
+		// only support confluent for now
+		Type:                 "confluent",
+		URL:                  srs.Url,
+		DefaultCompatibility: defaultCompatibility,
+		Subjects:             subjects,
 	}
 
-	srs.State.SchemaRegistries = append(srs.State.SchemaRegistries, schemaRegistryInformation)
+	previouslyScanned := false
+	for i, existing := range srs.State.SchemaRegistries {
+		if existing.URL == schemaRegistryInformation.URL {
+			srs.State.SchemaRegistries[i] = schemaRegistryInformation
+			previouslyScanned = true
+		}
+	}
+
+	if !previouslyScanned {
+		srs.State.SchemaRegistries = append(srs.State.SchemaRegistries, schemaRegistryInformation)
+	}
 
 	if err := srs.State.PersistStateFile(srs.StateFile); err != nil {
 		return fmt.Errorf("failed to save schema registry state: %v", err)

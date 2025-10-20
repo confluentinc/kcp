@@ -340,16 +340,18 @@ type KcpBuildInfo struct {
 
 type SchemaRegistryInformation struct {
 	// ID       string    `json:"id"`
-	Type     string    `json:"type"`
-	URL      string    `json:"url"`
-	Subjects []Subject `json:"subjects"`
+	Type                 string                       `json:"type"`
+	URL                  string                       `json:"url"`
+	DefaultCompatibility schemaregistry.Compatibility `json:"default_compatibility"`
+	Subjects             []Subject                    `json:"subjects"`
 }
 
 type Subject struct {
-	Name       string                          `json:"name"`
-	SchemaType string                          `json:"schema_type"`
-	Versions   []schemaregistry.SchemaMetadata `json:"versions"`
-	Latest     schemaregistry.SchemaMetadata   `json:"latest_schema"`
+	Name          string                          `json:"name"`
+	SchemaType    string                          `json:"schema_type"`
+	Compatibility string                          `json:"compatibility,omitempty"`
+	Versions      []schemaregistry.SchemaMetadata `json:"versions"`
+	Latest        schemaregistry.SchemaMetadata   `json:"latest_schema"`
 }
 
 // ProcessedState represents the transformed output data structure
