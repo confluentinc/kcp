@@ -4,29 +4,29 @@
   "description": "Configure your Confluent Cloud environment and cluster",
   "xstateMachine": {
     "id": "wizard",
-    "initial": "environment-question",
+    "initial": "environment_question",
     "context": {
       "stepData": {},
       "allData": {},
-      "currentStep": "environment-question"
+      "currentStep": "environment_question"
     },
     "states": {
-      "environment-question": {
+      "environment_question": {
         "meta": {
           "title": "Environment Configuration",
           "schema": {
             "type": "object",
             "properties": {
-              "needsEnvironment": {
+              "needs_environment": {
                 "type": "boolean",
                 "title": "I need to create a new Confluent Cloud environment",
                 "default": true
               }
             },
-            "required": ["needsEnvironment"]
+            "required": ["needs_environment"]
           },
           "uiSchema": {
-            "needsEnvironment": {
+            "needs_environment": {
               "ui:widget": "radio"
             }
           }
@@ -34,62 +34,57 @@
         "on": {
           "NEXT": [
             {
-              "target": "create-environment",
-              "guard": "needsEnvironment",
-              "actions": "saveStepData"
+              "target": "create_environment",
+              "guard": "needs_environment",
+              "actions": "save_step_data"
             },
             {
-              "target": "cluster-question",
-              "guard": "doesNotNeedEnvironment",
-              "actions": "saveStepData"
+              "target": "cluster_question",
+              "guard": "does_not_need_environment",
+              "actions": "save_step_data"
             },
             {
-              "target": "cluster-question",
-              "guard": "needsEnvironment",
-              "actions": "saveStepData"
-            },
-            {
-              "target": "cluster-question",
-              "guard": "doesNotNeedEnvironment",
-              "actions": "saveStepData"
+              "target": "cluster_question",
+              "guard": "needs_environment",
+              "actions": "save_step_data"
             }
           ]
         }
       },
-      "create-environment": {
+      "create_environment": {
         "meta": {
           "title": "Create Confluent Cloud Environment and Cluster",
           "description": "Enter details for your new Confluent Cloud environment and cluster",
           "schema": {
             "type": "object",
             "properties": {
-              "environmentName": {
+              "environment_name": {
                 "type": "string",
                 "title": "Environment Name",
                 "description": "Name for your new Confluent Cloud environment"
               },
-              "clusterName": {
+              "cluster_name": {
                 "type": "string",
                 "title": "Cluster Name",
                 "description": "Name for your new Confluent Cloud cluster"
               },
-              "clusterType": {
+              "cluster_type": {
                 "type": "string",
                 "enum": ["dedicated"],
                 "title": "Cluster Type",
                 "description": "Select the type of cluster"
               }
             },
-            "required": ["environmentName", "clusterName", "clusterType"]
+            "required": ["environment_name", "cluster_name", "cluster_type"]
           },
           "uiSchema": {
-            "environmentName": {
+            "environment_name": {
               "ui:placeholder": "e.g., production-env"
             },
-            "clusterName": {
+            "cluster_name": {
               "ui:placeholder": "e.g., production-cluster"
             },
-            "clusterType": {
+            "cluster_type": {
               "ui:widget": "select"
             }
           }
@@ -97,30 +92,30 @@
         "on": {
           "NEXT": {
             "target": "review",
-            "actions": "saveStepData"
+            "actions": "save_step_data"
           },
           "BACK": {
-            "target": "environment-question"
+            "target": "environment_question"
           }
         }
       },
-      "cluster-question": {
+      "cluster_question": {
         "meta": {
           "title": "Cluster Configuration",
           "description": "Do you need to create a new cluster in your existing environment?",
           "schema": {
             "type": "object",
             "properties": {
-              "needsCluster": {
+              "needs_cluster": {
                 "type": "boolean",
                 "title": "I need to create a new cluster",
                 "default": false
               }
             },
-            "required": ["needsCluster"]
+            "required": ["needs_cluster"]
           },
           "uiSchema": {
-            "needsCluster": {
+            "needs_cluster": {
               "ui:widget": "radio"
             }
           }
@@ -128,55 +123,55 @@
         "on": {
           "NEXT": [
             {
-              "target": "create-cluster",
-              "guard": "needsCluster",
-              "actions": "saveStepData"
+              "target": "create_cluster",
+              "guard": "needs_cluster",
+              "actions": "save_step_data"
             },
             {
               "target": "review",
-              "guard": "doesNotNeedCluster",
-              "actions": "saveStepData"
+              "guard": "does_not_need_cluster",
+              "actions": "save_step_data"
             }
           ],
           "BACK": {
-            "target": "environment-question"
+            "target": "environment_question"
           }
         }
       },
-      "create-cluster": {
+      "create_cluster": {
         "meta": {
           "title": "Create Confluent Cloud Cluster",
           "description": "Enter details for your new Confluent Cloud cluster",
           "schema": {
             "type": "object",
             "properties": {
-              "environmentId": {
+              "environment_id": {
                 "type": "string",
                 "title": "Environment ID",
                 "description": "ID of the Confluent Cloud environment"
               },
-              "clusterName": {
+              "cluster_name": {
                 "type": "string",
                 "title": "Cluster Name",
                 "description": "Name for your new Confluent Cloud cluster"
               },
-              "clusterType": {
+              "cluster_type": {
                 "type": "string",
                 "enum": ["dedicated"],
                 "title": "Cluster Type",
                 "description": "Select the type of cluster"
               }
             },
-            "required": ["environmentId", "clusterName", "clusterType"]
+            "required": ["environment_id", "cluster_name", "cluster_type"]
           },
           "uiSchema": {
-            "environmentId": {
+            "environment_id": {
               "ui:placeholder": "e.g., env-xxxx"
             },
-            "clusterName": {
+            "cluster_name": {
               "ui:placeholder": "e.g., production-cluster"
             },
-            "clusterType": {
+            "cluster_type": {
               "ui:widget": "select"
             }
           }
@@ -184,10 +179,10 @@
         "on": {
           "NEXT": {
             "target": "review",
-            "actions": "saveStepData"
+            "actions": "save_step_data"
           },
           "BACK": {
-            "target": "cluster-question"
+            "target": "cluster_question"
           }
         }
       },
@@ -197,30 +192,29 @@
           "description": "Review your Confluent Cloud configuration",
           "type": "review",
           "summaryFields": [
-            "hasExistingEnvironment",
-            "environmentName",
-            "needsCluster",
-            "clusterName",
-            "clusterType"
+            "environment_name",
+            "needs_cluster",
+            "cluster_name",
+            "cluster_type"
           ]
         },
         "on": {
           "SUBMIT": {
             "target": "complete",
-            "actions": "saveStepData"
+            "actions": "save_step_data"
           },
           "BACK": [
             {
-              "target": "create-environment",
-              "guard": "cameFromCreateEnvironment"
+              "target": "create_environment",
+              "guard": "came_from_create_environment"
             },
             {
-              "target": "create-cluster",
-              "guard": "cameFromCreateCluster"
+              "target": "create_cluster",
+              "guard": "came_from_create_cluster"
             },
             {
-              "target": "cluster-question",
-              "guard": "cameFromClusterQuestion"
+              "target": "cluster_question",
+              "guard": "came_from_cluster_question"
             }
           ]
         }
@@ -236,15 +230,15 @@
     }
   },
   "guards": {
-    "needsEnvironment": "event && event.data && event.data.needsEnvironment === true",
-    "doesNotNeedEnvironment": "event && event.data && event.data.needsEnvironment === false",
-    "needsCluster": "event && event.data && event.data.needsCluster === true",
-    "doesNotNeedCluster": "event && event.data && event.data.needsCluster === false",
-    "cameFromCreateEnvironment": "context && context.previousStep === 'create-environment'",
-    "cameFromCreateCluster": "context && context.previousStep === 'create-cluster'",
-    "cameFromClusterQuestion": "context && context.previousStep === 'cluster-question'"
+    "needs_environment": "event && event.data && event.data.needs_environment === true",
+    "does_not_need_environment": "event && event.data && event.data.needs_environment === false",
+    "needs_cluster": "event && event.data && event.data.needs_cluster === true",
+    "does_not_need_cluster": "event && event.data && event.data.needs_cluster === false",
+    "came_from_create_environment": "context && context.previousStep === 'create_environment'",
+    "came_from_create_cluster": "context && context.previousStep === 'create_cluster'",
+    "came_from_cluster_question": "context && context.previousStep === 'cluster_question'"
   },
   "actions": {
-    "saveStepData": "assign({ stepData: (context, event) => ({ ...context.stepData, [event.stepId]: event.data }), allData: (context, event) => ({ ...context.allData, [event.stepId]: event.data }), previousStep: (context, event) => event.stepId })"
+    "save_step_data": "assign({ stepData: (context, event) => ({ ...context.stepData, [event.stepId]: event.data }), allData: (context, event) => ({ ...context.allData, [event.stepId]: event.data }), previousStep: (context, event) => event.stepId })"
   }
 }

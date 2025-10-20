@@ -75,7 +75,7 @@ export default function Wizard() {
     // Create actions from JSON strings - completely dynamic
     const actions = Object.entries(config.actions).reduce((acc, [key, actionFn]) => {
       try {
-        if (key === 'saveStepData') {
+        if (key === 'save_step_data') {
           // Special handling for saveStepData since it needs assign
           // XState v5 uses an object parameter { context, event } not separate parameters
           acc[key] = assign(({ context, event }: any) => {
