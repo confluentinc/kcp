@@ -51,7 +51,7 @@ func (srs *SchemaRegistryScanner) Run() error {
 	}
 
 	schemaRegistryInformation := types.SchemaRegistryInformation{
-		// only support confluent for now
+		// assume only confluent schema registry for now
 		Type:                 "confluent",
 		URL:                  srs.Url,
 		DefaultCompatibility: defaultCompatibility,
