@@ -14,15 +14,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
 // State represents the raw input data structure (kcp-state.json file)
 // This is what gets fed INTO the frontend/API for processing
 type State struct {
-	Regions      []DiscoveredRegion `json:"regions"`
-	KcpBuildInfo KcpBuildInfo       `json:"kcp_build_info"`
-	Timestamp    time.Time          `json:"timestamp"`
+	Regions          []DiscoveredRegion          `json:"regions"`
+	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
+	Timestamp        time.Time                   `json:"timestamp"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -334,6 +336,22 @@ type KcpBuildInfo struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
 	Date    string `json:"date"`
+}
+
+type SchemaRegistryInformation struct {
+	// ID       string    `json:"id"`
+	Type                 string                       `json:"type"`
+	URL                  string                       `json:"url"`
+	DefaultCompatibility schemaregistry.Compatibility `json:"default_compatibility"`
+	Subjects             []Subject                    `json:"subjects"`
+}
+
+type Subject struct {
+	Name          string                          `json:"name"`
+	SchemaType    string                          `json:"schema_type"`
+	Compatibility string                          `json:"compatibility,omitempty"`
+	Versions      []schemaregistry.SchemaMetadata `json:"versions"`
+	Latest        schemaregistry.SchemaMetadata   `json:"latest_schema"`
 }
 
 // ProcessedState represents the transformed output data structure

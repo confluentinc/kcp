@@ -18,13 +18,13 @@ type ClustersScannerKafkaService interface {
 
 type ClustersScanner struct {
 	StateFile   string
+	State       types.State
 	Credentials types.Credentials
-	State       *types.State
 }
 
 type ClustersScannerOpts struct {
 	StateFile   string
-	State       *types.State
+	State       types.State
 	Credentials types.Credentials
 }
 
