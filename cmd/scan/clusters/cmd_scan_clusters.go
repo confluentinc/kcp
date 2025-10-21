@@ -2,7 +2,6 @@ package clusters
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -70,7 +69,7 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 func runScanClusters(cmd *cobra.Command, args []string) error {
 	opts, err := parseScanClustersOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse scan clusters opts: %v", err)
+		return fmt.Errorf("❌ failed to parse scan clusters opts: %v", err)
 	}
 
 	clustersScanner := NewClustersScanner(*opts)
@@ -84,15 +83,11 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 func parseScanClustersOpts() (*ClustersScannerOpts, error) {
 	credentials, errs := types.NewCredentialsFromFile(credentialsYaml)
 	if len(errs) > 0 {
-		errMsg := "Failed to parse credentials file:"
+		errMsg := "failed to parse credentials file:"
 		for _, e := range errs {
-			errMsg += "\n\t❌ " + e.Error()
+			errMsg += "\n\t- " + e.Error()
 		}
 		return nil, fmt.Errorf("%s", errMsg)
-	}
-
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("❌ state file does not exist: %s", stateFile)
 	}
 
 	state, err := types.NewStateFromFile(stateFile)
@@ -102,7 +97,7 @@ func parseScanClustersOpts() (*ClustersScannerOpts, error) {
 
 	opts := ClustersScannerOpts{
 		StateFile:   stateFile,
-		State:       state,
+		State:       *state,
 		Credentials: *credentials,
 	}
 
