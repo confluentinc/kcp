@@ -8,11 +8,20 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type SchemaRegistryService struct {
-	client schemaregistry.Client
+type SchemaRegistryClient interface {
+	GetDefaultCompatibility() (schemaregistry.Compatibility, error)
+	GetAllSubjects() ([]string, error)
+	GetLatestSchemaMetadata(subject string) (schemaregistry.SchemaMetadata, error)
+	GetCompatibility(subject string) (schemaregistry.Compatibility, error)
+	GetAllVersions(subject string) ([]int, error)
+	GetSchemaMetadata(subject string, version int) (schemaregistry.SchemaMetadata, error)
 }
 
-func NewSchemaRegistryService(client schemaregistry.Client) *SchemaRegistryService {
+type SchemaRegistryService struct {
+	client SchemaRegistryClient
+}
+
+func NewSchemaRegistryService(client SchemaRegistryClient) *SchemaRegistryService {
 	return &SchemaRegistryService{
 		client: client,
 	}
@@ -44,7 +53,7 @@ func (sr *SchemaRegistryService) GetAllSubjectsWithVersions() ([]types.Subject, 
 			continue
 		}
 
-		// default to AVRO if no schema type is set
+		// Schema Registry API may omit SchemaType for older schemas; AVRO was the original default
 		if latest.SchemaType == "" {
 			latest.SchemaType = "AVRO"
 		}
@@ -72,6 +81,7 @@ func (sr *SchemaRegistryService) GetAllSubjectsWithVersions() ([]types.Subject, 
 				continue
 			}
 
+			// Schema Registry API may omit SchemaType for older schemas; AVRO was the original default
 			if schema.SchemaType == "" {
 				schema.SchemaType = "AVRO"
 			}
