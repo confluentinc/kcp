@@ -1,9 +1,7 @@
 package client
 
 import (
-	"crypto/tls"
 	"fmt"
-	"net/http"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/types"
@@ -51,14 +49,6 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 	}
 
 	srConfig := schemaregistry.NewConfig(url)
-
-	// TODO: delete this after dev testing of skip ssl verification
-	// ================================
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	srConfig.HTTPClient = &http.Client{Transport: transport}
-	// ================================
 
 	switch config.authType {
 	case types.SchemaRegistryAuthTypeBasicAuth:
