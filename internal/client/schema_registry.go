@@ -40,18 +40,12 @@ func configureBasicAuth(srConfig *schemaregistry.Config, username, password stri
 	srConfig.BasicAuthUserInfo = fmt.Sprintf("%s:%s", username, password)
 }
 
-func configureUnauthenticated(srConfig *schemaregistry.Config) {
-	// No authentication configuration needed
-}
-
 // NewSchemaRegistryClient creates a new Schema Registry client for the given URL
 func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemaregistry.Client, error) {
-	// Default configuration (unauthenticated)
 	config := SchemaRegistryConfig{
 		authType: types.SchemaRegistryAuthTypeUnauthenticated,
 	}
 
-	// Apply all options
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -59,18 +53,20 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 	srConfig := schemaregistry.NewConfig(url)
 
 	// TODO: delete this after dev testing of skip ssl verification
+	// ================================
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	srConfig.HTTPClient = &http.Client{Transport: transport}
+	// ================================
 
 	switch config.authType {
 	case types.SchemaRegistryAuthTypeBasicAuth:
 		configureBasicAuth(srConfig, config.username, config.password)
 	case types.SchemaRegistryAuthTypeUnauthenticated:
-		configureUnauthenticated(srConfig)
+		// no authentication configuration needed
 	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", config.authType)
+		return nil, fmt.Errorf("auth type: %v not supported", config.authType)
 	}
 
 	schemaRegistryClient, err := schemaregistry.NewClient(srConfig)
