@@ -6,26 +6,11 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
-	"github.com/confluentinc/kcp/internal/generators/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
 )
-
-type TerraformFiles struct {
-	MainTf      string `json:"main_tf"`
-	ProvidersTf string `json:"providers_tf"`
-	VariablesTf string `json:"variables_tf"`
-}
-
-type WizardRequest struct {
-	NeedsEnvironment bool   `json:"needs_environment"`
-	EnvironmentName  string `json:"environment_name"`
-	EnvironmentId    string `json:"environment_id"`
-	NeedsCluster     bool   `json:"needs_cluster"`
-	ClusterName      string `json:"cluster_name"`
-	ClusterType      string `json:"cluster_type"`
-}
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
@@ -38,17 +23,20 @@ type UICmdOpts struct {
 }
 
 type UI struct {
-	reportService ReportService
+	reportService            ReportService
+	confluentCloudHCLService confluent.ConfluentCloudHCLService
 
 	port        string
 	cachedState *types.State // Cache the uploaded state for metrics filtering
 }
 
-func NewUI(reportService ReportService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, confluentCloudHCLService confluent.ConfluentCloudHCLService, opts UICmdOpts) *UI {
 	return &UI{
-		port:          opts.Port,
-		reportService: reportService,
-		cachedState:   nil,
+		reportService:            reportService,
+		confluentCloudHCLService: confluentCloudHCLService,
+
+		port:        opts.Port,
+		cachedState: nil,
 	}
 }
 
@@ -206,8 +194,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 }
 
 func (ui *UI) handlePostAssets(c echo.Context) error {
-	// Bind the wizard JSON payload
-	var req WizardRequest
+	var req types.WizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -248,22 +235,12 @@ func (ui *UI) handlePostAssets(c echo.Context) error {
 		}
 	}
 
-	// Generate Terraform files using the confluent generator
-	generator := confluent.NewGenerator()
-
-	cfg := confluent.Config{
-		NeedsEnvironment: req.NeedsEnvironment,
-		EnvironmentName:  req.EnvironmentName,
-		EnvironmentId:    req.EnvironmentId,
-		NeedsCluster:     req.NeedsCluster,
-		ClusterName:      req.ClusterName,
-		ClusterType:      req.ClusterType,
-	}
-
-	terraformFiles := TerraformFiles{
-		MainTf:      generator.GenerateMainTf(cfg),
-		ProvidersTf: generator.GenerateProvidersTf(),
-		VariablesTf: generator.GenerateVariablesTf(),
+	terraformFiles, err := ui.confluentCloudHCLService.GenerateTerraformFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
 	}
 
 	return c.JSON(http.StatusCreated, terraformFiles)

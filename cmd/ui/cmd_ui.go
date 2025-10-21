@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/cmd/ui/api"
+	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/spf13/cobra"
 )
@@ -34,7 +35,9 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 	}
 
 	reportService := report.NewReportService()
-	ui := api.NewUI(reportService, *opts)
+	confluentCloudHCLService := confluent.NewConfluentCloudHCLService()
+
+	ui := api.NewUI(reportService, *confluentCloudHCLService, *opts)
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
 	}

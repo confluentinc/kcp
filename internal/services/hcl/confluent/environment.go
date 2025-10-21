@@ -6,7 +6,7 @@ import (
 )
 
 // GenerateEnvironmentResource creates a new Confluent environment resource
-func GenerateEnvironmentResource(name string) *hclwrite.Block {
+func generateEnvironmentResource(name string) *hclwrite.Block {
 	environmentBlock := hclwrite.NewBlock("resource", []string{"confluent_environment", "environment"})
 	environmentBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
 	environmentBlock.Body().AppendNewline()
@@ -19,14 +19,14 @@ func GenerateEnvironmentResource(name string) *hclwrite.Block {
 }
 
 // GenerateEnvironmentDataSource creates a data source for an existing environment
-func GenerateEnvironmentDataSource(id string) *hclwrite.Block {
+func generateEnvironmentDataSource(id string) *hclwrite.Block {
 	environmentDataBlock := hclwrite.NewBlock("data", []string{"confluent_environment", "environment"})
 	environmentDataBlock.Body().SetAttributeValue("id", cty.StringVal(id))
 	return environmentDataBlock
 }
 
 // GetEnvironmentReference returns the reference string for the environment ID
-func GetEnvironmentReference(isNewEnv bool) string {
+func getEnvironmentReference(isNewEnv bool) string {
 	if isNewEnv {
 		return "confluent_environment.environment.id"
 	}
@@ -34,7 +34,7 @@ func GetEnvironmentReference(isNewEnv bool) string {
 }
 
 // GetEnvironmentResourceName returns the reference string for the environment resource name
-func GetEnvironmentResourceName(isNewEnv bool) string {
+func getEnvironmentResourceName(isNewEnv bool) string {
 	if isNewEnv {
 		return "confluent_environment.environment.resource_name"
 	}

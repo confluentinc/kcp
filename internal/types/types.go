@@ -100,3 +100,18 @@ type GlobalMetrics struct {
 	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
 	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }
+
+type WizardRequest struct {
+	NeedsEnvironment bool   `json:"needs_environment"`
+	EnvironmentName  string `json:"environment_name"`
+	EnvironmentId    string `json:"environment_id"`
+	NeedsCluster     bool   `json:"needs_cluster"`
+	ClusterName      string `json:"cluster_name"`
+	ClusterType      string `json:"cluster_type"`
+}
+
+type TerraformFiles struct {
+	MainTf      string `json:"main_tf"`
+	ProvidersTf string `json:"providers_tf"`
+	VariablesTf string `json:"variables_tf"`
+}

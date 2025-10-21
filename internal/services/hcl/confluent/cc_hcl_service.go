@@ -3,88 +3,86 @@ package confluent
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/generators/hcl"
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
 
-// Generator handles Confluent Cloud Terraform generation
-type Generator struct {
-	// Configuration fields if needed in the future
+type ConfluentCloudHCLService struct {
 }
 
-// Config holds the configuration for generating Confluent Cloud Terraform files
-type Config struct {
-	NeedsEnvironment bool
-	EnvironmentName  string
-	EnvironmentId    string
-	NeedsCluster     bool
-	ClusterName      string
-	ClusterType      string
+func NewConfluentCloudHCLService() *ConfluentCloudHCLService {
+	return &ConfluentCloudHCLService{}
 }
 
-// NewGenerator creates a new Confluent generator
-func NewGenerator() *Generator {
-	return &Generator{}
+func (cc *ConfluentCloudHCLService) GenerateTerraformFiles(request types.WizardRequest) (types.TerraformFiles, error) {
+	terraformFiles := types.TerraformFiles{
+		MainTf:      cc.generateMainTf(request),
+		ProvidersTf: cc.generateProvidersTf(),
+		VariablesTf: cc.generateVariablesTf(),
+	}
+
+	return terraformFiles, nil
 }
 
 // GenerateMainTf generates the main.tf file content using individual resource functions
-func (g *Generator) GenerateMainTf(cfg Config) string {
+func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	// Add environment (create or use data source)
-	if cfg.NeedsEnvironment {
-		rootBody.AppendBlock(GenerateEnvironmentResource(cfg.EnvironmentName))
+	if request.NeedsEnvironment {
+		rootBody.AppendBlock(generateEnvironmentResource(request.EnvironmentName))
 		rootBody.AppendNewline()
 	} else {
-		rootBody.AppendBlock(GenerateEnvironmentDataSource(cfg.EnvironmentId))
+		rootBody.AppendBlock(generateEnvironmentDataSource(request.EnvironmentId))
 		rootBody.AppendNewline()
 	}
 
 	// Add Kafka cluster (create if needed)
-	if cfg.NeedsCluster || cfg.NeedsEnvironment {
-		rootBody.AppendBlock(GenerateKafkaClusterResource(cfg.ClusterName, cfg.ClusterType, "us-east-1", cfg.NeedsEnvironment))
+	if request.NeedsCluster || request.NeedsEnvironment {
+		rootBody.AppendBlock(generateKafkaClusterResource(request.ClusterName, request.ClusterType, "us-east-1", request.NeedsEnvironment))
 		rootBody.AppendNewline()
 	}
 
 	// Add Schema Registry data source
-	rootBody.AppendBlock(GenerateSchemaRegistryDataSource(cfg.NeedsEnvironment))
+	rootBody.AppendBlock(generateSchemaRegistryDataSource(request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
 	// Add Service Account
-	description := fmt.Sprintf("Service account to manage the %s environment.", cfg.EnvironmentName)
-	rootBody.AppendBlock(GenerateServiceAccount("app-manager", description))
+	description := fmt.Sprintf("Service account to manage the %s environment.", request.EnvironmentName)
+	rootBody.AppendBlock(generateServiceAccount("app-manager", description))
 	rootBody.AppendNewline()
 
 	// Add Role Bindings
-	rootBody.AppendBlock(GenerateRoleBinding(
+	rootBody.AppendBlock(generateRoleBinding(
 		"subject-resource-owner",
 		"User:${confluent_service_account.app-manager.id}",
 		"ResourceOwner",
-		hcl.TokensForStringTemplate("${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"),
+		utils.TokensForStringTemplate("${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"),
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(GenerateRoleBinding(
+	rootBody.AppendBlock(generateRoleBinding(
 		"app-manager-kafka-cluster-admin",
 		"User:${confluent_service_account.app-manager.id}",
 		"CloudClusterAdmin",
-		hcl.TokensForResourceReference("confluent_kafka_cluster.cluster.rbac_crn"),
+		utils.TokensForResourceReference("confluent_kafka_cluster.cluster.rbac_crn"),
 	))
 	rootBody.AppendNewline()
 
-	envResourceName := GetEnvironmentResourceName(cfg.NeedsEnvironment)
-	rootBody.AppendBlock(GenerateRoleBinding(
+	envResourceName := getEnvironmentResourceName(request.NeedsEnvironment)
+	rootBody.AppendBlock(generateRoleBinding(
 		"app-manager-kafka-data-steward",
 		"User:${confluent_service_account.app-manager.id}",
 		"DataSteward",
-		hcl.TokensForResourceReference(envResourceName),
+		utils.TokensForResourceReference(envResourceName),
 	))
 	rootBody.AppendNewline()
 
 	// Add Kafka ACLs
-	rootBody.AppendBlock(GenerateKafkaACL(
+	rootBody.AppendBlock(generateKafkaACL(
 		"app-manager-create-on-cluster",
 		"CLUSTER",
 		"kafka-cluster",
@@ -94,7 +92,7 @@ func (g *Generator) GenerateMainTf(cfg Config) string {
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(GenerateKafkaACL(
+	rootBody.AppendBlock(generateKafkaACL(
 		"app-manager-describe-on-cluster",
 		"CLUSTER",
 		"kafka-cluster",
@@ -104,7 +102,7 @@ func (g *Generator) GenerateMainTf(cfg Config) string {
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(GenerateKafkaACL(
+	rootBody.AppendBlock(generateKafkaACL(
 		"app-manager-read-all-consumer-groups",
 		"GROUP",
 		"*",
@@ -115,17 +113,17 @@ func (g *Generator) GenerateMainTf(cfg Config) string {
 	rootBody.AppendNewline()
 
 	// Add API Keys
-	rootBody.AppendBlock(GenerateSchemaRegistryAPIKey(cfg.EnvironmentName, cfg.NeedsEnvironment))
+	rootBody.AppendBlock(generateSchemaRegistryAPIKey(request.EnvironmentName, request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(GenerateKafkaAPIKey(cfg.EnvironmentName, cfg.NeedsEnvironment))
+	rootBody.AppendBlock(generateKafkaAPIKey(request.EnvironmentName, request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
 
 // GenerateProvidersTf generates the providers.tf file content
-func (g *Generator) GenerateProvidersTf() string {
+func (cc *ConfluentCloudHCLService) generateProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -148,14 +146,14 @@ func (g *Generator) GenerateProvidersTf() string {
 	// Provider block
 	providerBlock := rootBody.AppendNewBlock("provider", []string{"confluent"})
 	providerBody := providerBlock.Body()
-	providerBody.SetAttributeRaw("cloud_api_key", hcl.TokensForResourceReference("var.confluent_cloud_api_key"))
-	providerBody.SetAttributeRaw("cloud_api_secret", hcl.TokensForResourceReference("var.confluent_cloud_api_secret"))
+	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForResourceReference("var.confluent_cloud_api_key"))
+	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForResourceReference("var.confluent_cloud_api_secret"))
 
 	return string(f.Bytes())
 }
 
 // GenerateVariablesTf generates the variables.tf file content
-func (g *Generator) GenerateVariablesTf() string {
+func (cc *ConfluentCloudHCLService) generateVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -172,7 +170,7 @@ func (g *Generator) GenerateVariablesTf() string {
 	for _, v := range variables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.name})
 		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", hcl.TokensForResourceReference("string"))
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
 		if v.description != "" {
 			variableBody.SetAttributeValue("description", cty.StringVal(v.description))
 		}
