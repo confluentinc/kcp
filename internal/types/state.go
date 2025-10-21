@@ -339,7 +339,6 @@ type KcpBuildInfo struct {
 }
 
 type SchemaRegistryInformation struct {
-	// ID       string    `json:"id"`
 	Type                 string                       `json:"type"`
 	URL                  string                       `json:"url"`
 	DefaultCompatibility schemaregistry.Compatibility `json:"default_compatibility"`
