@@ -25,16 +25,18 @@ type UICmdOpts struct {
 type UI struct {
 	reportService         ReportService
 	targetInfraHCLService hcl.TargetInfraHCLService
+	migrationInfraHCLService hcl.MigrationInfraHCLService
 
 	port        string
 	cachedState *types.State // Cache the uploaded state for metrics filtering
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, opts UICmdOpts) *UI {
 	return &UI{
 		reportService:         reportService,
 		targetInfraHCLService: targetInfraHCLService,
-
+		migrationInfraHCLService: migrationInfraHCLService,
+		
 		port:        opts.Port,
 		cachedState: nil,
 	}
@@ -60,8 +62,8 @@ func (ui *UI) Run() error {
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
-	e.POST("/assets", ui.handlePostAssets)
-	e.POST("/assets/transient/:cluster-arn", ui.handlePostTransientAssets)
+	e.POST("/assets", ui.handleTargetClusterAssets)
+	e.POST("/assets/migration/:cluster-arn", ui.handleMigrationAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -195,8 +197,8 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	return c.JSON(http.StatusOK, regionCosts)
 }
 
-func (ui *UI) handlePostAssets(c echo.Context) error {
-	var req types.WizardRequest
+func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
+	var req types.TargetClusterWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -248,11 +250,11 @@ func (ui *UI) handlePostAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
-func (ui *UI) handlePostTransientAssets(c echo.Context) error {
+func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	clusterArn := c.Param("cluster-arn")
 	_ = clusterArn
 
-	var req types.TransientWizardRequest
+	var req types.MigrationWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -260,12 +262,20 @@ func (ui *UI) handlePostTransientAssets(c echo.Context) error {
 		})
 	}
 
-	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.EnvironmentId == "" || req.EnvironmentName == "" {
+	if  req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid configuration",
-			"message": "authenticationMethod, targetClusterType, environmentId, and environmentName are required",
+			"message": "targetEnvironmentId, targetClusterId, and targetRestEndpoint are required",
 		})
 	}
 
-	return c.JSON(http.StatusCreated, "")
+	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
 }

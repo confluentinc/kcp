@@ -17,7 +17,7 @@ func NewTargetInfraHCLService() *TargetInfraHCLService {
 	return &TargetInfraHCLService{}
 }
 
-func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.WizardRequest) (types.TerraformFiles, error) {
+func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) (types.TerraformFiles, error) {
 	terraformFiles := types.TerraformFiles{
 		MainTf:      ti.generateMainTf(request),
 		ProvidersTf: ti.generateProvidersTf(),
@@ -28,7 +28,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.WizardRequ
 }
 
 // GenerateMainTf generates the main.tf file content using individual resource functions
-func (ti *TargetInfraHCLService) generateMainTf(request types.WizardRequest) string {
+func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 

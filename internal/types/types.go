@@ -101,7 +101,7 @@ type GlobalMetrics struct {
 	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
 }
 
-type WizardRequest struct {
+type TargetClusterWizardRequest struct {
 	NeedsEnvironment bool   `json:"needs_environment"`
 	EnvironmentName  string `json:"environment_name"`
 	EnvironmentId    string `json:"environment_id"`
@@ -126,10 +126,17 @@ type TerraformFiles struct {
 }
 */
 
-type TransientWizardRequest struct {
-	MskPubliclyAccessible bool   `json:"msk_publicly_accessible"`
-	AuthenticationMethod  string `json:"authentication_method"`
-	TargetClusterType     string `json:"target_cluster_type"`
-	EnvironmentId         string `json:"environment_id"`
-	EnvironmentName       string `json:"environment_name"`
+type MigrationWizardRequest struct {
+	MskPubliclyAccessible          bool   `json:"msk_publicly_accessible"`
+	AuthenticationMethod           string `json:"authentication_method"`
+	TargetClusterType              string `json:"target_cluster_type"`
+	TargetEnvironmentId            string `json:"target_environment_id"`
+	TargetClusterId                string `json:"target_cluster_id"`
+	TargetRestEndpoint             string `json:"target_rest_endpoint"`
+	MskClusterId                   string `json:"msk_cluster_id"`
+	MskSaslScramUsername           string `json:"msk_sasl_scram_username"`
+	MskSaslScramPassword           string `json:"msk_sasl_scram_password"`
+	MskSaslScramBootstrapServers   string `json:"msk_sasl_scram_bootstrap_servers"`
+	TargetClusterApiKey            string `json:"target_cluster_api_key"`
+	TargetClusterApiSecret         string `json:"target_cluster_api_secret"`
 }

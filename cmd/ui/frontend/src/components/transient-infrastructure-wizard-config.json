@@ -119,28 +119,76 @@
           "schema": {
             "type": "object",
             "properties": {
-              "environment_id": {
+              "target_environment_id": {
                 "type": "string",
                 "title": "Environment ID",
                 "description": "Confluent Cloud Environment ID"
               },
-              "environment_name": {
+              "target_cluster_id": {
                 "type": "string",
-                "title": "Environment Name",
-                "description": "Name of the Confluent Cloud environment"
+                "title": "Cluster ID",
+                "description": "Confluent Cloud Cluster ID"
+              },
+              "target_rest_endpoint": {
+                "type": "string",
+                "title": "REST Endpoint",
+                "description": "Confluent Cloud Cluster REST Endpoint"
               }
             },
             "required": [
-              "environment_id",
-              "environment_name"
+              "target_environment_id",
+              "target_cluster_id",
+              "target_rest_endpoint"
             ]
           },
           "uiSchema": {
-            "environment_id": {
+            "target_environment_id": {
               "ui:placeholder": "e.g., env-xxxxx"
             },
-            "environment_name": {
-              "ui:placeholder": "e.g., production"
+            "target_cluster_id": {
+              "ui:placeholder": "e.g., cluster-xxxxx"
+            },
+            "target_rest_endpoint": {
+              "ui:placeholder": "e.g., https://api.confluent.cloud"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "statefile_inputs",
+            "actions": "save_step_data"
+          },
+          "BACK": {
+            "target": "cluster_type_question"
+          }
+        }
+      },
+      "statefile_inputs": {
+        "meta": {
+          "title": "Statefile Configuration",
+          "description": "Enter configuration details for your statefile",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "msk_cluster_id": {
+                "type": "string",
+                "title": "Environment ID",
+                "description": "Confluent Cloud Environment ID"
+              },
+              "msk_cluster_bootstrap_brokers": {
+                "type": "string",
+                "title": "Cluster ID",
+                "description": "Confluent Cloud Cluster ID"
+              }
+            },
+            "required": ["msk_cluster_id", "msk_cluster_bootstrap_brokers"]
+          },
+          "uiSchema": {
+            "msk_cluster_id": {
+              "ui:placeholder": "e.g., env-xxxxx"
+            },
+            "msk_cluster_bootstrap_brokers": {
+              "ui:placeholder": "e.g., b-1.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098,b-2.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098"
             }
           }
         },
@@ -150,7 +198,7 @@
             "actions": "save_step_data"
           },
           "BACK": {
-            "target": "cluster_type_question"
+            "target": "dedicated_inputs"
           }
         }
       },
@@ -162,8 +210,9 @@
           "summaryFields": [
             "msk_publicly_accessible",
             "target_cluster_type",
-            "environment_id",
-            "environment_name",
+            "target_environment_id",
+            "target_cluster_id",
+            "target_rest_endpoint",
             "authentication_method"
           ]
         },
@@ -174,11 +223,8 @@
           },
           "BACK": [
             {
-              "target": "dedicated_inputs",
-              "guard": "came_from_dedicated_inputs"
-            },
-            {
-              "target": "authentication_method_question"
+              "target": "statefile_inputs",
+              "guard": "came_from_statefile_inputs"
             }
           ]
         }
@@ -187,7 +233,8 @@
         "type": "final",
         "meta": {
           "title": "Configuration Complete",
-          "message": "Your transient infrastructure configuration is ready to be processed..."
+          "message": "Your transient infrastructure configuration is ready to be processed...",
+          "apiEndpoint": "/api/assets/migration/cluster_arn_placeholder"
         }
       }
     }
@@ -195,12 +242,10 @@
   "guards": {
     "is_dedicated": "event && event.data && event.data.target_cluster_type === 'dedicated'",
     "is_enterprise": "event && event.data && event.data.target_cluster_type === 'enterprise'",
-    "has_internet_gateway": "event && event.data && event.data.has_internet_gateway === true",
-    "no_internet_gateway": "event && event.data && event.data.has_internet_gateway === false",
     "is_iam": "event && event.data && event.data.authentication_method === 'iam'",
     "is_sasl_scram": "event && event.data && event.data.authentication_method === 'sasl_scram'",
     "came_from_dedicated_inputs": "context && context.previousStep === 'dedicated_inputs'",
-    "came_from_enterprise_networking_inputs": "context && context.previousStep === 'enterprise_networking_inputs'"
+    "came_from_statefile_inputs": "context && context.previousStep === 'statefile_inputs'"
   },
   "actions": {
     "save_step_data": "assign({ stepData: (context, event) => ({ ...context.stepData, [event.stepId]: event.data }), allData: (context, event) => ({ ...context.allData, [event.stepId]: event.data }), previousStep: (context, event) => event.stepId })"
