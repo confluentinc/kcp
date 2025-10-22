@@ -48,8 +48,8 @@ func (mi *MigrationInfraHCLService) generateProvidersTf() string {
 	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
-	requiredProvidersBody.AppendBlock(confluent.GenerateRequiredProviderBlock())
-	rootBody.AppendNewline()
+	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
+	rootBody.AppendNewline()	
 
 	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()
@@ -70,10 +70,6 @@ func (mi *MigrationInfraHCLService) generateVariablesTf() string {
 		{"confluent_cloud_api_secret", "Confluent Cloud API Secret", true},
 		{"msk_sasl_scram_username", "MSK SASL SCRAM Username", false},
 		{"msk_sasl_scram_password", "MSK SASL SCRAM Password", true},
-		{"msk_cluster_id", "MSK Cluster ID", false},
-		{"msk_cluster_bootstrap_brokers", "MSK Cluster Bootstrap Brokers", false},
-		{"confluent_cloud_cluster_rest_endpoint", "Confluent Cloud Cluster REST Endpoint", false},
-		{"confluent_cloud_cluster_id", "Confluent Cloud Cluster ID", false},
 		{"confluent_cloud_cluster_api_key", "Confluent Cloud cluster API key", false},
 		{"confluent_cloud_cluster_api_secret", "Confluent Cloud cluster API secret", true},
 	}

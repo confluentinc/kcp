@@ -8,8 +8,8 @@ import (
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/zclconf/go-cty/cty"
 )
 
 type ClusterLinkTemplateData struct {
@@ -36,10 +36,9 @@ func generateRandomSuffix() string {
 func GenerateClusterLinkLocals() *hclwrite.Block {
 	localsBlock := hclwrite.NewBlock("locals", nil)
 
-	localsBlock.Body().SetAttributeValue("link_name", cty.StringVal("msk-to-cc-link"))
-
-	basicAuthTokens := utils.TokensForStringTemplate(
-		"base64encode(\"${var.confluent_cloud_cluster_api_key}:${var.confluent_cloud_cluster_api_secret}\")",
+	basicAuthTokens := utils.TokensForFunctionCall(
+		"base64encode",
+		"${var.confluent_cloud_cluster_api_key}:${var.confluent_cloud_cluster_api_secret}",
 	)
 	localsBlock.Body().SetAttributeRaw("basic_auth_credentials", basicAuthTokens)
 
@@ -56,10 +55,12 @@ Error: error creating Cluster Link: 401 Unauthorized: Unable to validate cluster
 func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite.Block {
 	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", "confluent_cluster_link"})
 
-	triggersBlock := resourceBlock.Body().AppendNewBlock("triggers", nil)
-	triggersBlock.Body().SetAttributeRaw("source_cluster_id", utils.TokensForResourceReference(request.MskClusterId))
-	triggersBlock.Body().SetAttributeRaw("destination_cluster_id", utils.TokensForResourceReference(request.TargetClusterId))
-	triggersBlock.Body().SetAttributeRaw("bootstrap_servers", utils.TokensForResourceReference(request.MskSaslScramBootstrapServers))
+	triggersMap := map[string]hclwrite.Tokens{
+		"source_cluster_id":      utils.TokensForStringTemplate(request.MskClusterId),
+		"destination_cluster_id": utils.TokensForStringTemplate(request.TargetClusterId),
+		"bootstrap_servers":      utils.TokensForStringTemplate(request.MskSaslScramBootstrapServers),
+	}
+	resourceBlock.Body().SetAttributeRaw("triggers", utils.TokensForMap(triggersMap))
 
 	resourceBlock.Body().AppendNewline()
 
@@ -76,8 +77,13 @@ func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite
 
 	curlCommand := generateClusterLinkCurlCommand(templateData)
 
-	heredocCommand := fmt.Sprintf("<<-EOT\n%s\nEOT", curlCommand)
-	provisionerBlock.Body().SetAttributeRaw("command", utils.TokensForStringTemplate(heredocCommand))
+	provisionerBlock.Body().SetAttributeRaw("command", hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOHeredoc, Bytes: []byte("<<-EOT")},
+		&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+		&hclwrite.Token{Type: hclsyntax.TokenStringLit, Bytes: []byte(curlCommand)},
+		&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+		&hclwrite.Token{Type: hclsyntax.TokenCHeredoc, Bytes: []byte("EOT")},
+	})
 
 	return resourceBlock
 }
