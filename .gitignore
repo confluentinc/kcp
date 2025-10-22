@@ -62,6 +62,4 @@ tmp
 *.log.gz
 
 
-!confluent-cloud-wizard-config.json
-!wizard-config.json
-!wizard-config-orig.json
+!cmd/ui/frontend/src/components/*.json

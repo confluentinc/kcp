@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
-	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
@@ -23,17 +23,17 @@ type UICmdOpts struct {
 }
 
 type UI struct {
-	reportService            ReportService
-	confluentCloudHCLService confluent.ConfluentCloudHCLService
+	reportService         ReportService
+	targetInfraHCLService hcl.TargetInfraHCLService
 
 	port        string
 	cachedState *types.State // Cache the uploaded state for metrics filtering
 }
 
-func NewUI(reportService ReportService, confluentCloudHCLService confluent.ConfluentCloudHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, opts UICmdOpts) *UI {
 	return &UI{
-		reportService:            reportService,
-		confluentCloudHCLService: confluentCloudHCLService,
+		reportService:         reportService,
+		targetInfraHCLService: targetInfraHCLService,
 
 		port:        opts.Port,
 		cachedState: nil,
@@ -59,7 +59,9 @@ func (ui *UI) Run() error {
 	e.POST("/upload-state", ui.handleUploadState)
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
+
 	e.POST("/assets", ui.handlePostAssets)
+	e.POST("/assets/transient/:cluster-arn", ui.handlePostTransientAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -235,7 +237,7 @@ func (ui *UI) handlePostAssets(c echo.Context) error {
 		}
 	}
 
-	terraformFiles, err := ui.confluentCloudHCLService.GenerateTerraformFiles(req)
+	terraformFiles, err := ui.targetInfraHCLService.GenerateTerraformFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",
@@ -244,4 +246,26 @@ func (ui *UI) handlePostAssets(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func (ui *UI) handlePostTransientAssets(c echo.Context) error {
+	clusterArn := c.Param("cluster-arn")
+	_ = clusterArn
+
+	var req types.TransientWizardRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.EnvironmentId == "" || req.EnvironmentName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid configuration",
+			"message": "authenticationMethod, targetClusterType, environmentId, and environmentName are required",
+		})
+	}
+
+	return c.JSON(http.StatusCreated, "")
 }

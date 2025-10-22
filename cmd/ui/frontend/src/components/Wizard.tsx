@@ -33,8 +33,12 @@ interface TerraformFiles {
   variables_tf: string
 }
 
-export default function Wizard() {
-  const config = wizardConfig as unknown as WizardConfig
+interface WizardProps {
+  config?: WizardConfig
+}
+
+export default function Wizard({ config: configProp }: WizardProps = {}) {
+  const config = (configProp || wizardConfig) as unknown as WizardConfig
 
   // Store form data in component state as a backup
   const [componentFormData, setComponentFormData] = useState<Record<string, any>>({})

@@ -1,62 +1,63 @@
-package confluent
+package hcl
 
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
 
-type ConfluentCloudHCLService struct {
+type TargetInfraHCLService struct {
 }
 
-func NewConfluentCloudHCLService() *ConfluentCloudHCLService {
-	return &ConfluentCloudHCLService{}
+func NewTargetInfraHCLService() *TargetInfraHCLService {
+	return &TargetInfraHCLService{}
 }
 
-func (cc *ConfluentCloudHCLService) GenerateTerraformFiles(request types.WizardRequest) (types.TerraformFiles, error) {
+func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.WizardRequest) (types.TerraformFiles, error) {
 	terraformFiles := types.TerraformFiles{
-		MainTf:      cc.generateMainTf(request),
-		ProvidersTf: cc.generateProvidersTf(),
-		VariablesTf: cc.generateVariablesTf(),
+		MainTf:      ti.generateMainTf(request),
+		ProvidersTf: ti.generateProvidersTf(),
+		VariablesTf: ti.generateVariablesTf(),
 	}
 
 	return terraformFiles, nil
 }
 
 // GenerateMainTf generates the main.tf file content using individual resource functions
-func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) string {
+func (ti *TargetInfraHCLService) generateMainTf(request types.WizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	// Add environment (create or use data source)
 	if request.NeedsEnvironment {
-		rootBody.AppendBlock(generateEnvironmentResource(request.EnvironmentName))
+		rootBody.AppendBlock(confluent.GenerateEnvironmentResource(request.EnvironmentName))
 		rootBody.AppendNewline()
 	} else {
-		rootBody.AppendBlock(generateEnvironmentDataSource(request.EnvironmentId))
+		rootBody.AppendBlock(confluent.GenerateEnvironmentDataSource(request.EnvironmentId))
 		rootBody.AppendNewline()
 	}
 
 	// Add Kafka cluster (create if needed)
 	if request.NeedsCluster || request.NeedsEnvironment {
-		rootBody.AppendBlock(generateKafkaClusterResource(request.ClusterName, request.ClusterType, "us-east-1", request.NeedsEnvironment))
+		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(request.ClusterName, request.ClusterType, "us-east-1", request.NeedsEnvironment))
 		rootBody.AppendNewline()
 	}
 
 	// Add Schema Registry data source
-	rootBody.AppendBlock(generateSchemaRegistryDataSource(request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateSchemaRegistryDataSource(request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
 	// Add Service Account
 	description := fmt.Sprintf("Service account to manage the %s environment.", request.EnvironmentName)
-	rootBody.AppendBlock(generateServiceAccount("app-manager", description))
+	rootBody.AppendBlock(confluent.GenerateServiceAccount("app-manager", description))
 	rootBody.AppendNewline()
 
 	// Add Role Bindings
-	rootBody.AppendBlock(generateRoleBinding(
+	rootBody.AppendBlock(confluent.GenerateRoleBinding(
 		"subject-resource-owner",
 		"User:${confluent_service_account.app-manager.id}",
 		"ResourceOwner",
@@ -64,7 +65,7 @@ func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) 
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(generateRoleBinding(
+	rootBody.AppendBlock(confluent.GenerateRoleBinding(
 		"app-manager-kafka-cluster-admin",
 		"User:${confluent_service_account.app-manager.id}",
 		"CloudClusterAdmin",
@@ -72,8 +73,8 @@ func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) 
 	))
 	rootBody.AppendNewline()
 
-	envResourceName := getEnvironmentResourceName(request.NeedsEnvironment)
-	rootBody.AppendBlock(generateRoleBinding(
+	envResourceName := confluent.GetEnvironmentResourceName(request.NeedsEnvironment)
+	rootBody.AppendBlock(confluent.GenerateRoleBinding(
 		"app-manager-kafka-data-steward",
 		"User:${confluent_service_account.app-manager.id}",
 		"DataSteward",
@@ -82,7 +83,7 @@ func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) 
 	rootBody.AppendNewline()
 
 	// Add Kafka ACLs
-	rootBody.AppendBlock(generateKafkaACL(
+	rootBody.AppendBlock(confluent.GenerateKafkaACL(
 		"app-manager-create-on-cluster",
 		"CLUSTER",
 		"kafka-cluster",
@@ -92,7 +93,7 @@ func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) 
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(generateKafkaACL(
+	rootBody.AppendBlock(confluent.GenerateKafkaACL(
 		"app-manager-describe-on-cluster",
 		"CLUSTER",
 		"kafka-cluster",
@@ -102,7 +103,7 @@ func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) 
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(generateKafkaACL(
+	rootBody.AppendBlock(confluent.GenerateKafkaACL(
 		"app-manager-read-all-consumer-groups",
 		"GROUP",
 		"*",
@@ -113,17 +114,17 @@ func (cc *ConfluentCloudHCLService) generateMainTf(request types.WizardRequest) 
 	rootBody.AppendNewline()
 
 	// Add API Keys
-	rootBody.AppendBlock(generateSchemaRegistryAPIKey(request.EnvironmentName, request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateSchemaRegistryAPIKey(request.EnvironmentName, request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(generateKafkaAPIKey(request.EnvironmentName, request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateKafkaAPIKey(request.EnvironmentName, request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
 
 // GenerateProvidersTf generates the providers.tf file content
-func (cc *ConfluentCloudHCLService) generateProvidersTf() string {
+func (ti *TargetInfraHCLService) generateProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -153,7 +154,7 @@ func (cc *ConfluentCloudHCLService) generateProvidersTf() string {
 }
 
 // GenerateVariablesTf generates the variables.tf file content
-func (cc *ConfluentCloudHCLService) generateVariablesTf() string {
+func (ti *TargetInfraHCLService) generateVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 

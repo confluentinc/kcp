@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateKafkaACL creates a Kafka ACL resource
-func generateKafkaACL(name, resourceType, resourceName, patternType, principal, operation string) *hclwrite.Block {
+func GenerateKafkaACL(name, resourceType, resourceName, patternType, principal, operation string) *hclwrite.Block {
 	aclBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", name})
 
 	kafkaClusterBlock := hclwrite.NewBlock("kafka_cluster", nil)

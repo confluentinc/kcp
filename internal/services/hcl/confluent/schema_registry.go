@@ -6,11 +6,11 @@ import (
 )
 
 // GenerateSchemaRegistryDataSource creates a data source for the Schema Registry cluster
-func generateSchemaRegistryDataSource(isNewEnv bool) *hclwrite.Block {
+func GenerateSchemaRegistryDataSource(isNewEnv bool) *hclwrite.Block {
 	schemaRegistryDataBlock := hclwrite.NewBlock("data", []string{"confluent_schema_registry_cluster", "schema_registry"})
 
 	environmentSRBlock := hclwrite.NewBlock("environment", nil)
-	envRef := getEnvironmentReference(isNewEnv)
+	envRef := GetEnvironmentReference(isNewEnv)
 	environmentSRBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(envRef))
 
 	schemaRegistryDataBlock.Body().AppendBlock(environmentSRBlock)

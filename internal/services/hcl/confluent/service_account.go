@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateServiceAccount creates a service account resource
-func generateServiceAccount(name, description string) *hclwrite.Block {
+func GenerateServiceAccount(name, description string) *hclwrite.Block {
 	serviceAccountBlock := hclwrite.NewBlock("resource", []string{"confluent_service_account", name})
 	serviceAccountBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
 	serviceAccountBlock.Body().SetAttributeValue("description", cty.StringVal(description))
@@ -15,7 +15,7 @@ func generateServiceAccount(name, description string) *hclwrite.Block {
 }
 
 // GenerateRoleBinding creates a role binding resource
-func generateRoleBinding(name, principal, roleName string, crnPattern hclwrite.Tokens) *hclwrite.Block {
+func GenerateRoleBinding(name, principal, roleName string, crnPattern hclwrite.Tokens) *hclwrite.Block {
 	roleBindingBlock := hclwrite.NewBlock("resource", []string{"confluent_role_binding", name})
 	roleBindingBlock.Body().SetAttributeRaw("principal", utils.TokensForStringTemplate(principal))
 	roleBindingBlock.Body().SetAttributeValue("role_name", cty.StringVal(roleName))

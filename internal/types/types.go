@@ -115,3 +115,21 @@ type TerraformFiles struct {
 	ProvidersTf string `json:"providers_tf"`
 	VariablesTf string `json:"variables_tf"`
 }
+
+/*
+{
+  "msk_publicly_accessible": "yes",
+  "authentication_method": "sasl_scram",
+  "target_cluster_type": "dedicated",
+  "environment_id": "sfsdf",
+  "environment_name": "sdfsdf"
+}
+*/
+
+type TransientWizardRequest struct {
+	MskPubliclyAccessible bool   `json:"msk_publicly_accessible"`
+	AuthenticationMethod  string `json:"authentication_method"`
+	TargetClusterType     string `json:"target_cluster_type"`
+	EnvironmentId         string `json:"environment_id"`
+	EnvironmentName       string `json:"environment_name"`
+}

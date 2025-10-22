@@ -1,0 +1,208 @@
+{
+  "id": "transient-infrastructure-wizard",
+  "title": "Transient Infrastructure Setup Wizard",
+  "description": "Configure transient infrastructure for migration",
+  "xstateMachine": {
+    "id": "wizard",
+    "initial": "msk_publicly_accessible",
+    "context": {
+      "stepData": {},
+      "allData": {},
+      "currentStep": "msk_publicly_accessible"
+    },
+    "states": {
+      "msk_publicly_accessible": {
+        "meta": {
+          "title": "Is your MSK cluster accessible from the internet?",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "msk_publicly_accessible": {
+                "type": "string",
+                "title": "Is your MSK cluster accessible from the internet?",
+                "enum": ["yes", "no"],
+                "enumNames": ["Yes", "No"]
+              }
+            },
+            "required": ["msk_publicly_accessible"]
+          },
+          "uiSchema": {
+            "msk_publicly_accessible": {
+              "ui:widget": "radio"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "authentication_method_question",
+            "actions": "save_step_data"
+          }
+        }
+      },
+      "authentication_method_question": {
+        "meta": {
+          "title": "Authentication Method",
+          "description": "Which authentication method will you use for the cluster link?",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "authentication_method": {
+                "type": "string",
+                "title": "Which authentication method will you use for the cluster link?",
+                "enum": ["iam", "sasl_scram"],
+                "enumNames": ["IAM", "SASL/SCRAM"]
+              }
+            },
+            "required": ["authentication_method"]
+          },
+          "uiSchema": {
+            "authentication_method": {
+              "ui:widget": "radio"
+            }
+          }
+        },
+        "on": {
+          "NEXT": [
+            {
+              "target": "cluster_type_question",
+              "guard": "is_sasl_scram",
+              "actions": "save_step_data"
+            },
+            {
+              "target": "authentication_method_question"
+            }
+          ],
+          "BACK": [
+            {
+              "target": "cluster_type_question",
+              "guard": "msk_publicly_accessible"
+            }
+          ]
+        }
+      },
+      "cluster_type_question": {
+        "meta": {
+          "title": "Target Cluster Type",
+          "description": "Select the type of your target Confluent Cloud cluster",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "target_cluster_type": {
+                "type": "string",
+                "title": "Is the target Confluent Cloud cluster 'Dedicated' or 'Enterprise'?",
+                "enum": ["dedicated", "enterprise"],
+                "enumNames": ["Dedicated", "Enterprise"]
+              }
+            },
+            "required": ["target_cluster_type"]
+          },
+          "uiSchema": {
+            "target_cluster_type": {
+              "ui:widget": "radio"
+            }
+          }
+        },
+        "on": {
+          "NEXT": [
+            {
+              "target": "dedicated_inputs",
+              "guard": "is_dedicated",
+              "actions": "save_step_data"
+            }
+          ]
+        }
+      },
+      "dedicated_inputs": {
+        "meta": {
+          "title": "Dedicated Cluster Configuration",
+          "description": "Enter configuration details for your Dedicated cluster",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "environment_id": {
+                "type": "string",
+                "title": "Environment ID",
+                "description": "Confluent Cloud Environment ID"
+              },
+              "environment_name": {
+                "type": "string",
+                "title": "Environment Name",
+                "description": "Name of the Confluent Cloud environment"
+              }
+            },
+            "required": [
+              "environment_id",
+              "environment_name"
+            ]
+          },
+          "uiSchema": {
+            "environment_id": {
+              "ui:placeholder": "e.g., env-xxxxx"
+            },
+            "environment_name": {
+              "ui:placeholder": "e.g., production"
+            }
+          }
+        },
+        "on": {
+          "NEXT": {
+            "target": "review",
+            "actions": "save_step_data"
+          },
+          "BACK": {
+            "target": "cluster_type_question"
+          }
+        }
+      },
+      "review": {
+        "meta": {
+          "title": "Review Configuration",
+          "description": "Review your transient infrastructure configuration",
+          "type": "review",
+          "summaryFields": [
+            "msk_publicly_accessible",
+            "target_cluster_type",
+            "environment_id",
+            "environment_name",
+            "authentication_method"
+          ]
+        },
+        "on": {
+          "SUBMIT": {
+            "target": "complete",
+            "actions": "save_step_data"
+          },
+          "BACK": [
+            {
+              "target": "dedicated_inputs",
+              "guard": "came_from_dedicated_inputs"
+            },
+            {
+              "target": "authentication_method_question"
+            }
+          ]
+        }
+      },
+      "complete": {
+        "type": "final",
+        "meta": {
+          "title": "Configuration Complete",
+          "message": "Your transient infrastructure configuration is ready to be processed..."
+        }
+      }
+    }
+  },
+  "guards": {
+    "is_dedicated": "event && event.data && event.data.target_cluster_type === 'dedicated'",
+    "is_enterprise": "event && event.data && event.data.target_cluster_type === 'enterprise'",
+    "has_internet_gateway": "event && event.data && event.data.has_internet_gateway === true",
+    "no_internet_gateway": "event && event.data && event.data.has_internet_gateway === false",
+    "is_iam": "event && event.data && event.data.authentication_method === 'iam'",
+    "is_sasl_scram": "event && event.data && event.data.authentication_method === 'sasl_scram'",
+    "came_from_dedicated_inputs": "context && context.previousStep === 'dedicated_inputs'",
+    "came_from_enterprise_networking_inputs": "context && context.previousStep === 'enterprise_networking_inputs'"
+  },
+  "actions": {
+    "save_step_data": "assign({ stepData: (context, event) => ({ ...context.stepData, [event.stepId]: event.data }), allData: (context, event) => ({ ...context.allData, [event.stepId]: event.data }), previousStep: (context, event) => event.stepId })"
+  }
+}

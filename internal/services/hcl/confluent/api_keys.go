@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateSchemaRegistryAPIKey creates a Schema Registry API key resource
-func generateSchemaRegistryAPIKey(envName string, isNewEnv bool) *hclwrite.Block {
+func GenerateSchemaRegistryAPIKey(envName string, isNewEnv bool) *hclwrite.Block {
 	apiKeyBlock := hclwrite.NewBlock("resource", []string{"confluent_api_key", "env-manager-schema-registry-api-key"})
 	apiKeyBlock.Body().SetAttributeValue("display_name", cty.StringVal("env-manager-schema-registry-api-key"))
 	apiKeyBlock.Body().SetAttributeValue("description", cty.StringVal("Schema Registry API Key that is owned by the "+envName+" environment."))
@@ -26,7 +26,7 @@ func generateSchemaRegistryAPIKey(envName string, isNewEnv bool) *hclwrite.Block
 	managedResourceBlock.Body().SetAttributeRaw("kind", utils.TokensForResourceReference("data.confluent_schema_registry_cluster.schema_registry.kind"))
 
 	environmentApiKeyBlock := hclwrite.NewBlock("environment", nil)
-	envRef := getEnvironmentReference(isNewEnv)
+	envRef := GetEnvironmentReference(isNewEnv)
 	environmentApiKeyBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(envRef))
 	managedResourceBlock.Body().AppendBlock(environmentApiKeyBlock)
 	apiKeyBlock.Body().AppendBlock(managedResourceBlock)
@@ -35,7 +35,7 @@ func generateSchemaRegistryAPIKey(envName string, isNewEnv bool) *hclwrite.Block
 }
 
 // GenerateKafkaAPIKey creates a Kafka API key resource
-func generateKafkaAPIKey(envName string, isNewEnv bool) *hclwrite.Block {
+func GenerateKafkaAPIKey(envName string, isNewEnv bool) *hclwrite.Block {
 	apiKeyBlock := hclwrite.NewBlock("resource", []string{"confluent_api_key", "app-manager-kafka-api-key"})
 	apiKeyBlock.Body().SetAttributeValue("display_name", cty.StringVal("app-manager-kafka-api-key"))
 	apiKeyBlock.Body().SetAttributeValue("description", cty.StringVal("Kafka API Key that has been created by the "+envName+" environment."))
@@ -55,7 +55,7 @@ func generateKafkaAPIKey(envName string, isNewEnv bool) *hclwrite.Block {
 	managedResourceBlock.Body().AppendNewline()
 
 	environmentApiKeyBlock := hclwrite.NewBlock("environment", nil)
-	envRef := getEnvironmentReference(isNewEnv)
+	envRef := GetEnvironmentReference(isNewEnv)
 	environmentApiKeyBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(envRef))
 	managedResourceBlock.Body().AppendBlock(environmentApiKeyBlock)
 	apiKeyBlock.Body().AppendBlock(managedResourceBlock)
