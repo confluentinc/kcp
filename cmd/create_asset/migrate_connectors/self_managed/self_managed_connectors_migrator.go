@@ -141,12 +141,12 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 }
 
 func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types.SelfManagedConnector) (map[string]any, []Warning, error) {
-	connectorClass, ok := connector.Config["properties"].(map[string]any)["connector.class"].(string)
+	connectorClass, ok := connector.Config["connector.class"]
 	if !ok {
 		return nil, nil, fmt.Errorf("'connector.class' not found in config")
 	}
 
-	pluginName, err := connector_utils.InferPluginName(connectorClass)
+	pluginName, err := connector_utils.InferPluginName(connectorClass.(string))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to determine plugin name: %w", err)
 	}
@@ -158,12 +158,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 		pluginName,
 	)
 
-	actualConfig := connector.Config
-	if properties, ok := connector.Config["properties"].(map[string]any); ok {
-		actualConfig = properties
-	}
-
-	configJSON, err := json.Marshal(actualConfig)
+	configJSON, err := json.Marshal(connector.Config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal connector config: %w", err)
 	}

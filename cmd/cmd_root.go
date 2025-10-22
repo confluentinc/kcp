@@ -27,13 +27,13 @@ var RootCmd = &cobra.Command{
 	Short: "A CLI tool for kafka cluster planning and migration",
 	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + getDocURL(),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		if build_info.Version == "dev" {
-			fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
-				color.RedString("┌─────────────────────────────────────────────────────────────────────────┐"),
-				color.RedString("│ ⚠️  WARNING: This is a development build                                │"),
-				color.RedString("│ Official releases: https://github.com/confluentinc/kcp/releases         │"),
-				color.RedString("└─────────────────────────────────────────────────────────────────────────┘"))
-		}
+		// if build_info.Version == "dev" {
+		// 	fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
+		// 		color.RedString("┌─────────────────────────────────────────────────────────────────────────┐"),
+		// 		color.RedString("│ ⚠️  WARNING: This is a development build                                │"),
+		// 		color.RedString("│ Official releases: https://github.com/confluentinc/kcp/releases         │"),
+		// 		color.RedString("└─────────────────────────────────────────────────────────────────────────┘"))
+		// }
 
 		fmt.Printf("%s %s %s %s\n",
 			color.CyanString("Executing kcp with build"),

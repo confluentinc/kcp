@@ -81,11 +81,9 @@ func TestSelfManagedConnectorMigrator_Run_WithConnectors(t *testing.T) {
 		{
 			Name: "test-datagen-connector",
 			Config: map[string]any{
-				"properties": map[string]any{
-					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
-					"topics":          "test-topic",
-					"quickstart":      "users",
-				},
+				"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+				"topics":          "test-topic",
+				"quickstart":      "users",
 			},
 		},
 	}
@@ -151,12 +149,10 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_Success(t *testin
 	connector := types.SelfManagedConnector{
 		Name: "test-connector",
 		Config: map[string]any{
-			"properties": map[string]any{
-				"connector.class":       "io.confluent.kafka.connect.datagen.DatagenConnector",
-				"topics":                "test-topic",
-				"quickstart":            "users",
-				"topic.creation.enable": "true",
-			},
+			"connector.class":       "io.confluent.kafka.connect.datagen.DatagenConnector",
+			"topics":                "test-topic",
+			"quickstart":            "users",
+			"topic.creation.enable": "true",
 		},
 	}
 
@@ -187,9 +183,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_MissingConnectorC
 	connector := types.SelfManagedConnector{
 		Name: "test-connector",
 		Config: map[string]any{
-			"properties": map[string]any{
-				"topics": "test-topic",
-			},
+			"topics": "test-topic",
 		},
 	}
 
@@ -210,10 +204,8 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_UnsupportedConnec
 	connector := types.SelfManagedConnector{
 		Name: "test-connector",
 		Config: map[string]any{
-			"properties": map[string]any{
-				"connector.class": "com.unknown.UnsupportedConnector",
-				"topics":          "test-topic",
-			},
+			"connector.class": "com.unknown.UnsupportedConnector",
+			"topics":          "test-topic",
 		},
 	}
 
@@ -236,10 +228,8 @@ func TestSelfManagedConnectorMigrator_Run_CreatesOutputDirectory(t *testing.T) {
 			{
 				Name: "test-connector",
 				Config: map[string]any{
-					"properties": map[string]any{
-						"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
-						"topics":          "test-topic",
-					},
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"topics":          "test-topic",
 				},
 			},
 		},
@@ -273,10 +263,8 @@ func TestSelfManagedConnectorMigrator_Run_InvalidOutputDirectory(t *testing.T) {
 		Connectors: []types.SelfManagedConnector{
 			{
 				Name: "test-connector",
-				Config: map[string]any{
-					"properties": map[string]any{
-						"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
-					},
+					Config: map[string]any{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
 				},
 			},
 		},
@@ -332,12 +320,10 @@ func TestSelfManagedConnectorMigrator_Integration(t *testing.T) {
 		{
 			Name: "integration-test-connector",
 			Config: map[string]any{
-				"properties": map[string]any{
-					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
-					"topics":          "test-topic",
-					"quickstart":      "users",
-					"topic.creation.enable": "true",
-				},
+				"connector.class":       "io.confluent.kafka.connect.datagen.DatagenConnector",
+				"topics":                "test-topic",
+				"quickstart":            "users",
+				"topic.creation.enable": "true",
 			},
 		},
 	}
@@ -373,19 +359,15 @@ func TestSelfManagedConnectorMigrator_MultipleConnectors(t *testing.T) {
 		{
 			Name: "connector1",
 			Config: map[string]any{
-				"properties": map[string]any{
-					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
-					"topics":          "topic1",
-				},
+				"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+				"topics":          "topic1",
 			},
 		},
 		{
 			Name: "connector2",
 			Config: map[string]any{
-				"properties": map[string]any{
-					"connector.class": "io.confluent.connect.s3.S3SinkConnector",
-					"topics":          "topic2",
-				},
+				"connector.class": "io.confluent.connect.s3.S3SinkConnector",
+				"topics":          "topic2",
 			},
 		},
 	}
@@ -426,11 +408,9 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig(t *testing.T) {
 	connector := types.SelfManagedConnector{
 		Name: "test-connector",
 		Config: map[string]any{
-			"properties": map[string]any{
-				"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
-				"topics":          "test-topic",
-				"quickstart":      "users",
-			},
+			"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+			"topics":          "test-topic",
+			"quickstart":      "users",
 		},
 	}
 

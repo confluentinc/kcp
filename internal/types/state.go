@@ -274,9 +274,9 @@ type ConnectorSummary struct {
 }
 
 type SelfManagedConnector struct {
-	Name        string                 `json:"name"`
-	Config      map[string]interface{} `json:"config"`
-	State       string                 `json:"state,omitempty"`
+	Name   string            `json:"name"`
+	Config map[string]any `json:"config"`
+	State  string            `json:"state,omitempty"`
 }
 
 type SelfManagedConnectors struct {
