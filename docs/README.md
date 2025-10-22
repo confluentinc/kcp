@@ -8,6 +8,7 @@
     - [`kcp scan`](#kcp-scan)
       - [`kcp scan clusters`](#kcp-scan-clusters)
       - [`kcp scan client-inventory`](#kcp-scan-client-inventory)
+      - [`kcp scan schema-registry`](#kcp-scan-schema-registry)
     - [`kcp report`](#kcp-report)
       - [`kcp report costs`](#kcp-report-costs)
       - [`kcp report metrics`](#kcp-report-metrics)
@@ -170,6 +171,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `clusters`
 - `client-inventory`
+- `schema-registry`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -273,6 +275,59 @@ Alternatively, the following environment variables need to be set:
 ```shell
 export REGION=<aws-region>
 export S3_URI=<folder-in-s3>
+```
+
+---
+
+#### `kcp scan schema-registry`
+
+This command scans a schema registry to capture all subjects, their versions, schema metadata, and compatibility settings. The information is appended to the kcp-state.json file for migration planning.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the schema registry information will be written to
+- `--url`: The URL of the schema registry to scan
+
+**Authentication Options** (choose one):
+
+- `--use-unauthenticated`: Use unauthenticated access
+- `--use-basic-auth`: Use basic authentication (requires `--username` and `--password`)
+
+**Example Usage**
+
+```shell
+# With unauthenticated access
+kcp scan schema-registry \
+  --state-file kcp-state.json \
+  --url https://my-schema-registry:8081 \
+  --use-unauthenticated
+
+# With basic authentication
+kcp scan schema-registry \
+  --state-file kcp-state.json \
+  --url https://my-schema-registry:8081 \
+  --use-basic-auth \
+  --username my-username \
+  --password my-password
+```
+
+**Output:**
+The command appends the following schema registry information to the kcp-state.json file:
+
+- Schema registry type and URL
+- Default compatibility level
+- All subjects and their versions
+- Latest schema metadata for each subject
+
+Alternatively, the following environment variables can be set:
+
+```shell
+export STATE_FILE=<path-to-state-file>
+export URL=<schema-registry-url>
+export USE_UNAUTHENTICATED=<true|false>
+export USE_BASIC_AUTH=<true|false>
+export USERNAME=<username>
+export PASSWORD=<password>
 ```
 
 ---
