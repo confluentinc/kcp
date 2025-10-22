@@ -18,10 +18,10 @@
             "type": "object",
             "properties": {
               "msk_publicly_accessible": {
-                "type": "string",
+                "type": "boolean",
                 "title": "Is your MSK cluster accessible from the internet?",
-                "enum": ["yes", "no"],
-                "enumNames": ["Yes", "No"]
+                "enum": [true, false],
+                "enumNames": [true, false]
               }
             },
             "required": ["msk_publicly_accessible"]
@@ -172,22 +172,22 @@
             "properties": {
               "msk_cluster_id": {
                 "type": "string",
-                "title": "Environment ID",
-                "description": "Confluent Cloud Environment ID"
+                "title": "MSK Cluster ID",
+                "description": "MSK Cluster ID"
               },
-              "msk_cluster_bootstrap_brokers": {
+              "msk_sasl_scram_bootstrap_servers": {
                 "type": "string",
-                "title": "Cluster ID",
-                "description": "Confluent Cloud Cluster ID"
+                "title": "MSK Cluster Bootstrap Brokers",
+                "description": "MSK Cluster Bootstrap Brokers"
               }
             },
-            "required": ["msk_cluster_id", "msk_cluster_bootstrap_brokers"]
+            "required": ["msk_cluster_id", "msk_sasl_scram_bootstrap_servers"]
           },
           "uiSchema": {
             "msk_cluster_id": {
-              "ui:placeholder": "e.g., env-xxxxx"
+              "ui:placeholder": "e.g., cluster-xxxxx"
             },
-            "msk_cluster_bootstrap_brokers": {
+            "msk_sasl_scram_bootstrap_servers": {
               "ui:placeholder": "e.g., b-1.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098,b-2.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098"
             }
           }
@@ -213,7 +213,9 @@
             "target_environment_id",
             "target_cluster_id",
             "target_rest_endpoint",
-            "authentication_method"
+            "authentication_method",
+            "msk_cluster_id",
+            "msk_sasl_scram_bootstrap_servers"
           ]
         },
         "on": {

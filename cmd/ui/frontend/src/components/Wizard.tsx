@@ -223,7 +223,7 @@ export default function Wizard({ config: configProp }: WizardProps = {}) {
       // Get all the wizard data and send it to the API
       const wizardData = getFlattenedData()
       
-      const response = await fetch('/assets', {
+      const response = await fetch('/assets/migration/cluster_arn_placeholder', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
