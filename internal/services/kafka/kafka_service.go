@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -56,6 +57,13 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 		return nil, err
 	}
 	kafkaAdminClientInformation.Acls = acls
+
+	connectors, err := ks.scanSelfManagedConnectors(topics)
+	if err != nil {
+		slog.Warn("⚠️ failed to scan self-managed connectors", "clusterArn", ks.clusterArn, "error", err)
+	} else {
+		kafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
+	}
 
 	return kafkaAdminClientInformation, nil
 }
@@ -127,4 +135,85 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 	}
 
 	return flattenedAcls, nil
+}
+
+func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) ([]types.SelfManagedConnector, error) {
+	const (
+		configTopicName = "connect-configs"
+		statusTopicName = "connect-status"
+		keyPrefix       = "connector-"
+	)
+
+	existingTopics := make(map[string]bool)
+	for _, topic := range topics {
+		existingTopics[topic.Name] = true
+	}
+
+	if !existingTopics[configTopicName] {
+		slog.Debug("⏭️ skipping topic (does not exist)", "topic", configTopicName, "clusterArn", ks.clusterArn)
+		return []types.SelfManagedConnector{}, nil
+	}
+
+	slog.Info("🔍 found connect-configs topic, attempting to read all connector configurations", "topic", configTopicName, "clusterArn", ks.clusterArn)
+	connectorConfigs, err := ks.client.GetAllMessagesWithKeyFilter(configTopicName, keyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read connector configurations: %w", err)
+	}
+
+	var connectorStatuses map[string]string
+	if existingTopics[statusTopicName] {
+		slog.Info("🔍 found connect-status topic, attempting to read connector status information", "topic", statusTopicName, "clusterArn", ks.clusterArn)
+		connectorStatuses, err = ks.client.GetConnectorStatusMessages(statusTopicName)
+		if err != nil {
+			slog.Warn("⚠️ failed to read connector status information", "topic", statusTopicName, "error", err)
+			connectorStatuses = make(map[string]string) // Continue with empty `connectorStatuses` map to avoid nil errors.
+		} else {
+			slog.Info("✅ successfully read connector status information", "topic", statusTopicName, "count", len(connectorStatuses))
+		}
+	} else {
+		slog.Debug("⏭️ skipping topic (does not exist)", "topic", statusTopicName, "clusterArn", ks.clusterArn)
+		connectorStatuses = make(map[string]string)
+	}
+
+	connectors := []types.SelfManagedConnector{}
+	for connectorKey, configJSON := range connectorConfigs {
+		var rawConfig map[string]any
+		if err := json.Unmarshal([]byte(configJSON), &rawConfig); err != nil {
+			slog.Warn("⚠️ failed to parse connector config JSON", "connector", connectorKey, "error", err)
+			continue
+		}
+
+		var configMap map[string]any
+		if properties, ok := rawConfig["properties"].(map[string]any); ok {
+			configMap = properties
+		}
+
+		// Removes the "connector-" prefix from the message key to get the actual connector name.
+		connectorName := connectorKey
+		if len(connectorKey) > len(keyPrefix) && connectorKey[:len(keyPrefix)] == keyPrefix {
+			connectorName = connectorKey[len(keyPrefix):]
+		}
+
+		connector := types.SelfManagedConnector{
+			Name:   connectorName,
+			Config: configMap,
+		}
+
+		// Attemps to retrieve the connector's status from the `connectorStatuses` map.
+		if statusJSON, exists := connectorStatuses[connectorName]; exists {
+			var statusMap map[string]any
+			if err := json.Unmarshal([]byte(statusJSON), &statusMap); err != nil {
+				slog.Warn("⚠️ failed to parse connector status JSON", "connector", connectorName, "error", err)
+			} else {
+				if state, ok := statusMap["state"].(string); ok {
+					connector.State = state
+				}
+			}
+		}
+
+		connectors = append(connectors, connector)
+	}
+
+	slog.Info("✅ successfully read connector configurations", "topic", configTopicName, "clusterArn", ks.clusterArn, "count", len(connectors))
+	return connectors, nil
 }
