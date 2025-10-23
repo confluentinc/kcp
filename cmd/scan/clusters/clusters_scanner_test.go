@@ -221,12 +221,12 @@ func TestClustersScanner_scanKafkaResources(t *testing.T) {
 
 func TestClustersScanner_scanCluster(t *testing.T) {
 	tests := []struct {
-		name         string
-		scanner      *ClustersScanner
-		region       string
+		name        string
+		scanner     *ClustersScanner
+		region      string
 		clusterAuth types.ClusterAuth
-		wantErr      bool
-		wantErrMsg   string
+		wantErr     bool
+		wantErrMsg  string
 	}{
 		{
 			name: "getClusterFromDiscovery returns error",

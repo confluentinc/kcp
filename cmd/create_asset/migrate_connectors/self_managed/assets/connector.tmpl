@@ -1,0 +1,32 @@
+{{if .Warnings}}/*
+ * The following warnings were returned by the connector config translation endpoint:
+{{range .Warnings}} * - [{{.Field}}] {{.Message}}
+{{end}} */
+{{end}}
+
+resource "confluent_connector" "{{.ConnectorName | lower}}" {
+  environment {
+    id = "{{.EnvironmentId}}"
+  }
+  kafka_cluster {
+    id = "{{.ClusterId}}"
+  }
+
+  config_sensitive = {
+    /*
+    ## Choose one of the following options:
+    ## https://registry.terraform.io/providers/confluentinc/confluent/latest/docs/resources/confluent_connector
+
+      "kafka.auth.mode"  = "KAFKA_API_KEY",
+      "kafka.api.key"    = "<cluster_api_key>",
+      "kafka.api.secret" = "<cluster_api_secret>",
+    ## ----------------------------------------------- ##
+      "kafka.auth.mode"          = "SERVICE_ACCOUNT",
+      "kafka.service.account.id" = "<service_account_id>"
+    */
+  }
+
+  config_nonsensitive = {
+{{range $key, $value := .ConnectorConfig}}    "{{$key}}" = "{{$value}}"
+{{end}}  }
+}
