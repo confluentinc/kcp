@@ -15,7 +15,6 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
-
 type ConnectAPIClient interface {
 	ListConnectors() ([]string, error)
 	GetConnectorConfig(name string) (map[string]any, error)
@@ -268,7 +267,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 			if cluster.Arn == s.MskClusterArn {
 				s.State.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
 				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", utils.ExtractClusterNameFromArn(s.MskClusterArn)))
-				
+
 				return nil
 			}
 		}

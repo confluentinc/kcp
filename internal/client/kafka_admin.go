@@ -348,84 +348,47 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 		return nil, fmt.Errorf("topic %s has no partitions", topicName)
 	}
 
-	controller, err := k.admin.Controller()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get controller: %w", err)
-	}
-
 	connectorConfigs := make(map[string]string)
 
-	// Process each partition
 	for _, partition := range partitions {
-		// Get oldest offset
-		oldestReq := &sarama.OffsetRequest{
-			Version: 1,
-		}
-		oldestReq.AddBlock(topicName, partition, sarama.OffsetOldest, 1)
-
-		oldestResp, err := controller.GetAvailableOffsets(oldestReq)
+		// Creates a partition consumer starting from the oldest offset.
+		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, sarama.OffsetOldest)
 		if err != nil {
-			continue // Skip this partition if we can't get offsets
-		}
-
-		oldestBlock := oldestResp.GetBlock(topicName, partition)
-		if oldestBlock == nil || len(oldestBlock.Offsets) == 0 {
 			continue
 		}
-		oldestOffset := oldestBlock.Offsets[0]
 
-		// Get newest offset
-		newestReq := &sarama.OffsetRequest{
-			Version: 1,
-		}
-		newestReq.AddBlock(topicName, partition, sarama.OffsetNewest, 1)
+		// For compacted topics, we don't know how many messages remain after compaction so we read messages 
+		// from the earliest offset until no more messages are read and the timout is hit.
+		timeout := time.After(30 * time.Second)
+		lastMessageTime := time.Now()
 
-		newestResp, err := controller.GetAvailableOffsets(newestReq)
-		if err != nil {
-			continue // Skip this partition if we can't get offsets
-		}
-
-		newestBlock := newestResp.GetBlock(topicName, partition)
-		if newestBlock == nil || len(newestBlock.Offsets) == 0 {
-			continue
-		}
-		newestOffset := newestBlock.Offsets[0]
-
-		if newestOffset <= oldestOffset {
-			continue // No messages in this partition
-		}
-
-		// Create a partition consumer for the entire range
-		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, oldestOffset)
-		if err != nil {
-			continue // Skip this partition if we can't consume it
-		}
-
-		// Consume messages until we reach the newest offset
-		messageCount := 0
 	consumeLoop:
-		for messageCount < int(newestOffset-oldestOffset) {
+		for {
 			select {
 			case msg := <-partitionConsumer.Messages():
 				if msg != nil {
-					messageCount++
+					lastMessageTime = time.Now()
 					if len(msg.Key) > 0 {
 						keyStr := string(msg.Key)
-						// Check if the key starts with the prefix
+						// Checks if the key starts with the prefix.
 						if len(keyStr) >= len(keyPrefix) && keyStr[:len(keyPrefix)] == keyPrefix {
-							// Use the full key as the connector name
+							// Uses the full key as the connector name.
 							connectorConfigs[keyStr] = string(msg.Value)
 						}
 					}
 				}
 			case err := <-partitionConsumer.Errors():
 				if err != nil {
-					// Log the error but continue with other partitions
 					break consumeLoop
 				}
-			case <-time.After(10 * time.Second):
-				// Timeout after 10 seconds per partition
+			case <-timeout:
+				// Overall timeout for this partition.
 				break consumeLoop
+			case <-time.After(5 * time.Second):
+				// If no messages received for 5 seconds, assume we've reached the end.
+				if time.Since(lastMessageTime) >= 5*time.Second {
+					break consumeLoop
+				}
 			}
 		}
 
@@ -464,7 +427,7 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 		}
 
 		messagesRead := 0
-		timeout := time.After(120 * time.Second)
+		timeout := time.After(5 * time.Second)
 
 	partitionLoop:
 		for {
