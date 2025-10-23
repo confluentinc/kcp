@@ -120,17 +120,3 @@ type MigrationWizardRequest struct {
 	MskClusterId                 string `json:"msk_cluster_id"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }
-
-// format json
-/*
-{
-"msk_publicly_accessible":false,
-"authentication_method":"sasl_scram",
-"target_cluster_type":"dedicated",
-"target_environment_id":"env123",
-"target_cluster_id":"cluster123",
-"target_rest_endpoint":"http://rest",
-"msk_cluster_id":"dffdd",
-"msk_sasl_scram_bootstrap_servers":"sdfffg",
-}
-*/
