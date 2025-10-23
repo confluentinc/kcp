@@ -357,7 +357,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 			continue
 		}
 
-		// For compacted topics, we don't know how many messages remain after compaction so we read messages 
+		// For compacted topics, we don't know how many messages remain after compaction so we read messages
 		// from the earliest offset until no more messages are read and the timout is hit.
 		timeout := time.After(30 * time.Second)
 		lastMessageTime := time.Now()
@@ -426,15 +426,17 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 			continue // Skip this partition if we can't consume it
 		}
 
-		messagesRead := 0
-		timeout := time.After(5 * time.Second)
+		// For compacted topics, we don't know how many messages remain after compaction
+		// So we read messages until we hit a timeout instead of counting to newest offset
+		timeout := time.After(30 * time.Second)
+		lastMessageTime := time.Now()
 
 	partitionLoop:
 		for {
 			select {
 			case msg := <-partitionConsumer.Messages():
 				if msg != nil {
-					messagesRead++
+					lastMessageTime = time.Now()
 
 					if len(msg.Key) > 0 {
 						keyStr := string(msg.Key)
@@ -459,10 +461,19 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 						}
 					}
 				}
-			case <-partitionConsumer.Errors():
-				break partitionLoop
+			case err := <-partitionConsumer.Errors():
+				if err != nil {
+					// Log the error but continue with other partitions
+					break partitionLoop
+				}
 			case <-timeout:
+				// Overall timeout for this partition
 				break partitionLoop
+			case <-time.After(5 * time.Second):
+				// If no messages received for 5 seconds, assume we've reached the end
+				if time.Since(lastMessageTime) >= 5*time.Second {
+					break partitionLoop
+				}
 			}
 		}
 
