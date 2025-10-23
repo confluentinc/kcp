@@ -95,12 +95,6 @@ type Manifest struct {
 	MigrationInfraType MigrationInfraType `json:"migration_infra_type"`
 }
 
-// / todo review if we need
-type GlobalMetrics struct {
-	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
-	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
-}
-
 type TargetClusterWizardRequest struct {
 	NeedsEnvironment bool   `json:"needs_environment"`
 	EnvironmentName  string `json:"environment_name"`
@@ -116,27 +110,13 @@ type TerraformFiles struct {
 	VariablesTf string `json:"variables_tf"`
 }
 
-/*
-{
-  "msk_publicly_accessible": "yes",
-  "authentication_method": "sasl_scram",
-  "target_cluster_type": "dedicated",
-  "environment_id": "sfsdf",
-  "environment_name": "sdfsdf"
-}
-*/
-
 type MigrationWizardRequest struct {
-	MskPubliclyAccessible          bool   `json:"msk_publicly_accessible"`
-	AuthenticationMethod           string `json:"authentication_method"`
-	TargetClusterType              string `json:"target_cluster_type"`
-	TargetEnvironmentId            string `json:"target_environment_id"`
-	TargetClusterId                string `json:"target_cluster_id"`
-	TargetRestEndpoint             string `json:"target_rest_endpoint"`
-	MskClusterId                   string `json:"msk_cluster_id"`
-	MskSaslScramUsername           string `json:"msk_sasl_scram_username"`
-	MskSaslScramPassword           string `json:"msk_sasl_scram_password"`
-	MskSaslScramBootstrapServers   string `json:"msk_sasl_scram_bootstrap_servers"`
-	TargetClusterApiKey            string `json:"target_cluster_api_key"`
-	TargetClusterApiSecret         string `json:"target_cluster_api_secret"`
+	MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
+	AuthenticationMethod         string `json:"authentication_method"`
+	TargetClusterType            string `json:"target_cluster_type"`
+	TargetEnvironmentId          string `json:"target_environment_id"`
+	TargetClusterId              string `json:"target_cluster_id"`
+	TargetRestEndpoint           string `json:"target_rest_endpoint"`
+	MskClusterId                 string `json:"msk_cluster_id"`
+	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }

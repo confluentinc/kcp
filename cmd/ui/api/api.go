@@ -259,10 +259,10 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" {
+	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.MskClusterId == "" || req.MskSaslScramBootstrapServers == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid configuration",
-			"message": "targetEnvironmentId, targetClusterId, and targetRestEndpoint are required",
+			"message": "authenticationMethod, targetClusterType, targetEnvironmentId, targetClusterId, targetRestEndpoint, mskClusterId, and mskSaslScramBootstrapServers are required",
 		})
 	}
 
