@@ -33,7 +33,7 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 		{
 			name: "found cluster in region",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
@@ -58,7 +58,7 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 		{
 			name: "no regions match",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
@@ -81,7 +81,7 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 		{
 			name: "no clusters match",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
@@ -231,7 +231,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 		{
 			name: "getClusterFromDiscovery returns error",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name:     "us-east-1",
@@ -250,7 +250,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 		{
 			name: "GetSelectedAuthType returns error",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
@@ -275,7 +275,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 		{
 			name: "GetBootstrapBrokersForAuthType returns error",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
@@ -307,7 +307,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 		{
 			name: "createKafkaAdmin returns error",
 			scanner: &ClustersScanner{
-				State: &types.State{
+				State: types.State{
 					Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
