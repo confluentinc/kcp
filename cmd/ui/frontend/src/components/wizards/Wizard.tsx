@@ -78,6 +78,7 @@ export function Wizard({ config }: WizardProps) {
 
   // Handle regular form steps
   if (!currentStep) {
+    console.log('Invalid step configuration from Wizard.tsx', currentStep)
     return <div className="text-gray-900 dark:text-gray-100">Invalid step configuration</div>
   }
 

@@ -4,7 +4,7 @@ export const targetInfraWizardConfig: WizardConfig = {
   id: 'target-infra-wizard',
   title: 'Target Infrastructure Wizard',
   description: 'Configure your target infrastructure for migration',
-  apiEndpoint: '/assets',
+  apiEndpoint: '/assets/target',
   initial: 'environment_question',
 
   states: {

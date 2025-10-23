@@ -23,8 +23,8 @@ type UICmdOpts struct {
 }
 
 type UI struct {
-	reportService         ReportService
-	targetInfraHCLService hcl.TargetInfraHCLService
+	reportService            ReportService
+	targetInfraHCLService    hcl.TargetInfraHCLService
 	migrationInfraHCLService hcl.MigrationInfraHCLService
 
 	port        string
@@ -33,10 +33,10 @@ type UI struct {
 
 func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, opts UICmdOpts) *UI {
 	return &UI{
-		reportService:         reportService,
-		targetInfraHCLService: targetInfraHCLService,
+		reportService:            reportService,
+		targetInfraHCLService:    targetInfraHCLService,
 		migrationInfraHCLService: migrationInfraHCLService,
-		
+
 		port:        opts.Port,
 		cachedState: nil,
 	}
@@ -62,8 +62,8 @@ func (ui *UI) Run() error {
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
-	e.POST("/assets", ui.handleTargetClusterAssets)
-	e.POST("/assets/migration/:cluster-arn", ui.handleMigrationAssets)
+	e.POST("/assets/target", ui.handleTargetClusterAssets)
+	e.POST("/assets/migration", ui.handleMigrationAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -251,9 +251,6 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrationAssets(c echo.Context) error {
-	clusterArn := c.Param("cluster-arn")
-	_ = clusterArn
-
 	var req types.MigrationWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -262,7 +259,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if  req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" {
+	if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid configuration",
 			"message": "targetEnvironmentId, targetClusterId, and targetRestEndpoint are required",

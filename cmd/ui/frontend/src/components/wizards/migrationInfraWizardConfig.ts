@@ -3,195 +3,260 @@ import type { WizardConfig } from './types'
 export const migrationInfraWizardConfig: WizardConfig = {
   id: 'migration-infra-wizard',
   title: 'Migration Infrastructure Wizard',
-  description: 'Configure infrastructure for your migration',
-  apiEndpoint: '/migration-infra',
+  description: 'Configure your migration infrastructure for migration',
+  apiEndpoint: '/assets/migration',
+  initial: 'msk_publicly_accessible',
 
   states: {
-    migration_type: {
+    msk_publicly_accessible: {
       meta: {
-        title: 'Migration Type',
-        description: 'What type of migration are you planning?',
+        title: 'Is your MSK cluster accessible from the internet?',
         schema: {
           type: 'object',
           properties: {
-            migration_type: {
-              type: 'string',
-              enum: ['lift-and-shift', 'replatform', 'refactor', 'rearchitect'],
-              title: 'Migration Type',
-              description: 'Select the type of migration strategy',
+            msk_publicly_accessible: {
+              type: 'boolean',
+              title: 'Is your MSK cluster accessible from the internet?',
+              enum: [true, false],
+              enumNames: [true, false],
             },
           },
-          required: ['migration_type'],
+          required: ['msk_publicly_accessible'],
         },
         uiSchema: {
-          migration_type: {
-            'ui:widget': 'select',
+          msk_publicly_accessible: {
+            'ui:widget': 'radio',
           },
         },
       },
       on: {
         NEXT: {
-          target: 'source_environment',
+          target: 'authentication_method_question',
           actions: 'save_step_data',
         },
       },
     },
-    source_environment: {
+    authentication_method_question: {
       meta: {
-        title: 'Source Environment',
-        description: 'Configure your source environment details',
+        title: 'Authentication Method',
+        description: 'Which authentication method will you use for the cluster link?',
         schema: {
           type: 'object',
           properties: {
-            source_platform: {
+            authentication_method: {
               type: 'string',
-              enum: ['on-premises', 'aws', 'azure', 'gcp', 'vmware'],
-              title: 'Source Platform',
-              description: 'Where is your current infrastructure running?',
-            },
-            source_region: {
-              type: 'string',
-              title: 'Source Region',
-              description: 'Primary region of your source environment',
-            },
-            workload_count: {
-              type: 'integer',
-              title: 'Number of Workloads',
-              description: 'How many workloads need to be migrated?',
-              minimum: 1,
-              maximum: 10000,
+              title: 'Which authentication method will you use for the cluster link?',
+              enum: ['iam', 'sasl_scram'],
+              enumNames: ['IAM', 'SASL/SCRAM'],
             },
           },
-          required: ['source_platform', 'source_region', 'workload_count'],
+          required: ['authentication_method'],
         },
         uiSchema: {
-          source_platform: {
-            'ui:widget': 'select',
+          authentication_method: {
+            'ui:widget': 'radio',
           },
-          workload_count: {
-            'ui:widget': 'updown',
+        },
+      },
+      on: {
+        NEXT: [
+          {
+            target: 'cluster_type_question',
+            guard: 'is_sasl_scram',
+            actions: 'save_step_data',
+          },
+        ],
+        BACK: [
+          {
+            target: 'msk_publicly_accessible',
+            guard: 'msk_publicly_accessible',
+          },
+        ],
+      },
+    },
+    cluster_type_question: {
+      meta: {
+        title: 'Target Cluster Type',
+        description: 'Select the type of your target Confluent Cloud cluster',
+        schema: {
+          type: 'object',
+          properties: {
+            target_cluster_type: {
+              type: 'string',
+              title: "Is the target Confluent Cloud cluster 'Dedicated' or 'Enterprise'?",
+              enum: ['dedicated', 'enterprise'],
+              enumNames: ['Dedicated', 'Enterprise'],
+            },
+          },
+          required: ['target_cluster_type'],
+        },
+        uiSchema: {
+          target_cluster_type: {
+            'ui:widget': 'radio',
+          },
+        },
+      },
+      on: {
+        NEXT: [
+          {
+            target: 'dedicated_inputs',
+            guard: 'is_dedicated',
+            actions: 'save_step_data',
+          },
+        ],
+        BACK: {
+          target: 'authentication_method_question',
+        },
+      },
+    },
+    dedicated_inputs: {
+      meta: {
+        title: 'Dedicated Cluster Configuration',
+        description: 'Enter configuration details for your Dedicated cluster',
+        schema: {
+          type: 'object',
+          properties: {
+            target_environment_id: {
+              type: 'string',
+              title: 'Environment ID',
+              description: 'Confluent Cloud Environment ID',
+            },
+            target_cluster_id: {
+              type: 'string',
+              title: 'Cluster ID',
+              description: 'Confluent Cloud Cluster ID',
+            },
+            target_rest_endpoint: {
+              type: 'string',
+              title: 'REST Endpoint',
+              description: 'Confluent Cloud Cluster REST Endpoint',
+            },
+          },
+          required: ['target_environment_id', 'target_cluster_id', 'target_rest_endpoint'],
+        },
+        uiSchema: {
+          target_environment_id: {
+            'ui:placeholder': 'e.g., env-xxxxx',
+          },
+          target_cluster_id: {
+            'ui:placeholder': 'e.g., cluster-xxxxx',
+          },
+          target_rest_endpoint: {
+            'ui:placeholder': 'e.g., https://api.confluent.cloud',
           },
         },
       },
       on: {
         NEXT: {
-          target: 'target_environment',
+          target: 'statefile_inputs',
           actions: 'save_step_data',
         },
         BACK: {
-          target: 'migration_type',
+          target: 'cluster_type_question',
         },
       },
     },
-    target_environment: {
+    statefile_inputs: {
       meta: {
-        title: 'Target Environment',
-        description: 'Configure your target environment details',
+        title: 'Statefile Configuration',
+        description: 'Enter configuration details for your statefile',
         schema: {
           type: 'object',
           properties: {
-            target_platform: {
+            msk_cluster_id: {
               type: 'string',
-              enum: ['aws', 'azure', 'gcp', 'hybrid-cloud'],
-              title: 'Target Platform',
-              description: 'Where will you migrate to?',
+              title: 'MSK Cluster ID',
+              description: 'MSK Cluster ID',
             },
-            target_region: {
+            msk_sasl_scram_bootstrap_servers: {
               type: 'string',
-              title: 'Target Region',
-              description: 'Primary region for your target environment',
-            },
-            migration_timeline: {
-              type: 'string',
-              enum: ['immediate', '3-months', '6-months', '12-months', 'custom'],
-              title: 'Migration Timeline',
-              description: 'When do you plan to complete the migration?',
+              title: 'MSK Cluster Bootstrap Brokers',
+              description: 'MSK Cluster Bootstrap Brokers',
             },
           },
-          required: ['target_platform', 'target_region', 'migration_timeline'],
+          required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers'],
         },
         uiSchema: {
-          target_platform: {
-            'ui:widget': 'select',
+          msk_cluster_id: {
+            'ui:placeholder': 'e.g., cluster-xxxxx',
           },
-          migration_timeline: {
-            'ui:widget': 'select',
+          msk_sasl_scram_bootstrap_servers: {
+            'ui:placeholder':
+              'e.g., b-1.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098,b-2.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098',
           },
         },
       },
       on: {
         NEXT: {
-          target: 'migration_tools',
+          target: 'review',
           actions: 'save_step_data',
         },
         BACK: {
-          target: 'source_environment',
+          target: 'dedicated_inputs',
         },
       },
     },
-    migration_tools: {
+    review: {
       meta: {
-        title: 'Migration Tools',
-        description: 'Select tools and services for your migration',
-        schema: {
-          type: 'object',
-          properties: {
-            migration_tool: {
-              type: 'string',
-              enum: ['aws-mgn', 'azure-migrate', 'vmware-hcx', 'custom'],
-              title: 'Migration Tool',
-              description: 'Which migration tool will you use?',
-            },
-            backup_strategy: {
-              type: 'boolean',
-              title: 'Enable Backup Strategy',
-              description: 'Implement backup and disaster recovery',
-              default: true,
-            },
-            monitoring_enabled: {
-              type: 'boolean',
-              title: 'Enable Monitoring',
-              description: 'Set up monitoring and alerting',
-              default: true,
-            },
-            security_compliance: {
-              type: 'string',
-              enum: ['basic', 'enhanced', 'enterprise'],
-              title: 'Security Compliance Level',
-              description: 'Required security and compliance level',
-            },
-          },
-          required: ['migration_tool', 'security_compliance'],
-        },
-        uiSchema: {
-          migration_tool: {
-            'ui:widget': 'select',
-          },
-          security_compliance: {
-            'ui:widget': 'select',
-          },
-        },
+        title: 'Review Configuration',
+        description: 'Review your transient infrastructure configuration',
+        type: 'review',
+        summaryFields: [
+          'msk_publicly_accessible',
+          'target_cluster_type',
+          'target_environment_id',
+          'target_cluster_id',
+          'target_rest_endpoint',
+          'authentication_method',
+          'msk_cluster_id',
+          'msk_sasl_scram_bootstrap_servers',
+        ],
       },
       on: {
-        NEXT: {
+        SUBMIT: {
           target: 'complete',
           actions: 'save_step_data',
         },
-        BACK: {
-          target: 'target_environment',
-        },
+        BACK: [
+          {
+            target: 'statefile_inputs',
+            guard: 'came_from_statefile_inputs',
+          },
+        ],
       },
     },
     complete: {
       type: 'final',
       meta: {
         title: 'Configuration Complete',
-        message: 'Your migration infrastructure configuration is ready to be processed...',
+        message: 'Your transient infrastructure configuration is ready to be processed...',
       },
     },
   },
 
-  guards: {},
+  guards: {
+    is_dedicated: ({ event }) => {
+      return event.data?.target_cluster_type === 'dedicated'
+    },
+    is_enterprise: ({ event }) => {
+      return event.data?.target_cluster_type === 'enterprise'
+    },
+    is_iam: ({ event }) => {
+      return event.data?.authentication_method === 'iam'
+    },
+    is_sasl_scram: ({ event }) => {
+      return event.data?.authentication_method === 'sasl_scram'
+    },
+    msk_publicly_accessible: ({ event }) => {
+      return event.data?.msk_publicly_accessible === true
+    },
+    came_from_dedicated_inputs: ({ context }) => {
+      return context.previousStep === 'dedicated_inputs'
+    },
+    came_from_statefile_inputs: ({ context }) => {
+      return context.previousStep === 'statefile_inputs'
+    },
+  },
 
   actions: {
     save_step_data: 'save_step_data',
