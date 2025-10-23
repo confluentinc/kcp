@@ -11,7 +11,6 @@ import {
 } from './wizards'
 
 export default function MigrationAssets() {
-  console.log('MigrationAssets')
   const regions = useAppStore((state) => state.regions)
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [wizardType, setWizardType] = useState<
