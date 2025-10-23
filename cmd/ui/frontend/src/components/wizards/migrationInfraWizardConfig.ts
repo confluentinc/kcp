@@ -8,34 +8,6 @@ export const migrationInfraWizardConfig: WizardConfig = {
   initial: 'authentication_method_question',
 
   states: {
-    // msk_publicly_accessible: {
-    //   meta: {
-    //     title: 'Is your MSK cluster accessible from the internet?',
-    //     schema: {
-    //       type: 'object',
-    //       properties: {
-    //         msk_publicly_accessible: {
-    //           type: 'boolean',
-    //           title: 'Is your MSK cluster accessible from the internet?',
-    //           enum: [true, false],
-    //           enumNames: [true, false],
-    //         },
-    //       },
-    //       required: ['msk_publicly_accessible'],
-    //     },
-    //     uiSchema: {
-    //       msk_publicly_accessible: {
-    //         'ui:widget': 'radio',
-    //       },
-    //     },
-    //   },
-    //   on: {
-    //     NEXT: {
-    //       target: 'authentication_method_question',
-    //       actions: 'save_step_data',
-    //     },
-    //   },
-    // },
     authentication_method_question: {
       meta: {
         title: 'Authentication Method',
@@ -46,8 +18,8 @@ export const migrationInfraWizardConfig: WizardConfig = {
             authentication_method: {
               type: 'string',
               title: 'Which authentication method will you use for the cluster link?',
-              enum: ['iam', 'sasl_scram'],
-              enumNames: ['IAM', 'SASL/SCRAM'],
+              enum: ['sasl_scram'],
+              enumNames: ['SASL/SCRAM'],
             },
           },
           required: ['authentication_method'],
@@ -77,9 +49,9 @@ export const migrationInfraWizardConfig: WizardConfig = {
           properties: {
             target_cluster_type: {
               type: 'string',
-              title: "Is the target Confluent Cloud cluster 'Dedicated' or 'Enterprise'?",
-              enum: ['dedicated', 'enterprise'],
-              enumNames: ['Dedicated', 'Enterprise'],
+              title: "What type of target Confluent Cloud cluster are you migrating to?",
+              enum: ['dedicated'],
+              enumNames: ['Dedicated'],
             },
           },
           required: ['target_cluster_type'],
@@ -197,36 +169,6 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
       },
     },
-    // todo if we want a review step - we need to handle it in the code
-    // review: {
-    //   meta: {
-    //     title: 'Review Configuration',
-    //     description: 'Review your migration infrastructure configuration',
-    //     type: 'review',
-    //     summaryFields: [
-    //       'msk_publicly_accessible',
-    //       'target_cluster_type',
-    //       'target_environment_id',
-    //       'target_cluster_id',
-    //       'target_rest_endpoint',
-    //       'authentication_method',
-    //       'msk_cluster_id',
-    //       'msk_sasl_scram_bootstrap_servers',
-    //     ],
-    //   },
-    //   on: {
-    //     SUBMIT: {
-    //       target: 'complete',
-    //       actions: 'save_step_data',
-    //     },
-    //     BACK: [
-    //       {
-    //         target: 'statefile_inputs',
-    //         guard: 'came_from_statefile_inputs',
-    //       },
-    //     ],
-    //   },
-    // },
     complete: {
       type: 'final',
       meta: {
@@ -240,18 +182,9 @@ export const migrationInfraWizardConfig: WizardConfig = {
     is_dedicated: ({ event }) => {
       return event.data?.target_cluster_type === 'dedicated'
     },
-    is_enterprise: ({ event }) => {
-      return event.data?.target_cluster_type === 'enterprise'
-    },
-    is_iam: ({ event }) => {
-      return event.data?.authentication_method === 'iam'
-    },
     is_sasl_scram: ({ event }) => {
       return event.data?.authentication_method === 'sasl_scram'
     },
-    // msk_publicly_accessible: ({ event }) => {
-    //   return event.data?.msk_publicly_accessible === true
-    // },
     came_from_dedicated_inputs: ({ context }) => {
       return context.previousStep === 'dedicated_inputs'
     },
