@@ -38,6 +38,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
+		Hidden:        true, 
 	}
 
 	groups := map[*pflag.FlagSet]string{}
