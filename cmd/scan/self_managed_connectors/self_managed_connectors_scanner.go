@@ -32,17 +32,17 @@ type SelfManagedConnectorsScannerOpts struct {
 	StateFile      string
 	State          *types.State
 	ConnectRestURL string
-	MskClusterArn  string
+	ClusterArn  string
 	AuthMethod     types.ConnectAuthMethod
 	SaslScramAuth  types.ConnectSaslScramAuth
 	TlsAuth        types.ConnectTlsAuth
 }
 
 type SelfManagedConnectorsScanner struct {
-	StateFile     string
-	State         *types.State
-	MskClusterArn string
-	client        ConnectAPIClient
+	StateFile  string
+	State      *types.State
+	ClusterArn string
+	client     ConnectAPIClient
 }
 
 func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) *SelfManagedConnectorsScanner {
@@ -59,10 +59,10 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) *Sel
 	}
 
 	return &SelfManagedConnectorsScanner{
-		StateFile:     opts.StateFile,
-		State:         opts.State,
-		MskClusterArn: opts.MskClusterArn,
-		client:        connectClient,
+		StateFile:  opts.StateFile,
+		State:      opts.State,
+		ClusterArn: opts.ClusterArn,
+		client:     connectClient,
 	}
 }
 
@@ -104,7 +104,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("❌ Connect API client not initialized")
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting self-managed connector scan for cluster %s", utils.ExtractClusterNameFromArn(s.MskClusterArn)))
+	slog.Info(fmt.Sprintf("🚀 starting self-managed connector scan for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn)))
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
@@ -114,7 +114,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	slog.Info(fmt.Sprintf("🔍 found %d connectors", len(connectorNames)))
 
 	if len(connectorNames) == 0 {
-		slog.Info(fmt.Sprintf("⏭️ no connectors found for cluster %s, skipping", utils.ExtractClusterNameFromArn(s.MskClusterArn)))
+		slog.Info(fmt.Sprintf("⏭️ no connectors found for cluster %s, skipping", utils.ExtractClusterNameFromArn(s.ClusterArn)))
 		return nil
 	}
 
@@ -138,7 +138,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("❌ failed to save state file: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ self-managed connector scan complete for cluster %s", utils.ExtractClusterNameFromArn(s.MskClusterArn)))
+	slog.Info(fmt.Sprintf("✅ self-managed connector scan complete for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn)))
 	return nil
 }
 
@@ -264,14 +264,14 @@ func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
 	for i, region := range s.State.Regions {
 		for j, cluster := range region.Clusters {
-			if cluster.Arn == s.MskClusterArn {
+			if cluster.Arn == s.ClusterArn {
 				s.State.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
-				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", utils.ExtractClusterNameFromArn(s.MskClusterArn)))
+				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", utils.ExtractClusterNameFromArn(s.ClusterArn)))
 
 				return nil
 			}
 		}
 	}
 
-	return fmt.Errorf("cluster with ARN %s not found in state file", s.MskClusterArn)
+	return fmt.Errorf("cluster with ARN %s not found in state file", s.ClusterArn)
 }

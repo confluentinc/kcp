@@ -16,7 +16,7 @@ import (
 var (
 	stateFile      string
 	connectRestURL string
-	mskClusterArn  string
+	clusterArn  string
 
 	useSaslScram       bool
 	useTls             bool
@@ -47,7 +47,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file to update with connector information.")
 	requiredFlags.StringVar(&connectRestURL, "connect-rest-url", "", "The Kafka Connect REST API URL (e.g., http://localhost:8083).")
-	requiredFlags.StringVar(&mskClusterArn, "msk-cluster-arn", "", "The MSK cluster ARN in the state file to associate these connectors with.")
+	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The MSK cluster ARN in the state file to associate these connectors with.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -94,7 +94,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 
 	selfManagedConnectorsCmd.MarkFlagRequired("state-file")
 	selfManagedConnectorsCmd.MarkFlagRequired("connect-rest-url")
-	selfManagedConnectorsCmd.MarkFlagRequired("msk-cluster-arn")
+	selfManagedConnectorsCmd.MarkFlagRequired("cluster-arn")
 
 	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-sasl-scram", "use-tls", "use-unauthenticated")
 	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-sasl-scram", "use-tls", "use-unauthenticated")
@@ -156,7 +156,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 
-	_, err = utils.GetClusterByArn(state, mskClusterArn)
+	_, err = utils.GetClusterByArn(state, clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ cluster not found in state file: %v", err)
 	}
@@ -165,7 +165,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		StateFile:      stateFile,
 		State:          state,
 		ConnectRestURL: normalizedURL,
-		MskClusterArn:  mskClusterArn,
+		ClusterArn:  clusterArn,
 		AuthMethod:     authMethod,
 		SaslScramAuth: types.ConnectSaslScramAuth{
 			Username: saslScramUsername,

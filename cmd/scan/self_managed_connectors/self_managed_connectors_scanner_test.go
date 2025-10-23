@@ -65,7 +65,7 @@ func TestSelfManagedConnectorsScanner_Run_NoSelfManagedConnectors(t *testing.T) 
     scanner := &SelfManagedConnectorsScanner{
         StateFile:     "/tmp/test-state.json",
         State:         state,
-        MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+        ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
         client:        mockClient,
     }
 
@@ -133,7 +133,7 @@ func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:     "/tmp/test-state.json",
 		State:         state,
-		MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:        mockClient,
 	}
 
@@ -179,7 +179,7 @@ func TestSelfManagedConnectorsScanner_Run_ListSelfManagedConnectorsError(t *test
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:     "/tmp/test-state.json",
 		State:         state,
-		MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:        mockClient,
 	}
 
@@ -196,7 +196,7 @@ func TestSelfManagedConnectorsScanner_Run_NilClient(t *testing.T) {
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:     "/tmp/test-state.json",
 		State:         &types.State{},
-		MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:        nil,
 	}
 
@@ -303,7 +303,7 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_Success(t *testi
 
 	scanner := &SelfManagedConnectorsScanner{
 		State:         state,
-		MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 	}
 
 	connectors := []types.SelfManagedConnector{
@@ -341,7 +341,7 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_ClusterNotFound(
 
 	scanner := &SelfManagedConnectorsScanner{
 		State:         state,
-		MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/non-existent-cluster/xyz-789",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/non-existent-cluster/xyz-789",
 	}
 
 	connectors := []types.SelfManagedConnector{
@@ -403,7 +403,7 @@ func TestSelfManagedConnectorsScanner_Run_PartialFailure(t *testing.T) {
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:     "/tmp/test-state.json",
 		State:         state,
-		MskClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:        mockClient,
 	}
 
