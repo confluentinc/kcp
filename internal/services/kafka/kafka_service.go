@@ -150,7 +150,7 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 	}
 
 	if !existingTopics[configTopicName] {
-		slog.Debug("⏭️ skipping topic (does not exist)", "topic", configTopicName, "clusterArn", ks.clusterArn)
+		slog.Debug("⏭️ skipping topic (does not exist or lacking permissions)", "topic", configTopicName, "clusterArn", ks.clusterArn)
 		return []types.SelfManagedConnector{}, nil
 	}
 
@@ -171,7 +171,7 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 			slog.Info("✅ successfully read connector status information", "topic", statusTopicName, "count", len(connectorStatuses))
 		}
 	} else {
-		slog.Debug("⏭️ skipping topic (does not exist)", "topic", statusTopicName, "clusterArn", ks.clusterArn)
+		slog.Debug("⏭️ skipping topic (does not exist or lacking permissions)", "topic", statusTopicName, "clusterArn", ks.clusterArn)
 		connectorStatuses = make(map[string]string)
 	}
 
