@@ -188,7 +188,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: {
-          target: 'review',
+          target: 'complete',
           actions: 'save_step_data',
         },
         BACK: {
@@ -196,40 +196,41 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
       },
     },
-    review: {
-      meta: {
-        title: 'Review Configuration',
-        description: 'Review your transient infrastructure configuration',
-        type: 'review',
-        summaryFields: [
-          'msk_publicly_accessible',
-          'target_cluster_type',
-          'target_environment_id',
-          'target_cluster_id',
-          'target_rest_endpoint',
-          'authentication_method',
-          'msk_cluster_id',
-          'msk_sasl_scram_bootstrap_servers',
-        ],
-      },
-      on: {
-        SUBMIT: {
-          target: 'complete',
-          actions: 'save_step_data',
-        },
-        BACK: [
-          {
-            target: 'statefile_inputs',
-            guard: 'came_from_statefile_inputs',
-          },
-        ],
-      },
-    },
+    // todo if we want a review step - we need to handle it in the code
+    // review: {
+    //   meta: {
+    //     title: 'Review Configuration',
+    //     description: 'Review your migration infrastructure configuration',
+    //     type: 'review',
+    //     summaryFields: [
+    //       'msk_publicly_accessible',
+    //       'target_cluster_type',
+    //       'target_environment_id',
+    //       'target_cluster_id',
+    //       'target_rest_endpoint',
+    //       'authentication_method',
+    //       'msk_cluster_id',
+    //       'msk_sasl_scram_bootstrap_servers',
+    //     ],
+    //   },
+    //   on: {
+    //     SUBMIT: {
+    //       target: 'complete',
+    //       actions: 'save_step_data',
+    //     },
+    //     BACK: [
+    //       {
+    //         target: 'statefile_inputs',
+    //         guard: 'came_from_statefile_inputs',
+    //       },
+    //     ],
+    //   },
+    // },
     complete: {
       type: 'final',
       meta: {
         title: 'Configuration Complete',
-        message: 'Your transient infrastructure configuration is ready to be processed...',
+        message: 'Your migration infrastructure configuration is ready to be processed...',
       },
     },
   },
