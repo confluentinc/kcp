@@ -3,10 +3,6 @@ import ClusterMetrics from './ClusterMetrics'
 import ClusterTopics from './ClusterTopics'
 import ClusterConnectors from './ClusterConnectors'
 import ClusterACLs from './ClusterACLs'
-import Wizard from './Wizard'
-import { Modal } from './ui/modal'
-import { Button } from './ui/button'
-import transientInfrastructureWizardConfig from './transient-infrastructure-wizard-config.json'
 
 interface ClusterReportProps {
   cluster: {
@@ -45,8 +41,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
   const [activeTab, setActiveTab] = useState<
     'metrics' | 'topics' | 'connectors' | 'cluster' | 'acls'
   >('cluster')
-  const [isWizardOpen, setIsWizardOpen] = useState(false)
-  const [isTransientWizardOpen, setIsTransientWizardOpen] = useState(false)
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
   const provisioned = mskConfig?.Provisioned
@@ -106,22 +100,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                 Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'} •
                 Version: {mskConfig.CurrentVersion || 'Unknown'}
               </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              <Button
-                onClick={() => setIsWizardOpen(true)}
-                variant="default"
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Create Migration Infrastructure
-              </Button>
-              <Button
-                onClick={() => setIsTransientWizardOpen(true)}
-                variant="default"
-                className="bg-purple-600 hover:bg-purple-700 text-white"
-              >
-                Create Transient Infrastructure
-              </Button>
             </div>
           </div>
 
@@ -650,24 +628,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           )}
         </div>
       </div>
-
-      {/* Migration Wizard Modal */}
-      <Modal
-        isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
-        title={`Create Migration Infrastructure - ${cluster.name}`}
-      >
-        <Wizard />
-      </Modal>
-
-      {/* Transient Infrastructure Wizard Modal */}
-      <Modal
-        isOpen={isTransientWizardOpen}
-        onClose={() => setIsTransientWizardOpen(false)}
-        title={`Create Transient Infrastructure - ${cluster.name}`}
-      >
-        <Wizard config={transientInfrastructureWizardConfig as any} />
-      </Modal>
     </div>
   )
 }
