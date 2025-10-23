@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import { Modal } from './ui/modal'
 import { Button } from './ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
 import {
   Wizard,
   targetInfraWizardConfig,
@@ -64,69 +65,101 @@ export default function MigrationAssets() {
       </div>
 
       {allClusters.length > 0 ? (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Cluster Name
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Region
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {allClusters.map(({ cluster, regionName }) => (
-                  <tr
-                    key={`${regionName}-${cluster.name}`}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-700"
+        <div className="space-y-4">
+          {allClusters.map(({ cluster, regionName }) => {
+            const clusterKey = `${regionName}-${cluster.name}`
+
+            return (
+              <div
+                key={clusterKey}
+                className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
+              >
+                {/* Cluster Header Row */}
+                <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-6">
+                      <div>
+                        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                          {cluster.name}
+                        </h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{regionName}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                        onClick={() => handleCreateMigrationInfrastructure(cluster, regionName)}
+                      >
+                        Create Migration Infrastructure
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                        onClick={() => handleCreateTargetInfrastructure(cluster, regionName)}
+                      >
+                        Create Target Infrastructure
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                        onClick={() => handleCreateMigrationScripts(cluster, regionName)}
+                      >
+                        Create Migration Scripts
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tabbed Content - Always Visible */}
+                <div className="px-6 py-4">
+                  <Tabs
+                    defaultValue="migration-infra"
+                    className="w-full"
                   >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {cluster.name}
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="migration-infra">Migration Infrastructure</TabsTrigger>
+                      <TabsTrigger value="target-infra">Target Infrastructure</TabsTrigger>
+                      <TabsTrigger value="migration-scripts">Migration Scripts</TabsTrigger>
+                    </TabsList>
+                    <TabsContent
+                      value="migration-infra"
+                      className="mt-4"
+                    >
+                      <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <p className="text-gray-900 dark:text-gray-100">
+                          Hello World - Migration Infrastructure
+                        </p>
                       </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-500 dark:text-gray-400">{regionName}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="bg-green-600 hover:bg-green-700 text-white border-green-600"
-                          onClick={() => handleCreateMigrationInfrastructure(cluster, regionName)}
-                        >
-                          Create Migration Infrastructure
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="bg-blue-600 hover:bg-blue-700 text-white"
-                          onClick={() => handleCreateTargetInfrastructure(cluster, regionName)}
-                        >
-                          Create Target Infrastructure
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
-                          onClick={() => handleCreateMigrationScripts(cluster, regionName)}
-                        >
-                          Create Migration Scripts
-                        </Button>
+                    </TabsContent>
+                    <TabsContent
+                      value="target-infra"
+                      className="mt-4"
+                    >
+                      <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <p className="text-gray-900 dark:text-gray-100">
+                          Hello World - Target Infrastructure
+                        </p>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </TabsContent>
+                    <TabsContent
+                      value="migration-scripts"
+                      className="mt-4"
+                    >
+                      <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <p className="text-gray-900 dark:text-gray-100">
+                          Hello World - Migration Scripts
+                        </p>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+                </div>
+              </div>
+            )
+          })}
         </div>
       ) : (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8">
