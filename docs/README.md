@@ -223,6 +223,9 @@ The sub-commands require the following minimum AWS IAM permissions:
 
 Scan multiple MSK clusters at the Kafka level using the generated assets of the `kcp discover` command to drive it.
 
+>[!NOTE]
+> You can provide the user connecting to the Kafka cluster through kcp with read permissions for `connect-status` and `connect-configs`, assuming they exist, to potentially discover the state of any running self-managed connectors and their configs.
+
 **Example Usage**
 
 ```shell
@@ -232,7 +235,7 @@ kcp scan clusters \
 ```
 
 **Output:**
-The command appends the gathered list of ACLs, topics and the Kafka cluster ID to each cluster's entries in the kcp-state.json file.
+The command appends the gathered list of ACLs, topics and the Kafka cluster ID to each cluster's entries in the kcp-state.json file. If provided with sufficient permissions, kcp will also consume from the `connect-status` and `connect-configs` topics, if they exist, and gather self-managed connectors and their running state/configs.
 
 
 ---
