@@ -2,11 +2,19 @@ import { useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import { Modal } from './ui/modal'
 import { Button } from './ui/button'
-import Wizard from './Wizard'
+import {
+  Wizard,
+  targetInfraWizardConfig,
+  migrationInfraWizardConfig,
+  migrationScriptsWizardConfig,
+} from './wizards'
 
 export default function MigrationAssets() {
   const regions = useAppStore((state) => state.regions)
   const [isWizardOpen, setIsWizardOpen] = useState(false)
+  const [wizardType, setWizardType] = useState<
+    'target-infra' | 'migration-infra' | 'migration-scripts' | null
+  >(null)
   const [selectedClusterForWizard, setSelectedClusterForWizard] = useState<{
     cluster: any
     regionName: string
@@ -24,11 +32,25 @@ export default function MigrationAssets() {
 
   const handleCreateTargetInfrastructure = (cluster: any, regionName: string) => {
     setSelectedClusterForWizard({ cluster, regionName })
+    setWizardType('target-infra')
+    setIsWizardOpen(true)
+  }
+
+  const handleCreateMigrationInfrastructure = (cluster: any, regionName: string) => {
+    setSelectedClusterForWizard({ cluster, regionName })
+    setWizardType('migration-infra')
+    setIsWizardOpen(true)
+  }
+
+  const handleCreateMigrationScripts = (cluster: any, regionName: string) => {
+    setSelectedClusterForWizard({ cluster, regionName })
+    setWizardType('migration-scripts')
     setIsWizardOpen(true)
   }
 
   const handleCloseWizard = () => {
     setIsWizardOpen(false)
+    setWizardType(null)
     setSelectedClusterForWizard(null)
   }
 
@@ -77,14 +99,13 @@ export default function MigrationAssets() {
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled
-                          className="opacity-50 cursor-not-allowed"
-                          title="Coming soon"
+                          className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                          onClick={() => handleCreateMigrationInfrastructure(cluster, regionName)}
                         >
                           Create Migration Infrastructure
                         </Button>
                         <Button
-                          variant="default"
+                          variant="outline"
                           size="sm"
                           className="bg-blue-600 hover:bg-blue-700 text-white"
                           onClick={() => handleCreateTargetInfrastructure(cluster, regionName)}
@@ -94,9 +115,8 @@ export default function MigrationAssets() {
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled
-                          className="opacity-50 cursor-not-allowed"
-                          title="Coming soon"
+                          className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                          onClick={() => handleCreateMigrationScripts(cluster, regionName)}
                         >
                           Create Migration Scripts
                         </Button>
@@ -125,13 +145,21 @@ export default function MigrationAssets() {
       )}
 
       {/* Migration Wizard Modal */}
-      {selectedClusterForWizard && (
+      {selectedClusterForWizard && wizardType && (
         <Modal
           isOpen={isWizardOpen}
           onClose={handleCloseWizard}
-          title={`Create Target Infrastructure - ${selectedClusterForWizard.cluster.name}`}
+          title={`${
+            wizardType === 'target-infra'
+              ? 'Create Target Infrastructure'
+              : wizardType === 'migration-infra'
+              ? 'Create Migration Infrastructure'
+              : 'Create Migration Scripts'
+          } - ${selectedClusterForWizard.cluster.name}`}
         >
-          <Wizard />
+          {wizardType === 'target-infra' && <Wizard config={targetInfraWizardConfig} />}
+          {wizardType === 'migration-infra' && <Wizard config={migrationInfraWizardConfig} />}
+          {wizardType === 'migration-scripts' && <Wizard config={migrationScriptsWizardConfig} />}
         </Modal>
       )}
     </div>

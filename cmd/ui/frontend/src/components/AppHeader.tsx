@@ -51,7 +51,7 @@ export default function AppHeader({
           className="h-6 w-6"
         />
         <HeaderTitle>KCP</HeaderTitle>
-        <HeaderSubtitle> - Migrate your Kafka clusters to Confluent Cloud</HeaderSubtitle>
+        <HeaderSubtitle>Migrate your Kafka clusters to Confluent Cloud</HeaderSubtitle>
       </HeaderSection>
       <HeaderSection position="right">
         {error && (
