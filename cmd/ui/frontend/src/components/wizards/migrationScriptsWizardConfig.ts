@@ -7,29 +7,29 @@ export const migrationScriptsWizardConfig: WizardConfig = {
   apiEndpoint: '/migration-scripts',
 
   states: {
-    script_type: {
+    migration_type: {
       meta: {
-        title: 'Script Type',
-        description: 'What type of migration scripts do you need?',
+        title: 'Migration Type',
+        description: 'What type of migration do you wish to perform?',
         schema: {
           type: 'object',
           properties: {
-            script_type: {
+            migration_type: {
               type: 'string',
               enum: [
-                'data-migration',
-                'application-migration',
-                'infrastructure-migration',
-                'database-migration',
+                'Mirror Topics',
+                'Migrate ACLs',
+                'Migrate Connectors',
+                'Migrate Schemas',
               ],
-              title: 'Script Type',
-              description: 'Select the type of migration scripts needed',
+              title: 'Migration Type',
+              description: 'Select the type of migration you wish to perform',
             },
           },
-          required: ['script_type'],
+          required: ['migration_type'],
         },
         uiSchema: {
-          script_type: {
+          migration_type: {
             'ui:widget': 'select',
           },
         },
@@ -37,6 +37,7 @@ export const migrationScriptsWizardConfig: WizardConfig = {
       on: {
         NEXT: {
           target: 'source_system',
+          guard: 'migrate_mirror_topics',
           actions: 'save_step_data',
         },
       },
@@ -217,7 +218,11 @@ export const migrationScriptsWizardConfig: WizardConfig = {
     },
   },
 
-  guards: {},
+  guards: {
+    migrate_mirror_topics: ({ event }) => {
+      return event.data?.migration_type === 'Mirror Topics'
+    },
+  },
 
   actions: {
     save_step_data: 'save_step_data',
