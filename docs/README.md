@@ -194,6 +194,17 @@ The sub-commands require the following minimum AWS IAM permissions:
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
       ]
+    },
+        {
+      "Sid": "MSKConnectTopicAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kafka-cluster:ReadData"
+      ],
+      "Resource": [
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-configs",
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-status"
+      ]
     }
   ]
 }
@@ -224,7 +235,7 @@ The sub-commands require the following minimum AWS IAM permissions:
 Scan multiple MSK clusters at the Kafka level using the generated assets of the `kcp discover` command to drive it.
 
 >[!NOTE]
-> You can provide the user connecting to the Kafka cluster through kcp with read permissions for `connect-status` and `connect-configs`, assuming they exist, to potentially discover the state of any running self-managed connectors and their configs.
+> Optionally, you can provide the kcp user/principal connecting to the MSK cluster with permissions to read the `connect-configs` and `connect-status` topics. This allows kcp to aggregate discovered self-managed connectors, their connect URL, state and config.
 
 **Example Usage**
 
