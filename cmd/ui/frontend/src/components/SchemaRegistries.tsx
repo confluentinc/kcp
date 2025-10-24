@@ -153,9 +153,9 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
                           {/* Latest Schema */}
                           <div>
                             <div className="flex items-center justify-between mb-2">
-                              <h7 className="font-medium text-gray-900 dark:text-gray-100">
+                              <h6 className="font-medium text-gray-900 dark:text-gray-100">
                                 Latest Schema (v{subject.latest_schema.version})
-                              </h7>
+                              </h6>
                               <Button
                                 onClick={() =>
                                   copyToClipboard(formatSchema(subject.latest_schema.schema))
@@ -175,9 +175,9 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
 
                           {/* Version History */}
                           <div>
-                            <h7 className="font-medium text-gray-900 dark:text-gray-100 mb-3 block">
+                            <h6 className="font-medium text-gray-900 dark:text-gray-100 mb-3 block">
                               Version History
-                            </h7>
+                            </h6>
                             <div className="space-y-2">
                               {subject.versions.map((version, versionIndex) => {
                                 const versionKey = `${subjectKey}-${versionIndex}`
