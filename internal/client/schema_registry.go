@@ -64,6 +64,5 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 		return nil, err
 	}
 
-	schemaRegistryClient.GetAllContexts()
 	return schemaRegistryClient, nil
 }
