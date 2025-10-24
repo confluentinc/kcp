@@ -49,9 +49,10 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 
 	// Return the processed state with flattened data for frontend consumption
 	processedState := types.ProcessedState{
-		Regions:      processedRegions,
-		KcpBuildInfo: state.KcpBuildInfo,
-		Timestamp:    state.Timestamp,
+		Regions:          processedRegions,
+		SchemaRegistries: state.SchemaRegistries,
+		KcpBuildInfo:     state.KcpBuildInfo,
+		Timestamp:        state.Timestamp,
 	}
 
 	return processedState

@@ -375,9 +375,10 @@ type Subject struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Regions      []ProcessedRegion `json:"regions"`
-	KcpBuildInfo KcpBuildInfo      `json:"kcp_build_info"`
-	Timestamp    time.Time         `json:"timestamp"`
+	Regions          []ProcessedRegion           `json:"regions"`
+	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
+	Timestamp        time.Time                   `json:"timestamp"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters

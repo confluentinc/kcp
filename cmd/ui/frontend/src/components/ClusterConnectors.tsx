@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+
 interface Connector {
   connector_arn: string
   connector_name: string
@@ -32,11 +35,24 @@ interface Connector {
   connector_configuration: Record<string, string>
 }
 
-interface ClusterConnectorsProps {
-  connectors: Connector[]
+interface SelfManagedConnector {
+  name: string
+  config: Record<string, string>
+  state: string
+  connect_host: string
 }
 
-export default function ClusterConnectors({ connectors }: ClusterConnectorsProps) {
+interface ClusterConnectorsProps {
+  connectors: Connector[]
+  selfManagedConnectors?: SelfManagedConnector[]
+}
+
+export default function ClusterConnectors({
+  connectors,
+  selfManagedConnectors = [],
+}: ClusterConnectorsProps) {
+  const [activeTab, setActiveTab] = useState<'msk' | 'selfManaged'>('msk')
+
   const formatDate = (dateString: string) =>
     new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -46,25 +62,66 @@ export default function ClusterConnectors({ connectors }: ClusterConnectorsProps
       minute: '2-digit',
     })
 
-  if (!connectors || connectors.length === 0) {
+  const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
+    <div
+      key={connector.name}
+      className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-colors"
+    >
+      {/* Connector Header */}
+      <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                {connector.name}
+              </h4>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Connector Configuration */}
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h5 className="font-medium text-gray-900 dark:text-gray-100">Connector Configuration</h5>
+          <Button
+            onClick={() => {
+              const configText = Object.entries(connector.config)
+                .map(([key, value]) => `${key}=${value}`)
+                .join('\n')
+              navigator.clipboard.writeText(configText)
+            }}
+            variant="outline"
+            size="sm"
+          >
+            Copy Config
+          </Button>
+        </div>
+
+        <textarea
+          readOnly
+          value={Object.entries(connector.config)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n')}
+          className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+        />
+      </div>
+    </div>
+  )
+
+  const renderMSKConnectors = () => {
+    if (!connectors || connectors.length === 0) {
+      return (
+        <div className="text-center py-12">
+          <div className="text-gray-500 dark:text-gray-400 text-lg">No MSK connectors found</div>
+          <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+            This cluster doesn't have any MSK Connect connectors configured.
+          </p>
+        </div>
+      )
+    }
+
     return (
-      <div className="text-center py-12">
-        <div className="text-gray-500 dark:text-gray-400 text-lg">No connectors found</div>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
-          This cluster doesn't have any Kafka Connect connectors configured.
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Kafka Connect Connectors ({connectors.length})
-        </h3>
-      </div>
-
       <div className="grid gap-6">
         {connectors.map((connector) => (
           <div
@@ -162,45 +219,138 @@ export default function ClusterConnectors({ connectors }: ClusterConnectorsProps
 
               {/* Connector Configuration */}
               <div>
-                <div className="mb-3">
+                <div className="flex items-center justify-between mb-3">
                   <h5 className="font-medium text-gray-900 dark:text-gray-100">
                     Connector Configuration
                   </h5>
+                  <Button
+                    onClick={() => {
+                      const configText = Object.entries(connector.connector_configuration)
+                        .map(([key, value]) => `${key}=${value}`)
+                        .join('\n')
+                      navigator.clipboard.writeText(configText)
+                    }}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Copy Config
+                  </Button>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full border border-gray-200 dark:border-gray-600 rounded-lg">
-                    <thead>
-                      <tr className="bg-gray-50 dark:bg-gray-700">
-                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-600">
-                          Property
-                        </th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
-                          Value
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(connector.connector_configuration).map(([key, value]) => (
-                        <tr
-                          key={key}
-                          className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                        >
-                          <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-600">
-                            {key}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 font-mono break-all border-b border-l border-gray-200 dark:border-gray-600">
-                            {value}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <textarea
+                  readOnly
+                  value={Object.entries(connector.connector_configuration)
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join('\n')}
+                  className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                />
               </div>
             </div>
           </div>
         ))}
+      </div>
+    )
+  }
+
+  const renderSelfManagedConnectors = () => {
+    if (!selfManagedConnectors || selfManagedConnectors.length === 0) {
+      return (
+        <div className="text-center py-12">
+          <div className="text-gray-500 dark:text-gray-400 text-lg">
+            No self-managed connectors found
+          </div>
+          <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+            This cluster doesn't have any self-managed Kafka Connect connectors configured.
+          </p>
+        </div>
+      )
+    }
+
+    // Group connectors by connect_host
+    const groupedConnectors = selfManagedConnectors.reduce((groups, connector) => {
+      const host = connector.connect_host
+      if (!groups[host]) {
+        groups[host] = []
+      }
+      groups[host].push(connector)
+      return groups
+    }, {} as Record<string, SelfManagedConnector[]>)
+
+    return (
+      <div className="space-y-8">
+        {Object.entries(groupedConnectors).map(([connectHost, connectors]) => (
+          <div
+            key={connectHost}
+            className="space-y-4"
+          >
+            <div className="border-b border-gray-200 dark:border-gray-700 pb-2">
+              <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Connect Cluster URL: {connectHost}
+              </h4>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {connectors.length} connector{connectors.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+            <div className="grid gap-4">{connectors.map(renderSelfManagedConnector)}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  // Check if we have any connectors at all
+  const hasMSKConnectors = connectors && connectors.length > 0
+  const hasSelfManagedConnectors = selfManagedConnectors && selfManagedConnectors.length > 0
+
+  if (!hasMSKConnectors && !hasSelfManagedConnectors) {
+    return (
+      <div className="text-center py-12">
+        <div className="text-gray-500 dark:text-gray-400 text-lg">No connectors found</div>
+        <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+          This cluster doesn't have any Kafka Connect connectors configured.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          Kafka Connect Connectors
+        </h3>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200 dark:border-gray-700">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('msk')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'msk'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+            }`}
+          >
+            MSK Connectors ({connectors?.length || 0})
+          </button>
+          <button
+            onClick={() => setActiveTab('selfManaged')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'selfManaged'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+            }`}
+          >
+            Self Managed Connectors ({selfManagedConnectors?.length || 0})
+          </button>
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      <div className="mt-6">
+        {activeTab === 'msk' && renderMSKConnectors()}
+        {activeTab === 'selfManaged' && renderSelfManagedConnectors()}
       </div>
     </div>
   )
