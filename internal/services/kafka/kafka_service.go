@@ -208,6 +208,9 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 				if state, ok := statusMap["state"].(string); ok {
 					connector.State = state
 				}
+				if connectHost, ok := statusMap["worker_id"].(string); ok {
+					connector.ConnectHost = connectHost
+				}
 			}
 		}
 

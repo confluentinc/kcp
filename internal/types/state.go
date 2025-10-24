@@ -276,9 +276,10 @@ type ConnectorSummary struct {
 }
 
 type SelfManagedConnector struct {
-	Name   string         `json:"name"`
-	Config map[string]any `json:"config"`
-	State  string         `json:"state,omitempty"`
+	Name        string         `json:"name"`
+	Config      map[string]any `json:"config"`
+	State       string         `json:"state,omitempty"`
+	ConnectHost string         `json:"connect_host,omitempty"`
 }
 
 type SelfManagedConnectors struct {
