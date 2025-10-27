@@ -11,6 +11,7 @@ import (
 type SchemaRegistryScannerService interface {
 	GetDefaultCompatibility() (schemaregistry.Compatibility, error)
 	GetAllSubjectsWithVersions() ([]types.Subject, error)
+	GetAllContexts() ([]string, error)
 }
 
 type SchemaRegistryScannerOpts struct {
@@ -45,6 +46,11 @@ func (srs *SchemaRegistryScanner) Run() error {
 		return fmt.Errorf("failed to get default compatibility: %v", err)
 	}
 
+	contexts, err := srs.SchemaRegistryService.GetAllContexts()
+	if err != nil {
+		return fmt.Errorf("failed to get all contexts: %v", err)
+	}
+
 	subjects, err := srs.SchemaRegistryService.GetAllSubjectsWithVersions()
 	if err != nil {
 		return fmt.Errorf("failed to export all subjects: %v", err)
@@ -55,6 +61,7 @@ func (srs *SchemaRegistryScanner) Run() error {
 		Type:                 "confluent",
 		URL:                  srs.Url,
 		DefaultCompatibility: defaultCompatibility,
+		Contexts:             contexts,
 		Subjects:             subjects,
 	}
 

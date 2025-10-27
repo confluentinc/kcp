@@ -15,6 +15,7 @@ type SchemaRegistryClient interface {
 	GetCompatibility(subject string) (schemaregistry.Compatibility, error)
 	GetAllVersions(subject string) ([]int, error)
 	GetSchemaMetadata(subject string, version int) (schemaregistry.SchemaMetadata, error)
+	GetAllContexts() ([]string, error)
 }
 
 type SchemaRegistryService struct {
@@ -25,6 +26,14 @@ func NewSchemaRegistryService(client SchemaRegistryClient) *SchemaRegistryServic
 	return &SchemaRegistryService{
 		client: client,
 	}
+}
+
+func (sr *SchemaRegistryService) GetAllContexts() ([]string, error) {
+	contexts, err := sr.client.GetAllContexts()
+	if err != nil {
+		return nil, err
+	}
+	return contexts, nil
 }
 
 func (sr *SchemaRegistryService) GetDefaultCompatibility() (schemaregistry.Compatibility, error) {

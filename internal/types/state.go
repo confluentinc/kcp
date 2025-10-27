@@ -360,6 +360,7 @@ type SchemaRegistryInformation struct {
 	Type                 string                       `json:"type"`
 	URL                  string                       `json:"url"`
 	DefaultCompatibility schemaregistry.Compatibility `json:"default_compatibility"`
+	Contexts             []string                     `json:"contexts"`
 	Subjects             []Subject                    `json:"subjects"`
 }
 
