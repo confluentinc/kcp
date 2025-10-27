@@ -200,11 +200,25 @@ export const migrationScriptsWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: {
-          target: 'complete',
+          target: 'confirmation',
           actions: 'save_step_data',
         },
         BACK: {
           target: 'target_system',
+        },
+      },
+    },
+    confirmation: {
+      meta: {
+        title: 'Review Configuration',
+        description: 'Review your configuration before generating Terraform files',
+      },
+      on: {
+        CONFIRM: {
+          target: 'complete',
+        },
+        BACK: {
+          target: 'script_options',
         },
       },
     },

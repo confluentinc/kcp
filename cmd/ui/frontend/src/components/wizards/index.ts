@@ -5,6 +5,7 @@ export { Wizard } from './Wizard.tsx'
 export { WizardStepForm } from './components/WizardStepForm.tsx'
 export { WizardProgress } from './components/WizardProgress.tsx'
 export { WizardComplete } from './components/WizardComplete.tsx'
+export { WizardConfirmation } from './components/WizardConfirmation.tsx'
 export { TerraformDisplay } from './components/TerraformDisplay.tsx'
 
 export { useWizardAPI } from './hooks/useWizardAPI.ts'

@@ -49,7 +49,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
           properties: {
             target_cluster_type: {
               type: 'string',
-              title: "What type of target Confluent Cloud cluster are you migrating to?",
+              title: 'What type of target Confluent Cloud cluster are you migrating to?',
               enum: ['dedicated'],
               enumNames: ['Dedicated'],
             },
@@ -122,7 +122,8 @@ export const migrationInfraWizardConfig: WizardConfig = {
     statefile_inputs: {
       meta: {
         title: 'Statefile Configuration',
-        description: 'Enter configuration details for your statefile - WIP these will be parsed from the statefile in future and this stage removed',
+        description:
+          'Enter configuration details for your statefile - WIP these will be parsed from the statefile in future and this stage removed',
         schema: {
           type: 'object',
           properties: {
@@ -144,7 +145,11 @@ export const migrationInfraWizardConfig: WizardConfig = {
               default: false,
             },
           },
-          required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_publicly_accessible'],
+          required: [
+            'msk_cluster_id',
+            'msk_sasl_scram_bootstrap_servers',
+            'msk_publicly_accessible',
+          ],
         },
         uiSchema: {
           msk_cluster_id: {
@@ -155,17 +160,31 @@ export const migrationInfraWizardConfig: WizardConfig = {
               'e.g., b-1.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098,b-2.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098',
           },
           msk_publicly_accessible: {
-            "ui:widget": "radio",
-          }
+            'ui:widget': 'radio',
+          },
         },
       },
       on: {
         NEXT: {
-          target: 'complete',
+          target: 'confirmation',
           actions: 'save_step_data',
         },
         BACK: {
           target: 'dedicated_inputs',
+        },
+      },
+    },
+    confirmation: {
+      meta: {
+        title: 'Review Configuration',
+        description: 'Review your configuration before generating Terraform files',
+      },
+      on: {
+        CONFIRM: {
+          target: 'complete',
+        },
+        BACK: {
+          target: 'statefile_inputs',
         },
       },
     },

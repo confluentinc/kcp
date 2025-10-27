@@ -88,7 +88,7 @@ export const targetInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: {
-          target: 'complete',
+          target: 'confirmation',
           actions: 'save_step_data',
         },
         BACK: {
@@ -125,7 +125,7 @@ export const targetInfraWizardConfig: WizardConfig = {
             actions: 'save_step_data',
           },
           {
-            target: 'complete',
+            target: 'confirmation',
             guard: 'does_not_need_cluster',
             actions: 'save_step_data',
           },
@@ -175,8 +175,22 @@ export const targetInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: {
-          target: 'complete',
+          target: 'confirmation',
           actions: 'save_step_data',
+        },
+        BACK: {
+          target: 'cluster_question',
+        },
+      },
+    },
+    confirmation: {
+      meta: {
+        title: 'Review Configuration',
+        description: 'Review your configuration before generating Terraform files',
+      },
+      on: {
+        CONFIRM: {
+          target: 'complete',
         },
         BACK: {
           target: 'cluster_question',

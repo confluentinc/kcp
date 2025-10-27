@@ -3,6 +3,7 @@ import { useMachine } from '@xstate/react'
 import { WizardStepForm } from './components/WizardStepForm'
 import { WizardProgress } from './components/WizardProgress'
 import { WizardComplete } from './components/WizardComplete'
+import { WizardConfirmation } from './components/WizardConfirmation'
 import { useWizardAPI } from './hooks/useWizardAPI'
 import { useWizardData } from './hooks/useWizardData'
 import { createWizardMachine } from './factory/createWizardMachine'
@@ -38,20 +39,20 @@ export function Wizard({ config }: WizardProps) {
       data: formData,
       stepId: currentStateId,
     })
-
-    // If this is the last step, automatically generate terraform
-    if (currentIndex === totalSteps - 1) {
-      try {
-        const updatedData = { ...flattenedData, ...formData }
-        await generateTerraform(updatedData)
-      } catch (err) {
-        console.error('Failed to generate terraform:', err)
-      }
-    }
   }
 
   const handleBack = () => {
     send({ type: 'BACK' })
+  }
+
+  const handleConfirmation = async () => {
+    try {
+      await generateTerraform(flattenedData)
+      // Transition to complete state after generation
+      send({ type: 'CONFIRM' })
+    } catch (err) {
+      console.error('Failed to generate terraform:', err)
+    }
   }
 
   const handleRegenerate = async () => {
@@ -60,6 +61,24 @@ export function Wizard({ config }: WizardProps) {
     } catch (err) {
       console.error('Failed to regenerate terraform:', err)
     }
+  }
+
+  // Handle confirmation state
+  if (currentStateId === 'confirmation') {
+    return (
+      <div className="max-w-4xl mx-auto p-6 space-y-6">
+        <WizardProgress
+          currentIndex={currentIndex}
+          totalSteps={totalSteps}
+        />
+        <WizardConfirmation
+          data={flattenedData}
+          onConfirm={handleConfirmation}
+          onBack={handleBack}
+          isLoading={isLoading}
+        />
+      </div>
+    )
   }
 
   // Handle complete state or when terraform files are ready
