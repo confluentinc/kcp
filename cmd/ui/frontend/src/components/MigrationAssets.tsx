@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import { Modal } from './ui/modal'
 import { Button } from './ui/button'
@@ -7,7 +7,7 @@ import {
   Wizard,
   targetInfraWizardConfig,
   migrationInfraWizardConfig,
-  migrationScriptsWizardConfig,
+  createMigrationScriptsWizardConfig,
 } from './wizards'
 
 export default function MigrationAssets() {
@@ -54,6 +54,20 @@ export default function MigrationAssets() {
     setWizardType(null)
     setSelectedClusterForWizard(null)
   }
+
+  // Create dynamic migration scripts wizard config based on selected cluster
+  const migrationScriptsConfig = useMemo(() => {
+    if (!selectedClusterForWizard) {
+      return createMigrationScriptsWizardConfig({
+        cluster: { name: 'Unknown Cluster', kafka_admin_client_information: null },
+        regionName: 'Unknown Region',
+      })
+    }
+    return createMigrationScriptsWizardConfig({
+      cluster: selectedClusterForWizard.cluster,
+      regionName: selectedClusterForWizard.regionName,
+    })
+  }, [selectedClusterForWizard])
 
   return (
     <div className="p-6">
@@ -192,7 +206,7 @@ export default function MigrationAssets() {
         >
           {wizardType === 'target-infra' && <Wizard config={targetInfraWizardConfig} />}
           {wizardType === 'migration-infra' && <Wizard config={migrationInfraWizardConfig} />}
-          {wizardType === 'migration-scripts' && <Wizard config={migrationScriptsWizardConfig} />}
+          {wizardType === 'migration-scripts' && <Wizard config={migrationScriptsConfig} />}
         </Modal>
       )}
     </div>

@@ -4,10 +4,16 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
+
+// FormatHclResourceName ensures that resources are all 'snake_case'.
+func FormatHclResourceName(resourceName string) string {
+	return strings.ToLower(strings.ReplaceAll(resourceName, "-", "_"))
+}
 
 // TokensForTemplate creates properly formatted tokens for a template string (string with ${} interpolations)
 func TokensForStringTemplate(template string) hclwrite.Tokens {

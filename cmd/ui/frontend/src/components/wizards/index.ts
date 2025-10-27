@@ -14,7 +14,7 @@ export { createWizardMachine } from './factory/createWizardMachine.ts'
 
 export { targetInfraWizardConfig } from './targetInfraWizardConfig.ts'
 export { migrationInfraWizardConfig } from './migrationInfraWizardConfig.ts'
-export { migrationScriptsWizardConfig } from './migrationScriptsWizardConfig.ts'
+export { migrationScriptsWizardConfig, createMigrationScriptsWizardConfig } from './migrationScriptsWizardConfig.ts'
 
 export type {
   WizardStep,
