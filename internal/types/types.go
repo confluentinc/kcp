@@ -130,7 +130,6 @@ type MigrationWizardRequest struct {
 }
 
 // MigrationScriptsWizardRequest request types depending on the chosen asset path.
-
 type MirrorTopicsRequest struct {
 	MigrationType                     string   `json:"migration_type"`
 	SelectedTopics                    []string `json:"selected_topics"`
