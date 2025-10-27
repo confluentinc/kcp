@@ -5,6 +5,7 @@ import ClusterReport from '@/components/ClusterReport'
 import RegionReport from '@/components/RegionReport'
 import Summary from '@/components/Summary'
 import TCOInputs from '@/components/TCOInputs'
+import SchemaRegistries from '@/components/SchemaRegistries'
 import AppHeader from '@/components/AppHeader'
 import { useAppStore } from '@/stores/appStore'
 
@@ -14,17 +15,21 @@ export default function Home() {
   // Global state from Zustand - using single selector to avoid multiple subscriptions
   const {
     regions,
+    schemaRegistries,
     selectedCluster,
     selectedRegion,
     selectedSummary,
     selectedTCOInputs,
+    selectedSchemaRegistries,
     isProcessing,
     error,
     setRegions,
+    setSchemaRegistries,
     setSelectedCluster,
     setSelectedRegion,
     setSelectedSummary,
     setSelectedTCOInputs,
+    setSelectedSchemaRegistries,
     setIsProcessing,
     setError,
   } = useAppStore()
@@ -35,6 +40,7 @@ export default function Home() {
 
     // Reset state
     setRegions([])
+    setSchemaRegistries([])
     useAppStore.getState().clearSelection()
     setError(null)
     setIsProcessing(true)
@@ -68,6 +74,11 @@ export default function Home() {
             const processedRegions = result.regions
             setRegions(processedRegions)
 
+            // Process schema registries if available
+            if (result.schema_registries) {
+              setSchemaRegistries(result.schema_registries)
+            }
+
             // Auto-select Summary if regions are available
             if (processedRegions.length > 0) {
               setSelectedSummary()
@@ -82,6 +93,7 @@ export default function Home() {
         console.error('Error processing file:', err)
         setError(err instanceof Error ? err.message : 'Failed to process file')
         setRegions([])
+        setSchemaRegistries([])
         useAppStore.getState().clearSelection()
       } finally {
         setIsProcessing(false)
@@ -113,6 +125,10 @@ export default function Home() {
     setSelectedTCOInputs()
   }
 
+  const handleSchemaRegistriesSelect = () => {
+    setSelectedSchemaRegistries()
+  }
+
   return (
     <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-gray-900 transition-colors">
       <AppHeader />
@@ -125,10 +141,12 @@ export default function Home() {
           onRegionSelect={handleRegionSelect}
           onSummarySelect={handleSummarySelect}
           onTCOInputsSelect={handleTCOInputsSelect}
+          onSchemaRegistriesSelect={handleSchemaRegistriesSelect}
           selectedCluster={selectedCluster}
           selectedRegion={selectedRegion}
           selectedSummary={selectedSummary}
           selectedTCOInputs={selectedTCOInputs}
+          selectedSchemaRegistries={selectedSchemaRegistries}
           isProcessing={isProcessing}
           error={error}
         />
@@ -147,6 +165,8 @@ export default function Home() {
               <Summary />
             ) : selectedTCOInputs ? (
               <TCOInputs />
+            ) : selectedSchemaRegistries ? (
+              <SchemaRegistries schemaRegistries={schemaRegistries} />
             ) : selectedCluster ? (
               <ClusterReport
                 cluster={selectedCluster.cluster}

@@ -176,7 +176,12 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           {/* Connectors Tab */}
           {activeTab === 'connectors' && (
             <div className="min-w-0 max-w-full">
-              <ClusterConnectors connectors={cluster.aws_client_information?.connectors || []} />
+              <ClusterConnectors
+                connectors={cluster.aws_client_information?.connectors || []}
+                selfManagedConnectors={
+                  cluster.kafka_admin_client_information?.self_managed_connectors?.connectors || []
+                }
+              />
             </div>
           )}
 

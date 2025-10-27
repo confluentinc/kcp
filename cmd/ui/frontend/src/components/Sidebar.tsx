@@ -8,10 +8,12 @@ interface SidebarProps {
   onRegionSelect: (region: Region) => void
   onSummarySelect: () => void
   onTCOInputsSelect: () => void
+  onSchemaRegistriesSelect: () => void
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
   selectedSummary: boolean
   selectedTCOInputs: boolean
+  selectedSchemaRegistries: boolean
   isProcessing?: boolean
   error?: string | null
 }
@@ -23,10 +25,12 @@ export default function Sidebar({
   onRegionSelect,
   onSummarySelect,
   onTCOInputsSelect,
+  onSchemaRegistriesSelect,
   selectedCluster,
   selectedRegion,
   selectedSummary,
   selectedTCOInputs,
+  selectedSchemaRegistries,
   isProcessing = false,
   error = null,
 }: SidebarProps) {
@@ -85,12 +89,128 @@ export default function Sidebar({
                   </button>
                 </div>
 
-                {/* Summary Section */}
+                {/* Clusters By Region Section */}
+                <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+                  {/* Clusters By Region Header */}
+                  <div className="p-3">
+                    <div className="flex items-center space-x-2 min-w-0 flex-1">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400"></div>
+                      <h4 className="text-base font-medium whitespace-nowrap text-gray-600 dark:text-gray-400">
+                        Clusters By Region
+                      </h4>
+                    </div>
+                  </div>
+
+                  {/* Summary under Clusters By Region */}
+                  <div className="ml-4 space-y-2">
+                    <button
+                      onClick={onSummarySelect}
+                      className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
+                        selectedSummary
+                          ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2 min-w-0 flex-1">
+                        <div
+                          className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            selectedSummary ? 'bg-blue-600' : 'bg-gray-500'
+                          }`}
+                        ></div>
+                        <h4
+                          className={`text-base font-medium whitespace-nowrap ${
+                            selectedSummary
+                              ? 'text-blue-900 dark:text-blue-100'
+                              : 'text-gray-800 dark:text-gray-200'
+                          }`}
+                        >
+                          Summary
+                        </h4>
+                      </div>
+                    </button>
+
+                    {/* Regions under Summary */}
+                    <div className="ml-4 space-y-2">
+                      {regions.map((region) => {
+                        const isRegionSelected = selectedRegion?.name === region.name
+
+                        return (
+                          <div
+                            key={region.name}
+                            className="space-y-1"
+                          >
+                            <button
+                              onClick={() => onRegionSelect(region)}
+                              className={`w-full text-left flex items-center justify-between p-2 rounded-md transition-colors ${
+                                isRegionSelected
+                                  ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                                  : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                <div
+                                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                    isRegionSelected ? 'bg-blue-500' : 'bg-blue-400'
+                                  }`}
+                                ></div>
+                                <h5
+                                  className={`text-sm font-medium whitespace-nowrap ${
+                                    isRegionSelected
+                                      ? 'text-blue-900 dark:text-blue-100'
+                                      : 'text-gray-700 dark:text-gray-300'
+                                  }`}
+                                >
+                                  {region.name}
+                                </h5>
+                              </div>
+                            </button>
+
+                            {/* Clusters under each region - only show provisioned clusters */}
+                            <div className="ml-4 space-y-1">
+                              {(region.clusters || [])
+                                .filter(
+                                  (cluster) =>
+                                    cluster.aws_client_information?.msk_cluster_config?.Provisioned
+                                )
+                                .map((cluster) => {
+                                  const isSelected =
+                                    selectedCluster?.cluster.name === cluster.name &&
+                                    selectedCluster?.regionName === region.name
+                                  return (
+                                    <button
+                                      key={cluster.name}
+                                      onClick={() => onClusterSelect(cluster, region.name)}
+                                      className={`w-full text-left px-2 py-1 text-sm rounded-sm transition-colors ${
+                                        isSelected
+                                          ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-700'
+                                          : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
+                                      }`}
+                                    >
+                                      <div className="flex items-center space-x-2">
+                                        <div
+                                          className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                                            isSelected ? 'bg-blue-500' : 'bg-gray-400'
+                                          }`}
+                                        ></div>
+                                        <span className="truncate">{cluster.name}</span>
+                                      </div>
+                                    </button>
+                                  )
+                                })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Schema Registries Section */}
                 <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
                   <button
-                    onClick={onSummarySelect}
+                    onClick={onSchemaRegistriesSelect}
                     className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
-                      selectedSummary
+                      selectedSchemaRegistries
                         ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
                         : 'hover:bg-gray-100 dark:hover:bg-gray-600'
                     }`}
@@ -98,94 +218,20 @@ export default function Sidebar({
                     <div className="flex items-center space-x-2 min-w-0 flex-1">
                       <div
                         className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                          selectedSummary ? 'bg-blue-600' : 'bg-gray-500'
+                          selectedSchemaRegistries ? 'bg-blue-600' : 'bg-gray-500'
                         }`}
                       ></div>
                       <h4
                         className={`text-base font-medium whitespace-nowrap ${
-                          selectedSummary
+                          selectedSchemaRegistries
                             ? 'text-blue-900 dark:text-blue-100'
                             : 'text-gray-800 dark:text-gray-200'
                         }`}
                       >
-                        Summary
+                        Schema Registries
                       </h4>
                     </div>
                   </button>
-
-                  {/* Regions under Summary */}
-                  <div className="ml-4 space-y-2">
-                    {regions.map((region) => {
-                      const isRegionSelected = selectedRegion?.name === region.name
-
-                      return (
-                        <div
-                          key={region.name}
-                          className="space-y-1"
-                        >
-                          <button
-                            onClick={() => onRegionSelect(region)}
-                            className={`w-full text-left flex items-center justify-between p-2 rounded-md transition-colors ${
-                              isRegionSelected
-                                ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-600'
-                            }`}
-                          >
-                            <div className="flex items-center space-x-2 min-w-0 flex-1">
-                              <div
-                                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                                  isRegionSelected ? 'bg-blue-500' : 'bg-blue-400'
-                                }`}
-                              ></div>
-                              <h5
-                                className={`text-sm font-medium whitespace-nowrap ${
-                                  isRegionSelected
-                                    ? 'text-blue-900 dark:text-blue-100'
-                                    : 'text-gray-700 dark:text-gray-300'
-                                }`}
-                              >
-                                {region.name}
-                              </h5>
-                            </div>
-                          </button>
-
-                          {/* Clusters under each region - only show provisioned clusters */}
-                          <div className="ml-4 space-y-1">
-                            {(region.clusters || [])
-                              .filter(
-                                (cluster) =>
-                                  cluster.aws_client_information?.msk_cluster_config?.Provisioned
-                              )
-                              .map((cluster) => {
-                                const isSelected =
-                                  selectedCluster?.cluster.name === cluster.name &&
-                                  selectedCluster?.regionName === region.name
-                                return (
-                                  <button
-                                    key={cluster.name}
-                                    onClick={() => onClusterSelect(cluster, region.name)}
-                                    className={`w-full text-left px-2 py-1 text-sm rounded-sm transition-colors ${
-                                      isSelected
-                                        ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-700'
-                                        : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
-                                    }`}
-                                  >
-                                    <div className="flex items-center space-x-2">
-                                      <div
-                                        className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                                          isSelected ? 'bg-blue-500' : 'bg-gray-400'
-                                        }`}
-                                      ></div>
-                                      <span className="truncate">{cluster.name}</span>
-                                    </div>
-                                  </button>
-                                )
-                              })}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
                 </div>
               </div>
             </div>
