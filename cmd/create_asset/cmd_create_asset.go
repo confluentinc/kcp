@@ -4,8 +4,8 @@ import (
 	"github.com/confluentinc/kcp/cmd/create_asset/bastion_host"
 	"github.com/confluentinc/kcp/cmd/create_asset/migrate_acls"
 	"github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors"
+	"github.com/confluentinc/kcp/cmd/create_asset/migrate_topics"
 	"github.com/confluentinc/kcp/cmd/create_asset/migration_infra"
-	"github.com/confluentinc/kcp/cmd/create_asset/migration_scripts"
 	"github.com/confluentinc/kcp/cmd/create_asset/reverse_proxy"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +22,7 @@ func NewCreateAssetCmd() *cobra.Command {
 		bastion_host.NewBastionHostCmd(),
 		migrate_acls.NewMigrateAclsCmd(),
 		migrate_connectors.NewMigrateConnectorsCmd(),
-		migration_scripts.NewMigrationCmd(),
+		migrate_topics.NewMigrateTopicsCmd(),
 		migration_infra.NewMigrationInfraCmd(),
 		reverse_proxy.NewReverseProxyCmd(),
 	)
