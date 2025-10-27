@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { useMachine } from '@xstate/react'
+import { useAppStore } from '@/stores/appStore'
 import { WizardStepForm } from './components/WizardStepForm'
 import { WizardProgress } from './components/WizardProgress'
-import { WizardComplete } from './components/WizardComplete'
 import { WizardConfirmation } from './components/WizardConfirmation'
 import { useWizardAPI } from './hooks/useWizardAPI'
 import { useWizardData } from './hooks/useWizardData'
@@ -11,18 +11,24 @@ import type { WizardConfig } from './types'
 
 interface WizardProps {
   config: WizardConfig
+  clusterKey?: string
+  wizardType?: 'target-infra' | 'migration-infra' | 'migration-scripts'
+  onComplete?: () => void
 }
 
-export function Wizard({ config }: WizardProps) {
+export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardProps) {
   // Create the wizard machine
   const wizardMachine = useMemo(() => createWizardMachine(config), [config])
   const [state, send] = useMachine(wizardMachine)
 
   // API integration
-  const { isLoading, terraformFiles, error, generateTerraform } = useWizardAPI(config.apiEndpoint)
+  const { isLoading, generateTerraform } = useWizardAPI(config.apiEndpoint)
 
   // Data management
   const { flattenedData } = useWizardData(state.context as any)
+
+  // Zustand store
+  const setTerraformFiles = useAppStore((state) => state.setTerraformFiles)
 
   const currentStateId = state.value as string
   const currentStep = config.states[currentStateId]?.meta
@@ -47,19 +53,19 @@ export function Wizard({ config }: WizardProps) {
 
   const handleConfirmation = async () => {
     try {
-      await generateTerraform(flattenedData)
-      // Transition to complete state after generation
-      send({ type: 'CONFIRM' })
+      const files = await generateTerraform(flattenedData)
+
+      // Store files in zustand if cluster info is provided
+      if (clusterKey && wizardType && files) {
+        setTerraformFiles(clusterKey, wizardType, files)
+      }
+
+      // Call onComplete callback to exit wizard and switch tab
+      if (onComplete) {
+        onComplete()
+      }
     } catch (err) {
       console.error('Failed to generate terraform:', err)
-    }
-  }
-
-  const handleRegenerate = async () => {
-    try {
-      await generateTerraform(flattenedData)
-    } catch (err) {
-      console.error('Failed to regenerate terraform:', err)
     }
   }
 
@@ -76,20 +82,6 @@ export function Wizard({ config }: WizardProps) {
           onConfirm={handleConfirmation}
           onBack={handleBack}
           isLoading={isLoading}
-        />
-      </div>
-    )
-  }
-
-  // Handle complete state or when terraform files are ready
-  if (state.matches('complete') || terraformFiles || error) {
-    return (
-      <div className="max-w-4xl mx-auto p-6">
-        <WizardComplete
-          terraformFiles={terraformFiles}
-          isLoading={isLoading}
-          error={error}
-          onRegenerate={handleRegenerate}
         />
       </div>
     )

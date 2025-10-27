@@ -35,9 +35,10 @@ export interface WizardConfig {
 }
 
 export interface TerraformFiles {
-  main_tf: string
-  providers_tf: string
-  variables_tf: string
+  main_tf?: string
+  providers_tf?: string
+  variables_tf?: string
+  [key: string]: string | undefined
 }
 
 export interface WizardState {
