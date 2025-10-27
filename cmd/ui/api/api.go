@@ -61,9 +61,9 @@ func (ui *UI) Run() error {
 	e.POST("/upload-state", ui.handleUploadState)
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
-
-	e.POST("/assets/target", ui.handleTargetClusterAssets)
-	e.POST("/assets/migration", ui.handleMigrationAssets)
+	e.POST("/assets/target", ui.handlePostTargetClusterAssets)
+	e.POST("/assets/migration", ui.handlePostMigrationAssets)
+	e.POST("/assets/schema-registry", ui.handlePostSchemaRegistryAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -197,7 +197,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	return c.JSON(http.StatusOK, regionCosts)
 }
 
-func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
+func (ui *UI) handlePostTargetClusterAssets(c echo.Context) error {
 	var req types.TargetClusterWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -250,7 +250,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
-func (ui *UI) handleMigrationAssets(c echo.Context) error {
+func (ui *UI) handlePostMigrationAssets(c echo.Context) error {
 	var req types.MigrationWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -275,4 +275,16 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func (ui *UI) handlePostSchemaRegistryAssets(c echo.Context) error {
+	var req types.SchemaRegistryWizardRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, "NOTHING FOR NOW")
 }

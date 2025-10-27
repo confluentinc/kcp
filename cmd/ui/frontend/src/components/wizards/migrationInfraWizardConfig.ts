@@ -26,7 +26,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
         uiSchema: {
           authentication_method: {
-            'ui:widget': 'radio',
+            'ui:widget': 'select',
           },
         },
       },
@@ -58,7 +58,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
         uiSchema: {
           target_cluster_type: {
-            'ui:widget': 'radio',
+            'ui:widget': 'select',
           },
         },
       },

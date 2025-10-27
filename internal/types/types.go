@@ -128,3 +128,7 @@ type MigrationWizardRequest struct {
 	MskClusterId                 string `json:"msk_cluster_id"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }
+
+type SchemaRegistryWizardRequest struct {
+	SchemaRegistryType string `json:"schema_registry_type"`
+}
