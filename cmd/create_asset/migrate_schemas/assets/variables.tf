@@ -23,7 +23,6 @@ variable "source_schema_registry_url" {
 variable "source_schema_registry_username" {
   description = "Username for source schema registry authentication"
   type        = string
-  sensitive   = true
 }
 
 variable "source_schema_registry_password" {
@@ -40,7 +39,6 @@ variable "target_schema_registry_url" {
 variable "target_schema_registry_api_key" {
   description = "API key for the Confluent Cloud target schema registry"
   type        = string
-  sensitive   = true
 }
 
 variable "target_schema_registry_api_secret" {
