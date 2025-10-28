@@ -136,15 +136,14 @@ func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string
 
 	// Prepare template data
 	templateData := struct {
-		Exporters                       []SchemaExporter
-		SourceSchemaRegistryID          string
-		SourceSchemaRegistryURL         string
-		ConfluentCloudSchemaRegistryURL string
+		Exporters               []SchemaExporter
+		SourceSchemaRegistryID  string
+		SourceSchemaRegistryURL string
 	}{
 		Exporters: ms.exporters,
 		// confluent exporter expects an id for the source schema registry
-		SourceSchemaRegistryID:          randomString(5),
-		SourceSchemaRegistryURL:         ms.schemaRegistry.URL,
+		SourceSchemaRegistryID:  randomString(5),
+		SourceSchemaRegistryURL: ms.schemaRegistry.URL,
 	}
 	// Execute template
 	var buf strings.Builder
