@@ -37,32 +37,3 @@ resource "confluent_schema_exporter" "api_exporters" {
     }
   }
 }
-
-output "migration_results" {
-  description = "Results of all migration requests"
-  value = {
-    for name, exporter in confluent_schema_exporter.api_exporters : name => {
-      exporter_id   = exporter.id
-      name = exporter.name
-      status        = exporter.status
-      subjects      = exporter.subjects
-      context_type  = exporter.context_type
-      context_name  = exporter.context
-    }
-  }
-}
-
-output "exporter_names" {
-  description = "Names of all created schema exporters"
-  value       = [for exporter in confluent_schema_exporter.api_exporters : exporter.name]
-}
-
-output "exporter_ids" {
-  description = "IDs of all created schema exporters"
-  value       = [for exporter in confluent_schema_exporter.api_exporters : exporter.id]
-}
-
-output "exporter_statuses" {
-  description = "Statuses of all schema exporters"
-  value       = { for name, exporter in confluent_schema_exporter.api_exporters : name => exporter.status }
-}
