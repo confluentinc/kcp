@@ -47,7 +47,7 @@ func (ms *MigrateSchemasAssetGenerator) Run() error {
 
 	outputDir := filepath.Join("migrate_schemas")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create migrate-topics directory: %w", err)
+		return fmt.Errorf("failed to create migrate-schemas directory: %w", err)
 	}
 
 	assetsDir := "assets"
