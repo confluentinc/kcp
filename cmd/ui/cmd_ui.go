@@ -37,8 +37,9 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 	reportService := report.NewReportService()
 	targetInfraHCLService := hcl.NewTargetInfraHCLService()
 	migrationInfraHCLService := hcl.NewMigrationInfraHCLService()
+	migrationScriptsHCLService := hcl.NewMigrationScriptsHCLService()
 
-	ui := api.NewUI(reportService, *targetInfraHCLService, *migrationInfraHCLService, *opts)
+	ui := api.NewUI(reportService, *targetInfraHCLService, *migrationInfraHCLService, *migrationScriptsHCLService, *opts)
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
 	}

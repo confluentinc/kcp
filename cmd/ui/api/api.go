@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -23,19 +24,21 @@ type UICmdOpts struct {
 }
 
 type UI struct {
-	reportService            ReportService
-	targetInfraHCLService    hcl.TargetInfraHCLService
-	migrationInfraHCLService hcl.MigrationInfraHCLService
+	reportService              ReportService
+	targetInfraHCLService      hcl.TargetInfraHCLService
+	migrationInfraHCLService   hcl.MigrationInfraHCLService
+	migrationScriptsHCLService hcl.MigrationScriptsHCLService
 
 	port        string
 	cachedState *types.State // Cache the uploaded state for metrics filtering
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
 	return &UI{
-		reportService:            reportService,
-		targetInfraHCLService:    targetInfraHCLService,
-		migrationInfraHCLService: migrationInfraHCLService,
+		reportService:              reportService,
+		targetInfraHCLService:      targetInfraHCLService,
+		migrationInfraHCLService:   migrationInfraHCLService,
+		migrationScriptsHCLService: migrationScriptsHCLService,
 
 		port:        opts.Port,
 		cachedState: nil,
@@ -64,6 +67,7 @@ func (ui *UI) Run() error {
 
 	e.POST("/assets/target", ui.handleTargetClusterAssets)
 	e.POST("/assets/migration", ui.handleMigrationAssets)
+	e.POST("/assets/migration-scripts", ui.handleMigrationScripts)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -267,6 +271,60 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	}
 
 	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func (ui *UI) handleMigrationScripts(c echo.Context) error {
+	var baseRequest map[string]interface{}
+	if err := c.Bind(&baseRequest); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	migrationType, ok := baseRequest["migration_type"].(string)
+	if !ok {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Missing migration_type",
+			"message": "migration_type is required in the request body",
+		})
+	}
+
+	var terraformFiles types.TerraformFiles
+	var err error
+
+	switch migrationType {
+	case "Mirror Topics":
+		var request types.MirrorTopicsRequest
+		jsonData, marshalErr := json.Marshal(baseRequest)
+		if marshalErr != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": marshalErr.Error(),
+			})
+		}
+		if unmarshalErr := json.Unmarshal(jsonData, &request); unmarshalErr != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": unmarshalErr.Error(),
+			})
+		}
+		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(request)
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid migration script type",
+			"message": "Invalid migration script type: " + migrationType,
+		})
+	}
+
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",

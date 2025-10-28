@@ -128,3 +128,12 @@ type MigrationWizardRequest struct {
 	MskClusterId                 string `json:"msk_cluster_id"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }
+
+// MigrationScriptsWizardRequest request types depending on the chosen asset path.
+type MirrorTopicsRequest struct {
+	MigrationType                     string   `json:"migration_type"`
+	SelectedTopics                    []string `json:"selected_topics"`
+	ClusterLinkName                   string   `json:"cluster_link_name"`
+	ConfluentCloudClusterId           string   `json:"confluent_cloud_cluster_id"`
+	ConfluentCloudClusterRestEndpoint string   `json:"confluent_cloud_cluster_rest_endpoint"`
+}
