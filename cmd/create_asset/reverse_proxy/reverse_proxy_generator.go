@@ -45,23 +45,23 @@ func NewReverseProxyAssetGenerator(opts ReverseProxyOpts) *ReverseProxyAssetGene
 func (rp *ReverseProxyAssetGenerator) Run() error {
 	slog.Info("🏁 generating reverse proxy assets")
 
-	targetDir := "reverse_proxy"
-	slog.Info("📁 creating reverse proxy directory", "directory", targetDir)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	outputDir := "reverse_proxy"
+	slog.Info("📁 creating reverse proxy directory", "directory", outputDir)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create reverse proxy directory: %w", err)
 	}
 
 	assetsDir := "assets"
-	slog.Info("📋 copying assets to target directory", "from", assetsDir, "to", targetDir)
-	if err := rp.copyFiles(assetsDir, targetDir); err != nil {
+	slog.Info("📋 copying assets to target directory", "from", assetsDir, "to", outputDir)
+	if err := rp.copyFiles(assetsDir, outputDir); err != nil {
 		return fmt.Errorf("failed to copy reverse proxy files: %w", err)
 	}
 
-	if err := rp.generateTfvarsFiles(targetDir); err != nil {
+	if err := rp.generateTfvarsFiles(outputDir); err != nil {
 		return fmt.Errorf("failed to generate tfvars files: %w", err)
 	}
 
-	slog.Info("✅ reverse proxy assets generated", "directory", targetDir)
+	slog.Info("✅ reverse proxy assets generated", "directory", outputDir)
 
 	return nil
 }

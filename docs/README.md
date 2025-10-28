@@ -15,9 +15,14 @@
     - [`kcp create-asset`](#kcp-create-asset)
       - [`kcp create-asset bastion-host`](#kcp-create-asset-bastion-host)
       - [`kcp create-asset migrate-acls`](#kcp-create-asset-migrate-acls)
+        - [`kcp create-asset migrate-acls iam`](#kcp-create-asset-migrate-acls-iam)
+        - [`kcp create-asset migrate-acls kafka`](#kcp-create-asset-migrate-acls-kafka)
       - [`kcp create-asset migrate-connectors`](#kcp-create-asset-migrate-connectors)
+        - [`kcp create-asset migrate-connectors msk`](#kcp-create-asset-migrate-connectors-msk)
+        - [`kcp create-asset migrate-connectors self-managed`](#kcp-create-asset-migrate-connectors-self-managed)
       - [`kcp create-asset migration-infra`](#kcp-create-asset-migration-infra)
-      - [`kcp create-asset migration-scripts`](#kcp-create-asset-migration-scripts)
+      - [`kcp create-asset migrate-schemas`](#kcp-create-asset-migrate-schemas)
+      - [`kcp create-asset migrate-topics`](#kcp-create-asset-migrate-topics)
       - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
     - [`kcp ui`](#kcp-ui)
     - [`kcp update`](#kcp-update)
@@ -435,8 +440,10 @@ The `kcp create-asset` command includes the following sub-commands:
 
 - `bastion-host`
 - `migrate-acls`
+- `migrate-connectors`
 - `migration-infra`
-- `migration-scripts`
+- `migrate-schemas`
+- `migrate-topics`
 - `reverse-proxy`
 
 The sub-commands require the following minimum AWS IAM permissions:
@@ -1196,14 +1203,50 @@ The command creates a `migration-infra` directory containing Terraform configura
 
 ---
 
-#### `kcp create-asset migration-scripts`
+#### `kcp create-asset migrate-schemas`
+
+This command generates Terraform assets for migrating Schema Registry schemas to Confluent Cloud using Schema Exporters.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the schema registry information has been written to
+- `--url`: The URL of the schema registry to migrate schemas from
+
+**Example Usage**:
+
+```shell
+kcp create-asset migrate-schemas \
+  --state-file kcp-state.json \
+  --url https://my-schema-registry.example.com
+```
+
+**Output:**
+The command creates a `migrate_schemas` directory containing Terraform files:
+
+- `main.tf` - Terraform configuration defining `confluent_schema_exporter` resources for schema migration
+- `variables.tf` - Input variable definitions for source and destination Schema Registry details
+- `inputs.auto.tfvars` - Auto-populated variable values from the kcp state file
+
+**What it does:**
+The generated Terraform configuration creates Schema Exporter resources that continuously sync schemas from your source Schema Registry to Confluent Cloud's Schema Registry. By default, it exports all subjects (`:*:`) with context type `NONE`.
+
+**Next Steps:**
+1. Navigate to the generated `migrate_schemas` directory
+2. Review and customize the Terraform configuration if needed
+3. Run `terraform init` to initialize the Terraform workspace
+4. Run `terraform plan` to preview the changes
+5. Run `terraform apply` to create the Schema Exporters
+
+---
+
+#### `kcp create-asset migrate-topics`
 
 This command generates migration scripts that mirror topics from MSK to Confluent Platform jump clusters and then finally to Confluent Cloud.
 
 **Example Usage**:
 
 ```shell
-kcp create-asset migration-scripts \
+kcp create-asset migrate-topics \
   --state-file kcp-state.json \
   --cluster-arn arn:aws:kafka:us-east-3:635910096382:cluster/my-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2 \
   --migration-infra-folder migration_infra
@@ -1213,14 +1256,14 @@ kcp create-asset migration-scripts \
 > This command does not require AWS IAM permissions as it generates local scripts and configuration files. The mirror topics piggyback off the authentication link established in the cluster link.
 
 **Output:**
-The command creates a `migration_scripts` directory containing shell scripts:
+The command creates a `migrate_topics` directory containing shell scripts:
 
 - `msk-to-cp-mirror-topics.sh` - Individual `kafka-mirror` commands per topic to move data from MSK to the Confluent Platform jump cluster.
 - `destination-cluster-properties` - Kafka client configuration file.
 - `cp-to-cc-mirror-topics.sh` - Individual cURL requests to the Confluent Cloud API per topic move data from the Confluent Platform jump cluster to Confluent Cloud.
 
 > [!NOTE]
-> A `README.md` is generated in the `migration_scripts` directory to further assist in migrating the data from MSK to Confluent Cloud.
+> A `README.md` is generated in the `migrate_topics` directory to further assist in migrating the data from MSK to Confluent Cloud.
 
 ---
 
