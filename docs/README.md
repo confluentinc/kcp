@@ -21,6 +21,7 @@
         - [`kcp create-asset migrate-connectors msk`](#kcp-create-asset-migrate-connectors-msk)
         - [`kcp create-asset migrate-connectors self-managed`](#kcp-create-asset-migrate-connectors-self-managed)
       - [`kcp create-asset migration-infra`](#kcp-create-asset-migration-infra)
+      - [`kcp create-asset migrate-schemas`](#kcp-create-asset-migrate-schemas)
       - [`kcp create-asset migrate-topics`](#kcp-create-asset-migrate-topics)
       - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
     - [`kcp ui`](#kcp-ui)
@@ -439,7 +440,9 @@ The `kcp create-asset` command includes the following sub-commands:
 
 - `bastion-host`
 - `migrate-acls`
+- `migrate-connectors`
 - `migration-infra`
+- `migrate-schemas`
 - `migrate-topics`
 - `reverse-proxy`
 
@@ -1197,6 +1200,42 @@ The command creates a `migration-infra` directory containing Terraform configura
 - **Networking** - NAT gateway, Elastic IPs, subnets, security groups, route tables & associations. Security Groups are created when `--security-group-ids` parameter is not provided.
 - **Confluent Cloud** - Environment, Cluster, Schema Registry, Service Accounts, API keys.
 - **Private Link** - Establish VPC connectivity between the MSK VPC and Confluent Cloud cluster.
+
+---
+
+#### `kcp create-asset migrate-schemas`
+
+This command generates Terraform assets for migrating Schema Registry schemas to Confluent Cloud using Schema Exporters.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the schema registry information has been written to
+- `--url`: The URL of the schema registry to migrate schemas from
+
+**Example Usage**:
+
+```shell
+kcp create-asset migrate-schemas \
+  --state-file kcp-state.json \
+  --url https://my-schema-registry.example.com
+```
+
+**Output:**
+The command creates a `migrate_schemas` directory containing Terraform files:
+
+- `main.tf` - Terraform configuration defining `confluent_schema_exporter` resources for schema migration
+- `variables.tf` - Input variable definitions for source and destination Schema Registry details
+- `inputs.auto.tfvars` - Auto-populated variable values from the kcp state file
+
+**What it does:**
+The generated Terraform configuration creates Schema Exporter resources that continuously sync schemas from your source Schema Registry to Confluent Cloud's Schema Registry. By default, it exports all subjects (`:*:`) with context type `NONE`.
+
+**Next Steps:**
+1. Navigate to the generated `migrate_schemas` directory
+2. Review and customize the Terraform configuration if needed
+3. Run `terraform init` to initialize the Terraform workspace
+4. Run `terraform plan` to preview the changes
+5. Run `terraform apply` to create the Schema Exporters
 
 ---
 
