@@ -1,9 +1,7 @@
 package migrate_schemas
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -12,8 +10,8 @@ import (
 )
 
 var (
-	stateFile            string
-	migrationInfraFolder string
+	stateFile string
+	url       string
 )
 
 func NewMigrateSchemasCmd() *cobra.Command {
@@ -32,7 +30,7 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration-infra folder produced from 'kcp create-asset migration-infra' command after applying the Terraform")
+	requiredFlags.StringVar(&url, "url", "", "The URL of the schema registry to migrate schemas from.")
 	migrateSchemasCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -55,7 +53,7 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	})
 
 	migrateSchemasCmd.MarkFlagRequired("state-file")
-	migrateSchemasCmd.MarkFlagRequired("migration-infra-folder")
+	migrateSchemasCmd.MarkFlagRequired("url")
 
 	return migrateSchemasCmd
 }
@@ -83,15 +81,36 @@ func runMigrateSchemas(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateSchemasOpts() (*MigrateSchemasOpts, error) {
-	file, err := os.ReadFile(stateFile)
+	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read cluster file: %v", err)
+		return nil, fmt.Errorf("failed to load existing state file: %v", err)
 	}
 
-	var state types.State
-	if err := json.Unmarshal(file, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+	var schemaRegistry types.SchemaRegistryInformation
+	found := false
+	for _, sr := range state.SchemaRegistries {
+		if sr.URL == url {
+			schemaRegistry = sr
+			found = true
+			break
+		}
 	}
 
-	return nil, nil
+	if !found {
+		return nil, fmt.Errorf("schema registry with URL %q not found in state file", url)
+	}
+
+	opts := MigrateSchemasOpts{
+		SchemaRegistry: schemaRegistry,
+		// Default exporter for CLI - this may be configurable in the future
+		Exporters: []SchemaExporter{
+			{
+				Name:        "kcp-schemas-to-cc-exporter",
+				ContextType: "NONE",
+				Subjects:    []string{":*:"},
+			},
+		},
+	}
+
+	return &opts, nil
 }
