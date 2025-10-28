@@ -1,71 +1,70 @@
-package bastion_host
+package migrate_schemas
 
 import (
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 //go:embed assets
 var assetsFS embed.FS
 
-// struct to hold the options for the bastion host asset generator
-type BastionHostOpts struct {
-	Region           string
-	VPCId            string
-	PublicSubnetCidr string
-	CreateIGW        bool
-	SecurityGroupIds []string
+type SchemaExporter struct {
+	Name        string
+	ContextType string
+	ContextName string
+	Subjects    []string
 }
 
-type BastionHostAssetGenerator struct {
-	region           string
-	vpcId            string
-	publicSubnetCidr string
-	createIGW        bool
-	securityGroupIds []string
+type MigrateSchemasOpts struct {
+	SchemaRegistry types.SchemaRegistryInformation
+	Exporters      []SchemaExporter
 }
 
-func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerator {
-	return &BastionHostAssetGenerator{
-		region:           opts.Region,
-		vpcId:            opts.VPCId,
-		publicSubnetCidr: opts.PublicSubnetCidr,
-		createIGW:        opts.CreateIGW,
-		securityGroupIds: opts.SecurityGroupIds,
+type MigrateSchemasAssetGenerator struct {
+	schemaRegistry types.SchemaRegistryInformation
+	exporters      []SchemaExporter
+}
+
+func NewMigrateSchemasAssetGenerator(opts MigrateSchemasOpts) *MigrateSchemasAssetGenerator {
+	return &MigrateSchemasAssetGenerator{
+		schemaRegistry: opts.SchemaRegistry,
+		exporters:      opts.Exporters,
 	}
 }
 
-func (bh *BastionHostAssetGenerator) Run() error {
-	slog.Info("🏁 generating bastion host environment assets")
+func (ms *MigrateSchemasAssetGenerator) Run() error {
+	slog.Info("🏁 generating migrate schemas assets!")
 
-	outputDir := filepath.Join("bastion_host")
-	slog.Info("📁 creating bastion host directory", "directory", outputDir)
+	outputDir := filepath.Join("migrate_schemas")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create bastion host directory: %w", err)
+		return fmt.Errorf("failed to create migrate-topics directory: %w", err)
 	}
 
 	assetsDir := "assets"
-	slog.Info("📋 copying assets to target directory", "from", assetsDir, "to", outputDir)
-	if err := bh.copyFiles(assetsDir, outputDir); err != nil {
-		return fmt.Errorf("failed to copy bastion host files: %w", err)
+	if err := ms.copyFiles(assetsDir, outputDir); err != nil {
+		return fmt.Errorf("failed to copy migrate schemas files: %w", err)
 	}
 
-	if err := bh.generateTfvarsFiles(outputDir); err != nil {
+	if err := ms.generateTfvarsFiles(outputDir); err != nil {
 		return fmt.Errorf("failed to generate tfvars files: %w", err)
 	}
 
-	slog.Info("✅ bastion host environment assets generated successfully", "directory", outputDir)
+	slog.Info("✅ migrate schemas assets generated", "directory", outputDir)
 
 	return nil
 }
 
-func (bh *BastionHostAssetGenerator) copyFiles(sourceDir, destDir string) error {
+func (ms *MigrateSchemasAssetGenerator) copyFiles(sourceDir, destDir string) error {
 	return fs.WalkDir(assetsFS, sourceDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -107,15 +106,21 @@ func (bh *BastionHostAssetGenerator) copyFiles(sourceDir, destDir string) error 
 	})
 }
 
-func (bh *BastionHostAssetGenerator) generateTfvarsFiles(terraformDir string) error {
-	if err := bh.generateInputsTfvars(terraformDir); err != nil {
+func (ms *MigrateSchemasAssetGenerator) generateTfvarsFiles(terraformDir string) error {
+	if err := ms.generateInputsTfvars(terraformDir); err != nil {
 		return fmt.Errorf("failed to generate inputs tfvars file: %w", err)
 	}
 
 	return nil
 }
 
-func (bh *BastionHostAssetGenerator) generateInputsTfvars(terraformDir string) error {
+func randomString(length int) string {
+	b := make([]byte, length)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)[:length]
+}
+
+func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string) error {
 	// Read the Go template file from embedded assets
 	templatePath := "assets/inputs.auto.tfvars.go.tmpl"
 	templateContent, err := assetsFS.ReadFile(templatePath)
@@ -131,17 +136,15 @@ func (bh *BastionHostAssetGenerator) generateInputsTfvars(terraformDir string) e
 
 	// Prepare template data
 	templateData := struct {
-		AWSRegion        string
-		PublicSubnetCIDR string
-		VPCID            string
-		CreateIGW        bool
-		SecurityGroupIds []string
+		Exporters                       []SchemaExporter
+		SourceSchemaRegistryID          string
+		SourceSchemaRegistryURL         string
+		ConfluentCloudSchemaRegistryURL string
 	}{
-		AWSRegion:        bh.region,
-		PublicSubnetCIDR: bh.publicSubnetCidr,
-		VPCID:            bh.vpcId,
-		CreateIGW:        bh.createIGW,
-		SecurityGroupIds: bh.securityGroupIds,
+		Exporters: ms.exporters,
+		// confluent exporter expects an id for the source schema registry
+		SourceSchemaRegistryID:          randomString(5),
+		SourceSchemaRegistryURL:         ms.schemaRegistry.URL,
 	}
 	// Execute template
 	var buf strings.Builder

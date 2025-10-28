@@ -1,4 +1,4 @@
-package migration_scripts
+package migrate_topics
 
 import (
 	"embed"
@@ -16,53 +16,53 @@ import (
 //go:embed assets
 var assetsFS embed.FS
 
-type MigrationScriptsOpts struct {
+type MigrateTopicsOpts struct {
 	MirrorTopics    []string
 	TerraformOutput types.TerraformOutput
 	Manifest        types.Manifest
 }
 
-type MigrationScriptsAssetGenerator struct {
+type MigrateTopicsAssetGenerator struct {
 	mirrorTopics    []string
 	terraformOutput types.TerraformOutput
 	manifest        types.Manifest
 }
 
-func NewMigrationAssetGenerator(opts MigrationScriptsOpts) *MigrationScriptsAssetGenerator {
-	return &MigrationScriptsAssetGenerator{
+func NewMigrateTopicsAssetGenerator(opts MigrateTopicsOpts) *MigrateTopicsAssetGenerator {
+	return &MigrateTopicsAssetGenerator{
 		mirrorTopics:    opts.MirrorTopics,
 		terraformOutput: opts.TerraformOutput,
 		manifest:        opts.Manifest,
 	}
 }
 
-func (ms *MigrationScriptsAssetGenerator) Run() error {
+func (mt *MigrateTopicsAssetGenerator) Run() error {
 	slog.Info("🏁 generating migration scripts assets!")
 
-	outputDir := filepath.Join("migration_scripts")
+	outputDir := filepath.Join("migrate_topics")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create migration-plan directory: %w", err)
+		return fmt.Errorf("failed to create migrate-topics directory: %w", err)
 	}
 
-	switch ms.manifest.MigrationInfraType {
+	switch mt.manifest.MigrationInfraType {
 	case types.MskCpCcPrivateSaslIam, types.MskCpCcPrivateSaslScram:
-		if err := ms.generateJumpClusterMigrationScripts(outputDir, ms.mirrorTopics); err != nil {
-			return fmt.Errorf("failed to generate jump cluster migration scripts: %w", err)
+		if err := mt.generateJumpClusterMigrationScripts(outputDir, mt.mirrorTopics); err != nil {
+			return fmt.Errorf("failed to generate jump cluster migrate topics scripts: %w", err)
 		}
 	case types.MskCcPublic:
-		if err := ms.generateMskToCCMigrationScripts(outputDir, ms.mirrorTopics); err != nil {
-			return fmt.Errorf("failed to generate msk to cc migration scripts: %w", err)
+		if err := mt.generateMskToCCMigrationScripts(outputDir, mt.mirrorTopics); err != nil {
+			return fmt.Errorf("failed to generate msk to cc migrate topics scripts: %w", err)
 		}
 	default:
-		return fmt.Errorf("invalid migration infra type: %d", ms.manifest.MigrationInfraType)
+		return fmt.Errorf("invalid migrate topics infra type: %d", mt.manifest.MigrationInfraType)
 	}
 
-	slog.Info("✅ migration assets generated", "directory", outputDir)
+	slog.Info("✅ migrate topics assets generated", "directory", outputDir)
 
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) copyREADMEfile(outputDir, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) copyREADMEfile(outputDir, assetsDir string) error {
 	readmeContent, err := assetsFS.ReadFile(filepath.Join(assetsDir, "README.md"))
 	if err != nil {
 		return fmt.Errorf("failed to read README file: %w", err)
@@ -75,21 +75,21 @@ func (ms *MigrationScriptsAssetGenerator) copyREADMEfile(outputDir, assetsDir st
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateMskToCCMigrationScripts(outputDir string, mirrorTopics []string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMskToCCMigrationScripts(outputDir string, mirrorTopics []string) error {
 	assetsDir := "assets/msk-to-cc-migration"
 
-	if err := ms.copyREADMEfile(outputDir, assetsDir); err != nil {
+	if err := mt.copyREADMEfile(outputDir, assetsDir); err != nil {
 		return fmt.Errorf("failed to copy README file: %w", err)
 	}
 
-	if err := ms.generateMSKToCCMirrorTopics(outputDir, mirrorTopics, assetsDir); err != nil {
+	if err := mt.generateMSKToCCMirrorTopics(outputDir, mirrorTopics, assetsDir); err != nil {
 		return fmt.Errorf("failed to generate msk-to-cc-mirror-topics.sh: %w", err)
 	}
 
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateMSKToCCMirrorTopics(outputDir string, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMSKToCCMirrorTopics(outputDir string, mirrorTopics []string, assetsDir string) error {
 	mskToCCMirrorTopicsPath := filepath.Join(outputDir, "msk-to-cc-mirror-topics.sh")
 
 	file, err := os.Create(mskToCCMirrorTopicsPath)
@@ -99,7 +99,7 @@ func (ms *MigrationScriptsAssetGenerator) generateMSKToCCMirrorTopics(outputDir 
 
 	defer file.Close()
 
-	if err := ms.generateMSKToCCMirrorTopicsContent(file, ms.terraformOutput, mirrorTopics, assetsDir); err != nil {
+	if err := mt.generateMSKToCCMirrorTopicsContent(file, mt.terraformOutput, mirrorTopics, assetsDir); err != nil {
 		return err
 	}
 
@@ -111,7 +111,7 @@ func (ms *MigrationScriptsAssetGenerator) generateMSKToCCMirrorTopics(outputDir 
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateMSKToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMSKToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "msk-to-cc-mirror-topics.sh.go.tmpl")
 	templateContent, err := assetsFS.ReadFile(templatePath)
 	if err != nil {
@@ -146,29 +146,29 @@ func (ms *MigrationScriptsAssetGenerator) generateMSKToCCMirrorTopicsContent(w i
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateJumpClusterMigrationScripts(outputDir string, mirrorTopics []string) error {
+func (mt *MigrateTopicsAssetGenerator) generateJumpClusterMigrationScripts(outputDir string, mirrorTopics []string) error {
 	assetsDir := "assets/msk-to-cp_cp-to-cc-migration"
 
-	if err := ms.copyREADMEfile(outputDir, assetsDir); err != nil {
+	if err := mt.copyREADMEfile(outputDir, assetsDir); err != nil {
 		return fmt.Errorf("failed to copy README file: %w", err)
 	}
 
-	if err := ms.generateMskToCpMirrorTopics(outputDir, mirrorTopics, assetsDir); err != nil {
+	if err := mt.generateMskToCpMirrorTopics(outputDir, mirrorTopics, assetsDir); err != nil {
 		return fmt.Errorf("failed to generate msk-to-cp-mirror-topics.sh: %w", err)
 	}
 
-	if err := ms.generateCpToCCMirrorTopics(outputDir, mirrorTopics, assetsDir); err != nil {
+	if err := mt.generateCpToCCMirrorTopics(outputDir, mirrorTopics, assetsDir); err != nil {
 		return fmt.Errorf("failed to generate cp-to-cc-mirror-topics.sh: %w", err)
 	}
 
-	if err := ms.generateDestinationClusterProperties(outputDir, assetsDir); err != nil {
+	if err := mt.generateDestinationClusterProperties(outputDir, assetsDir); err != nil {
 		return fmt.Errorf("failed to generate destination cluster properties: %w", err)
 	}
 
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateMskToCpMirrorTopics(outputDir string, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMskToCpMirrorTopics(outputDir string, mirrorTopics []string, assetsDir string) error {
 	mskToCpMirrorTopicsPath := filepath.Join(outputDir, "msk-to-cp-mirror-topics.sh")
 
 	file, err := os.Create(mskToCpMirrorTopicsPath)
@@ -177,7 +177,7 @@ func (ms *MigrationScriptsAssetGenerator) generateMskToCpMirrorTopics(outputDir 
 	}
 	defer file.Close()
 
-	if err := ms.generateMskToCpMirrorTopicsContent(file, ms.terraformOutput, mirrorTopics, assetsDir); err != nil {
+	if err := mt.generateMskToCpMirrorTopicsContent(file, mt.terraformOutput, mirrorTopics, assetsDir); err != nil {
 		return err
 	}
 
@@ -189,7 +189,7 @@ func (ms *MigrationScriptsAssetGenerator) generateMskToCpMirrorTopics(outputDir 
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateMskToCpMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMskToCpMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "msk-to-cp-mirror-topics.sh.go.tmpl")
 	templateContent, err := assetsFS.ReadFile(templatePath)
 	if err != nil {
@@ -216,7 +216,7 @@ func (ms *MigrationScriptsAssetGenerator) generateMskToCpMirrorTopicsContent(w i
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateCpToCCMirrorTopics(outputDir string, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateCpToCCMirrorTopics(outputDir string, mirrorTopics []string, assetsDir string) error {
 	cpToCCMirrorTopicsPath := filepath.Join(outputDir, "cp-to-cc-mirror-topics.sh")
 
 	file, err := os.Create(cpToCCMirrorTopicsPath)
@@ -226,7 +226,7 @@ func (ms *MigrationScriptsAssetGenerator) generateCpToCCMirrorTopics(outputDir s
 
 	defer file.Close()
 
-	if err := ms.generateCpToCCMirrorTopicsContent(file, ms.terraformOutput, mirrorTopics, assetsDir); err != nil {
+	if err := mt.generateCpToCCMirrorTopicsContent(file, mt.terraformOutput, mirrorTopics, assetsDir); err != nil {
 		return err
 	}
 
@@ -238,7 +238,7 @@ func (ms *MigrationScriptsAssetGenerator) generateCpToCCMirrorTopics(outputDir s
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateCpToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateCpToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "cp-to-cc-mirror-topics.sh.go.tmpl")
 	templateContent, err := assetsFS.ReadFile(templatePath)
 	if err != nil {
@@ -273,7 +273,7 @@ func (ms *MigrationScriptsAssetGenerator) generateCpToCCMirrorTopicsContent(w io
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateDestinationClusterProperties(outputDir string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateDestinationClusterProperties(outputDir string, assetsDir string) error {
 	destinationClusterPropertiesPath := filepath.Join(outputDir, "destination-cluster.properties")
 
 	file, err := os.Create(destinationClusterPropertiesPath)
@@ -282,14 +282,14 @@ func (ms *MigrationScriptsAssetGenerator) generateDestinationClusterProperties(o
 	}
 	defer file.Close()
 
-	if err := ms.generateDestinationClusterPropertiesContent(file, ms.terraformOutput, assetsDir); err != nil {
+	if err := mt.generateDestinationClusterPropertiesContent(file, mt.terraformOutput, assetsDir); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (ms *MigrationScriptsAssetGenerator) generateDestinationClusterPropertiesContent(w io.Writer, terraformOutput types.TerraformOutput, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateDestinationClusterPropertiesContent(w io.Writer, terraformOutput types.TerraformOutput, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "destination-cluster-properties.go.tmpl")
 
 	templateContent, err := assetsFS.ReadFile(templatePath)
