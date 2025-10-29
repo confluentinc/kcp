@@ -389,7 +389,9 @@ export default function MigrationAssets() {
                       >
                         Create Target Infrastructure
                       </Button>
+                      {/* TODO: show this button when the migration scripts wizard is ready */}
                       <Button
+                        hidden={true}
                         variant="outline"
                         size="sm"
                         className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
@@ -409,7 +411,8 @@ export default function MigrationAssets() {
                         {[
                           { id: 'migration-infra', label: 'Migration Infrastructure' },
                           { id: 'target-infra', label: 'Target Infrastructure' },
-                          { id: 'migration-scripts', label: 'Migration Scripts' },
+                          // TODO: show this tab when the migration scripts wizard is ready
+                          // { id: 'migration-scripts', label: 'Migration Scripts' },
                         ].map((tab) => (
                           <button
                             key={tab.id}
