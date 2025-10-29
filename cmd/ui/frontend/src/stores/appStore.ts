@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { Cluster, Region } from '@/types'
+import type { TerraformFiles } from '@/components/wizards/types'
 
 // Cluster-specific date filters
 interface ClusterDateFilters {
@@ -34,6 +35,13 @@ interface WorkloadData {
   }
 }
 
+interface MigrationAssets {
+  [clusterKey: string]: {
+    'target-infra': TerraformFiles | null
+    'migration-infra': TerraformFiles | null
+    'migration-scripts': TerraformFiles | null
+  }
+}
 interface SchemaRegistry {
   type: string
   url: string
@@ -72,6 +80,9 @@ interface AppState {
 
   // TCO Inputs data
   tcoWorkloadData: WorkloadData
+
+  // Migration assets (terraform files per cluster per wizard type)
+  migrationAssets: MigrationAssets
 
   // Date filters (per cluster)
   clusterDateFilters: Record<string, ClusterDateFilters> // Key: "region:cluster"
@@ -128,6 +139,17 @@ interface AppState {
   setIsProcessing: (processing: boolean) => void
   setError: (error: string | null) => void
   setActiveMetricsTab: (tab: string) => void
+
+  // Migration assets actions
+  setTerraformFiles: (
+    clusterKey: string,
+    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts',
+    files: TerraformFiles
+  ) => void
+  getTerraformFiles: (
+    clusterKey: string,
+    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts'
+  ) => TerraformFiles | null
 }
 
 export const useAppStore = create<AppState>()(
@@ -143,6 +165,7 @@ export const useAppStore = create<AppState>()(
       selectedSchemaRegistries: false,
       preselectedMetric: null,
       tcoWorkloadData: {},
+      migrationAssets: {},
       clusterDateFilters: {},
       regionState: {},
       summaryDateFilters: {
@@ -481,6 +504,27 @@ export const useAppStore = create<AppState>()(
           false,
           'initializeTCOData'
         ),
+
+      // Migration assets actions
+      setTerraformFiles: (clusterKey, wizardType, files) =>
+        set(
+          (state) => ({
+            migrationAssets: {
+              ...state.migrationAssets,
+              [clusterKey]: {
+                ...state.migrationAssets[clusterKey],
+                [wizardType]: files,
+              },
+            },
+          }),
+          false,
+          'setTerraformFiles'
+        ),
+
+      getTerraformFiles: (clusterKey, wizardType) => {
+        const state = get()
+        return state.migrationAssets[clusterKey]?.[wizardType] || null
+      },
     }),
     {
       name: 'kcp-app-store',

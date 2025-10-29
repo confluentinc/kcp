@@ -2,7 +2,17 @@ import { useState, useEffect } from 'react'
 import { Header, HeaderSection, HeaderTitle, HeaderSubtitle } from '@/components/ui/header'
 import { Button } from '@/components/ui/button'
 
-export default function AppHeader() {
+interface AppHeaderProps {
+  onFileUpload?: () => void
+  isProcessing?: boolean
+  error?: string | null
+}
+
+export default function AppHeader({
+  onFileUpload,
+  isProcessing = false,
+  error = null,
+}: AppHeaderProps) {
   const [darkMode, setDarkMode] = useState(true)
 
   // Initialize dark mode from localStorage or default to dark
@@ -41,9 +51,27 @@ export default function AppHeader() {
           className="h-6 w-6"
         />
         <HeaderTitle>KCP</HeaderTitle>
-        <HeaderSubtitle> - Migrate your Kafka clusters to Confluent Cloud</HeaderSubtitle>
+        <HeaderSubtitle>Migrate your Kafka clusters to Confluent Cloud</HeaderSubtitle>
       </HeaderSection>
       <HeaderSection position="right">
+        {error && (
+          <div className="mr-4 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+            <div className="text-sm text-red-800 dark:text-red-200">
+              <strong>Error:</strong> {error}
+            </div>
+          </div>
+        )}
+        {onFileUpload && (
+          <Button
+            onClick={onFileUpload}
+            variant="outline"
+            size="sm"
+            disabled={isProcessing}
+            className="mr-2"
+          >
+            {isProcessing ? 'Processing...' : 'Upload KCP State File'}
+          </Button>
+        )}
         <Button
           onClick={toggleDarkMode}
           variant="outline"

@@ -60,3 +60,6 @@ local/
 tmp
 *.log
 *.log.gz
+
+
+!cmd/ui/frontend/src/components/*.json
