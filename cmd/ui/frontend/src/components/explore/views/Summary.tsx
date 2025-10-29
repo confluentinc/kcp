@@ -11,20 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-  ReferenceArea,
-} from 'recharts'
+import { Area, Legend } from 'recharts'
+import DateRangeChart, { CostChartTooltip } from '@/components/charts/DateRangeChart'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useChartZoom } from '@/lib/useChartZoom'
+import { formatDateShort } from '@/lib/formatters'
 
 interface CostSummaryData {
   startDate: string | null
@@ -40,6 +32,7 @@ interface CostSummaryData {
   chartData: Array<{
     date: string
     formattedDate: string
+    epochTime: number
     [regionName: string]: string | number
   }>
 }
@@ -293,10 +286,7 @@ export default function Summary() {
       const dateObj = new Date(date)
       const dataPoint: any = {
         date: date,
-        formattedDate: dateObj.toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-        }),
+        formattedDate: formatDateShort(date),
         epochTime: dateObj.getTime(),
       }
 
@@ -654,144 +644,53 @@ export default function Summary() {
           </div>
 
           {costSummary.chartData.length > 0 ? (
-            <div
-              className="h-96"
-              style={{ userSelect: 'none' }}
-            >
-              <ResponsiveContainer
-                width="100%"
+            <div className="h-96">
+              <DateRangeChart
+                data={costSummary.chartData}
+                chartType="area"
                 height="100%"
+                yAxisFormatter={(value) => `$${value.toFixed(2)}`}
+                customTooltip={CostChartTooltip}
+                zoomData={zoomData}
+                left={typeof left === 'number' ? left : undefined}
+                right={typeof right === 'number' ? right : undefined}
+                refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
+                refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={zoom}
               >
-                <AreaChart
-                  data={zoomData}
-                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={zoom}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    className="opacity-30"
-                  />
-                  <XAxis
-                    allowDataOverflow
-                    dataKey="epochTime"
-                    domain={[left, right]}
-                    type="number"
-                    scale="time"
-                    tickFormatter={(value) =>
-                      new Date(value).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                      })
-                    }
-                    tick={{ fontSize: 12, fill: 'currentColor' }}
-                    className="text-gray-700 dark:text-gray-200"
-                  />
-                  <YAxis
-                    tick={{ fontSize: 12, fill: 'currentColor' }}
-                    className="text-gray-700 dark:text-gray-200"
-                    tickFormatter={(value) => `$${value.toFixed(2)}`}
-                  />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (active && payload && payload.length > 0) {
-                        const nonZeroEntries = payload.filter(
-                          (entry) => entry.value && entry.value > 0
-                        )
+                <Legend />
+                {costSummary.regionBreakdown.map((region, index) => {
+                  const colors = [
+                    '#3b82f6', // blue
+                    '#ef4444', // red
+                    '#10b981', // green
+                    '#f59e0b', // yellow
+                    '#8b5cf6', // purple
+                    '#06b6d4', // cyan
+                    '#f97316', // orange
+                    '#84cc16', // lime
+                    '#ec4899', // pink
+                    '#6366f1', // indigo
+                  ]
+                  const color = colors[index % colors.length]
 
-                        if (nonZeroEntries.length === 0) return null
-
-                        const sortedEntries = nonZeroEntries.sort(
-                          (a, b) => (b.value || 0) - (a.value || 0)
-                        )
-
-                        return (
-                          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
-                            <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
-                              {label
-                                ? format(new Date(label), 'MMM dd, yyyy HH:mm')
-                                : 'Unknown Date'}
-                            </p>
-                            <div className="space-y-1">
-                              {sortedEntries.map((entry, index) => (
-                                <p
-                                  key={index}
-                                  className="text-gray-900 dark:text-gray-100 text-sm flex items-center justify-between"
-                                >
-                                  <span
-                                    className="flex items-center"
-                                    style={{ color: entry.color }}
-                                  >
-                                    <span
-                                      className="inline-block w-3 h-3 rounded-full mr-2"
-                                      style={{ backgroundColor: entry.color }}
-                                    ></span>
-                                    {entry.name}:
-                                  </span>
-                                  <span className="ml-2 font-mono">
-                                    ${(entry.value || 0).toFixed(2)}
-                                  </span>
-                                </p>
-                              ))}
-                            </div>
-                            <div className="border-t border-gray-200 dark:border-gray-600 mt-2 pt-2">
-                              <p className="text-gray-900 dark:text-gray-100 text-sm font-semibold flex justify-between">
-                                <span>Total:</span>
-                                <span className="font-mono">
-                                  $
-                                  {sortedEntries
-                                    .reduce((sum, entry) => sum + (entry.value || 0), 0)
-                                    .toFixed(2)}
-                                </span>
-                              </p>
-                            </div>
-                          </div>
-                        )
-                      }
-                      return null
-                    }}
-                  />
-                  <Legend />
-                  {costSummary.regionBreakdown.map((region, index) => {
-                    const colors = [
-                      '#3b82f6', // blue
-                      '#ef4444', // red
-                      '#10b981', // green
-                      '#f59e0b', // yellow
-                      '#8b5cf6', // purple
-                      '#06b6d4', // cyan
-                      '#f97316', // orange
-                      '#84cc16', // lime
-                      '#ec4899', // pink
-                      '#6366f1', // indigo
-                    ]
-                    const color = colors[index % colors.length]
-
-                    return (
-                      <Area
-                        key={region.region}
-                        type="monotone"
-                        dataKey={region.region}
-                        stackId="1"
-                        stroke={color}
-                        fill={color}
-                        fillOpacity={0.6}
-                        strokeWidth={1}
-                        name={region.region}
-                      />
-                    )
-                  })}
-
-                  {refAreaLeft && refAreaRight ? (
-                    <ReferenceArea
-                      x1={refAreaLeft}
-                      x2={refAreaRight}
-                      strokeOpacity={0.3}
+                  return (
+                    <Area
+                      key={region.region}
+                      type="monotone"
+                      dataKey={region.region}
+                      stackId="1"
+                      stroke={color}
+                      fill={color}
+                      fillOpacity={0.6}
+                      strokeWidth={1}
+                      name={region.region}
                     />
-                  ) : null}
-                </AreaChart>
-              </ResponsiveContainer>
+                  )
+                })}
+              </DateRangeChart>
             </div>
           ) : (
             <div className="text-center py-8">

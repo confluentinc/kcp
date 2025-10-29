@@ -1,4 +1,4 @@
-import { formatRetentionTime } from '../lib/utils'
+import { formatRetentionTime } from '@/lib/utils'
 
 interface ClusterTopicsProps {
   kafkaAdminInfo?: any

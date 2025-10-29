@@ -23,16 +23,9 @@ import { format } from 'date-fns'
 import { cn, downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/appStore'
 import { useChartZoom } from '@/lib/useChartZoom'
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceArea,
-} from 'recharts'
+import { formatDateShort } from '@/lib/formatters'
+import { Line } from 'recharts'
+import DateRangeChart, { SimpleChartTooltip } from '@/components/charts/DateRangeChart'
 
 interface ClusterMetricsProps {
   cluster: {
@@ -244,10 +237,7 @@ export default function ClusterMetrics({
       const dateObj = new Date(date)
       const dataPoint: any = {
         date: date,
-        formattedDate: dateObj.toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-        }),
+        formattedDate: formatDateShort(date),
         epochTime: dateObj.getTime(),
       }
 
@@ -755,81 +745,36 @@ export default function ClusterMetrics({
 
                     {/* Single Chart */}
                     {selectedMetric && (
-                      <div style={{ userSelect: 'none' }}>
-                        <ResponsiveContainer
-                          width="100%"
-                          height={400}
-                        >
-                          <LineChart
-                            data={zoomData}
-                            onMouseDown={handleMouseDown}
-                            onMouseMove={handleMouseMove}
-                            onMouseUp={zoom}
-                          >
-                            <CartesianGrid
-                              strokeDasharray="3 3"
-                              className="opacity-30"
-                            />
-                            <XAxis
-                              allowDataOverflow
-                              dataKey="epochTime"
-                              domain={[left, right]}
-                              type="number"
-                              scale="time"
-                              tickFormatter={(value) =>
-                                new Date(value).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                })
-                              }
-                              tick={{ fontSize: 12, fill: 'currentColor' }}
-                              className="text-gray-700 dark:text-gray-200"
-                            />
-                            <YAxis
-                              tick={{ fontSize: 12, fill: 'currentColor' }}
-                              className="text-gray-700 dark:text-gray-200"
-                            />
-                            <Tooltip
-                              content={({ active, payload, label }) => {
-                                if (active && payload && payload.length) {
-                                  return (
-                                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
-                                      <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-1">
-                                        {label
-                                          ? format(new Date(label), 'MMM dd, yyyy HH:mm')
-                                          : 'Unknown Date'}
-                                      </p>
-                                      <p className="text-gray-900 dark:text-gray-100 text-sm">
-                                        <span className="font-medium">{selectedMetric}:</span>{' '}
-                                        {payload[0].value !== null ? payload[0].value : 'No data'}
-                                      </p>
-                                    </div>
-                                  )
-                                }
-                                return null
-                              }}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey={selectedMetric}
-                              stroke="#3b82f6"
-                              strokeWidth={3}
-                              dot={{ r: 2, fill: '#3b82f6' }}
-                              activeDot={{ r: 4, fill: '#1d4ed8' }}
-                              connectNulls={false}
-                              name={selectedMetric}
-                            />
-
-                            {refAreaLeft && refAreaRight ? (
-                              <ReferenceArea
-                                x1={refAreaLeft}
-                                x2={refAreaRight}
-                                strokeOpacity={0.3}
-                              />
-                            ) : null}
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
+                      <DateRangeChart
+                        data={processedData.chartData}
+                        chartType="line"
+                        height={400}
+                        customTooltip={(props) => (
+                          <SimpleChartTooltip
+                            {...props}
+                            labelKey={selectedMetric}
+                          />
+                        )}
+                        zoomData={zoomData}
+                        left={typeof left === 'number' ? left : undefined}
+                        right={typeof right === 'number' ? right : undefined}
+                        refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
+                        refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
+                        onMouseDown={handleMouseDown}
+                        onMouseMove={handleMouseMove}
+                        onMouseUp={zoom}
+                      >
+                        <Line
+                          type="monotone"
+                          dataKey={selectedMetric}
+                          stroke="#3b82f6"
+                          strokeWidth={3}
+                          dot={{ r: 2, fill: '#3b82f6' }}
+                          activeDot={{ r: 4, fill: '#1d4ed8' }}
+                          connectNulls={false}
+                          name={selectedMetric}
+                        />
+                      </DateRangeChart>
                     )}
                   </div>
                 ) : (

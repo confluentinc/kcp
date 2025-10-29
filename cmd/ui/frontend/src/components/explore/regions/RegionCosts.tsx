@@ -22,16 +22,9 @@ import { format } from 'date-fns'
 import { cn, downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
 import { useRegionCostFilters } from '@/stores/appStore'
 import { useChartZoom } from '@/lib/useChartZoom'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceArea,
-} from 'recharts'
+import { formatDateShort } from '@/lib/formatters'
+import { Area } from 'recharts'
+import DateRangeChart, { CostChartTooltip } from '@/components/charts/DateRangeChart'
 
 interface RegionCostsProps {
   region: {
@@ -255,10 +248,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       const dateObj = new Date(date)
       const dataPoint: any = {
         date: date,
-        formattedDate: dateObj.toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-        }),
+        formattedDate: formatDateShort(date),
         epochTime: dateObj.getTime(),
       }
 
@@ -675,108 +665,34 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
                       {/* Stacked Area Chart for Usage Types */}
                       {selectedService && (
-                        <div style={{ userSelect: 'none' }}>
-                          <ResponsiveContainer
-                            width="100%"
-                            height={400}
-                          >
-                            <AreaChart
-                              data={zoomData}
-                              onMouseDown={handleMouseDown}
-                              onMouseMove={handleMouseMove}
-                              onMouseUp={zoom}
-                            >
-                              <CartesianGrid
-                                strokeDasharray="3 3"
-                                className="opacity-30"
-                              />
-                              <XAxis
-                                allowDataOverflow
-                                dataKey="epochTime"
-                                domain={[left, right]}
-                                type="number"
-                                scale="time"
-                                tickFormatter={(value) =>
-                                  new Date(value).toLocaleDateString('en-US', {
-                                    month: 'short',
-                                    day: 'numeric',
-                                  })
-                                }
-                                tick={{ fontSize: 12, fill: 'currentColor' }}
-                                className="text-gray-700 dark:text-gray-200"
-                              />
-                              <YAxis
-                                tick={{ fontSize: 12, fill: 'currentColor' }}
-                                className="text-gray-700 dark:text-gray-200"
-                              />
-                              <Tooltip
-                                cursor={{
-                                  stroke: '#8884d8',
-                                  strokeWidth: 2,
-                                  strokeDasharray: '5 5',
-                                }}
-                                content={({ active, payload, label }) => {
-                                  if (active && payload && payload.length > 0) {
-                                    // Show all non-zero usage types in the tooltip
-                                    const nonZeroEntries = payload.filter(
-                                      (entry) => entry.value && entry.value > 0
-                                    )
-
-                                    if (nonZeroEntries.length === 0) return null
-
-                                    // Sort by value (descending) for better readability
-                                    const sortedEntries = nonZeroEntries.sort(
-                                      (a, b) => (b.value || 0) - (a.value || 0)
-                                    )
-
-                                    return (
-                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg max-w-xs">
-                                        <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
-                                          {label
-                                            ? format(new Date(label), 'MMM dd, yyyy HH:mm')
-                                            : 'Unknown Date'}
-                                        </p>
-                                        <div className="space-y-1">
-                                          {sortedEntries.map((entry, index) => (
-                                            <p
-                                              key={index}
-                                              className="text-gray-900 dark:text-gray-100 text-sm flex items-center"
-                                            >
-                                              <span
-                                                className="inline-block w-3 h-3 rounded-full mr-2 flex-shrink-0"
-                                                style={{ backgroundColor: entry.color }}
-                                              ></span>
-                                              <span className="font-medium truncate">
-                                                {entry.name}:
-                                              </span>
-                                              <span className="ml-auto pl-2 font-mono">
-                                                ${(entry.value || 0).toFixed(2)}
-                                              </span>
-                                            </p>
-                                          ))}
-                                        </div>
-                                        <div className="border-t border-gray-200 dark:border-gray-600 mt-2 pt-2">
-                                          <p className="text-gray-900 dark:text-gray-100 text-sm font-semibold flex justify-between">
-                                            <span>Total:</span>
-                                            <span className="font-mono">
-                                              $
-                                              {sortedEntries
-                                                .reduce((sum, entry) => sum + (entry.value || 0), 0)
-                                                .toFixed(2)}
-                                            </span>
-                                          </p>
-                                        </div>
-                                      </div>
-                                    )
-                                  }
-                                  return null
-                                }}
-                              />
-                              {/* Generate an Area for each usage type in the selected service */}
-                              {processedData
-                                .getUsageTypesForService(selectedService)
-                                .map((usageType, index) => {
-                                  const usageKey = `${selectedService}:${usageType}`
+                        <DateRangeChart
+                          data={processedData.chartData}
+                          chartType="area"
+                          height={400}
+                          customTooltip={(props) => (
+                            <CostChartTooltip
+                              {...props}
+                              labelFormatter={(label: number | string) =>
+                                label
+                                  ? format(new Date(label), 'MMM dd, yyyy HH:mm')
+                                  : 'Unknown Date'
+                              }
+                            />
+                          )}
+                          zoomData={zoomData}
+                          left={typeof left === 'number' ? left : undefined}
+                          right={typeof right === 'number' ? right : undefined}
+                          refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
+                          refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
+                          onMouseDown={handleMouseDown}
+                          onMouseMove={handleMouseMove}
+                          onMouseUp={zoom}
+                        >
+                          {/* Generate an Area for each usage type in the selected service */}
+                          {processedData
+                            .getUsageTypesForService(selectedService)
+                            .map((usageType, index) => {
+                              const usageKey = `${selectedService}:${usageType}`
                                   const colors = [
                                     '#3b82f6',
                                     '#ef4444',
@@ -805,17 +721,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
                                     />
                                   )
                                 })}
-
-                              {refAreaLeft && refAreaRight ? (
-                                <ReferenceArea
-                                  x1={refAreaLeft}
-                                  x2={refAreaRight}
-                                  strokeOpacity={0.3}
-                                />
-                              ) : null}
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
+                        </DateRangeChart>
                       )}
                     </div>
                   ) : (

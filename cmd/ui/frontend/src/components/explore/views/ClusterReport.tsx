@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import ClusterMetrics from './ClusterMetrics'
-import ClusterTopics from './ClusterTopics'
-import ClusterConnectors from './ClusterConnectors'
-import ClusterACLs from './ClusterACLs'
+import ClusterMetrics from '../clusters/ClusterMetrics'
+import ClusterTopics from '../clusters/ClusterTopics'
+import ClusterConnectors from '../clusters/ClusterConnectors'
+import ClusterACLs from '../clusters/ClusterACLs'
+import { formatDate } from '@/lib/formatters'
+import StatusBadge from '@/components/common/StatusBadge'
 
 interface ClusterReportProps {
   cluster: {
@@ -57,25 +59,6 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
       </div>
     )
   }
-
-  const formatDate = (dateString: string) =>
-    new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-
-  const getStatusBadge = (enabled: boolean, label: string) => (
-    <span
-      className={`text-sm font-medium ${
-        enabled ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-      }`}
-    >
-      {label}
-    </span>
-  )
 
   const decodeBase64 = (base64String: string) => {
     try {
@@ -296,12 +279,14 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                           IAM Authentication
                         </td>
                         <td className="py-2 text-center">
-                          {getStatusBadge(
-                            provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false,
-                            provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled
-                              ? 'Enabled'
-                              : 'Disabled'
-                          )}
+                          <StatusBadge
+                            enabled={provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false}
+                            label={
+                              provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled
+                                ? 'Enabled'
+                                : 'Disabled'
+                            }
+                          />
                         </td>
                       </tr>
                       <tr>
@@ -309,12 +294,16 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                           SCRAM Authentication
                         </td>
                         <td className="py-2 text-center">
-                          {getStatusBadge(
-                            provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false,
-                            provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
-                              ? 'Enabled'
-                              : 'Disabled'
-                          )}
+                          <StatusBadge
+                            enabled={
+                              provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false
+                            }
+                            label={
+                              provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
+                                ? 'Enabled'
+                                : 'Disabled'
+                            }
+                          />
                         </td>
                       </tr>
                       <tr>
@@ -322,10 +311,14 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                           TLS Authentication
                         </td>
                         <td className="py-2 text-center">
-                          {getStatusBadge(
-                            provisioned.ClientAuthentication?.Tls?.Enabled || false,
-                            provisioned.ClientAuthentication?.Tls?.Enabled ? 'Enabled' : 'Disabled'
-                          )}
+                          <StatusBadge
+                            enabled={provisioned.ClientAuthentication?.Tls?.Enabled || false}
+                            label={
+                              provisioned.ClientAuthentication?.Tls?.Enabled
+                                ? 'Enabled'
+                                : 'Disabled'
+                            }
+                          />
                         </td>
                       </tr>
                       <tr>
@@ -333,12 +326,16 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                           Unauthenticated Access
                         </td>
                         <td className="py-2 text-center">
-                          {getStatusBadge(
-                            provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false,
-                            provisioned.ClientAuthentication?.Unauthenticated?.Enabled
-                              ? 'Enabled'
-                              : 'Disabled'
-                          )}
+                          <StatusBadge
+                            enabled={
+                              provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false
+                            }
+                            label={
+                              provisioned.ClientAuthentication?.Unauthenticated?.Enabled
+                                ? 'Enabled'
+                                : 'Disabled'
+                            }
+                          />
                         </td>
                       </tr>
                     </tbody>
@@ -398,13 +395,17 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                       <span className="text-gray-600 dark:text-gray-400">
                         Provisioned Throughput:
                       </span>
-                      {getStatusBadge(
-                        brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled ||
-                          false,
-                        brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled
-                          ? 'Enabled'
-                          : 'Disabled'
-                      )}
+                      <StatusBadge
+                        enabled={
+                          brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled ||
+                          false
+                        }
+                        label={
+                          brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled
+                            ? 'Enabled'
+                            : 'Disabled'
+                        }
+                      />
                     </div>
                   </div>
                 </div>
@@ -426,43 +427,53 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                         <span className="font-medium text-gray-900 dark:text-gray-100">
                           IAM Authentication
                         </span>
-                        {getStatusBadge(
-                          provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false,
-                          provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled
-                            ? 'Enabled'
-                            : 'Disabled'
-                        )}
+                        <StatusBadge
+                          enabled={provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled || false}
+                          label={
+                            provisioned.ClientAuthentication?.Sasl?.Iam?.Enabled
+                              ? 'Enabled'
+                              : 'Disabled'
+                          }
+                        />
                       </div>
                       <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
                         <span className="font-medium text-gray-900 dark:text-gray-100">
                           SCRAM Authentication
                         </span>
-                        {getStatusBadge(
-                          provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false,
-                          provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
-                            ? 'Enabled'
-                            : 'Disabled'
-                        )}
+                        <StatusBadge
+                          enabled={provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled || false}
+                          label={
+                            provisioned.ClientAuthentication?.Sasl?.Scram?.Enabled
+                              ? 'Enabled'
+                              : 'Disabled'
+                          }
+                        />
                       </div>
                       <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
                         <span className="font-medium text-gray-900 dark:text-gray-100">
                           TLS Authentication
                         </span>
-                        {getStatusBadge(
-                          provisioned.ClientAuthentication?.Tls?.Enabled || false,
-                          provisioned.ClientAuthentication?.Tls?.Enabled ? 'Enabled' : 'Disabled'
-                        )}
+                        <StatusBadge
+                          enabled={provisioned.ClientAuthentication?.Tls?.Enabled || false}
+                          label={
+                            provisioned.ClientAuthentication?.Tls?.Enabled ? 'Enabled' : 'Disabled'
+                          }
+                        />
                       </div>
                       <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors">
                         <span className="font-medium text-gray-900 dark:text-gray-100">
                           Unauthenticated Access
                         </span>
-                        {getStatusBadge(
-                          provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false,
-                          provisioned.ClientAuthentication?.Unauthenticated?.Enabled
-                            ? 'Enabled'
-                            : 'Disabled'
-                        )}
+                        <StatusBadge
+                          enabled={
+                            provisioned.ClientAuthentication?.Unauthenticated?.Enabled || false
+                          }
+                          label={
+                            provisioned.ClientAuthentication?.Unauthenticated?.Enabled
+                              ? 'Enabled'
+                              : 'Disabled'
+                          }
+                        />
                       </div>
                     </div>
                   </div>
@@ -506,12 +517,16 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                             <span className="text-sm text-gray-600 dark:text-gray-400">
                               In-Cluster:
                             </span>
-                            {getStatusBadge(
-                              provisioned.EncryptionInfo?.EncryptionInTransit?.InCluster || false,
-                              provisioned.EncryptionInfo?.EncryptionInTransit?.InCluster
-                                ? 'Enabled'
-                                : 'Disabled'
-                            )}
+                            <StatusBadge
+                              enabled={
+                                provisioned.EncryptionInfo?.EncryptionInTransit?.InCluster || false
+                              }
+                              label={
+                                provisioned.EncryptionInfo?.EncryptionInTransit?.InCluster
+                                  ? 'Enabled'
+                                  : 'Disabled'
+                              }
+                            />
                           </div>
                         </div>
                       </div>
@@ -538,28 +553,36 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-gray-600 dark:text-gray-400">CloudWatch Logs:</span>
-                      {getStatusBadge(
-                        provisioned.LoggingInfo?.BrokerLogs?.CloudWatchLogs?.Enabled || false,
-                        provisioned.LoggingInfo?.BrokerLogs?.CloudWatchLogs?.Enabled
-                          ? 'Enabled'
-                          : 'Disabled'
-                      )}
+                      <StatusBadge
+                        enabled={
+                          provisioned.LoggingInfo?.BrokerLogs?.CloudWatchLogs?.Enabled || false
+                        }
+                        label={
+                          provisioned.LoggingInfo?.BrokerLogs?.CloudWatchLogs?.Enabled
+                            ? 'Enabled'
+                            : 'Disabled'
+                        }
+                      />
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-gray-600 dark:text-gray-400">Firehose Logs:</span>
-                      {getStatusBadge(
-                        provisioned.LoggingInfo?.BrokerLogs?.Firehose?.Enabled || false,
-                        provisioned.LoggingInfo?.BrokerLogs?.Firehose?.Enabled
-                          ? 'Enabled'
-                          : 'Disabled'
-                      )}
+                      <StatusBadge
+                        enabled={provisioned.LoggingInfo?.BrokerLogs?.Firehose?.Enabled || false}
+                        label={
+                          provisioned.LoggingInfo?.BrokerLogs?.Firehose?.Enabled
+                            ? 'Enabled'
+                            : 'Disabled'
+                        }
+                      />
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-gray-600 dark:text-gray-400">S3 Logs:</span>
-                      {getStatusBadge(
-                        provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled || false,
-                        provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled ? 'Enabled' : 'Disabled'
-                      )}
+                      <StatusBadge
+                        enabled={provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled || false}
+                        label={
+                          provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled ? 'Enabled' : 'Disabled'
+                        }
+                      />
                     </div>
                   </div>
                 </div>

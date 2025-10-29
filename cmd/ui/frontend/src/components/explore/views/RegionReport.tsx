@@ -1,4 +1,4 @@
-import RegionCosts from './RegionCosts'
+import RegionCosts from '../regions/RegionCosts'
 
 export default function RegionReport({ region }: any) {
   return (

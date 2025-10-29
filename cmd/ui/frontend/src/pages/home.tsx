@@ -1,12 +1,12 @@
 import { useRef } from 'react'
 import type { Region, Cluster } from '@/types'
-import ClusterReport from '@/components/ClusterReport'
-import RegionReport from '@/components/RegionReport'
-import Summary from '@/components/Summary'
-import TCOInputs from '@/components/TCOInputs'
-import Explore from '@/components/Explore'
-import MigrationAssets from '@/components/MigrationAssets'
-import SchemaRegistries from '@/components/SchemaRegistries'
+import ClusterReport from '@/components/explore/views/ClusterReport'
+import RegionReport from '@/components/explore/views/RegionReport'
+import Summary from '@/components/explore/views/Summary'
+import TCOInputsPage from '@/components/tco/TCOInputsPage'
+import ExploreNavigation from '@/components/explore/ExploreNavigation'
+import MigrationAssetsPage from '@/components/migration/MigrationAssetsPage'
+import SchemaRegistries from '@/components/explore/views/SchemaRegistries'
 import AppHeader from '@/components/AppHeader'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAppStore } from '@/stores/appStore'
@@ -163,7 +163,7 @@ export default function Home() {
             >
               <div className="flex h-full">
                 <div className="w-80 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0">
-                  <Explore
+                  <ExploreNavigation
                     regions={regions}
                     onClusterSelect={handleClusterSelect}
                     onRegionSelect={handleRegionSelect}
@@ -177,9 +177,7 @@ export default function Home() {
                 </div>
                 <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
                   <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
-                    {selectedSummary && (
-                      <Summary />
-                    )}
+                    {selectedSummary && <Summary />}
                     {selectedCluster && (
                       <ClusterReport
                         cluster={selectedCluster.cluster}
@@ -189,9 +187,7 @@ export default function Home() {
                         }
                       />
                     )}
-                    {selectedRegion && (
-                      <RegionReport region={selectedRegion} />
-                    )}
+                    {selectedRegion && <RegionReport region={selectedRegion} />}
                     {selectedSchemaRegistries && (
                       <SchemaRegistries schemaRegistries={schemaRegistries} />
                     )}
@@ -205,7 +201,7 @@ export default function Home() {
               className="flex-1 overflow-hidden bg-white dark:bg-gray-800"
             >
               <div className="h-full overflow-auto">
-                <TCOInputs />
+                <TCOInputsPage />
               </div>
             </TabsContent>
 
@@ -214,7 +210,7 @@ export default function Home() {
               className="flex-1 overflow-hidden bg-white dark:bg-gray-800"
             >
               <div className="h-full overflow-auto">
-                <MigrationAssets />
+                <MigrationAssetsPage />
               </div>
             </TabsContent>
           </Tabs>

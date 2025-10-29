@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { formatDate } from '@/lib/formatters'
 
 interface Connector {
   connector_arn: string
@@ -52,15 +53,6 @@ export default function ClusterConnectors({
   selfManagedConnectors = [],
 }: ClusterConnectorsProps) {
   const [activeTab, setActiveTab] = useState<'msk' | 'selfManaged'>('msk')
-
-  const formatDate = (dateString: string) =>
-    new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
 
   const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
     <div

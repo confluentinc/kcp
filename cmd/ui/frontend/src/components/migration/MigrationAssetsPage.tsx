@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
-import { Modal } from './ui/modal'
-import { Button } from './ui/button'
+import { Modal } from '@/components/ui/modal'
+import { Button } from '@/components/ui/button'
 import { TerraformCodeViewer } from './TerraformCodeViewer'
 import {
   Wizard,
   targetInfraWizardConfig,
   migrationInfraWizardConfig,
   migrationScriptsWizardConfig,
-} from './wizards'
+} from '@/components/wizards'
 
 // Type definitions for File System Access API
 declare global {
