@@ -17,6 +17,7 @@ type MockSchemaRegistryClient struct {
 	GetCompatibilityFunc        func(subject string) (schemaregistry.Compatibility, error)
 	GetAllVersionsFunc          func(subject string) ([]int, error)
 	GetSchemaMetadataFunc       func(subject string, version int) (schemaregistry.SchemaMetadata, error)
+	GetAllContextsFunc          func() ([]string, error)
 }
 
 func (m *MockSchemaRegistryClient) GetDefaultCompatibility() (schemaregistry.Compatibility, error) {
@@ -41,6 +42,10 @@ func (m *MockSchemaRegistryClient) GetAllVersions(subject string) ([]int, error)
 
 func (m *MockSchemaRegistryClient) GetSchemaMetadata(subject string, version int) (schemaregistry.SchemaMetadata, error) {
 	return m.GetSchemaMetadataFunc(subject, version)
+}
+
+func (m *MockSchemaRegistryClient) GetAllContexts() ([]string, error) {
+	return m.GetAllContextsFunc()
 }
 
 func TestSchemaRegistryService_GetDefaultCompatibility(t *testing.T) {

@@ -42,16 +42,40 @@ interface MigrationAssets {
     'migration-scripts': TerraformFiles | null
   }
 }
+interface SchemaRegistry {
+  type: string
+  url: string
+  subjects: Array<{
+    name: string
+    schema_type: string
+    versions: Array<{
+      schema: string
+      id: number
+      subject: string
+      version: number
+      schemaType?: string
+    }>
+    latest_schema: {
+      schema: string
+      id: number
+      subject: string
+      version: number
+      schemaType?: string
+    }
+  }>
+}
 
 interface AppState {
   // Data
   regions: Region[]
+  schemaRegistries: SchemaRegistry[]
 
   // Selection state
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
   selectedSummary: boolean
   selectedTCOInputs: boolean
+  selectedSchemaRegistries: boolean
   preselectedMetric: string | null
 
   // TCO Inputs data
@@ -76,10 +100,12 @@ interface AppState {
 
   // Actions
   setRegions: (regions: Region[]) => void
+  setSchemaRegistries: (schemaRegistries: SchemaRegistry[]) => void
   setSelectedCluster: (cluster: Cluster, regionName: string, preselectedMetric?: string) => void
   setSelectedRegion: (region: Region) => void
   setSelectedSummary: () => void
   setSelectedTCOInputs: () => void
+  setSelectedSchemaRegistries: () => void
   clearSelection: () => void
 
   // TCO Actions
@@ -131,10 +157,12 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       // Initial state
       regions: [],
+      schemaRegistries: [],
       selectedCluster: null,
       selectedRegion: null,
       selectedSummary: false,
       selectedTCOInputs: false,
+      selectedSchemaRegistries: false,
       preselectedMetric: null,
       tcoWorkloadData: {},
       migrationAssets: {},
@@ -150,6 +178,8 @@ export const useAppStore = create<AppState>()(
 
       // Data actions
       setRegions: (regions) => set({ regions }, false, 'setRegions'),
+      setSchemaRegistries: (schemaRegistries) =>
+        set({ schemaRegistries }, false, 'setSchemaRegistries'),
 
       setSelectedCluster: (cluster, regionName, preselectedMetric) =>
         set(
@@ -158,6 +188,7 @@ export const useAppStore = create<AppState>()(
             selectedRegion: null,
             selectedSummary: false,
             selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
             preselectedMetric: preselectedMetric || null,
           },
           false,
@@ -171,6 +202,7 @@ export const useAppStore = create<AppState>()(
             selectedCluster: null,
             selectedSummary: false,
             selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
             preselectedMetric: null,
           },
           false,
@@ -184,6 +216,7 @@ export const useAppStore = create<AppState>()(
             selectedCluster: null,
             selectedRegion: null,
             selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
             preselectedMetric: null,
           },
           false,
@@ -197,10 +230,25 @@ export const useAppStore = create<AppState>()(
             selectedCluster: null,
             selectedRegion: null,
             selectedSummary: false,
+            selectedSchemaRegistries: false,
             preselectedMetric: null,
           },
           false,
           'setSelectedTCOInputs'
+        ),
+
+      setSelectedSchemaRegistries: () =>
+        set(
+          {
+            selectedSchemaRegistries: true,
+            selectedCluster: null,
+            selectedRegion: null,
+            selectedSummary: false,
+            selectedTCOInputs: false,
+            preselectedMetric: null,
+          },
+          false,
+          'setSelectedSchemaRegistries'
         ),
 
       clearSelection: () =>
@@ -210,6 +258,7 @@ export const useAppStore = create<AppState>()(
             selectedRegion: null,
             selectedSummary: false,
             selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
             preselectedMetric: null,
           },
           false,

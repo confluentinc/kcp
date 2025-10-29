@@ -1,4 +1,4 @@
-package migration_scripts
+package migrate_topics
 
 import (
 	"encoding/json"
@@ -19,14 +19,14 @@ var (
 	clusterArn           string
 )
 
-func NewMigrationCmd() *cobra.Command {
+func NewMigrateTopicsCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
-		Use:           "migration-scripts",
-		Short:         "Create assets for the migration scripts",
+		Use:           "migrate-topics",
+		Short:         "Create assets for the migrate topics",
 		Long:          "Create shell scripts for setting up mirror topics used by the cluster links to migrate data to the target cluster in Confluent Cloud",
 		SilenceErrors: true,
-		PreRunE:       preRunCreateMigrationScripts,
-		RunE:          runCreateMigrationScripts,
+		PreRunE:       preRunMigrateTopics,
+		RunE:          runMigrateTopics,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -65,7 +65,7 @@ func NewMigrationCmd() *cobra.Command {
 	return migrationCmd
 }
 
-func preRunCreateMigrationScripts(cmd *cobra.Command, args []string) error {
+func preRunMigrateTopics(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -73,21 +73,21 @@ func preRunCreateMigrationScripts(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCreateMigrationScripts(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationScriptsOpts()
+func runMigrateTopics(cmd *cobra.Command, args []string) error {
+	opts, err := parseMigrateTopicsOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse migration scripts opts: %v", err)
+		return fmt.Errorf("failed to parse migrate topics opts: %v", err)
 	}
 
-	migrationAssetGenerator := NewMigrationAssetGenerator(*opts)
-	if err := migrationAssetGenerator.Run(); err != nil {
+	migrateTopicsAssetGenerator := NewMigrateTopicsAssetGenerator(*opts)
+	if err := migrateTopicsAssetGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to create migration assets: %v", err)
 	}
 
 	return nil
 }
 
-func parseMigrationScriptsOpts() (*MigrationScriptsOpts, error) {
+func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 	file, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cluster file: %v", err)
@@ -131,7 +131,7 @@ func parseMigrationScriptsOpts() (*MigrationScriptsOpts, error) {
 		return nil, fmt.Errorf("error: %v\n please run terraform apply in the migration infra folder", err)
 	}
 
-	opts := MigrationScriptsOpts{
+	opts := MigrateTopicsOpts{
 		MirrorTopics:    mirrorTopics,
 		TerraformOutput: terraformState.Outputs,
 		Manifest:        manifest,

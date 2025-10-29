@@ -6,6 +6,7 @@ import Summary from '@/components/Summary'
 import TCOInputs from '@/components/TCOInputs'
 import Explore from '@/components/Explore'
 import MigrationAssets from '@/components/MigrationAssets'
+import SchemaRegistries from '@/components/SchemaRegistries'
 import AppHeader from '@/components/AppHeader'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAppStore } from '@/stores/appStore'
@@ -16,15 +17,21 @@ export default function Home() {
   // Global state from Zustand - using single selector to avoid multiple subscriptions
   const {
     regions,
+    schemaRegistries,
     selectedCluster,
     selectedRegion,
     selectedSummary,
+    // selectedTCOInputs,
+    selectedSchemaRegistries,
     isProcessing,
     error,
     setRegions,
+    setSchemaRegistries,
     setSelectedCluster,
     setSelectedRegion,
     setSelectedSummary,
+    // setSelectedTCOInputs,
+    setSelectedSchemaRegistries,
     setIsProcessing,
     setError,
   } = useAppStore()
@@ -35,6 +42,7 @@ export default function Home() {
 
     // Reset state
     setRegions([])
+    setSchemaRegistries([])
     useAppStore.getState().clearSelection()
     setError(null)
     setIsProcessing(true)
@@ -68,6 +76,11 @@ export default function Home() {
             const processedRegions = result.regions
             setRegions(processedRegions)
 
+            // Process schema registries if available
+            if (result.schema_registries) {
+              setSchemaRegistries(result.schema_registries)
+            }
+
             // Auto-select Summary if regions are available
             if (processedRegions.length > 0) {
               setSelectedSummary()
@@ -82,6 +95,7 @@ export default function Home() {
         console.error('Error processing file:', err)
         setError(err instanceof Error ? err.message : 'Failed to process file')
         setRegions([])
+        setSchemaRegistries([])
         useAppStore.getState().clearSelection()
       } finally {
         setIsProcessing(false)
@@ -107,6 +121,14 @@ export default function Home() {
 
   const handleSummarySelect = () => {
     setSelectedSummary()
+  }
+
+  // const handleTCOInputsSelect = () => {
+  //   setSelectedTCOInputs()
+  // }
+
+  const handleSchemaRegistriesSelect = () => {
+    setSelectedSchemaRegistries()
   }
 
   return (
@@ -155,13 +177,16 @@ export default function Home() {
                     selectedCluster={selectedCluster}
                     selectedRegion={selectedRegion}
                     selectedSummary={selectedSummary}
+                    selectedSchemaRegistries={selectedSchemaRegistries}
+                    onSchemaRegistriesSelect={handleSchemaRegistriesSelect}
                   />
                 </div>
                 <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
                   <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
-                    {selectedSummary ? (
+                    {selectedSummary && (
                       <Summary />
-                    ) : selectedCluster ? (
+                    )}
+                    {selectedCluster && (
                       <ClusterReport
                         cluster={selectedCluster.cluster}
                         regionName={selectedCluster.regionName}
@@ -169,9 +194,15 @@ export default function Home() {
                           regions.find((r) => r.name === selectedCluster.regionName) as any
                         }
                       />
-                    ) : selectedRegion ? (
+                    )}
+                    {selectedRegion && (
                       <RegionReport region={selectedRegion} />
-                    ) : (
+                    )}
+                    {selectedSchemaRegistries && (
+                      <SchemaRegistries schemaRegistries={schemaRegistries} />
+                    )}
+                    {/*
+                    : (
                       <div className="flex items-center justify-center h-64">
                         <div className="text-center">
                           <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
@@ -184,6 +215,7 @@ export default function Home() {
                         </div>
                       </div>
                     )}
+                    */}
                   </div>
                 </main>
               </div>

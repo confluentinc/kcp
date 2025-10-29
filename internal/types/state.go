@@ -275,10 +275,22 @@ type ConnectorSummary struct {
 	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
+type SelfManagedConnector struct {
+	Name        string         `json:"name"`
+	Config      map[string]any `json:"config"`
+	State       string         `json:"state,omitempty"`
+	ConnectHost string         `json:"connect_host,omitempty"`
+}
+
+type SelfManagedConnectors struct {
+	Connectors []SelfManagedConnector `json:"connectors"`
+}
+
 type KafkaAdminClientInformation struct {
-	ClusterID string  `json:"cluster_id"`
-	Topics    *Topics `json:"topics"`
-	Acls      []Acls  `json:"acls"`
+	ClusterID             string                 `json:"cluster_id"`
+	Topics                *Topics                `json:"topics"`
+	Acls                  []Acls                 `json:"acls"`
+	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`
 }
 
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
@@ -289,6 +301,12 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 	c.Topics = &Topics{
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
+}
+
+func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
+	c.SelfManagedConnectors = &SelfManagedConnectors{
+		Connectors: connectors,
 	}
 }
 
@@ -342,6 +360,7 @@ type SchemaRegistryInformation struct {
 	Type                 string                       `json:"type"`
 	URL                  string                       `json:"url"`
 	DefaultCompatibility schemaregistry.Compatibility `json:"default_compatibility"`
+	Contexts             []string                     `json:"contexts"`
 	Subjects             []Subject                    `json:"subjects"`
 }
 
@@ -357,9 +376,10 @@ type Subject struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Regions      []ProcessedRegion `json:"regions"`
-	KcpBuildInfo KcpBuildInfo      `json:"kcp_build_info"`
-	Timestamp    time.Time         `json:"timestamp"`
+	Regions          []ProcessedRegion           `json:"regions"`
+	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
+	Timestamp        time.Time                   `json:"timestamp"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters

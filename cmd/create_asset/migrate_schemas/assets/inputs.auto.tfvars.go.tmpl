@@ -1,0 +1,17 @@
+exporters = [
+{{- range .Exporters}}
+  {
+    name         = "{{.Name}}"
+    context_type = "{{.ContextType}}"
+{{- if .ContextName}}
+    context_name = "{{.ContextName}}"
+{{- end}}
+    subjects     = [{{range $i, $subject := .Subjects}}{{if $i}}, {{end}}"{{$subject}}"{{end}}]
+  },
+{{- end}}
+]
+
+# This is just a random value as IDs aren't a thing outside of Confluent Cloud but required by the confluent exporter
+source_schema_registry_id       = "{{.SourceSchemaRegistryID}}"
+source_schema_registry_url      = "{{.SourceSchemaRegistryURL}}"
+
