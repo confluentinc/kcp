@@ -123,8 +123,37 @@ type Manifest struct {
 	MigrationInfraType MigrationInfraType `json:"migration_infra_type"`
 }
 
-// / todo review if we need
-type GlobalMetrics struct {
-	GlobalPartitionCountMax float64 `json:"global_partition_count_max"`
-	GlobalTopicCountMax     float64 `json:"global_topic_count_max"`
+type TargetClusterWizardRequest struct {
+	NeedsEnvironment bool   `json:"needs_environment"`
+	EnvironmentName  string `json:"environment_name"`
+	EnvironmentId    string `json:"environment_id"`
+	NeedsCluster     bool   `json:"needs_cluster"`
+	ClusterName      string `json:"cluster_name"`
+	ClusterType      string `json:"cluster_type"`
+}
+
+type TerraformFiles struct {
+	MainTf      string `json:"main_tf"`
+	ProvidersTf string `json:"providers_tf"`
+	VariablesTf string `json:"variables_tf"`
+}
+
+type MigrationWizardRequest struct {
+	MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
+	AuthenticationMethod         string `json:"authentication_method"`
+	TargetClusterType            string `json:"target_cluster_type"`
+	TargetEnvironmentId          string `json:"target_environment_id"`
+	TargetClusterId              string `json:"target_cluster_id"`
+	TargetRestEndpoint           string `json:"target_rest_endpoint"`
+	MskClusterId                 string `json:"msk_cluster_id"`
+	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+}
+
+// MigrationScriptsWizardRequest request types depending on the chosen asset path.
+type MirrorTopicsRequest struct {
+	MigrationType                     string   `json:"migration_type"`
+	SelectedTopics                    []string `json:"selected_topics"`
+	ClusterLinkName                   string   `json:"cluster_link_name"`
+	ConfluentCloudClusterId           string   `json:"confluent_cloud_cluster_id"`
+	ConfluentCloudClusterRestEndpoint string   `json:"confluent_cloud_cluster_rest_endpoint"`
 }

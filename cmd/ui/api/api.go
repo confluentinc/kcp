@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
@@ -22,17 +24,24 @@ type UICmdOpts struct {
 }
 
 type UI struct {
-	reportService ReportService
+	reportService              ReportService
+	targetInfraHCLService      hcl.TargetInfraHCLService
+	migrationInfraHCLService   hcl.MigrationInfraHCLService
+	migrationScriptsHCLService hcl.MigrationScriptsHCLService
 
 	port        string
 	cachedState *types.State // Cache the uploaded state for metrics filtering
 }
 
-func NewUI(reportService ReportService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
 	return &UI{
-		port:          opts.Port,
-		reportService: reportService,
-		cachedState:   nil,
+		reportService:              reportService,
+		targetInfraHCLService:      targetInfraHCLService,
+		migrationInfraHCLService:   migrationInfraHCLService,
+		migrationScriptsHCLService: migrationScriptsHCLService,
+
+		port:        opts.Port,
+		cachedState: nil,
 	}
 }
 
@@ -55,6 +64,10 @@ func (ui *UI) Run() error {
 	e.POST("/upload-state", ui.handleUploadState)
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
+
+	e.POST("/assets/target", ui.handleTargetClusterAssets)
+	e.POST("/assets/migration", ui.handleMigrationAssets)
+	e.POST("/assets/migration-scripts", ui.handleMigrationScripts)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -186,4 +199,138 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, regionCosts)
+}
+
+func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
+	var req types.TargetClusterWizardRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	// Validate required fields based on what user needs
+	if !req.NeedsEnvironment && !req.NeedsCluster {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid configuration",
+			"message": "At least an environment or cluster must be configured",
+		})
+	}
+
+	if req.NeedsEnvironment {
+		if req.EnvironmentName == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Missing required fields",
+				"message": "environmentName is required when creating a new environment",
+			})
+		}
+		// When creating environment, cluster info is also required (based on wizard flow)
+		if req.ClusterName == "" || req.ClusterType == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Missing required fields",
+				"message": "clusterName and clusterType are required when creating a new environment",
+			})
+		}
+	}
+
+	if req.NeedsCluster && !req.NeedsEnvironment {
+		if req.ClusterName == "" || req.ClusterType == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Missing required fields",
+				"message": "clusterName and clusterType are required when creating a new cluster",
+			})
+		}
+	}
+
+	terraformFiles, err := ui.targetInfraHCLService.GenerateTerraformFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func (ui *UI) handleMigrationAssets(c echo.Context) error {
+	var req types.MigrationWizardRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.MskClusterId == "" || req.MskSaslScramBootstrapServers == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid configuration",
+			"message": "authenticationMethod, targetClusterType, targetEnvironmentId, targetClusterId, targetRestEndpoint, mskClusterId, and mskSaslScramBootstrapServers are required",
+		})
+	}
+
+	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func (ui *UI) handleMigrationScripts(c echo.Context) error {
+	var baseRequest map[string]interface{}
+	if err := c.Bind(&baseRequest); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	migrationType, ok := baseRequest["migration_type"].(string)
+	if !ok {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Missing migration_type",
+			"message": "migration_type is required in the request body",
+		})
+	}
+
+	var terraformFiles types.TerraformFiles
+	var err error
+
+	switch migrationType {
+	case "Mirror Topics":
+		var request types.MirrorTopicsRequest
+		jsonData, marshalErr := json.Marshal(baseRequest)
+		if marshalErr != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": marshalErr.Error(),
+			})
+		}
+		if unmarshalErr := json.Unmarshal(jsonData, &request); unmarshalErr != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": unmarshalErr.Error(),
+			})
+		}
+		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(request)
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid migration script type",
+			"message": "Invalid migration script type: " + migrationType,
+		})
+	}
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
 }
