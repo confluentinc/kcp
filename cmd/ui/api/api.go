@@ -61,13 +61,16 @@ func (ui *UI) Run() error {
 		})
 	})
 
-	e.POST("/upload-state", ui.handleUploadState)
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
-	e.POST("/assets/target", ui.handleTargetClusterAssets)
+	e.POST("/upload-state", ui.handleUploadState)
 	e.POST("/assets/migration", ui.handleMigrationAssets)
-	e.POST("/assets/migration-scripts", ui.handleMigrationScripts)
+	e.POST("/assets/target", ui.handleTargetClusterAssets)
+	e.POST("/assets/migration-scripts/acls", ui.handleMigrateAclsAssets)
+	e.POST("/assets/migration-scripts/connectors", ui.handleMigrateConnectorsAssets)
+	e.POST("/assets/migration-scripts/topics", ui.handleMigrateTopicsAssets)
+	e.POST("/assets/migration-scripts/schemas", ui.handleMigrateSchemasAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -76,24 +79,6 @@ func (ui *UI) Run() error {
 	e.Logger.Fatal(e.Start(serverAddr))
 
 	return nil
-}
-
-func (ui *UI) handleUploadState(c echo.Context) error {
-	var state types.State
-
-	if err := c.Bind(&state); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid request body",
-			"message": err.Error(),
-		})
-	}
-
-	// Cache the state for metrics filtering
-	ui.cachedState = &state
-
-	processedState := ui.reportService.ProcessState(state)
-
-	return c.JSON(http.StatusOK, processedState)
 }
 
 func (ui *UI) handleGetMetrics(c echo.Context) error {
@@ -201,6 +186,51 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	return c.JSON(http.StatusOK, regionCosts)
 }
 
+func (ui *UI) handleUploadState(c echo.Context) error {
+	var state types.State
+
+	if err := c.Bind(&state); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	// Cache the state for metrics filtering
+	ui.cachedState = &state
+
+	processedState := ui.reportService.ProcessState(state)
+
+	return c.JSON(http.StatusOK, processedState)
+}
+
+func (ui *UI) handleMigrationAssets(c echo.Context) error {
+	var req types.MigrationWizardRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.MskClusterId == "" || req.MskSaslScramBootstrapServers == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid configuration",
+			"message": "authenticationMethod, targetClusterType, targetEnvironmentId, targetClusterId, targetRestEndpoint, mskClusterId, and mskSaslScramBootstrapServers are required",
+		})
+	}
+
+	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
 func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	var req types.TargetClusterWizardRequest
 	if err := c.Bind(&req); err != nil {
@@ -254,8 +284,16 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
-func (ui *UI) handleMigrationAssets(c echo.Context) error {
-	var req types.MigrationWizardRequest
+func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
+	return c.JSON(http.StatusCreated, "todo")
+}
+
+func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
+	return c.JSON(http.StatusCreated, "todo")
+}
+
+func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
+	var req types.MigrateTopicsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -263,14 +301,27 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.MskClusterId == "" || req.MskSaslScramBootstrapServers == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid configuration",
-			"message": "authenticationMethod, targetClusterType, targetEnvironmentId, targetClusterId, targetRestEndpoint, mskClusterId, and mskSaslScramBootstrapServers are required",
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
 		})
 	}
 
-	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
+	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
+	var req types.MigrateSchemasRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",
@@ -282,7 +333,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrationScripts(c echo.Context) error {
-	var baseRequest map[string]interface{}
+	var baseRequest map[string]any
 	if err := c.Bind(&baseRequest); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -303,7 +354,7 @@ func (ui *UI) handleMigrationScripts(c echo.Context) error {
 
 	switch migrationType {
 	case "Mirror Topics":
-		var request types.MirrorTopicsRequest
+		var request types.MigrateTopicsRequest
 		jsonData, marshalErr := json.Marshal(baseRequest)
 		if marshalErr != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
@@ -317,7 +368,7 @@ func (ui *UI) handleMigrationScripts(c echo.Context) error {
 				"message": unmarshalErr.Error(),
 			})
 		}
-		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(request)
+		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(request)
 	default:
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid migration script type",
