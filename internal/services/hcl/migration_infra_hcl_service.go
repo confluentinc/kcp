@@ -49,7 +49,7 @@ func (mi *MigrationInfraHCLService) generateProvidersTf() string {
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
 	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
-	rootBody.AppendNewline()	
+	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()

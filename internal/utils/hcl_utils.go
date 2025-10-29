@@ -82,7 +82,7 @@ func TokensForMap(entries map[string]hclwrite.Tokens) hclwrite.Tokens {
 
 // GenerateLifecyleBlock creates tokens for a lifecycle block - supports only 'prevent_destroy' and
 // 'create_before_destroy'.
-func GenerateLifecyleBlock(lifecycle string, boolean bool) (hclwrite.Tokens, error) {
+func GenerateLifecycleBlock(lifecycle string, boolean bool) (hclwrite.Tokens, error) {
 	var acceptedLifecycles = []string{"prevent_destroy", "create_before_destroy"}
 	if !slices.Contains(acceptedLifecycles, lifecycle) {
 		return nil, fmt.Errorf("invalid lifecycle: %s", lifecycle)
