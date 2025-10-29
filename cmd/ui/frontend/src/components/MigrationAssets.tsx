@@ -391,7 +391,7 @@ export default function MigrationAssets() {
                       </Button>
                       {/* TODO: show this button when the migration scripts wizard is ready */}
                       <Button
-                        hidden={true}
+                        hidden
                         variant="outline"
                         size="sm"
                         className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
