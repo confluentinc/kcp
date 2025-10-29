@@ -21,7 +21,6 @@ export default function Home() {
     selectedCluster,
     selectedRegion,
     selectedSummary,
-    // selectedTCOInputs,
     selectedSchemaRegistries,
     isProcessing,
     error,
@@ -30,7 +29,6 @@ export default function Home() {
     setSelectedCluster,
     setSelectedRegion,
     setSelectedSummary,
-    // setSelectedTCOInputs,
     setSelectedSchemaRegistries,
     setIsProcessing,
     setError,
@@ -123,10 +121,6 @@ export default function Home() {
     setSelectedSummary()
   }
 
-  // const handleTCOInputsSelect = () => {
-  //   setSelectedTCOInputs()
-  // }
-
   const handleSchemaRegistriesSelect = () => {
     setSelectedSchemaRegistries()
   }
@@ -201,21 +195,6 @@ export default function Home() {
                     {selectedSchemaRegistries && (
                       <SchemaRegistries schemaRegistries={schemaRegistries} />
                     )}
-                    {/*
-                    : (
-                      <div className="flex items-center justify-center h-64">
-                        <div className="text-center">
-                          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-                            Select a region or cluster to explore
-                          </h3>
-                          <p className="text-gray-600 dark:text-gray-400">
-                            Choose from the navigation tree on the left to view detailed reports and
-                            metrics.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                    */}
                   </div>
                 </main>
               </div>
