@@ -6,12 +6,12 @@ import (
 )
 
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
-    confluentProvider := map[string]hclwrite.Tokens{
-        "source":  utils.TokensForStringTemplate("confluentinc/confluent"),
-        "version": utils.TokensForStringTemplate("2.50.0"),
-    }
-    
-    return "confluent", utils.TokensForMap(confluentProvider)
+	confluentProvider := map[string]hclwrite.Tokens{
+		"source":  utils.TokensForStringTemplate("confluentinc/confluent"),
+		"version": utils.TokensForStringTemplate("2.50.0"),
+	}
+
+	return "confluent", utils.TokensForMap(confluentProvider)
 }
 
 func GenerateProviderBlock() *hclwrite.Block {
@@ -21,4 +21,8 @@ func GenerateProviderBlock() *hclwrite.Block {
 	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForResourceReference("var.confluent_cloud_api_secret"))
 
 	return providerBlock
+}
+
+func GenerateEmptyProviderBlock() *hclwrite.Block {
+	return hclwrite.NewBlock("provider", []string{"confluent"})
 }

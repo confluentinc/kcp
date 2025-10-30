@@ -31,6 +31,13 @@ func TokensForResourceReference(ref string) hclwrite.Tokens {
 	}
 }
 
+// TokensForVarReference creates tokens for a Terraform variable reference (e.g., "var.my_variable")
+func TokensForVarReference(varName string) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("var." + varName)},
+	}
+}
+
 // TokensForList creates tokens for an array literal
 func TokensForList(items []string) hclwrite.Tokens {
 	tokens := hclwrite.Tokens{

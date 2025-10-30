@@ -89,7 +89,6 @@ type ConnectTlsAuth struct {
 	ClientKey  string
 }
 
-
 type MigrationInfraType int
 
 const (
@@ -149,8 +148,7 @@ type MigrationWizardRequest struct {
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }
 
-// MigrationScriptsWizardRequest request types depending on the chosen asset path.
-type MirrorTopicsRequest struct {
+type MigrateTopicsRequest struct {
 	MigrationType                     string   `json:"migration_type"`
 	SelectedTopics                    []string `json:"selected_topics"`
 	ClusterLinkName                   string   `json:"cluster_link_name"`
@@ -158,4 +156,14 @@ type MirrorTopicsRequest struct {
 	ConfluentCloudClusterRestEndpoint string   `json:"confluent_cloud_cluster_rest_endpoint"`
 }
 
-type MigrateSchemasRequest struct {}
+type MigrateSchemasRequest struct {
+	SourceSchemaRegistryURL string     `json:"source_schema_registry_url"`
+	Exporters               []Exporter `json:"exporters"`
+}
+
+type Exporter struct {
+	Name        string   `json:"name"`
+	ContextType string   `json:"context_type"`
+	ContextName string   `json:"context_name"`
+	Subjects    []string `json:"subjects"`
+}
