@@ -57,10 +57,10 @@ export default function ClusterConnectors({
   const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
     <div
       key={connector.name}
-      className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-colors"
+      className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors"
     >
       {/* Connector Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
+      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
@@ -95,7 +95,7 @@ export default function ClusterConnectors({
           value={Object.entries(connector.config)
             .map(([key, value]) => `${key}=${value}`)
             .join('\n')}
-          className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+          className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
         />
       </div>
     </div>
@@ -118,10 +118,10 @@ export default function ClusterConnectors({
         {connectors.map((connector) => (
           <div
             key={connector.connector_arn}
-            className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-colors"
+            className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors"
           >
             {/* Connector Header */}
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
+            <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
@@ -234,7 +234,7 @@ export default function ClusterConnectors({
                   value={Object.entries(connector.connector_configuration)
                     .map(([key, value]) => `${key}=${value}`)
                     .join('\n')}
-                  className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                  className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                 />
               </div>
             </div>
@@ -275,7 +275,7 @@ export default function ClusterConnectors({
             key={connectHost}
             className="space-y-4"
           >
-            <div className="border-b border-gray-200 dark:border-gray-700 pb-2">
+            <div className="border-b border-gray-200 dark:border-border pb-2">
               <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 Connect Cluster URL: {connectHost}
               </h4>
@@ -314,13 +314,13 @@ export default function ClusterConnectors({
       </div>
 
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="border-b border-gray-200 dark:border-border">
         <nav className="-mb-px flex space-x-8">
           <button
             onClick={() => setActiveTab('msk')}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
               activeTab === 'msk'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                ? 'border-blue-500 text-blue-600 dark:text-accent'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
             }`}
           >
@@ -330,7 +330,7 @@ export default function ClusterConnectors({
             onClick={() => setActiveTab('selfManaged')}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
               activeTab === 'selfManaged'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                ? 'border-blue-500 text-blue-600 dark:text-accent'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
             }`}
           >

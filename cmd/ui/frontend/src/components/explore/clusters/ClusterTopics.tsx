@@ -7,7 +7,7 @@ interface ClusterTopicsProps {
 export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
   if (!kafkaAdminInfo?.topics) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Topics Overview
         </h3>
@@ -21,31 +21,31 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
   return (
     <div className="space-y-6">
       {/* Topic Summary */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Topics Overview
         </h3>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {kafkaAdminInfo.topics.summary.topics}
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400">Total Topics</div>
           </div>
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {kafkaAdminInfo.topics.summary.total_partitions}
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400">Total Partitions</div>
           </div>
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {kafkaAdminInfo.topics.summary.internal_topics}
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400">Internal Topics</div>
           </div>
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {kafkaAdminInfo.topics.summary.compact_topics}
             </div>
@@ -55,13 +55,13 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
       </div>
 
       {/* Topics Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors overflow-visible">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors overflow-visible">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">All Topics</h3>
 
         <div className="overflow-x-auto overflow-y-visible">
           <table className="w-full text-sm overflow-visible">
             <thead className="overflow-visible">
-              <tr className="border-b border-gray-200 dark:border-gray-600 overflow-visible">
+              <tr className="border-b border-gray-200 dark:border-border overflow-visible">
                 <th className="text-left py-3 font-medium text-gray-900 dark:text-gray-100">
                   Topic Name
                 </th>
@@ -102,7 +102,7 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
                     <span
                       className={`px-2 py-1 text-xs rounded ${
                         topic.configurations['cleanup.policy'] === 'compact'
-                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                          ? 'bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent'
                           : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                       }`}
                     >
@@ -117,7 +117,7 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
                           : parseInt(topic.configurations['retention.ms']).toLocaleString()}
                       </span>
                       {topic.configurations['retention.ms'] !== '-1' && (
-                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-[9999]">
+                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-2 bg-gray-900 dark:bg-card text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-[9999]">
                           <div className="text-left">
                             <div>
                               {formatRetentionTime(
@@ -144,7 +144,7 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
                               days
                             </div>
                           </div>
-                          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-gray-900 dark:border-b-gray-700"></div>
+                          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-gray-900 dark:border-b-[#4A4956]"></div>
                         </div>
                       )}
                     </div>

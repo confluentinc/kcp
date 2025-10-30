@@ -1,31 +1,36 @@
 import type { Cluster, Region } from '@/types'
+import { useAppStore } from '@/stores/appStore'
 
-interface ExploreProps {
-  regions: Region[]
-  onClusterSelect: (cluster: Cluster, regionName: string) => void
-  onRegionSelect: (region: Region) => void
-  onSummarySelect: () => void
-  selectedCluster: { cluster: Cluster; regionName: string } | null
-  selectedRegion: Region | null
-  selectedSummary: boolean
-  selectedSchemaRegistries: boolean
-  onSchemaRegistriesSelect: () => void
-}
+export default function Sidebar() {
+  const regions = useAppStore((state) => state.regions)
+  const selectedCluster = useAppStore((state) => state.selectedCluster)
+  const selectedRegion = useAppStore((state) => state.selectedRegion)
+  const selectedSummary = useAppStore((state) => state.selectedSummary)
+  const selectedSchemaRegistries = useAppStore((state) => state.selectedSchemaRegistries)
 
-export default function Explore({
-  regions,
-  onClusterSelect,
-  onRegionSelect,
-  onSummarySelect,
-  selectedCluster,
-  selectedRegion,
-  selectedSummary,
-  selectedSchemaRegistries,
-  onSchemaRegistriesSelect,
-}: ExploreProps) {
+  const setSelectedCluster = useAppStore((state) => state.setSelectedCluster)
+  const setSelectedRegion = useAppStore((state) => state.setSelectedRegion)
+  const setSelectedSummary = useAppStore((state) => state.setSelectedSummary)
+  const setSelectedSchemaRegistries = useAppStore((state) => state.setSelectedSchemaRegistries)
+
+  const handleClusterSelect = (cluster: Cluster, regionName: string) => {
+    setSelectedCluster(cluster, regionName)
+  }
+
+  const handleRegionSelect = (region: Region) => {
+    setSelectedRegion(region)
+  }
+
+  const handleSummarySelect = () => {
+    setSelectedSummary()
+  }
+
+  const handleSchemaRegistriesSelect = () => {
+    setSelectedSchemaRegistries()
+  }
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+      <div className="p-4 border-b border-gray-200 dark:border-border">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Navigation</h2>
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
           Explore regions and clusters
@@ -38,10 +43,10 @@ export default function Explore({
             {/* Summary Section */}
             <div className="space-y-2">
               <button
-                onClick={onSummarySelect}
+                onClick={handleSummarySelect}
                 className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
                   selectedSummary
-                    ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                    ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
                     : 'hover:bg-gray-100 dark:hover:bg-gray-600'
                 }`}
               >
@@ -54,7 +59,7 @@ export default function Explore({
                   <h4
                     className={`text-sm font-medium whitespace-nowrap ${
                       selectedSummary
-                        ? 'text-blue-900 dark:text-blue-100'
+                        ? 'text-blue-900 dark:text-accent'
                         : 'text-gray-800 dark:text-gray-200'
                     }`}
                   >
@@ -75,10 +80,10 @@ export default function Explore({
                     className="space-y-1"
                   >
                     <button
-                      onClick={() => onRegionSelect(region)}
+                      onClick={() => handleRegionSelect(region)}
                       className={`w-full text-left flex items-center justify-between p-2 rounded-md transition-colors ${
                         isRegionSelected
-                          ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                          ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
                           : 'hover:bg-gray-100 dark:hover:bg-gray-600'
                       }`}
                     >
@@ -91,7 +96,7 @@ export default function Explore({
                         <h5
                           className={`text-sm font-medium whitespace-nowrap ${
                             isRegionSelected
-                              ? 'text-blue-900 dark:text-blue-100'
+                              ? 'text-blue-900 dark:text-accent'
                               : 'text-gray-700 dark:text-gray-300'
                           }`}
                         >
@@ -114,10 +119,10 @@ export default function Explore({
                           return (
                             <button
                               key={cluster.name}
-                              onClick={() => onClusterSelect(cluster, region.name)}
+                              onClick={() => handleClusterSelect(cluster, region.name)}
                               className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors ${
                                 isSelected
-                                  ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-700'
+                                  ? 'bg-blue-100 dark:bg-accent/20 text-blue-900 dark:text-accent border border-blue-200 dark:border-accent'
                                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
                               }`}
                             >
@@ -139,7 +144,7 @@ export default function Explore({
             </div>
           </div>
         ) : (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-border rounded-lg p-4">
             <p className="text-sm text-yellow-800 dark:text-yellow-200">
               No regions available. Please upload a KCP state file to explore your infrastructure.
             </p>
@@ -147,12 +152,12 @@ export default function Explore({
         )}
 
         {/* Schema Registries Section */}
-        <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+        <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-border">
           <button
-            onClick={onSchemaRegistriesSelect}
+            onClick={handleSchemaRegistriesSelect}
             className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
               selectedSchemaRegistries
-                ? 'bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+                ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
                 : 'hover:bg-gray-100 dark:hover:bg-gray-600'
             }`}
           >
@@ -165,7 +170,7 @@ export default function Explore({
               <h4
                 className={`text-base font-medium whitespace-nowrap ${
                   selectedSchemaRegistries
-                    ? 'text-blue-900 dark:text-blue-100'
+                    ? 'text-blue-900 dark:text-accent'
                     : 'text-gray-800 dark:text-gray-200'
                 }`}
               >
@@ -178,3 +183,4 @@ export default function Explore({
     </div>
   )
 }
+

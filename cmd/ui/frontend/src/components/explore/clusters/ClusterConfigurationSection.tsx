@@ -93,7 +93,7 @@ export default function ClusterConfigurationSection({
             {(brokerInfo.ClientSubnets || []).map((subnet: string, index: number) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded transition-colors"
+                className="flex items-center justify-between p-2 bg-gray-50 dark:bg-card rounded transition-colors"
               >
                 <span className="font-mono text-sm text-gray-900 dark:text-gray-100">{subnet}</span>
                 <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -145,7 +145,7 @@ export default function ClusterConfigurationSection({
                 <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
                   Encryption at Rest
                 </div>
-                <div className="bg-gray-50 dark:bg-gray-700 rounded-lg transition-colors p-3">
+                <div className="bg-gray-50 dark:bg-card rounded-lg transition-colors p-3">
                   <div className="text-sm text-gray-600 dark:text-gray-400">KMS Key ID:</div>
                   <div className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors mt-1">
                     {provisioned.EncryptionInfo?.EncryptionAtRest?.DataVolumeKMSKeyId?.split('/').pop() ||
@@ -197,7 +197,7 @@ export default function ClusterConfigurationSection({
             <KeyValuePair
               label="Enhanced Monitoring:"
               value={
-                <span className="font-medium text-gray-900 dark:text-gray-100 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded">
+                <span className="font-medium text-gray-900 dark:text-gray-100 bg-blue-100 dark:bg-accent/20 text-blue-800 dark:text-accent px-2 py-1 rounded">
                   {provisioned.EnhancedMonitoring}
                 </span>
               }
@@ -255,7 +255,7 @@ export default function ClusterConfigurationSection({
           if (clusterConfig) {
             return (
               <div className="space-y-6">
-                <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+                <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
                   <div className="flex items-center justify-between mb-4">
                     <div>
                       <div className="font-medium text-gray-900 dark:text-gray-100">

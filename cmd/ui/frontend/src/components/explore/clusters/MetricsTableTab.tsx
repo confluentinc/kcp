@@ -28,28 +28,28 @@ export default function MetricsTableTab({
 }: MetricsTableTabProps) {
   return (
     <div className="space-y-4 min-w-0">
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
         <div className="w-full overflow-hidden rounded-lg">
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
             <Table className="min-w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10 w-[200px] max-w-[200px] border-r border-gray-200 dark:border-gray-600">
+                  <TableHead className="sticky left-0 bg-white dark:bg-card z-10 w-[200px] max-w-[200px] border-r border-gray-200 dark:border-border">
                     Metric
                   </TableHead>
-                  <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-gray-600">
-                    <div className="text-blue-600 dark:text-blue-400 font-semibold">Min</div>
+                  <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-border">
+                    <div className="text-blue-600 dark:text-accent font-semibold">Min</div>
                   </TableHead>
-                  <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-gray-600">
+                  <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-border">
                     <div className="text-green-600 dark:text-green-400 font-semibold">Avg</div>
                   </TableHead>
-                  <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-gray-600">
+                  <TableHead className="text-center w-[100px] min-w-[100px] max-w-[100px] border-r border-gray-200 dark:border-border">
                     <div className="text-red-600 dark:text-red-400 font-semibold">Max</div>
                   </TableHead>
                   {processedData.uniqueDates.map((date, index) => (
                     <TableHead
                       key={index}
-                      className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600"
+                      className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-border"
                     >
                       <div className="truncate">{date}</div>
                     </TableHead>
@@ -67,7 +67,7 @@ export default function MetricsTableTab({
                       key={rowIndex}
                       className="hover:bg-gray-50 dark:hover:bg-gray-700"
                     >
-                      <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium border-r border-gray-200 dark:border-gray-600 w-[200px] max-w-[200px]">
+                      <TableCell className="sticky left-0 bg-white dark:bg-card z-10 font-medium border-r border-gray-200 dark:border-border w-[200px] max-w-[200px]">
                         <div
                           className="truncate pr-2"
                           title={row.metric}
@@ -77,21 +77,21 @@ export default function MetricsTableTab({
                       </TableCell>
 
                       {/* Min column */}
-                      <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[100px] min-w-[100px] max-w-[100px]">
-                        <div className="font-mono text-sm truncate text-blue-600 dark:text-blue-400 font-semibold">
+                      <TableCell className="text-center border-r border-gray-200 dark:border-border w-[100px] min-w-[100px] max-w-[100px]">
+                        <div className="font-mono text-sm truncate text-blue-600 dark:text-accent font-semibold">
                           {metricAggregate?.min?.toFixed(2) ?? '-'}
                         </div>
                       </TableCell>
 
                       {/* Avg column */}
-                      <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[100px] min-w-[100px] max-w-[100px]">
+                      <TableCell className="text-center border-r border-gray-200 dark:border-border w-[100px] min-w-[100px] max-w-[100px]">
                         <div className="font-mono text-sm truncate text-green-600 dark:text-green-400 font-semibold">
                           {metricAggregate?.avg?.toFixed(2) ?? '-'}
                         </div>
                       </TableCell>
 
                       {/* Max column */}
-                      <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[100px] min-w-[100px] max-w-[100px]">
+                      <TableCell className="text-center border-r border-gray-200 dark:border-border w-[100px] min-w-[100px] max-w-[100px]">
                         <div className="font-mono text-sm truncate text-red-600 dark:text-red-400 font-semibold">
                           {metricAggregate?.max?.toFixed(2) ?? '-'}
                         </div>
@@ -101,7 +101,7 @@ export default function MetricsTableTab({
                       {row.values.map((value, valueIndex) => (
                         <TableCell
                           key={valueIndex}
-                          className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]"
+                          className="text-center border-r border-gray-200 dark:border-border w-[120px] min-w-[120px] max-w-[120px]"
                         >
                           <div className="font-mono text-sm truncate">
                             {value !== null ? value.toFixed(2) : '-'}

@@ -354,7 +354,7 @@ export default function Summary() {
           <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-2">
             Cost Analysis Summary
           </h1>
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 max-w-2xl mx-auto">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-lg p-4 max-w-2xl mx-auto">
             <p className="text-red-800 dark:text-red-200">
               <strong>Error:</strong> {error}
             </p>
@@ -400,7 +400,7 @@ export default function Summary() {
       </div>
 
       {/* Date Picker Controls */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-card rounded-xl p-6 shadow-lg border border-gray-200 dark:border-border">
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="flex flex-col space-y-2">
             <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -435,7 +435,7 @@ export default function Summary() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-card border border-gray-200 dark:border-border hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -480,7 +480,7 @@ export default function Summary() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-card border border-gray-200 dark:border-border hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -508,14 +508,14 @@ export default function Summary() {
 
       {/* Regional Breakdown Table */}
       <div className="w-full">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-card rounded-xl p-6 shadow-lg border border-gray-200 dark:border-border">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-6">
             MSK Cost by Region
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
+                <tr className="border-b border-gray-200 dark:border-border">
                   <th className="text-left py-3 px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                     Region
                   </th>
@@ -540,7 +540,7 @@ export default function Summary() {
                 {costSummary.regionBreakdown.map((region) => (
                   <tr
                     key={region.region}
-                    className="border-b border-gray-100 dark:border-gray-700/50"
+                    className="border-b border-gray-100 dark:border-border/50"
                   >
                     <td className="py-3 px-2 text-sm text-gray-900 dark:text-gray-100 font-medium">
                       {region.region}
@@ -563,7 +563,7 @@ export default function Summary() {
                   </tr>
                 ))}
                 {/* Total Row */}
-                <tr className="border-t-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50">
+                <tr className="border-t-2 border-gray-300 dark:border-border bg-gray-50 dark:bg-card/50">
                   <td className="py-3 px-2 text-sm font-bold text-gray-900 dark:text-gray-100">
                     Total
                   </td>
@@ -616,7 +616,7 @@ export default function Summary() {
 
       {/* Cost Over Time Chart */}
       <div className="w-full">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-card rounded-xl p-6 shadow-lg border border-gray-200 dark:border-border">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
               MSK Cost Over Time by Region

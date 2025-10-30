@@ -253,7 +253,7 @@ export default function ClusterMetrics({
   // Show error state
   if (error) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Cluster Metrics
         </h3>
@@ -267,7 +267,7 @@ export default function ClusterMetrics({
 
   // Main component render
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+    <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
       {/* Date Picker Controls */}
       <DateRangePicker
         startDate={startDate}
@@ -283,7 +283,7 @@ export default function ClusterMetrics({
 
       {/* Results Section */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-lg">
           <div className="text-red-500 dark:text-red-400">
             <p className="font-medium">Error loading metrics:</p>
             <p className="text-sm mt-1">{error}</p>

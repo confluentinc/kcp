@@ -64,9 +64,9 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
   return (
     <div className="max-w-7xl mx-auto space-y-6 min-w-0 w-full">
       {/* Header */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 transition-colors">
+      <div className="bg-white dark:bg-card rounded-lg shadow-sm border border-gray-200 dark:border-border transition-colors">
         {/* Cluster Title and Key Metrics */}
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="p-6 border-b border-gray-200 dark:border-border">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
@@ -81,19 +81,19 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
 
           {/* Key Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+            <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {mskConfig.ClusterType || 'Unknown'}
               </div>
               <div className="text-sm text-gray-600 dark:text-gray-400">Cluster Type</div>
             </div>
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+            <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {provisioned.NumberOfBrokerNodes}
               </div>
               <div className="text-sm text-gray-600 dark:text-gray-400">Broker Nodes</div>
             </div>
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+            <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {provisioned.CurrentBrokerSoftwareInfo?.KafkaVersion || 'Unknown'}
               </div>
@@ -113,7 +113,7 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           ]}
           activeId={activeTab}
           onChange={(id) => setActiveTab(id as any)}
-          className="border-b border-gray-200 dark:border-gray-700"
+          className="border-b border-gray-200 dark:border-border"
         />
 
         {/* Tab Content */}

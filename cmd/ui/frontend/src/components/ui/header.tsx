@@ -17,9 +17,9 @@ const Header = React.forwardRef<HTMLElement, HeaderProps>(
           'w-full flex items-center justify-between px-0 py-3 transition-all duration-200',
           {
             // Variants
-            'bg-background': variant === 'default',
-            'bg-background border-b border-border': variant === 'bordered',
-            'bg-background shadow-sm': variant === 'elevated',
+            'bg-background dark:bg-card': variant === 'default',
+            'bg-background dark:bg-card border-b border-border': variant === 'bordered',
+            'bg-background dark:bg-card shadow-sm': variant === 'elevated',
 
             // Sizes
             'h-12 py-2': size === 'sm',

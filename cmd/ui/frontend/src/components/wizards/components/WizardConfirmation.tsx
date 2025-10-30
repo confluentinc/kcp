@@ -38,7 +38,7 @@ export function WizardConfirmation({
         </p>
       </div>
 
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-6 bg-gray-50 dark:bg-gray-800">
+      <div className="border border-gray-200 dark:border-border rounded-lg p-6 bg-gray-50 dark:bg-card">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
           Configuration Summary
         </h3>
@@ -49,7 +49,7 @@ export function WizardConfirmation({
           {Object.entries(data).map(([key, value]) => (
             <div
               key={key}
-              className="border-b border-gray-200 dark:border-gray-700 pb-4 last:border-0"
+              className="border-b border-gray-200 dark:border-border pb-4 last:border-0"
             >
               <div className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
                 {formatKey(key)}

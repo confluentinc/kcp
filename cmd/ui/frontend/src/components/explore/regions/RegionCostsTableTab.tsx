@@ -84,19 +84,19 @@ export default function RegionCostsTableTab({
         </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
         <div className="w-full overflow-hidden rounded-lg">
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
             <Table className="min-w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10 w-[150px] max-w-[150px] border-r border-gray-200 dark:border-gray-600">
+                  <TableHead className="sticky left-0 bg-white dark:bg-card z-10 w-[150px] max-w-[150px] border-r border-gray-200 dark:border-border">
                     Service
                   </TableHead>
-                  <TableHead className="sticky left-[150px] bg-white dark:bg-gray-800 z-10 w-[250px] max-w-[250px] border-r border-gray-200 dark:border-gray-600">
+                  <TableHead className="sticky left-[150px] bg-white dark:bg-card z-10 w-[250px] max-w-[250px] border-r border-gray-200 dark:border-border">
                     Usage Type
                   </TableHead>
-                  <TableHead className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600">
+                  <TableHead className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-border">
                     <div className="text-green-600 dark:text-green-400 font-semibold">
                       Total ({formatCostTypeLabel(selectedCostType)})
                     </div>
@@ -104,7 +104,7 @@ export default function RegionCostsTableTab({
                   {processedData.uniqueDates.map((date, index) => (
                     <TableHead
                       key={index}
-                      className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600"
+                      className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-border"
                     >
                       <div className="truncate">{date}</div>
                     </TableHead>
@@ -117,7 +117,7 @@ export default function RegionCostsTableTab({
                     key={rowIndex}
                     className="hover:bg-gray-50 dark:hover:bg-gray-700"
                   >
-                    <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium border-r border-gray-200 dark:border-gray-600 w-[150px] max-w-[150px]">
+                    <TableCell className="sticky left-0 bg-white dark:bg-card z-10 font-medium border-r border-gray-200 dark:border-border w-[150px] max-w-[150px]">
                       <div
                         className="truncate pr-2"
                         title={row.service}
@@ -126,7 +126,7 @@ export default function RegionCostsTableTab({
                       </div>
                     </TableCell>
 
-                    <TableCell className="sticky left-[150px] bg-white dark:bg-gray-800 z-10 border-r border-gray-200 dark:border-gray-600 w-[250px] max-w-[250px]">
+                    <TableCell className="sticky left-[150px] bg-white dark:bg-card z-10 border-r border-gray-200 dark:border-border w-[250px] max-w-[250px]">
                       <div
                         className="truncate pr-2 text-sm"
                         title={row.usageType}
@@ -136,7 +136,7 @@ export default function RegionCostsTableTab({
                     </TableCell>
 
                     {/* Total column */}
-                    <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]">
+                    <TableCell className="text-center border-r border-gray-200 dark:border-border w-[120px] min-w-[120px] max-w-[120px]">
                       <div className="font-mono text-sm truncate text-green-600 dark:text-green-400 font-semibold">
                         ${row.total.toFixed(2)}
                       </div>
@@ -146,7 +146,7 @@ export default function RegionCostsTableTab({
                     {row.values.map((value: number, valueIndex: number) => (
                       <TableCell
                         key={valueIndex}
-                        className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]"
+                        className="text-center border-r border-gray-200 dark:border-border w-[120px] min-w-[120px] max-w-[120px]"
                       >
                         <div className="font-mono text-sm truncate">
                           ${value.toFixed(2)}

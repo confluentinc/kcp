@@ -44,15 +44,15 @@ export function Modal({ isOpen, onClose, title, children, className = '' }: Moda
       {/* Modal */}
       <div
         className={`
-        relative bg-white dark:bg-gray-800 rounded-lg shadow-2xl 
+        relative bg-white dark:bg-card rounded-lg shadow-2xl 
         w-[95vw] max-w-7xl h-[90vh] max-h-[90vh] 
-        border border-gray-200 dark:border-gray-700
+        border border-gray-200 dark:border-border
         flex flex-col
         ${className}
       `}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-border flex-shrink-0">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{title}</h2>
           <Button
             variant="ghost"

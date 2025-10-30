@@ -193,7 +193,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   // Show error state
   if (error) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Region Costs
         </h3>
@@ -207,7 +207,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
   // Main component render
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+    <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
       {/* Filters: Cost Type, Service, and Date Picker Controls */}
       <div className="flex flex-col gap-4 mb-6">
         {/* Top row: Service and Cost Type Selectors */}

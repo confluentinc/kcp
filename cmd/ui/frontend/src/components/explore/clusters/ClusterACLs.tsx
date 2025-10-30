@@ -30,7 +30,7 @@ export default function ClusterACLs({ acls }: ClusterACLsProps) {
 
   const getResourceTypeBadge = (resourceType: string) => {
     const colors = {
-      Topic: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+      Topic: 'bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent',
       Group: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
       Cluster: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
     }
@@ -39,7 +39,7 @@ export default function ClusterACLs({ acls }: ClusterACLsProps) {
       <span
         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
           colors[resourceType as keyof typeof colors] ||
-          'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+          'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200'
         }`}
       >
         {resourceType}
@@ -67,28 +67,28 @@ export default function ClusterACLs({ acls }: ClusterACLsProps) {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full border border-gray-200 dark:border-gray-600 rounded-lg">
+        <table className="w-full border border-gray-200 dark:border-border rounded-lg">
           <thead>
-            <tr className="bg-gray-50 dark:bg-gray-700">
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-600">
+            <tr className="bg-gray-50 dark:bg-card">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-border">
                 Resource Type
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
                 Resource Name
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
                 Pattern Type
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
                 Principal
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
                 Host
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
                 Operation
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-gray-600">
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
                 Permission
               </th>
             </tr>
@@ -99,25 +99,25 @@ export default function ClusterACLs({ acls }: ClusterACLsProps) {
                 key={index}
                 className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
-                <td className="px-4 py-3 text-sm border-b border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm border-b border-gray-200 dark:border-border">
                   {getResourceTypeBadge(acl.ResourceType)}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-l border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-l border-gray-200 dark:border-border">
                   {acl.ResourceName}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 border-b border-l border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 border-b border-l border-gray-200 dark:border-border">
                   {acl.ResourcePatternType}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-l border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-l border-gray-200 dark:border-border">
                   {acl.Principal}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 font-mono border-b border-l border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 font-mono border-b border-l border-gray-200 dark:border-border">
                   {acl.Host}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 border-b border-l border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 border-b border-l border-gray-200 dark:border-border">
                   {acl.Operation}
                 </td>
-                <td className="px-4 py-3 text-sm border-b border-l border-gray-200 dark:border-gray-600">
+                <td className="px-4 py-3 text-sm border-b border-l border-gray-200 dark:border-border">
                   {getPermissionBadge(acl.PermissionType)}
                 </td>
               </tr>

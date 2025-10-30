@@ -1,14 +1,9 @@
 import { useRef, useState } from 'react'
-import type { Region, Cluster } from '@/types'
-import ClusterReport from '@/components/explore/views/ClusterReport'
-import RegionReport from '@/components/explore/views/RegionReport'
-import Summary from '@/components/explore/views/Summary'
 import TCOInputsPage from '@/components/tco/TCOInputsPage'
-import ExploreNavigation from '@/components/explore/ExploreNavigation'
+import Sidebar from '@/components/explore/Sidebar'
 import MigrationAssetsPage from '@/components/migration/MigrationAssetsPage'
-import SchemaRegistries from '@/components/explore/views/SchemaRegistries'
+import ExploreContent from '@/components/explore/ExploreContent'
 import AppHeader from '@/components/AppHeader'
-// Removed Tabs UI in favor of button-based nav matching ClusterReport
 import Tabs from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/appStore'
 
@@ -18,22 +13,14 @@ export default function Home() {
     'explore'
   )
 
-  // Global state from Zustand - using single selector to avoid multiple subscriptions
+  // Global state from Zustand
   const {
     regions,
-    schemaRegistries,
-    selectedCluster,
-    selectedRegion,
-    selectedSummary,
-    selectedSchemaRegistries,
     isProcessing,
     error,
     setRegions,
     setSchemaRegistries,
-    setSelectedCluster,
-    setSelectedRegion,
     setSelectedSummary,
-    setSelectedSchemaRegistries,
     setIsProcessing,
     setError,
   } = useAppStore()
@@ -113,24 +100,8 @@ export default function Home() {
     fileInputRef.current?.click()
   }
 
-  const handleClusterSelect = (cluster: Cluster, regionName: string) => {
-    setSelectedCluster(cluster, regionName)
-  }
-
-  const handleRegionSelect = (region: Region) => {
-    setSelectedRegion(region)
-  }
-
-  const handleSummarySelect = () => {
-    setSelectedSummary()
-  }
-
-  const handleSchemaRegistriesSelect = () => {
-    setSelectedSchemaRegistries()
-  }
-
   return (
-    <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-gray-900 transition-colors">
+    <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-card transition-colors">
       <AppHeader
         onFileUpload={triggerFileUpload}
         isProcessing={isProcessing}
@@ -156,48 +127,24 @@ export default function Home() {
               ]}
               activeId={activeTopTab}
               onChange={(id) => setActiveTopTab(id as any)}
+              size="lg"
             />
 
             {activeTopTab === 'explore' && (
-              <div className="flex-1 overflow-hidden bg-white dark:bg-gray-800">
+              <div className="flex-1 overflow-hidden bg-white dark:bg-background">
                 <div className="flex h-full">
-                  <div className="w-80 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0">
-                    <ExploreNavigation
-                      regions={regions}
-                      onClusterSelect={handleClusterSelect}
-                      onRegionSelect={handleRegionSelect}
-                      onSummarySelect={handleSummarySelect}
-                      selectedCluster={selectedCluster}
-                      selectedRegion={selectedRegion}
-                      selectedSummary={selectedSummary}
-                      selectedSchemaRegistries={selectedSchemaRegistries}
-                      onSchemaRegistriesSelect={handleSchemaRegistriesSelect}
-                    />
+                  <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
+                    <Sidebar />
                   </div>
                   <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
-                    <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
-                      {selectedSummary && <Summary />}
-                      {selectedCluster && (
-                        <ClusterReport
-                          cluster={selectedCluster.cluster}
-                          regionName={selectedCluster.regionName}
-                          regionData={
-                            regions.find((r) => r.name === selectedCluster.regionName) as any
-                          }
-                        />
-                      )}
-                      {selectedRegion && <RegionReport region={selectedRegion} />}
-                      {selectedSchemaRegistries && (
-                        <SchemaRegistries schemaRegistries={schemaRegistries} />
-                      )}
-                    </div>
+                    <ExploreContent />
                   </main>
                 </div>
               </div>
             )}
 
             {activeTopTab === 'tco-inputs' && (
-              <div className="flex-1 overflow-hidden bg-white dark:bg-gray-800">
+              <div className="flex-1 overflow-hidden bg-white dark:bg-background">
                 <div className="h-full overflow-auto">
                   <TCOInputsPage />
                 </div>
@@ -205,7 +152,7 @@ export default function Home() {
             )}
 
             {activeTopTab === 'migration-assets' && (
-              <div className="flex-1 overflow-hidden bg-white dark:bg-gray-800">
+              <div className="flex-1 overflow-hidden bg-white dark:bg-background">
                 <div className="h-full overflow-auto">
                   <MigrationAssetsPage />
                 </div>
@@ -225,8 +172,8 @@ export default function Home() {
                 Upload a KCP state file to get started with exploring your Kafka clusters, analyzing
                 TCO inputs, and managing migration assets.
               </p>
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                <p className="text-sm text-blue-800 dark:text-blue-200">
+              <div className="bg-blue-50 dark:bg-accent/20 border border-blue-200 dark:border-border rounded-lg p-4">
+                <p className="text-sm text-blue-800 dark:text-accent">
                   <strong>Getting Started:</strong> Click the "Upload KCP State File" button in the
                   header to begin.
                 </p>

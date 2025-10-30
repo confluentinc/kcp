@@ -178,7 +178,7 @@ export default function TCOInputs() {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">TCO Inputs</h1>
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-border rounded-md p-4">
           <p className="text-yellow-800 dark:text-yellow-200">
             No clusters available. Please upload a KCP state file first to see the TCO input form.
           </p>
@@ -193,11 +193,11 @@ export default function TCOInputs() {
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">TCO Inputs</h1>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+              <tr className="bg-gray-50 dark:bg-card border-b border-gray-200 dark:border-border">
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 min-w-[200px]">
                   Workload Assumptions
                 </th>
@@ -218,7 +218,7 @@ export default function TCOInputs() {
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Avg Ingress Throughput (MB/s)
                 </td>
                 {allClusters.map((cluster) => (
@@ -234,7 +234,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'avgIngressThroughput', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="0.00"
                       />
                       <Button
@@ -251,7 +251,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Peak Ingress Throughput (MB/s)
                 </td>
                 {allClusters.map((cluster) => (
@@ -267,7 +267,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'peakIngressThroughput', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="0.00"
                       />
                       <Button
@@ -284,7 +284,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Avg Egress Throughput (MB/s)
                 </td>
                 {allClusters.map((cluster) => (
@@ -300,7 +300,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'avgEgressThroughput', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="0.00"
                       />
                       <Button
@@ -317,7 +317,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Peak Egress Throughput (MB/s)
                 </td>
                 {allClusters.map((cluster) => (
@@ -333,7 +333,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'peakEgressThroughput', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="0.00"
                       />
                       <Button
@@ -350,7 +350,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Retention Days
                 </td>
                 {allClusters.map((cluster) => (
@@ -367,7 +367,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'retentionDays', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="0"
                       />
                       <Button
@@ -384,7 +384,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Partitions
                 </td>
                 {allClusters.map((cluster) => (
@@ -401,7 +401,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'partitions', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="1000"
                       />
                       <Button
@@ -418,7 +418,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Replication Factor
                 </td>
                 {allClusters.map((cluster) => (
@@ -435,7 +435,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'replicationFactor', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="3"
                       />
                       <Button
@@ -452,7 +452,7 @@ export default function TCOInputs() {
                 ))}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Follower Fetching
                 </td>
                 {allClusters.map((cluster) => {
@@ -486,7 +486,7 @@ export default function TCOInputs() {
                 })}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Tiered Storage
                 </td>
                 {allClusters.map((cluster) => {
@@ -520,7 +520,7 @@ export default function TCOInputs() {
                 })}
               </tr>
               <tr>
-                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-700">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
                   Local Retention in Primary Storage Hours
                 </td>
                 {allClusters.map((cluster) => (
@@ -537,7 +537,7 @@ export default function TCOInputs() {
                         onChange={(e) =>
                           handleInputChange(cluster.key, 'localRetentionHours', e.target.value)
                         }
-                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         placeholder="0"
                       />
                       <Button
@@ -558,7 +558,7 @@ export default function TCOInputs() {
         </div>
       </div>
 
-      <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+      <div className="mt-6 p-4 bg-gray-50 dark:bg-card rounded-lg border border-gray-200 dark:border-border">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">CSV Preview:</h3>
           <Button
@@ -577,7 +577,7 @@ export default function TCOInputs() {
             )}
           </Button>
         </div>
-        <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono bg-white dark:bg-gray-900 p-3 rounded border">
+        <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono bg-white dark:bg-card p-3 rounded border">
           {generateCSV()}
         </pre>
       </div>

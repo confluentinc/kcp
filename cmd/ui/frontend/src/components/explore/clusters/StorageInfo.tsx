@@ -21,12 +21,12 @@ export default function StorageInfo({
 
   if (displayMode === 'detailed') {
     return (
-      <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 transition-colors">
+      <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
         <div className="space-y-2 text-sm">
           <KeyValuePair
             label="Volume Size:"
             value={`${volumeSize} GB`}
-            valueClassName="font-bold text-blue-600 dark:text-blue-400"
+            valueClassName="font-bold text-blue-600 dark:text-accent"
           />
           <KeyValuePair
             label="Total Storage:"
@@ -47,9 +47,14 @@ export default function StorageInfo({
   // Inline mode for grid display
   return (
     <>
-      <KeyValuePair label="Storage per Broker (GB):" value={volumeSize} />
-      <KeyValuePair label="Total Storage (GB):" value={totalStorage} />
+      <KeyValuePair
+        label="Storage per Broker (GB):"
+        value={volumeSize}
+      />
+      <KeyValuePair
+        label="Total Storage (GB):"
+        value={totalStorage}
+      />
     </>
   )
 }
-

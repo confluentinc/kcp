@@ -16,7 +16,7 @@ export function WizardProgress({ currentIndex, totalSteps }: WizardProgressProps
 
       <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
         <div
-          className="bg-blue-600 dark:bg-blue-500 h-2 rounded-full transition-all duration-300"
+          className="bg-blue-600 dark:bg-accent h-2 rounded-full transition-all duration-300"
           style={{ width: `${progress}%` }}
         />
       </div>

@@ -55,7 +55,7 @@ export default function AppHeader({
       </HeaderSection>
       <HeaderSection position="right">
         {error && (
-          <div className="mr-4 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+          <div className="mr-4 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-md">
             <div className="text-sm text-red-800 dark:text-red-200">
               <strong>Error:</strong> {error}
             </div>

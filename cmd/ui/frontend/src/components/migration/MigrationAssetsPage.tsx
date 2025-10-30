@@ -267,7 +267,7 @@ export default function MigrationAssets() {
     return (
       <div className="space-y-4">
         {/* File Tabs Navigation */}
-        <div className="border-b border-gray-200 dark:border-gray-700">
+        <div className="border-b border-gray-200 dark:border-border">
           <div className="flex items-center justify-between">
             <nav className="-mb-px flex space-x-2 overflow-x-auto px-4 flex-1">
               {fileEntries.map(([key]) => (
@@ -277,7 +277,7 @@ export default function MigrationAssets() {
                   className={`py-3 px-4 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                     activeFileTab === key
                       ? 'border-green-500 text-green-600 dark:text-green-400'
-                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-[#4A4956]'
                   }`}
                 >
                   {key.replace('_', '.')}
@@ -351,11 +351,11 @@ export default function MigrationAssets() {
             return (
               <div
                 key={clusterKey}
-                className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
+                className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border overflow-hidden"
               >
                 {/* Cluster Header Row - Clickable */}
                 <div
-                  className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  className="px-6 py-4 border-b border-gray-200 dark:border-border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                   onClick={() => toggleCluster(clusterKey)}
                 >
                   <div className="flex items-center justify-between">
@@ -403,9 +403,9 @@ export default function MigrationAssets() {
 
                 {/* Tabbed Content - Collapsible */}
                 {isExpanded && (
-                  <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                    <div className="border-b border-gray-200 dark:border-gray-700">
-                      <nav className="-mb-px flex space-x-8 px-6 overflow-x-auto bg-white dark:bg-gray-800">
+                  <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                    <div className="border-b border-gray-200 dark:border-border">
+                      <nav className="-mb-px flex space-x-8 px-6 overflow-x-auto bg-white dark:bg-card">
                         {[
                           { id: 'migration-infra', label: 'Migration Infrastructure' },
                           { id: 'target-infra', label: 'Target Infrastructure' },
@@ -418,8 +418,8 @@ export default function MigrationAssets() {
                             }
                             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                               activeTabs[clusterKey] === tab.id
-                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                                ? 'border-blue-500 text-blue-600 dark:text-accent'
+                                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-[#4A4956]'
                             }`}
                           >
                             {tab.label}
@@ -458,9 +458,9 @@ export default function MigrationAssets() {
           })}
         </div>
       ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8">
+        <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-8">
           <div className="text-center">
-            <div className="mx-auto w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mb-4">
+            <div className="mx-auto w-16 h-16 bg-gray-100 dark:bg-card rounded-full flex items-center justify-center mb-4">
               <span className="text-2xl">📦</span>
             </div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">

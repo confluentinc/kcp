@@ -24,7 +24,7 @@ function AggregateStatRow({
   }
 
   const typeColors = {
-    min: 'text-blue-600 dark:text-blue-400',
+    min: 'text-blue-600 dark:text-accent',
     avg: 'text-green-600 dark:text-green-400',
     max: 'text-red-600 dark:text-red-400',
   }

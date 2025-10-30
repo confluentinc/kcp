@@ -85,17 +85,17 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
         {schemaRegistries.map((registry, registryIndex) => (
           <div
             key={`${registry.type}-${registry.url}-${registryIndex}`}
-            className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-colors"
+            className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors"
           >
             {/* Registry Header */}
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
+            <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                       {registry.type === 'confluent' ? 'Confluent Schema Registry' : registry.type}
                     </h4>
-                    <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">
+                    <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent rounded-full">
                       {registry.subjects.length} subjects
                     </span>
                   </div>
@@ -116,10 +116,10 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
                   return (
                     <div
                       key={subjectKey}
-                      className="border border-gray-200 dark:border-gray-600 rounded-lg"
+                      className="border border-gray-200 dark:border-border rounded-lg"
                     >
                       {/* Subject Header */}
-                      <div className="p-4 bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+                      <div className="p-4 bg-gray-50 dark:bg-card border-b border-gray-200 dark:border-border">
                         <button
                           onClick={() => toggleSubject(subjectKey)}
                           className="w-full text-left flex items-center justify-between"
@@ -169,7 +169,7 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
                             <textarea
                               readOnly
                               value={formatSchema(subject.latest_schema.schema)}
-                              className="w-full h-32 p-3 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                              className="w-full h-32 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                             />
                           </div>
 
@@ -186,7 +186,7 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
                                 return (
                                   <div
                                     key={versionKey}
-                                    className="border border-gray-200 dark:border-gray-600 rounded-md"
+                                    className="border border-gray-200 dark:border-border rounded-md"
                                   >
                                     <button
                                       onClick={() => toggleVersion(versionKey)}
@@ -215,7 +215,7 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
                                     </button>
 
                                     {isVersionExpanded && (
-                                      <div className="p-3 border-t border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800">
+                                      <div className="p-3 border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
                                         <div className="flex items-center justify-between mb-2">
                                           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
                                             Schema Definition
@@ -233,7 +233,7 @@ export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesP
                                         <textarea
                                           readOnly
                                           value={formatSchema(version.schema)}
-                                          className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                                          className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                                         />
                                       </div>
                                     )}

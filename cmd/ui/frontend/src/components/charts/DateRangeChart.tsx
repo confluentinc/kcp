@@ -183,7 +183,7 @@ export function CostChartTooltip({ active, payload, label }: any) {
     const total = sortedEntries.reduce((sum: number, entry: any) => sum + (entry.value || 0), 0)
 
     return (
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
+      <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-3 shadow-lg">
         <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-2">
           {label ? format(new Date(label), 'MMM dd, yyyy HH:mm') : 'Unknown Date'}
         </p>
@@ -207,7 +207,7 @@ export function CostChartTooltip({ active, payload, label }: any) {
             </p>
           ))}
         </div>
-        <div className="border-t border-gray-200 dark:border-gray-600 mt-2 pt-2">
+        <div className="border-t border-gray-200 dark:border-border mt-2 pt-2">
           <p className="text-gray-900 dark:text-gray-100 text-sm font-semibold flex justify-between">
             <span>Total:</span>
             <span className="font-mono">${total.toFixed(2)}</span>
@@ -225,7 +225,7 @@ export function CostChartTooltip({ active, payload, label }: any) {
 export function SimpleChartTooltip({ active, payload, label, labelKey }: any) {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-3 shadow-lg">
+      <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-3 shadow-lg">
         <p className="text-gray-700 dark:text-gray-200 text-sm font-medium mb-1">
           {label ? format(new Date(label), 'MMM dd, yyyy HH:mm') : 'Unknown Date'}
         </p>

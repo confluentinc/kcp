@@ -63,7 +63,7 @@ export default function MetricsChartTab({
 }: MetricsChartTabProps) {
   return (
     <div className="space-y-4 min-w-0">
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
+      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
         <div className="p-6 rounded-lg">
           {processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
             <div className="space-y-6">
