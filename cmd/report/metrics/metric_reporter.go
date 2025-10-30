@@ -48,7 +48,7 @@ func (r *MetricReporter) Run() error {
 	slog.Info("🔍 processing clusters", "clusters", r.clusterArns, "startDate", r.startDate, "endDate", r.endDate)
 
 	processedState := r.reportService.ProcessState(*r.state)
-	processedClusterMetrics := []types.ProcessedClusterMetrics{}
+	processedClusterMetrics :=  []types.ProcessedClusterMetrics{}
 
 	// find the clusters in the state
 
@@ -69,7 +69,7 @@ func (r *MetricReporter) Run() error {
 	return nil
 }
 
-func (r *MetricReporter) generateReport(processedClusterMetrics []types.ProcessedClusterMetrics) *markdown.Markdown {
+func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics) *markdown.Markdown {
 	md := markdown.New()
 
 	md.AddHeading("AWS Metrics Report", 1)
@@ -84,46 +84,25 @@ func (r *MetricReporter) generateReport(processedClusterMetrics []types.Processe
 		r.startDate.Format("2006-01-02"),
 		r.endDate.Format("2006-01-02")))
 
-	regionGroups := r.groupClustersByRegion(processedClusterMetrics)
+	md.AddParagraph(fmt.Sprintf("**Clusters:** %v", r.clusterArns))
 
-	regions := make([]string, 0, len(regionGroups))
-	for region := range regionGroups {
-		regions = append(regions, region)
-	}
-	md.AddParagraph(fmt.Sprintf("**Regions:** %v", regions))
+	md.AddHorizontalRule()
 
-	if len(processedClusterMetrics) > 0 {
-		metadata := processedClusterMetrics[0].Metadata
-		md.AddParagraph(fmt.Sprintf("**Cluster Type:** %s", metadata.ClusterType))
-		md.AddParagraph(fmt.Sprintf("**Kafka Version:** %s", metadata.KafkaVersion))
-		md.AddParagraph(fmt.Sprintf("**Enhanced Monitoring:** %s", metadata.EnhancedMonitoring))
-		md.AddParagraph(fmt.Sprintf("**Period:** %d seconds", metadata.Period))
+	// Process each cluster in this region
+	for i, clusterMetrics := range clusters {
+
+		if i > 0 {
+			md.AddHorizontalRule()
+		}
+		r.addClusterSection(md, clusterMetrics)
 	}
 
 	md.AddHorizontalRule()
 
-	for region, clusters := range regionGroups {
-		r.addRegionSection(md, region, clusters)
-	}
-
 	return md
 }
 
-func (r *MetricReporter) groupClustersByRegion(processedClusterMetrics []types.ProcessedClusterMetrics) map[string][]types.ProcessedClusterMetrics {
-	regionGroups := make(map[string][]types.ProcessedClusterMetrics)
-
-	for i, clusterMetrics := range processedClusterMetrics {
-		// Extract region from cluster ARN
-		region := r.extractRegionFromArn(r.clusterArns[i])
-		regionGroups[region] = append(regionGroups[region], clusterMetrics)
-	}
-
-	return regionGroups
-}
-
 func (r *MetricReporter) extractRegionFromArn(arn string) string {
-	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
-	// Split on ':' and take index 3 for region
 	parts := strings.Split(arn, ":")
 	if len(parts) >= 4 {
 		return parts[3]
@@ -131,25 +110,21 @@ func (r *MetricReporter) extractRegionFromArn(arn string) string {
 	return "unknown-region"
 }
 
-func (r *MetricReporter) addRegionSection(md *markdown.Markdown, region string, clusters []types.ProcessedClusterMetrics) {
-	md.AddHeading(fmt.Sprintf("Region: %s", region), 2)
 
-	// Process each cluster in this region
-	for i, clusterMetrics := range clusters {
-		if i > 0 {
-			md.AddParagraph("---")
-		}
-		r.addClusterSection(md, clusterMetrics, region)
-	}
-
-	md.AddHorizontalRule()
-}
-
-func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics types.ProcessedClusterMetrics, region string) {
+func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics types.ProcessedClusterMetrics) {
 	// Extract cluster name from ARN - we need to find the matching ARN for this region
-	clusterName := r.extractClusterNameFromRegion(region)
 
-	md.AddHeading(fmt.Sprintf("Cluster: %s", clusterName), 3)
+
+	md.AddHeading(fmt.Sprintf("Cluster Name: %s", utils.ExtractClusterNameFromArn(clusterMetrics.ClusterArn)), 3)
+	md.AddParagraph(fmt.Sprintf("**Cluster ARN**: %s", clusterMetrics.ClusterArn))
+	md.AddParagraph(fmt.Sprintf("**Region**: %s", clusterMetrics.Region))
+	md.AddParagraph(fmt.Sprintf("**Cluster Type**: %s", clusterMetrics.Metadata.ClusterType))
+	md.AddParagraph(fmt.Sprintf("**Kafka Version**: %s", clusterMetrics.Metadata.KafkaVersion))
+	md.AddParagraph(fmt.Sprintf("**Enhanced Monitoring**: %s", clusterMetrics.Metadata.EnhancedMonitoring))
+	md.AddParagraph(fmt.Sprintf("**Period**: %d seconds", clusterMetrics.Metadata.Period))
+	md.AddParagraph(fmt.Sprintf("**Follower Fetching**: %t", clusterMetrics.Metadata.FollowerFetching))
+	md.AddParagraph(fmt.Sprintf("**Instance Type**: %s", clusterMetrics.Metadata.InstanceType))
+	md.AddParagraph(fmt.Sprintf("**Tiered Storage**: %t", clusterMetrics.Metadata.TieredStorage))
 
 	// Add metric aggregates
 	if len(clusterMetrics.Aggregates) > 0 {
