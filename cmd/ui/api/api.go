@@ -293,7 +293,7 @@ func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
-	var req types.MirrorTopicsRequest
+	var req types.MigrateTopicsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -301,7 +301,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",
@@ -354,7 +354,7 @@ func (ui *UI) handleMigrationScripts(c echo.Context) error {
 
 	switch migrationType {
 	case "Mirror Topics":
-		var request types.MirrorTopicsRequest
+		var request types.MigrateTopicsRequest
 		jsonData, marshalErr := json.Marshal(baseRequest)
 		if marshalErr != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
@@ -368,7 +368,7 @@ func (ui *UI) handleMigrationScripts(c echo.Context) error {
 				"message": unmarshalErr.Error(),
 			})
 		}
-		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(request)
+		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(request)
 	default:
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid migration script type",
