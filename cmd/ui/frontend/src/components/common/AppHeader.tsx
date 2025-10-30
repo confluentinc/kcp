@@ -76,10 +76,8 @@ export default function AppHeader({
           onClick={toggleDarkMode}
           variant="outline"
           size="sm"
-          className="flex items-center space-x-2"
         >
-          <span>{darkMode ? '☀️' : '🌙'}</span>
-          <span>{darkMode ? 'Light' : 'Dark'}</span>
+          {darkMode ? '☀️' : '🌙'}
         </Button>
       </HeaderSection>
     </Header>

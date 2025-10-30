@@ -269,8 +269,8 @@ export default function MigrationAssets() {
                   onClick={() => setActiveFileTabs((prev) => ({ ...prev, [fileTabsKey]: key }))}
                   className={`py-3 px-4 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                     activeFileTab === key
-                      ? 'border-green-500 text-green-600 dark:text-green-400'
-                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-[#4A4956]'
+                      ? 'border-accent text-accent'
+                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-border'
                   }`}
                 >
                   {key.replace('_', '.')}
@@ -290,7 +290,7 @@ export default function MigrationAssets() {
                 size="sm"
                 variant="outline"
                 onClick={() => handleDownloadZip(files, clusterName, wizardType)}
-                className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                className="text-xs px-2 py-1"
               >
                 💾 Download ZIP
               </Button>
@@ -298,7 +298,7 @@ export default function MigrationAssets() {
                 size="sm"
                 variant="outline"
                 onClick={() => handleSaveLocally(files, clusterName, wizardType)}
-                className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white border-green-600"
+                className="text-xs px-2 py-1"
               >
                 📁 Save Locally
               </Button>
@@ -369,7 +369,6 @@ export default function MigrationAssets() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white border-green-600"
                         onClick={() => handleCreateMigrationInfrastructure(cluster, regionName)}
                       >
                         Create Migration Infrastructure
@@ -377,7 +376,6 @@ export default function MigrationAssets() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
                         onClick={() => handleCreateTargetInfrastructure(cluster, regionName)}
                       >
                         Create Target Infrastructure
@@ -385,7 +383,6 @@ export default function MigrationAssets() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
                         onClick={() => handleCreateMigrationScripts(cluster, regionName)}
                       >
                         Create Migration Scripts
@@ -409,7 +406,7 @@ export default function MigrationAssets() {
                             onClick={() => setMigrationAssetTab(clusterKey, tab.id)}
                             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                               migrationAssetTabs[clusterKey] === tab.id
-                                ? 'border-blue-500 dark:border-accent text-blue-600 dark:text-accent'
+                                ? 'border-accent text-accent'
                                 : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-border'
                             }`}
                           >
