@@ -5,7 +5,7 @@ import { Download } from 'lucide-react'
 import { downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/store'
 import { useMetricsDataProcessor } from '@/hooks/useMetricsDataProcessor'
-import { useDateFiltersWithMetadata } from '@/hooks/useDateFiltersWithMetadata'
+import { useDateFilters } from '@/hooks/useDateFilters'
 import { useModalMetricsDates } from '@/hooks/useModalMetricsDates'
 import { useMetricSelection } from '@/hooks/useMetricSelection'
 import { useClusterMetricsFetch } from '@/hooks/useClusterMetricsFetch'
@@ -101,8 +101,8 @@ export default function ClusterMetrics({
   })
 
   // Use date filters hook with metadata for auto-initialization and reset functions
-  const { resetToMetadataDates, resetStartDateToMetadata, resetEndDateToMetadata } =
-    useDateFiltersWithMetadata({
+  const { resetToMetadataDates, resetStartDateToMetadata, resetEndDateToMetadata } = useDateFilters(
+    {
       startDate,
       endDate,
       setStartDate,
@@ -110,7 +110,8 @@ export default function ClusterMetrics({
       metadata: metricsResponse?.metadata,
       onReset: resetZoom,
       autoSetDefaults: !inModal,
-    })
+    }
+  )
 
   // Metric selection with preselected metric support
   const { selectedMetric, setSelectedMetric } = useMetricSelection({

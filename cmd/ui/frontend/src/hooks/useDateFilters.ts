@@ -94,7 +94,9 @@ export function useDateFilters({
 
   // Extract metadata dates
   const metadataDates = getMetadataDates(metadata)
-  const hasMetadataDates = Boolean(metadataDates.startDate && metadataDates.endDate)
+  const hasMetadataDates = Boolean(
+    metadataDates.startDate && metadataDates.endDate
+  )
 
   // Reset defaultsSet flag when dates are cleared (e.g., when switching clusters)
   useEffect(() => {
@@ -140,19 +142,15 @@ export function useDateFilters({
     const metaStartDate = new Date(metadataDates.startDate!)
     const metaEndDate = new Date(metadataDates.endDate!)
 
-    if (!isNaN(metaStartDate.getTime()) && !isNaN(metaEndDate.getTime())) {
+    if (
+      !isNaN(metaStartDate.getTime()) &&
+      !isNaN(metaEndDate.getTime())
+    ) {
       setStartDate(metaStartDate)
       setEndDate(metaEndDate)
       onReset?.()
     }
-  }, [
-    hasMetadataDates,
-    metadataDates.startDate,
-    metadataDates.endDate,
-    setStartDate,
-    setEndDate,
-    onReset,
-  ])
+  }, [hasMetadataDates, metadataDates.startDate, metadataDates.endDate, setStartDate, setEndDate, onReset])
 
   // Reset start date to metadata value
   const resetStartDateToMetadata = useCallback(() => {
@@ -187,3 +185,4 @@ export function useDateFilters({
     hasMetadataDates,
   }
 }
+
