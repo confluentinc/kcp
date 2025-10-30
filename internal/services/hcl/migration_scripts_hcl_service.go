@@ -67,7 +67,7 @@ func (s *MigrationScriptsHCLService) generateProvidersTf() string {
 }
 
 // ============================================================================
-// Mirror Topics Generation Methods
+// Migrate Topics Generation Methods
 // ============================================================================
 
 func (s *MigrationScriptsHCLService) generateMigrateTopicsTf(request types.MigrateTopicsRequest) string {
