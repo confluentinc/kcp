@@ -58,7 +58,10 @@ func GenerateSchemaExporter(exporter types.Exporter) *hclwrite.Block {
 
 	// context_type and context attributes
 	exporterBlock.Body().SetAttributeValue("context_type", cty.StringVal(exporter.ContextType))
-	exporterBlock.Body().SetAttributeValue("context", cty.StringVal(exporter.ContextName))
+	// only custom context type has a context name
+	if exporter.ContextType == "CUSTOM" {
+		exporterBlock.Body().SetAttributeValue("context", cty.StringVal(exporter.ContextName))
+	}
 	exporterBlock.Body().AppendNewline()
 
 	// destination_schema_registry_cluster block
