@@ -356,7 +356,7 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                   {/* Public Access status (same styling as Monitoring section) */}
                   <div className="mb-4">
                     <div className="space-y-3">
-                      <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
                         <span className="text-gray-600 dark:text-gray-400">Public Access:</span>
                         {getStatusBadge(
                           (mskConfig?.Provisioned?.BrokerNodeGroupInfo?.ConnectivityInfo?.PublicAccess?.Type || '') === 'SERVICE_PROVIDED_EIPS',
