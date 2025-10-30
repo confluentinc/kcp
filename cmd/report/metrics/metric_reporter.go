@@ -92,7 +92,7 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 	for i, clusterMetrics := range clusters {
 
 		if i > 0 {
-			md.AddParagraph("---")
+			md.AddHorizontalRule()
 		}
 		r.addClusterSection(md, clusterMetrics)
 	}
@@ -100,18 +100,6 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 	md.AddHorizontalRule()
 
 	return md
-}
-
-func (r *MetricReporter) groupClustersByRegion(processedClusterMetrics []types.ProcessedClusterMetrics) map[string][]types.ProcessedClusterMetrics {
-	regionGroups := make(map[string][]types.ProcessedClusterMetrics)
-
-	for i, clusterMetrics := range processedClusterMetrics {
-		// Extract region from cluster ARN
-		region := r.extractRegionFromArn(r.clusterArns[i])
-		regionGroups[region] = append(regionGroups[region], clusterMetrics)
-	}
-
-	return regionGroups
 }
 
 func (r *MetricReporter) extractRegionFromArn(arn string) string {
