@@ -62,80 +62,65 @@ interface SchemaRegistry {
 }
 
 // ============================================================================
-// HELPER FUNCTIONS - Reduce duplication
+// HELPER FUNCTIONS
 // ============================================================================
-const createClusterKey = (region: string, cluster: string): string => `${region}:${cluster}`
 
-const createDefaultDateFilters = (): DateFilters => ({
-  startDate: undefined,
-  endDate: undefined,
-})
-
-const createDefaultRegionState = (): RegionState => ({
-  ...createDefaultDateFilters(),
-  activeCostsTab: DEFAULT_TABS.COSTS,
-})
-
-/**
- * Updates a date filter object, preserving existing values
- */
-const updateDateFilter = <T extends DateFilters>(
-  current: T | undefined,
-  updates: Partial<DateFilters>
-): T => {
-  const base = (current || {}) as T
+function createDefaultDateFilters(): DateFilters {
   return {
-    ...base,
-    ...updates,
-  } as T
+    startDate: undefined,
+    endDate: undefined,
+  }
 }
 
-/**
- * Creates a selection state object with all flags properly set
- */
-const createSelectionState = (selection: {
-  cluster?: { cluster: Cluster; regionName: string } | null
-  region?: Region | null
-  summary?: boolean
-  tcoInputs?: boolean
-  schemaRegistries?: boolean
-  preselectedMetric?: string | null
-}) => ({
-  selectedCluster: selection.cluster ?? null,
-  selectedRegion: selection.region ?? null,
-  selectedSummary: selection.summary ?? false,
-  selectedTCOInputs: selection.tcoInputs ?? false,
-  selectedSchemaRegistries: selection.schemaRegistries ?? false,
-  preselectedMetric: selection.preselectedMetric ?? null,
-})
+function createDefaultRegionState(): RegionState {
+  return {
+    ...createDefaultDateFilters(),
+    activeCostsTab: DEFAULT_TABS.COSTS,
+  }
+}
+
+function createClusterKey(region: string, cluster: string): string {
+  return `${region}-${cluster}`
+}
+
+function updateDateFilter(
+  current: DateFilters,
+  update: Partial<DateFilters>
+): DateFilters {
+  return {
+    ...current,
+    ...update,
+  }
+}
+
+// ============================================================================
+// STORE INTERFACE
+// ============================================================================
 
 interface AppState {
-  // Data
+  // Data state
   regions: Region[]
   schemaRegistries: SchemaRegistry[]
-
-  // Selection state
   selectedCluster: { cluster: Cluster; regionName: string } | null
   selectedRegion: Region | null
   selectedSummary: boolean
   selectedTCOInputs: boolean
   selectedSchemaRegistries: boolean
-  preselectedMetric: string | null
 
-  // TCO Inputs data
+  // TCO workload data
   tcoWorkloadData: WorkloadData
 
-  // Migration assets (terraform files per cluster per wizard type)
-  migrationAssets: MigrationAssets
+  // Date filters (cluster-specific)
+  clusterDateFilters: Record<string, DateFilters>
 
-  // Date filters (per cluster) - using unified DateFilters
-  clusterDateFilters: Record<string, DateFilters> // Key: "region:cluster"
+  // Region-specific state
+  regionState: Record<string, RegionState>
 
-  // Region-specific state for costs (per region)
-  regionState: Record<string, RegionState> // Key: "region"
-
-  // Summary-specific state for date filters
+  // Summary-specific date filters
   summaryDateFilters: DateFilters
+
+  // Migration assets
+  migrationAssets: MigrationAssets
 
   // UI state
   isProcessing: boolean
@@ -143,6 +128,7 @@ interface AppState {
   activeMetricsTab: string
   expandedMigrationCluster: string | null
   migrationAssetTabs: Record<string, string> // Key: clusterKey, Value: tab id (migration-infra | target-infra | migration-scripts)
+  preselectedMetric: string | null
 
   // Actions
   setRegions: (regions: Region[]) => void
@@ -205,198 +191,103 @@ export const useAppStore = create<AppState>()(
       selectedSummary: false,
       selectedTCOInputs: false,
       selectedSchemaRegistries: false,
-      preselectedMetric: null,
       tcoWorkloadData: {},
-      migrationAssets: {},
       clusterDateFilters: {},
       regionState: {},
       summaryDateFilters: createDefaultDateFilters(),
+      migrationAssets: {},
       isProcessing: false,
       error: null,
       activeMetricsTab: DEFAULT_TABS.METRICS,
       expandedMigrationCluster: null,
       migrationAssetTabs: {},
+      preselectedMetric: null,
 
-      // Data actions
+      // Actions
       setRegions: (regions) => set({ regions }, false, 'setRegions'),
+
       setSchemaRegistries: (schemaRegistries) =>
         set({ schemaRegistries }, false, 'setSchemaRegistries'),
 
-      // Selection actions - using helper function to eliminate duplication
       setSelectedCluster: (cluster, regionName, preselectedMetric) =>
         set(
-          createSelectionState({
-            cluster: { cluster, regionName },
+          {
+            selectedCluster: { cluster, regionName },
+            selectedRegion: null,
+            selectedSummary: false,
+            selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
             preselectedMetric: preselectedMetric || null,
-          }),
+          },
           false,
           'setSelectedCluster'
         ),
 
       setSelectedRegion: (region) =>
         set(
-          (state) => ({
-            ...createSelectionState({ region }),
-            // Initialize region state with default values if it doesn't exist
-            regionState: {
-              ...state.regionState,
-              [region.name]: state.regionState[region.name] || createDefaultRegionState(),
-            },
-          }),
+          {
+            selectedRegion: region,
+            selectedCluster: null,
+            selectedSummary: false,
+            selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
+          },
           false,
           'setSelectedRegion'
         ),
 
       setSelectedSummary: () =>
-        set(createSelectionState({ summary: true }), false, 'setSelectedSummary'),
+        set(
+          {
+            selectedSummary: true,
+            selectedCluster: null,
+            selectedRegion: null,
+            selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
+          },
+          false,
+          'setSelectedSummary'
+        ),
 
       setSelectedTCOInputs: () =>
-        set(createSelectionState({ tcoInputs: true }), false, 'setSelectedTCOInputs'),
+        set(
+          {
+            selectedTCOInputs: true,
+            selectedCluster: null,
+            selectedRegion: null,
+            selectedSummary: false,
+            selectedSchemaRegistries: false,
+          },
+          false,
+          'setSelectedTCOInputs'
+        ),
 
       setSelectedSchemaRegistries: () =>
-        set(createSelectionState({ schemaRegistries: true }), false, 'setSelectedSchemaRegistries'),
-
-      clearSelection: () => set(createSelectionState({}), false, 'clearSelection'),
-
-      // Cluster-specific date filter actions - using unified helpers
-      setClusterStartDate: (region, cluster, date) =>
         set(
-          (state) => {
-            const key = createClusterKey(region, cluster)
-            return {
-              clusterDateFilters: {
-                ...state.clusterDateFilters,
-                [key]: updateDateFilter(state.clusterDateFilters[key], { startDate: date }),
-              },
-            }
+          {
+            selectedSchemaRegistries: true,
+            selectedCluster: null,
+            selectedRegion: null,
+            selectedSummary: false,
+            selectedTCOInputs: false,
           },
           false,
-          'setClusterStartDate'
+          'setSelectedSchemaRegistries'
         ),
 
-      setClusterEndDate: (region, cluster, date) =>
+      clearSelection: () =>
         set(
-          (state) => {
-            const key = createClusterKey(region, cluster)
-            return {
-              clusterDateFilters: {
-                ...state.clusterDateFilters,
-                [key]: updateDateFilter(state.clusterDateFilters[key], { endDate: date }),
-              },
-            }
+          {
+            selectedCluster: null,
+            selectedRegion: null,
+            selectedSummary: false,
+            selectedTCOInputs: false,
+            selectedSchemaRegistries: false,
           },
           false,
-          'setClusterEndDate'
+          'clearSelection'
         ),
 
-      clearClusterDates: (region, cluster) =>
-        set(
-          (state) => {
-            const key = createClusterKey(region, cluster)
-            const { [key]: removed, ...rest } = state.clusterDateFilters
-            // removed is intentionally unused - we only need rest
-            void removed
-            return { clusterDateFilters: rest }
-          },
-          false,
-          'clearClusterDates'
-        ),
-
-      getClusterDateFilters: (region, cluster) => {
-        const state = get()
-        const key = createClusterKey(region, cluster)
-        return state.clusterDateFilters[key] || createDefaultDateFilters()
-      },
-
-      // Region-specific actions for costs - using unified helpers
-      setRegionStartDate: (region, date) =>
-        set(
-          (state) => ({
-            regionState: {
-              ...state.regionState,
-              [region]: updateDateFilter(state.regionState[region], { startDate: date }),
-            },
-          }),
-          false,
-          'setRegionStartDate'
-        ),
-
-      setRegionEndDate: (region, date) =>
-        set(
-          (state) => ({
-            regionState: {
-              ...state.regionState,
-              [region]: updateDateFilter(state.regionState[region], { endDate: date }),
-            },
-          }),
-          false,
-          'setRegionEndDate'
-        ),
-
-      clearRegionDates: (region) =>
-        set(
-          (state) => ({
-            regionState: {
-              ...state.regionState,
-              [region]: {
-                ...createDefaultRegionState(),
-                activeCostsTab:
-                  state.regionState[region]?.activeCostsTab || DEFAULT_TABS.COSTS,
-              },
-            },
-          }),
-          false,
-          'clearRegionDates'
-        ),
-
-      setRegionActiveCostsTab: (region, tab) =>
-        set(
-          (state) => ({
-            regionState: {
-              ...state.regionState,
-              [region]: {
-                ...(state.regionState[region] || createDefaultRegionState()),
-                activeCostsTab: tab,
-              },
-            },
-          }),
-          false,
-          'setRegionActiveCostsTab'
-        ),
-
-      getRegionState: (region) => {
-        const state = get()
-        return state.regionState[region] || createDefaultRegionState()
-      },
-
-      // Summary-specific date filter actions - using unified helpers
-      setSummaryStartDate: (date) =>
-        set(
-          (state) => ({
-            summaryDateFilters: updateDateFilter(state.summaryDateFilters, { startDate: date }),
-          }),
-          false,
-          'setSummaryStartDate'
-        ),
-
-      setSummaryEndDate: (date) =>
-        set(
-          (state) => ({
-            summaryDateFilters: updateDateFilter(state.summaryDateFilters, { endDate: date }),
-          }),
-          false,
-          'setSummaryEndDate'
-        ),
-
-      clearSummaryDates: () =>
-        set({ summaryDateFilters: createDefaultDateFilters() }, false, 'clearSummaryDates'),
-
-      getSummaryDateFilters: () => {
-        const state = get()
-        return state.summaryDateFilters
-      },
-
-      // UI actions
       setIsProcessing: (processing) => set({ isProcessing: processing }, false, 'setIsProcessing'),
 
       setError: (error) => set({ error }, false, 'setError'),
@@ -481,6 +372,166 @@ export const useAppStore = create<AppState>()(
       getTerraformFiles: (clusterKey, wizardType) => {
         const state = get()
         return state.migrationAssets[clusterKey]?.[wizardType] || null
+      },
+
+      // Cluster-specific date filter actions - using unified helpers
+      setClusterStartDate: (region, cluster, date) =>
+        set(
+          (state) => {
+            const key = createClusterKey(region, cluster)
+            return {
+              clusterDateFilters: {
+                ...state.clusterDateFilters,
+                [key]: updateDateFilter(state.clusterDateFilters[key] || createDefaultDateFilters(), {
+                  startDate: date,
+                }),
+              },
+            }
+          },
+          false,
+          'setClusterStartDate'
+        ),
+
+      setClusterEndDate: (region, cluster, date) =>
+        set(
+          (state) => {
+            const key = createClusterKey(region, cluster)
+            return {
+              clusterDateFilters: {
+                ...state.clusterDateFilters,
+                [key]: updateDateFilter(state.clusterDateFilters[key] || createDefaultDateFilters(), {
+                  endDate: date,
+                }),
+              },
+            }
+          },
+          false,
+          'setClusterEndDate'
+        ),
+
+      clearClusterDates: (region, cluster) =>
+        set(
+          (state) => {
+            const key = createClusterKey(region, cluster)
+            const { [key]: removed, ...rest } = state.clusterDateFilters
+            // removed is intentionally unused - we only need rest
+            void removed
+            return { clusterDateFilters: rest }
+          },
+          false,
+          'clearClusterDates'
+        ),
+
+      getClusterDateFilters: (region, cluster) => {
+        const state = get()
+        const key = createClusterKey(region, cluster)
+        return state.clusterDateFilters[key] || createDefaultDateFilters()
+      },
+
+      // Region-specific actions for costs - using unified helpers
+      setRegionStartDate: (region, date) =>
+        set(
+          (state) => {
+            const current = state.regionState[region] || createDefaultRegionState()
+            return {
+              regionState: {
+                ...state.regionState,
+                [region]: {
+                  ...current,
+                  startDate: date,
+                },
+              },
+            }
+          },
+          false,
+          'setRegionStartDate'
+        ),
+
+      setRegionEndDate: (region, date) =>
+        set(
+          (state) => {
+            const current = state.regionState[region] || createDefaultRegionState()
+            return {
+              regionState: {
+                ...state.regionState,
+                [region]: {
+                  ...current,
+                  endDate: date,
+                },
+              },
+            }
+          },
+          false,
+          'setRegionEndDate'
+        ),
+
+      clearRegionDates: (region) =>
+        set(
+          (state) => ({
+            regionState: {
+              ...state.regionState,
+              [region]: {
+                ...createDefaultRegionState(),
+                activeCostsTab:
+                  state.regionState[region]?.activeCostsTab || DEFAULT_TABS.COSTS,
+              },
+            },
+          }),
+          false,
+          'clearRegionDates'
+        ),
+
+      setRegionActiveCostsTab: (region, tab) =>
+        set(
+          (state) => ({
+            regionState: {
+              ...state.regionState,
+              [region]: {
+                ...(state.regionState[region] || createDefaultRegionState()),
+                activeCostsTab: tab,
+              },
+            },
+          }),
+          false,
+          'setRegionActiveCostsTab'
+        ),
+
+      getRegionState: (region) => {
+        const state = get()
+        return state.regionState[region] || createDefaultRegionState()
+      },
+
+      // Summary-specific date filter actions - using unified helpers
+      setSummaryStartDate: (date) =>
+        set(
+          (state) => ({
+            summaryDateFilters: updateDateFilter(
+              state.summaryDateFilters || createDefaultDateFilters(),
+              { startDate: date }
+            ),
+          }),
+          false,
+          'setSummaryStartDate'
+        ),
+
+      setSummaryEndDate: (date) =>
+        set(
+          (state) => ({
+            summaryDateFilters: updateDateFilter(
+              state.summaryDateFilters || createDefaultDateFilters(),
+              { endDate: date }
+            ),
+          }),
+          false,
+          'setSummaryEndDate'
+        ),
+
+      clearSummaryDates: () =>
+        set({ summaryDateFilters: createDefaultDateFilters() }, false, 'clearSummaryDates'),
+
+      getSummaryDateFilters: () => {
+        const state = get()
+        return state.summaryDateFilters
       },
     }),
     {
@@ -567,3 +618,4 @@ export const useSummaryDateFilters = () => {
     clearDates: () => clearSummaryDates(),
   }
 }
+

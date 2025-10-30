@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useMachine } from '@xstate/react'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore } from '@/stores/store'
 import { WizardStepForm } from './components/WizardStepForm'
 import { WizardProgress } from './components/WizardProgress'
 import { WizardConfirmation } from './components/WizardConfirmation'

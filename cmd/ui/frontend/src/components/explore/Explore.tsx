@@ -3,7 +3,7 @@ import ClusterReport from './views/ClusterReport'
 import RegionReport from './views/RegionReport'
 import Summary from './views/Summary'
 import SchemaRegistries from './views/SchemaRegistries'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore } from '@/stores/store'
 
 export default function Explore() {
   const selectedSummary = useAppStore((state) => state.selectedSummary)

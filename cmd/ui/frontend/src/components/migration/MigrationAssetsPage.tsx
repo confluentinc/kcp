@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore } from '@/stores/store'
 import { Modal } from '@/components/common/ui/modal'
 import { Button } from '@/components/common/ui/button'
 import { TerraformCodeViewer } from './TerraformCodeViewer'

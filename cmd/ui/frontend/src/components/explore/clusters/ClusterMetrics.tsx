@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/common/ui/button'
 import Tabs from '@/components/common/Tabs'
 import { Download } from 'lucide-react'
 import { downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
-import { useClusterDateFilters, useAppStore } from '@/stores/appStore'
+import { useClusterDateFilters, useAppStore } from '@/stores/store'
 import { useChartZoom } from '@/lib/useChartZoom'
 import { useMetricsDataProcessor } from '@/hooks/useMetricsDataProcessor'
 import { convertBytesToMB, getTCOFieldFromWorkloadAssumption } from '@/lib/metricsUtils'
@@ -39,6 +39,8 @@ export default function ClusterMetrics({
   const [error, setError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<string>('')
   const [defaultsSet, setDefaultsSet] = useState(false)
+  const modalDatesResetRef = useRef(false)
+  const previousModalStateRef = useRef(false)
 
   // Get TCO store actions and preselected metric
   const { setTCOWorkloadValue, preselectedMetric } = useAppStore()
@@ -48,6 +50,7 @@ export default function ClusterMetrics({
   // Reset preselected metric flag when cluster changes
   useEffect(() => {
     setHasUsedPreselectedMetric(false)
+    modalDatesResetRef.current = false // Reset the flag when cluster changes
   }, [cluster.name, cluster.region])
 
   // Determine the TCO field based on the modal workload assumption
@@ -101,6 +104,7 @@ export default function ClusterMetrics({
       setDefaultsSet(true)
     }
   }, [metricsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
+
 
   // Custom reset functions that use metadata dates
   const resetToMetadataDates = () => {
@@ -159,6 +163,51 @@ export default function ClusterMetrics({
   useEffect(() => {
     updateData(processedData.chartData)
   }, [processedData.chartData, updateData])
+
+  // Reset dates to metadata when opened in modal mode
+  useEffect(() => {
+    const isModalActive = inModal && (isActive ?? false)
+    const modalJustOpened = isModalActive && !previousModalStateRef.current
+    
+    // Track previous modal state
+    previousModalStateRef.current = isModalActive
+    
+    // Reset the flag when modal closes
+    if (!isModalActive) {
+      modalDatesResetRef.current = false
+      return
+    }
+    
+    // Only reset when modal just opened and we haven't reset yet
+    if (modalJustOpened && !modalDatesResetRef.current && metricsResponse?.metadata) {
+      const metaStartDate = metricsResponse.metadata.start_date
+      const metaEndDate = metricsResponse.metadata.end_date
+
+      if (
+        metaStartDate &&
+        metaEndDate &&
+        !isNaN(new Date(metaStartDate).getTime()) &&
+        !isNaN(new Date(metaEndDate).getTime())
+      ) {
+        // Mark that we've reset to prevent re-running
+        modalDatesResetRef.current = true
+        
+        // Reset dates to metadata values
+        setStartDate(new Date(metaStartDate))
+        setEndDate(new Date(metaEndDate))
+        
+        // Reset zoom after dates are set
+        setTimeout(() => {
+          try {
+            resetZoom()
+          } catch (error) {
+            // Silently handle zoom reset errors
+            console.error('Error resetting zoom:', error)
+          }
+        }, 0)
+      }
+    }
+  }, [inModal, isActive, metricsResponse?.metadata?.start_date, metricsResponse?.metadata?.end_date, setStartDate, setEndDate, resetZoom])
 
   const handleDownloadCSV = () => {
     const filename = generateMetricsFilename(cluster.name, cluster.region)

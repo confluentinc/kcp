@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Button } from '@/components/common/ui/button'
 import { Modal } from '@/components/common/ui/modal'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore } from '@/stores/store'
 import { ExternalLink } from 'lucide-react'
 import ClusterMetrics from '@/components/explore/clusters/ClusterMetrics'
 import { DEFAULTS } from '@/constants'

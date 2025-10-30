@@ -9,7 +9,7 @@ import {
 } from '@/components/common/ui/select'
 import { Download } from 'lucide-react'
 import { downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
-import { useRegionCostFilters } from '@/stores/appStore'
+import { useRegionCostFilters } from '@/stores/store'
 import { useChartZoom } from '@/lib/useChartZoom'
 import { useRegionCostsData } from '@/hooks/useRegionCostsData'
 import DateRangePicker from '@/components/common/DateRangePicker'

@@ -1,5 +1,5 @@
 import type { Cluster, Region } from '@/types'
-import { useAppStore } from '@/stores/appStore'
+import { useAppStore } from '@/stores/store'
 
 export default function Sidebar() {
   const regions = useAppStore((state) => state.regions)
