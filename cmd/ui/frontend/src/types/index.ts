@@ -24,6 +24,7 @@ export interface Cluster {
   aws_client_information: {
     msk_cluster_config?: any
     connectors?: any[]
+    bootstrap_brokers?: any
   }
   kafka_admin_client_information: {
     acls?: any[]
