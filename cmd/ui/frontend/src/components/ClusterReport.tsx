@@ -30,6 +30,7 @@ interface ClusterReportProps {
     aws_client_information: {
       msk_cluster_config?: any
       connectors?: any[]
+      bootstrap_brokers?: any
     }
     kafka_admin_client_information?: any
   }
@@ -345,6 +346,205 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                   </table>
                 </div>
               </div>
+
+              {/* Bootstrap Brokers */}
+              {cluster.aws_client_information?.bootstrap_brokers && (
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                    Bootstrap Brokers
+                  </h3>
+                  {/* Public Access status (same styling as Monitoring section) */}
+                  <div className="mb-4">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600 dark:text-gray-400">Public Access:</span>
+                        {getStatusBadge(
+                          (mskConfig?.Provisioned?.BrokerNodeGroupInfo?.ConnectivityInfo?.PublicAccess?.Type || '') === 'SERVICE_PROVIDED_EIPS',
+                          (mskConfig?.Provisioned?.BrokerNodeGroupInfo?.ConnectivityInfo?.PublicAccess?.Type || '') === 'SERVICE_PROVIDED_EIPS'
+                            ? 'Enabled'
+                            : 'Disabled'
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 dark:border-gray-600">
+                          <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+                            Broker Type
+                          </th>
+                          <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+                            Addresses
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerString && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              Plaintext
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerString
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringTls && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              TLS
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringTls
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringPublicTls && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              Public TLS
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringPublicTls
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringSaslScram && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              SASL/SCRAM
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringSaslScram
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringPublicSaslScram && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              Public SASL/SCRAM
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringPublicSaslScram
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringSaslIam && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              SASL/IAM
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringSaslIam
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringPublicSaslIam && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              Public SASL/IAM
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringPublicSaslIam
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringVpcConnectivitySaslIam && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              VPC Connectivity SASL/IAM
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringVpcConnectivitySaslIam
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringVpcConnectivitySaslScram && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              VPC Connectivity SASL/SCRAM
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringVpcConnectivitySaslScram
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {cluster.aws_client_information.bootstrap_brokers
+                          .BootstrapBrokerStringVpcConnectivityTls && (
+                          <tr>
+                            <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                              VPC Connectivity TLS
+                            </td>
+                            <td className="py-2">
+                              <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                                {
+                                  cluster.aws_client_information.bootstrap_brokers
+                                    .BootstrapBrokerStringVpcConnectivityTls
+                                }
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Network Configuration */}
               <div>
