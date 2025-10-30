@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { apiClient } from '@/services/apiClient'
-import type { TerraformFiles } from '../types'
+import type { TerraformFiles, WizardFormData } from '../types'
 
 export function useWizardAPI(apiEndpoint: string) {
   const [isLoading, setIsLoading] = useState(false)
@@ -8,7 +8,7 @@ export function useWizardAPI(apiEndpoint: string) {
   const [error, setError] = useState<string | null>(null)
 
   const generateTerraform = useCallback(
-    async (wizardData: Record<string, any>) => {
+    async (wizardData: WizardFormData) => {
       try {
         setIsLoading(true)
         setError(null)

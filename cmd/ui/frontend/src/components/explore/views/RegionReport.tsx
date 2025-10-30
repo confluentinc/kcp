@@ -1,6 +1,11 @@
 import RegionCosts from '../regions/RegionCosts'
+import type { Region } from '@/types'
 
-export default function RegionReport({ region }: any) {
+interface RegionReportProps {
+  region: Region
+}
+
+export default function RegionReport({ region }: RegionReportProps) {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Region Header */}

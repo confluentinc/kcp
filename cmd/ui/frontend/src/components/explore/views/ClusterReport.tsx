@@ -6,44 +6,18 @@ import ClusterACLs from '../clusters/ClusterACLs'
 import { formatDate } from '@/lib/formatters'
 import Tabs from '@/components/common/Tabs'
 import ClusterConfigurationSection from '../clusters/ClusterConfigurationSection'
+import type { Cluster, Region } from '@/types'
+import { CLUSTER_REPORT_TABS } from '@/constants'
+import type { ClusterReportTab } from '@/types'
 
 interface ClusterReportProps {
-  cluster: {
-    name: string
-    metrics?: {
-      metadata: {
-        cluster_type: string
-        follower_fetching: boolean
-        tiered_storage: boolean
-        instance_type: string
-        broker_az_distribution: string
-        kafka_version: string
-        enhanced_monitoring: string
-        start_date: string
-        end_date: string
-        period: number // Period in seconds
-      }
-      results: Array<{
-        start: string
-        end: string
-        label: string
-        value: number | null
-      }>
-    }
-    aws_client_information: {
-      msk_cluster_config?: any
-      connectors?: any[]
-    }
-    kafka_admin_client_information?: any
-  }
+  cluster: Cluster
   regionName: string
-  regionData?: any
+  regionData?: Pick<Region, 'configurations'>
 }
 
 export default function ClusterReport({ cluster, regionName, regionData }: ClusterReportProps) {
-  const [activeTab, setActiveTab] = useState<
-    'metrics' | 'topics' | 'connectors' | 'cluster' | 'acls'
-  >('cluster')
+  const [activeTab, setActiveTab] = useState<ClusterReportTab>(CLUSTER_REPORT_TABS.CLUSTER)
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
   const provisioned = mskConfig?.Provisioned
@@ -104,41 +78,43 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
         {/* All Tabs */}
         <Tabs
           tabs={[
-            { id: 'cluster', label: 'Cluster' },
-            { id: 'metrics', label: 'Metrics' },
-            { id: 'topics', label: 'Topics' },
-            { id: 'connectors', label: 'Connectors' },
-            { id: 'acls', label: 'ACLs' },
+            { id: CLUSTER_REPORT_TABS.CLUSTER, label: 'Cluster' },
+            { id: CLUSTER_REPORT_TABS.METRICS, label: 'Metrics' },
+            { id: CLUSTER_REPORT_TABS.TOPICS, label: 'Topics' },
+            { id: CLUSTER_REPORT_TABS.CONNECTORS, label: 'Connectors' },
+            { id: CLUSTER_REPORT_TABS.ACLS, label: 'ACLs' },
           ]}
           activeId={activeTab}
-          onChange={(id) => setActiveTab(id as any)}
+          onChange={(id) => {
+            setActiveTab(id as ClusterReportTab)
+          }}
           className="border-b border-gray-200 dark:border-border"
         />
 
         {/* Tab Content */}
         <div className="p-6">
           {/* Metrics Tab */}
-          {activeTab === 'metrics' && (
+          {activeTab === CLUSTER_REPORT_TABS.METRICS && (
             <div className="min-w-0 max-w-full">
               <ClusterMetrics
                 cluster={{
                   name: cluster.name,
                   region: regionName,
                 }}
-                isActive={activeTab === 'metrics'}
+                isActive={activeTab === CLUSTER_REPORT_TABS.METRICS}
               />
             </div>
           )}
 
           {/* Topics Tab */}
-          {activeTab === 'topics' && (
+          {activeTab === CLUSTER_REPORT_TABS.TOPICS && (
             <div className="min-w-0 max-w-full">
               <ClusterTopics kafkaAdminInfo={cluster.kafka_admin_client_information} />
             </div>
           )}
 
           {/* Connectors Tab */}
-          {activeTab === 'connectors' && (
+          {activeTab === CLUSTER_REPORT_TABS.CONNECTORS && (
             <div className="min-w-0 max-w-full">
               <ClusterConnectors
                 connectors={cluster.aws_client_information?.connectors || []}
@@ -150,14 +126,14 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
           )}
 
           {/* ACLs Tab */}
-          {activeTab === 'acls' && (
+          {activeTab === CLUSTER_REPORT_TABS.ACLS && (
             <div className="min-w-0 max-w-full">
               <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
             </div>
           )}
 
           {/* Cluster Configuration Tab */}
-          {activeTab === 'cluster' && (
+          {activeTab === CLUSTER_REPORT_TABS.CLUSTER && (
             <ClusterConfigurationSection
               cluster={cluster}
               provisioned={provisioned}

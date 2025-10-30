@@ -5,7 +5,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from '@/components/common/ui/table'
 
 interface ProcessedData {
   tableData: Array<{

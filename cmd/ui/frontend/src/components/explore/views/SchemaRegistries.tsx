@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
 
 interface SchemaVersion {
   schema: string

@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/components/common/ui/select'
 import { Download } from 'lucide-react'
 import { downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
 import { useRegionCostFilters } from '@/stores/appStore'
@@ -19,6 +19,8 @@ import RegionCostsTableTab from './RegionCostsTableTab'
 import MetricsCodeViewer from '@/components/explore/clusters/MetricsCodeViewer'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
+import { TAB_IDS, COST_TYPES } from '@/constants'
+import type { TabId, CostType } from '@/types'
 
 interface RegionCostsProps {
   region: {
@@ -33,7 +35,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   const [error, setError] = useState<string | null>(null)
   const [selectedService, setSelectedService] = useState<string>('')
   const [selectedTableService, setSelectedTableService] = useState<string>('')
-  const [selectedCostType, setSelectedCostType] = useState<string>('unblended_cost')
+  const [selectedCostType, setSelectedCostType] = useState<CostType>(COST_TYPES.UNBLENDED_COST)
   const [defaultsSet, setDefaultsSet] = useState(false)
 
   // Region-specific state from Zustand
@@ -156,11 +158,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
         setCostsResponse(data)
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Failed to fetch costs'
-        )
+        setError(err instanceof Error ? err.message : 'Failed to fetch costs')
       } finally {
         setIsLoading(false)
       }
@@ -228,17 +226,17 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
             </label>
             <Select
               value={selectedCostType}
-              onValueChange={setSelectedCostType}
+              onValueChange={(value) => setSelectedCostType(value as CostType)}
             >
               <SelectTrigger className="w-[300px]">
                 <SelectValue placeholder="Select cost type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="unblended_cost">Unblended Cost</SelectItem>
-                <SelectItem value="blended_cost">Blended Cost</SelectItem>
-                <SelectItem value="amortized_cost">Amortized Cost</SelectItem>
-                <SelectItem value="net_amortized_cost">Net Amortized Cost</SelectItem>
-                <SelectItem value="net_unblended_cost">Net Unblended Cost</SelectItem>
+                <SelectItem value={COST_TYPES.UNBLENDED_COST}>Unblended Cost</SelectItem>
+                <SelectItem value={COST_TYPES.BLENDED_COST}>Blended Cost</SelectItem>
+                <SelectItem value={COST_TYPES.AMORTIZED_COST}>Amortized Cost</SelectItem>
+                <SelectItem value={COST_TYPES.NET_AMORTIZED_COST}>Net Amortized Cost</SelectItem>
+                <SelectItem value={COST_TYPES.NET_UNBLENDED_COST}>Net Unblended Cost</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -263,13 +261,13 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
           <div className="flex items-center justify-between mb-4">
             <Tabs
               tabs={[
-                { id: 'chart', label: 'Chart' },
-                { id: 'table', label: 'Table' },
-                { id: 'json', label: 'JSON' },
-                { id: 'csv', label: 'CSV' },
+                { id: TAB_IDS.CHART, label: 'Chart' },
+                { id: TAB_IDS.TABLE, label: 'Table' },
+                { id: TAB_IDS.JSON, label: 'JSON' },
+                { id: TAB_IDS.CSV, label: 'CSV' },
               ]}
               activeId={activeCostsTab}
-              onChange={(id) => setActiveCostsTab(id as any)}
+              onChange={(id) => setActiveCostsTab(id as TabId)}
             />
             <div className="flex items-center gap-2">
               <Button
@@ -296,7 +294,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
           {/* Tab Content */}
           <div className="space-y-4 min-w-0">
             {/* Chart Tab */}
-            {activeCostsTab === 'chart' && (
+            {activeCostsTab === TAB_IDS.CHART && (
               <RegionCostsChartTab
                 selectedService={selectedService}
                 selectedCostType={selectedCostType}
@@ -313,7 +311,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
             )}
 
             {/* Table Tab */}
-            {activeCostsTab === 'table' && (
+            {activeCostsTab === TAB_IDS.TABLE && (
               <RegionCostsTableTab
                 processedData={processedData}
                 selectedCostType={selectedCostType}
@@ -323,7 +321,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
             )}
 
             {/* JSON Tab */}
-            {activeCostsTab === 'json' && (
+            {activeCostsTab === TAB_IDS.JSON && (
               <MetricsCodeViewer
                 data={JSON.stringify(costsResponse, null, 2)}
                 label="JSON"
@@ -333,7 +331,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
             )}
 
             {/* CSV Tab */}
-            {activeCostsTab === 'csv' && (
+            {activeCostsTab === TAB_IDS.CSV && (
               <MetricsCodeViewer
                 data={processedData.csvData}
                 label="CSV"

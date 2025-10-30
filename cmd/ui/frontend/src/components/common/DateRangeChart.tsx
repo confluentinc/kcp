@@ -10,22 +10,38 @@ import {
   ResponsiveContainer,
   ReferenceArea,
 } from 'recharts'
+import type { CategoricalChartFunc } from 'recharts/types/chart/types'
 import { format } from 'date-fns'
 import { formatDateShort } from '@/lib/formatters'
 
+export interface ChartDataPoint {
+  date: string
+  formattedDate?: string
+  epochTime: number
+  [key: string]: string | number | null | undefined
+}
+
+export interface TooltipPayload {
+  name?: string
+  value?: number | string
+  color?: string
+  [key: string]: unknown
+}
+
+export interface TooltipContentProps {
+  active?: boolean
+  payload?: TooltipPayload[]
+  label?: number | string
+}
+
 interface DateRangeChartProps {
-  data: Array<{
-    date: string
-    formattedDate?: string
-    epochTime: number
-    [key: string]: string | number | null | undefined
-  }>
+  data: ChartDataPoint[]
   children: ReactNode
   chartType?: 'area' | 'line'
   height?: number | string
   yAxisFormatter?: (value: number) => string
   tooltipLabelFormatter?: (label: number | string) => string
-  customTooltip?: (props: any) => ReactNode
+  customTooltip?: (props: TooltipContentProps) => ReactNode
   margin?: {
     top?: number
     right?: number
@@ -33,13 +49,13 @@ interface DateRangeChartProps {
     bottom?: number
   }
   // Zoom props from useChartZoom
-  zoomData?: any[]
+  zoomData?: ChartDataPoint[]
   left?: number
   right?: number
   refAreaLeft?: number
   refAreaRight?: number
-  onMouseDown?: (e: any) => void
-  onMouseMove?: (e: any) => void
+  onMouseDown?: CategoricalChartFunc
+  onMouseMove?: CategoricalChartFunc
   onMouseUp?: () => void
 }
 
@@ -172,15 +188,25 @@ export default function DateRangeChart({
 /**
  * Default tooltip for cost charts (shows currency formatting)
  */
-export function CostChartTooltip({ active, payload, label }: any) {
+export function CostChartTooltip({ active, payload, label }: TooltipContentProps) {
   if (active && payload && payload.length > 0) {
-    const nonZeroEntries = payload.filter((entry: any) => entry.value && entry.value > 0)
+    const nonZeroEntries = payload.filter((entry) => {
+      const value = typeof entry.value === 'number' ? entry.value : 0
+      return value > 0
+    })
 
     if (nonZeroEntries.length === 0) return null
 
-    const sortedEntries = nonZeroEntries.sort((a: any, b: any) => (b.value || 0) - (a.value || 0))
+    const sortedEntries = nonZeroEntries.sort((a, b) => {
+      const aValue = typeof a.value === 'number' ? a.value : 0
+      const bValue = typeof b.value === 'number' ? b.value : 0
+      return bValue - aValue
+    })
 
-    const total = sortedEntries.reduce((sum: number, entry: any) => sum + (entry.value || 0), 0)
+    const total = sortedEntries.reduce((sum: number, entry) => {
+      const value = typeof entry.value === 'number' ? entry.value : 0
+      return sum + value
+    }, 0)
 
     return (
       <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-3 shadow-lg">
@@ -188,7 +214,9 @@ export function CostChartTooltip({ active, payload, label }: any) {
           {label ? format(new Date(label), 'MMM dd, yyyy HH:mm') : 'Unknown Date'}
         </p>
         <div className="space-y-1">
-          {sortedEntries.map((entry: any, index: number) => (
+          {sortedEntries.map((entry, index: number) => {
+            const value = typeof entry.value === 'number' ? entry.value : 0
+            return (
             <p
               key={index}
               className="text-gray-900 dark:text-gray-100 text-sm flex items-center justify-between"
@@ -203,9 +231,10 @@ export function CostChartTooltip({ active, payload, label }: any) {
                 ></span>
                 {entry.name}:
               </span>
-              <span className="ml-2 font-mono">${(entry.value || 0).toFixed(2)}</span>
+              <span className="ml-2 font-mono">${value.toFixed(2)}</span>
             </p>
-          ))}
+            )
+          })}
         </div>
         <div className="border-t border-gray-200 dark:border-border mt-2 pt-2">
           <p className="text-gray-900 dark:text-gray-100 text-sm font-semibold flex justify-between">
@@ -219,10 +248,14 @@ export function CostChartTooltip({ active, payload, label }: any) {
   return null
 }
 
+interface SimpleChartTooltipProps extends TooltipContentProps {
+  labelKey?: string
+}
+
 /**
  * Simple tooltip for single-value charts (like metrics)
  */
-export function SimpleChartTooltip({ active, payload, label, labelKey }: any) {
+export function SimpleChartTooltip({ active, payload, label, labelKey }: SimpleChartTooltipProps) {
   if (active && payload && payload.length) {
     return (
       <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-3 shadow-lg">

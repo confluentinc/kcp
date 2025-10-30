@@ -28,13 +28,3 @@ export interface ApiErrorResponse {
   details?: Record<string, unknown>
 }
 
-/**
- * Pagination metadata (for future use)
- */
-export interface PaginationMetadata {
-  page: number
-  pageSize: number
-  total: number
-  totalPages: number
-}
-

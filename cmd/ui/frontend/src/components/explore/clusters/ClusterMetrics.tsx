@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
 import Tabs from '@/components/common/Tabs'
 import { Download } from 'lucide-react'
 import { downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
@@ -13,6 +13,8 @@ import MetricsTableTab from './MetricsTableTab'
 import MetricsCodeViewer from './MetricsCodeViewer'
 import { apiClient } from '@/services/apiClient'
 import type { MetricsApiResponse } from '@/types/api'
+import { TAB_IDS } from '@/constants'
+import type { TabId } from '@/types'
 
 interface ClusterMetricsProps {
   cluster: {
@@ -61,7 +63,7 @@ export default function ClusterMetrics({
     const convertedValue =
       tcoField === 'partitions' ? Math.round(value).toString() : convertBytesToMB(value)
 
-    setTCOWorkloadValue(clusterKey, tcoField as any, convertedValue)
+    setTCOWorkloadValue(clusterKey, tcoField, convertedValue)
 
     // Show success feedback with stat type
     setTransferSuccess(`${tcoField}-${statType}`)
@@ -280,13 +282,13 @@ export default function ClusterMetrics({
           <div className="flex items-center justify-between mb-4">
             <Tabs
               tabs={[
-                { id: 'chart', label: 'Chart' },
-                { id: 'table', label: 'Table' },
-                { id: 'json', label: 'JSON' },
-                { id: 'csv', label: 'CSV' },
+                { id: TAB_IDS.CHART, label: 'Chart' },
+                { id: TAB_IDS.TABLE, label: 'Table' },
+                { id: TAB_IDS.JSON, label: 'JSON' },
+                { id: TAB_IDS.CSV, label: 'CSV' },
               ]}
               activeId={activeMetricsTab}
-              onChange={(id) => setActiveMetricsTab(id as any)}
+              onChange={(id) => setActiveMetricsTab(id as TabId)}
             />
             <div className="flex items-center gap-2">
               <Button
@@ -310,7 +312,7 @@ export default function ClusterMetrics({
             </div>
           </div>
 
-          {activeMetricsTab === 'chart' && (
+          {activeMetricsTab === TAB_IDS.CHART && (
             <MetricsChartTab
               selectedMetric={selectedMetric}
               setSelectedMetric={setSelectedMetric}
@@ -332,14 +334,14 @@ export default function ClusterMetrics({
             />
           )}
 
-          {activeMetricsTab === 'table' && (
+          {activeMetricsTab === TAB_IDS.TABLE && (
             <MetricsTableTab
               processedData={processedData}
               metricsResponse={metricsResponse}
             />
           )}
 
-          {activeMetricsTab === 'json' && (
+          {activeMetricsTab === TAB_IDS.JSON && (
             <MetricsCodeViewer
               data={JSON.stringify(metricsResponse, null, 2)}
               label="JSON"
@@ -348,7 +350,7 @@ export default function ClusterMetrics({
             />
           )}
 
-          {activeMetricsTab === 'csv' && (
+          {activeMetricsTab === TAB_IDS.CSV && (
             <MetricsCodeViewer
               data={processedData.csvData}
               label="CSV"

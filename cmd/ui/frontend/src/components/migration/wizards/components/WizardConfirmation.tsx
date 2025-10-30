@@ -1,7 +1,8 @@
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
+import type { WizardFormData } from '../types'
 
 interface WizardConfirmationProps {
-  data: Record<string, any>
+  data: WizardFormData
   onConfirm: () => void
   onBack: () => void
   isLoading: boolean
@@ -13,7 +14,7 @@ export function WizardConfirmation({
   onBack,
   isLoading,
 }: WizardConfirmationProps) {
-  const renderValue = (value: any): string => {
+  const renderValue = (value: unknown): string => {
     if (value === null || value === undefined) return 'N/A'
     if (typeof value === 'boolean') return value ? 'Yes' : 'No'
     if (typeof value === 'object') return JSON.stringify(value, null, 2)

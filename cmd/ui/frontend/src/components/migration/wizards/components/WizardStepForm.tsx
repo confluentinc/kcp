@@ -1,13 +1,13 @@
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
 import Form from '@rjsf/shadcn'
 import validator from '@rjsf/validator-ajv8'
 import type { RJSFSchema, UiSchema } from '@rjsf/utils'
-import type { WizardStep } from '../types'
+import type { WizardStep, WizardFormData } from '../types'
 
 interface WizardStepFormProps {
   step: WizardStep
-  formData: Record<string, any>
-  onSubmit: (formData: any) => void
+  formData: WizardFormData
+  onSubmit: (formData: WizardFormData) => void
   onBack: () => void
   canGoBack: boolean
   isLoading?: boolean

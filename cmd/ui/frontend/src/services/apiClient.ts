@@ -7,6 +7,7 @@ import type {
   StateUploadResponse,
   ApiErrorResponse,
 } from '@/types/api'
+import { API_ENDPOINTS, REQUEST_TIMEOUT } from '@/constants'
 
 /**
  * Custom error class for API errors
@@ -64,10 +65,11 @@ async function request<T>(
   const controller = new AbortController()
   const signal = config?.signal || controller.signal
 
-  // Set timeout if specified
+  // Set timeout if specified, otherwise use default
+  const finalConfig = { timeout: REQUEST_TIMEOUT, ...config }
   let timeoutId: NodeJS.Timeout | undefined
-  if (config?.timeout) {
-    timeoutId = setTimeout(() => controller.abort(), config.timeout)
+  if (finalConfig.timeout) {
+    timeoutId = setTimeout(() => controller.abort(), finalConfig.timeout)
   }
 
   try {
@@ -175,7 +177,7 @@ const metrics = {
     }
 
     return get<MetricsApiResponse>(
-      `/metrics/${encodeURIComponent(region)}/${encodeURIComponent(cluster)}`,
+      `${API_ENDPOINTS.METRICS}/${encodeURIComponent(region)}/${encodeURIComponent(cluster)}`,
       queryParams,
       config
     )
@@ -204,7 +206,7 @@ const costs = {
         params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
     }
 
-    return get<CostsApiResponse>(`/costs/${encodeURIComponent(region)}`, queryParams, config)
+    return get<CostsApiResponse>(`${API_ENDPOINTS.COSTS}/${encodeURIComponent(region)}`, queryParams, config)
   },
 }
 
@@ -219,7 +221,7 @@ const state = {
     data: StateUploadRequest,
     config?: RequestConfig
   ): Promise<StateUploadResponse> {
-    return post<StateUploadResponse>('/upload-state', data, config)
+    return post<StateUploadResponse>(API_ENDPOINTS.UPLOAD_STATE, data, config)
   },
 }
 
@@ -230,9 +232,9 @@ const wizard = {
   /**
    * Generate Terraform files from wizard data
    */
-  async generateTerraform<T = any>(
+  async generateTerraform<T = unknown>(
     endpoint: string,
-    wizardData: Record<string, any>,
+    wizardData: Record<string, unknown>,
     config?: RequestConfig
   ): Promise<T> {
     return post<T>(endpoint, wizardData, config)

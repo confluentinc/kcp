@@ -5,7 +5,7 @@ import Summary from './views/Summary'
 import SchemaRegistries from './views/SchemaRegistries'
 import { useAppStore } from '@/stores/appStore'
 
-export default function ExploreContent() {
+export default function Explore() {
   const selectedSummary = useAppStore((state) => state.selectedSummary)
   const selectedCluster = useAppStore((state) => state.selectedCluster)
   const selectedRegion = useAppStore((state) => state.selectedRegion)
@@ -52,8 +52,14 @@ export default function ExploreContent() {
     }
 
     return null
-  }, [selectedSummary, selectedCluster, selectedRegion, selectedSchemaRegistries, regions, schemaRegistries])
+  }, [
+    selectedSummary,
+    selectedCluster,
+    selectedRegion,
+    selectedSchemaRegistries,
+    regions,
+    schemaRegistries,
+  ])
 
   return <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">{activeView}</div>
 }
-

@@ -1,7 +1,8 @@
 import { formatRetentionTime } from '@/lib/utils'
+import type { KafkaAdminInfo, Topic } from '@/types'
 
 interface ClusterTopicsProps {
-  kafkaAdminInfo?: any
+  kafkaAdminInfo?: KafkaAdminInfo
 }
 
 export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
@@ -80,7 +81,7 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-600 overflow-visible">
-              {kafkaAdminInfo.topics.details.map((topic: any, index: number) => (
+              {kafkaAdminInfo.topics.details.map((topic: Topic, index: number) => (
                 <tr key={index}>
                   <td className="py-3 text-gray-900 dark:text-gray-100">
                     <div className="flex items-center">

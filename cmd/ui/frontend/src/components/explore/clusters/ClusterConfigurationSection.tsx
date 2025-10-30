@@ -7,6 +7,8 @@ import StatusBadge from '@/components/common/StatusBadge'
 import { createStatusBadgeProps } from '@/lib/utils'
 import { formatDate } from '@/lib/formatters'
 import { decodeBase64 } from '@/lib/clusterUtils'
+import type { MSKProvisionedCluster, BrokerNodeGroupInfo } from '@/types'
+import type { MSKConfiguration } from '@/types'
 
 interface ClusterConfigurationSectionProps {
   cluster: {
@@ -17,9 +19,11 @@ interface ClusterConfigurationSectionProps {
       }
     }
   }
-  provisioned: any
-  brokerInfo: any
-  regionData?: any
+  provisioned: MSKProvisionedCluster
+  brokerInfo: BrokerNodeGroupInfo
+  regionData?: {
+    configurations?: MSKConfiguration[]
+  }
 }
 
 export default function ClusterConfigurationSection({
@@ -76,10 +80,31 @@ export default function ClusterConfigurationSection({
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Authentication Status
         </h3>
-        <AuthenticationStatus
-          clientAuthentication={provisioned.ClientAuthentication || {}}
-          displayMode="table"
-        />
+            <AuthenticationStatus
+              clientAuthentication={
+                provisioned.ClientAuthentication
+                  ? {
+                      Unauthenticated: provisioned.ClientAuthentication.Unauthenticated?.Enabled
+                        ? { Enabled: true }
+                        : undefined,
+                      Sasl: provisioned.ClientAuthentication.Sasl
+                        ? {
+                            Iam: provisioned.ClientAuthentication.Sasl.Iam?.Enabled
+                              ? { Enabled: true }
+                              : undefined,
+                            Scram: provisioned.ClientAuthentication.Sasl.Scram?.Enabled
+                              ? { Enabled: true }
+                              : undefined,
+                          }
+                        : undefined,
+                      Tls: provisioned.ClientAuthentication.Tls?.CertificateAuthorityArnList
+                        ? { Enabled: true }
+                        : undefined,
+                    }
+                  : {}
+              }
+              displayMode="table"
+            />
       </div>
 
       {/* Network Configuration */}
@@ -113,7 +138,11 @@ export default function ClusterConfigurationSection({
         <StorageInfo
           volumeSize={brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0}
           brokerNodes={provisioned.NumberOfBrokerNodes || 0}
-          provisionedThroughput={brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput}
+          provisionedThroughput={
+            brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled !== undefined
+              ? { Enabled: brokerInfo.StorageInfo.EbsStorageInfo.ProvisionedThroughput.Enabled }
+              : undefined
+          }
           displayMode="detailed"
         />
       </div>
@@ -130,7 +159,28 @@ export default function ClusterConfigurationSection({
               Authentication Methods
             </h4>
             <AuthenticationStatus
-              clientAuthentication={provisioned.ClientAuthentication || {}}
+              clientAuthentication={
+                provisioned.ClientAuthentication
+                  ? {
+                      Unauthenticated: provisioned.ClientAuthentication.Unauthenticated?.Enabled
+                        ? { Enabled: true }
+                        : undefined,
+                      Sasl: provisioned.ClientAuthentication.Sasl
+                        ? {
+                            Iam: provisioned.ClientAuthentication.Sasl.Iam?.Enabled
+                              ? { Enabled: true }
+                              : undefined,
+                            Scram: provisioned.ClientAuthentication.Sasl.Scram?.Enabled
+                              ? { Enabled: true }
+                              : undefined,
+                          }
+                        : undefined,
+                      Tls: provisioned.ClientAuthentication.Tls?.CertificateAuthorityArnList
+                        ? { Enabled: true }
+                        : undefined,
+                    }
+                  : {}
+              }
               displayMode="list"
             />
           </div>
@@ -249,7 +299,7 @@ export default function ClusterConfigurationSection({
 
           // Find the matching configuration in region configurations
           const clusterConfig = regionData?.configurations?.find(
-            (config: any) => config.Arn === clusterConfigArn
+            (config) => config.Arn === clusterConfigArn
           )
 
           if (clusterConfig) {

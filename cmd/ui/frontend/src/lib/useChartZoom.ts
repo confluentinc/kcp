@@ -1,9 +1,5 @@
 import { useState, useCallback } from 'react'
-
-interface ChartDataPoint {
-  [key: string]: string | number | null | undefined
-  epochTime: number
-}
+import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
 interface ZoomState {
   data: ChartDataPoint[]

@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
-import { Modal } from '@/components/ui/modal'
+import { Button } from '@/components/common/ui/button'
+import { Modal } from '@/components/common/ui/modal'
 import { useAppStore } from '@/stores/appStore'
 import { ExternalLink } from 'lucide-react'
 import ClusterMetrics from '@/components/explore/clusters/ClusterMetrics'
+import { DEFAULTS } from '@/constants'
 
 export default function TCOInputs() {
   const { regions, tcoWorkloadData, setTCOWorkloadValue, initializeTCOData } = useAppStore()
@@ -135,8 +136,8 @@ export default function TCOInputs() {
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.avgEgressThroughput || ''),
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.peakEgressThroughput || ''),
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.retentionDays || ''),
-      allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.partitions || '1000'),
-      allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.replicationFactor || '3'),
+      allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.partitions || DEFAULTS.PARTITIONS),
+      allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.replicationFactor || DEFAULTS.REPLICATION_FACTOR),
       allClusters.map((cluster) => {
         // Find the cluster object from regions to get metadata
         const region = regions.find((r) => r.name === cluster.regionName)
@@ -148,7 +149,7 @@ export default function TCOInputs() {
         // Find the cluster object from regions to get metadata
         const region = regions.find((r) => r.name === cluster.regionName)
         const clusterObj = region?.clusters?.find((c) => c.name === cluster.name)
-        const tieredStorage = (clusterObj?.metrics?.metadata as any)?.tiered_storage
+        const tieredStorage = clusterObj?.metrics?.metadata?.tiered_storage
         return tieredStorage !== undefined ? tieredStorage.toString().toUpperCase() : 'N/A'
       }),
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.localRetentionHours || ''),
@@ -402,7 +403,7 @@ export default function TCOInputs() {
                           handleInputChange(cluster.key, 'partitions', e.target.value)
                         }
                         className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        placeholder="1000"
+                        placeholder={DEFAULTS.PARTITIONS}
                       />
                       <Button
                         onClick={() => handleOpenMetricsModal(cluster.key, 'partitions')}
@@ -436,7 +437,7 @@ export default function TCOInputs() {
                           handleInputChange(cluster.key, 'replicationFactor', e.target.value)
                         }
                         className="flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        placeholder="3"
+                        placeholder={DEFAULTS.REPLICATION_FACTOR}
                       />
                       <Button
                         disabled
@@ -493,7 +494,7 @@ export default function TCOInputs() {
                   // Find the cluster object from regions to get metadata
                   const region = regions.find((r) => r.name === cluster.regionName)
                   const clusterObj = region?.clusters?.find((c) => c.name === cluster.name)
-                  const tieredStorage = (clusterObj?.metrics?.metadata as any)?.tiered_storage
+                  const tieredStorage = clusterObj?.metrics?.metadata?.tiered_storage
 
                   return (
                     <td

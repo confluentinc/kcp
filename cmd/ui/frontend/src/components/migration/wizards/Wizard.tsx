@@ -7,12 +7,13 @@ import { WizardConfirmation } from './components/WizardConfirmation'
 import { useWizardAPI } from './hooks/useWizardAPI'
 import { useWizardData } from './hooks/useWizardData'
 import { createWizardMachine } from './factory/createWizardMachine'
-import type { WizardConfig } from './types'
+import type { WizardConfig, WizardContext, WizardStep } from './types'
+import type { WizardType } from '@/types'
 
 interface WizardProps {
   config: WizardConfig
   clusterKey?: string
-  wizardType?: 'target-infra' | 'migration-infra' | 'migration-scripts'
+  wizardType?: WizardType
   onComplete?: () => void
 }
 
@@ -25,20 +26,23 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   const { isLoading, generateTerraform } = useWizardAPI(config.apiEndpoint)
 
   // Data management
-  const { flattenedData } = useWizardData(state.context as any)
+  const { flattenedData } = useWizardData(state.context as WizardContext)
 
   // Zustand store
   const setTerraformFiles = useAppStore((state) => state.setTerraformFiles)
 
   const currentStateId = state.value as string
-  const currentStep = config.states[currentStateId]?.meta
+  const currentStep = (config.states[currentStateId] as { meta?: unknown })?.meta
 
   // Calculate progress
-  const allSteps = Object.keys(config.states).filter((key) => config.states[key].type !== 'final')
+  const allSteps = Object.keys(config.states).filter((key) => {
+    const stateConfig = config.states[key] as { type?: string } | undefined
+    return stateConfig?.type !== 'final'
+  })
   const currentIndex = allSteps.indexOf(currentStateId)
   const totalSteps = allSteps.length
 
-  const handleFormSubmit = async (formData: any) => {
+  const handleFormSubmit = async (formData: Record<string, unknown>) => {
     // Send the event with form data
     send({
       type: 'NEXT',
@@ -93,6 +97,9 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
     return <div className="text-gray-900 dark:text-gray-100">Invalid step configuration</div>
   }
 
+  // Type guard to ensure currentStep is a WizardStep
+  const stepData = (state.context.stepData?.[currentStateId] as Record<string, unknown>) || {}
+
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
       <WizardProgress
@@ -101,8 +108,8 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
       />
 
       <WizardStepForm
-        step={currentStep}
-        formData={(state.context.stepData as Record<string, any>)?.[currentStateId] || {}}
+        step={currentStep as WizardStep}
+        formData={stepData}
         onSubmit={handleFormSubmit}
         onBack={handleBack}
         canGoBack={currentIndex > 0}

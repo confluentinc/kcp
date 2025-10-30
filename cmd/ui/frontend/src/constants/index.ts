@@ -12,7 +12,42 @@ export const TAB_IDS = {
   CSV: 'csv',
 } as const
 
-export type TabId = typeof TAB_IDS[keyof typeof TAB_IDS]
+/**
+ * Top-level application tabs
+ */
+export const TOP_LEVEL_TABS = {
+  EXPLORE: 'explore',
+  TCO_INPUTS: 'tco-inputs',
+  MIGRATION_ASSETS: 'migration-assets',
+} as const
+
+/**
+ * Cluster report tab IDs
+ */
+export const CLUSTER_REPORT_TABS = {
+  CLUSTER: 'cluster',
+  METRICS: 'metrics',
+  TOPICS: 'topics',
+  CONNECTORS: 'connectors',
+  ACLS: 'acls',
+} as const
+
+/**
+ * Connector type tabs
+ */
+export const CONNECTOR_TABS = {
+  MSK: 'msk',
+  SELF_MANAGED: 'selfManaged',
+} as const
+
+/**
+ * Wizard types for migration workflows
+ */
+export const WIZARD_TYPES = {
+  TARGET_INFRA: 'target-infra',
+  MIGRATION_INFRA: 'migration-infra',
+  MIGRATION_SCRIPTS: 'migration-scripts',
+} as const
 
 /**
  * Cost types available in the application
@@ -25,8 +60,6 @@ export const COST_TYPES = {
   NET_UNBLENDED_COST: 'net_unblended_cost',
   USAGE_QUANTITY: 'usage_quantity',
 } as const
-
-export type CostType = typeof COST_TYPES[keyof typeof COST_TYPES]
 
 /**
  * Default tab selections
@@ -55,7 +88,13 @@ export const DEFAULTS = {
 } as const
 
 /**
+ * AWS Service Names
+ */
+export const AWS_SERVICES = {
+  MSK: 'Amazon Managed Streaming for Apache Kafka',
+} as const
+
+/**
  * Request timeout (in milliseconds)
  */
 export const REQUEST_TIMEOUT = 30000 // 30 seconds
-

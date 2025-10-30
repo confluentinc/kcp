@@ -22,6 +22,8 @@ export function createWizardMachine(config: WizardConfig) {
   }
 
   // Build state machine configuration from config.states
+  // Note: config.states is dynamically typed, so we use type assertion here
+  // The states structure matches XState's expected format
   const machineConfig = {
     id: config.id,
     initial: config.initial || Object.keys(config.states)[0],
@@ -33,8 +35,10 @@ export function createWizardMachine(config: WizardConfig) {
     states: config.states,
   }
 
-  return createMachine(machineConfig as any, {
-    guards: config.guards as any,
-    actions: actions as any,
+  // XState v5 types are complex for dynamic configurations
+  // Using type assertion here since we're building the machine dynamically from config
+  return createMachine(machineConfig as Parameters<typeof createMachine>[0], {
+    guards: config.guards as never,
+    actions: actions as never,
   })
 }

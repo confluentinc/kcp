@@ -1,3 +1,11 @@
+import type {
+  MSKClusterConfig,
+  MSKConnector,
+  KafkaAdminInfo,
+  MSKConfiguration,
+} from './aws/msk'
+import type { CostsApiResponse } from './api/costs'
+
 // Shared types for the application
 export interface Cluster {
   name: string
@@ -22,22 +30,41 @@ export interface Cluster {
     }>
   }
   aws_client_information: {
-    msk_cluster_config?: any
-    connectors?: any[]
+    msk_cluster_config?: MSKClusterConfig
+    connectors?: MSKConnector[]
   }
-  kafka_admin_client_information: {
-    acls?: any[]
-    [key: string]: any
-  }
+  kafka_admin_client_information: KafkaAdminInfo
   timestamp?: string
 }
 
 export interface Region {
   name: string
-  configurations?: Array<any>
-  costs?: {
-    results: Array<any>
-    metadata: any
-  }
+  configurations?: MSKConfiguration[]
+  costs?: CostsApiResponse
   clusters?: Array<Cluster>
 }
+
+// Re-export AWS MSK types for convenience
+export type {
+  MSKClusterConfig,
+  MSKProvisionedCluster,
+  BrokerNodeGroupInfo,
+  MSKConnector,
+  KafkaACL,
+  KafkaAdminInfo,
+  Topic,
+  TopicsInfo,
+  SelfManagedConnector,
+  MSKConfiguration,
+  RegionData,
+} from './aws/msk'
+
+// Re-export constants types
+export type {
+  TabId,
+  TopLevelTab,
+  CostType,
+  ClusterReportTab,
+  ConnectorTab,
+  WizardType,
+} from './constants'

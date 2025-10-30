@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Header, HeaderSection, HeaderTitle, HeaderSubtitle } from '@/components/ui/header'
-import { Button } from '@/components/ui/button'
+import { Header, HeaderSection, HeaderTitle, HeaderSubtitle } from '@/components/common/ui/header'
+import { Button } from '@/components/common/ui/button'
 
 interface AppHeaderProps {
   onFileUpload?: () => void

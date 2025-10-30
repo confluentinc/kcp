@@ -10,15 +10,18 @@ export interface WizardStep {
   type?: 'form' | 'complete'
 }
 
+// Wizard form data can contain any JSON-serializable values
+export type WizardFormData = Record<string, unknown>
+
 export interface WizardEvent {
   type: 'NEXT' | 'BACK' | 'SUBMIT'
-  data?: Record<string, any>
+  data?: WizardFormData
   stepId?: string
 }
 
 export interface WizardContext {
-  stepData: Record<string, any>
-  allData: Record<string, any>
+  stepData: Record<string, WizardFormData>
+  allData: Record<string, WizardFormData>
   currentStep: string
   previousStep?: string
 }
@@ -28,10 +31,10 @@ export interface WizardConfig {
   title: string
   description: string
   guards: Record<string, (params: { context: WizardContext; event: WizardEvent }) => boolean>
-  actions: Record<string, any>
+  actions: Record<string, unknown>
   apiEndpoint: string
   initial?: string
-  states: Record<string, any>
+  states: Record<string, unknown>
 }
 
 export interface TerraformFiles {
@@ -43,8 +46,8 @@ export interface TerraformFiles {
 
 export interface WizardState {
   currentStep: string
-  stepData: Record<string, any>
-  allData: Record<string, any>
+  stepData: Record<string, WizardFormData>
+  allData: Record<string, WizardFormData>
   isLoading: boolean
   terraformFiles: TerraformFiles | null
   error: string | null

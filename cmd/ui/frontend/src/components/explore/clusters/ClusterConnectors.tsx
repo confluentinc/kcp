@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
 import { formatDate } from '@/lib/formatters'
+import { CONNECTOR_TABS } from '@/constants'
+import type { ConnectorTab } from '@/types'
 
 interface Connector {
   connector_arn: string
@@ -25,7 +27,10 @@ interface Connector {
       ScaleInPolicy: { CpuUtilizationPercentage: number }
       ScaleOutPolicy: { CpuUtilizationPercentage: number }
     }
-    ProvisionedCapacity?: any
+    ProvisionedCapacity?: {
+      WorkerCount?: number
+      McuCount?: number
+    }
   }
   plugins: Array<{
     CustomPlugin: {
@@ -52,7 +57,7 @@ export default function ClusterConnectors({
   connectors,
   selfManagedConnectors = [],
 }: ClusterConnectorsProps) {
-  const [activeTab, setActiveTab] = useState<'msk' | 'selfManaged'>('msk')
+  const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
 
   const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
     <div
@@ -317,9 +322,9 @@ export default function ClusterConnectors({
       <div className="border-b border-gray-200 dark:border-border">
         <nav className="-mb-px flex space-x-8">
           <button
-            onClick={() => setActiveTab('msk')}
+            onClick={() => setActiveTab(CONNECTOR_TABS.MSK)}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'msk'
+              activeTab === CONNECTOR_TABS.MSK
                 ? 'border-blue-500 text-blue-600 dark:text-accent'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
             }`}
@@ -327,9 +332,9 @@ export default function ClusterConnectors({
             MSK Connectors ({connectors?.length || 0})
           </button>
           <button
-            onClick={() => setActiveTab('selfManaged')}
+            onClick={() => setActiveTab(CONNECTOR_TABS.SELF_MANAGED)}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'selfManaged'
+              activeTab === CONNECTOR_TABS.SELF_MANAGED
                 ? 'border-blue-500 text-blue-600 dark:text-accent'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
             }`}
@@ -341,8 +346,8 @@ export default function ClusterConnectors({
 
       {/* Tab Content */}
       <div className="mt-6">
-        {activeTab === 'msk' && renderMSKConnectors()}
-        {activeTab === 'selfManaged' && renderSelfManagedConnectors()}
+        {activeTab === CONNECTOR_TABS.MSK && renderMSKConnectors()}
+        {activeTab === CONNECTOR_TABS.SELF_MANAGED && renderSelfManagedConnectors()}
       </div>
     </div>
   )

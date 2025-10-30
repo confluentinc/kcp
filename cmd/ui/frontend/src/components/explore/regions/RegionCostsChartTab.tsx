@@ -1,16 +1,11 @@
-import { format } from 'date-fns'
+import type { CategoricalChartFunc } from 'recharts/types/chart/types'
 import { Area } from 'recharts'
-import DateRangeChart, { CostChartTooltip } from '@/components/charts/DateRangeChart'
+import DateRangeChart, { CostChartTooltip, type ChartDataPoint } from '@/components/common/DateRangeChart'
 import { formatCostTypeLabel } from '@/lib/costTypeUtils'
 import { getChartColor } from '@/lib/chartColors'
 
 interface ProcessedData {
-  chartData: Array<{
-    date: string
-    formattedDate: string
-    epochTime: number
-    [key: string]: string | number
-  }>
+  chartData: ChartDataPoint[]
   chartOptions: Array<{
     value: string
     label: string
@@ -24,13 +19,13 @@ interface RegionCostsChartTabProps {
   selectedService: string
   selectedCostType: string
   processedData: ProcessedData
-  zoomData: any[]
+  zoomData: ChartDataPoint[]
   left?: number
   right?: number
   refAreaLeft?: number
   refAreaRight?: number
-  handleMouseDown: (e: any) => void
-  handleMouseMove: (e: any) => void
+  handleMouseDown: CategoricalChartFunc
+  handleMouseMove: CategoricalChartFunc
   zoom: () => void
 }
 
@@ -73,14 +68,7 @@ export default function RegionCostsChartTab({
                 data={processedData.chartData}
                 chartType="area"
                 height={400}
-                customTooltip={(props) => (
-                  <CostChartTooltip
-                    {...props}
-                    labelFormatter={(label: number | string) =>
-                      label ? format(new Date(label), 'MMM dd, yyyy HH:mm') : 'Unknown Date'
-                    }
-                  />
-                )}
+                customTooltip={(props) => <CostChartTooltip {...props} />}
                 zoomData={zoomData}
                 left={typeof left === 'number' ? left : undefined}
                 right={typeof right === 'number' ? right : undefined}

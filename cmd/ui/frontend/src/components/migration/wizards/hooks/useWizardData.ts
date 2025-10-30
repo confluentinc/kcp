@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
-import type { WizardContext } from '../types'
+import type { WizardContext, WizardFormData } from '../types'
 
 export function useWizardData(context: WizardContext) {
   const flattenedData = useMemo(() => {
-    const flattened: Record<string, any> = {}
+    const flattened: Record<string, unknown> = {}
 
     // Try allData first
-    Object.entries(context.allData || {}).forEach(([, stepData]: [string, any]) => {
+    Object.entries(context.allData || {}).forEach(([, stepData]: [string, WizardFormData]) => {
       if (stepData && typeof stepData === 'object') {
         Object.assign(flattened, stepData)
       }
@@ -14,7 +14,7 @@ export function useWizardData(context: WizardContext) {
 
     // Fallback to stepData if allData is empty
     if (Object.keys(flattened).length === 0) {
-      Object.entries(context.stepData || {}).forEach(([, stepData]: [string, any]) => {
+      Object.entries(context.stepData || {}).forEach(([, stepData]: [string, WizardFormData]) => {
         if (stepData && typeof stepData === 'object') {
           Object.assign(flattened, stepData)
         }

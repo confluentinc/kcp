@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { formatDateShort } from '@/lib/formatters'
 import { formatCostTypeLabel } from '@/lib/costTypeUtils'
 import type { CostsApiResponse, CostResult } from '@/types/api'
+import { COST_TYPES } from '@/constants'
 
 interface ProcessedData {
   tableData: Array<{
@@ -83,7 +84,7 @@ export function useRegionCostsData(
         const serviceAggregates = aggregates[service]
 
         // Skip usage_quantity cost type
-        if (selectedCostType === 'usage_quantity') return
+        if (selectedCostType === COST_TYPES.USAGE_QUANTITY) return
 
         // Get service total directly from the selected cost type
         if (serviceAggregates[selectedCostType]?.total !== undefined) {

@@ -1,24 +1,26 @@
 import { useMemo, useEffect, useState } from 'react'
 import { useRegions, useSummaryDateFilters } from '@/stores/appStore'
 import { Download, CalendarIcon, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Button } from '@/components/common/ui/button'
+import { Calendar } from '@/components/common/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/common/ui/popover'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/components/common/ui/select'
 import { Area, Legend } from 'recharts'
-import DateRangeChart, { CostChartTooltip } from '@/components/charts/DateRangeChart'
+import DateRangeChart, { CostChartTooltip } from '@/components/common/DateRangeChart'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useChartZoom } from '@/lib/useChartZoom'
 import { formatDateShort } from '@/lib/formatters'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
+import { COST_TYPES, AWS_SERVICES } from '@/constants'
+import type { CostType } from '@/types'
 
 interface CostSummaryData {
   startDate: string | null
@@ -45,7 +47,9 @@ export default function Summary() {
   const [regionCostData, setRegionCostData] = useState<Record<string, CostsApiResponse>>({})
   const [error, setError] = useState<string | null>(null)
   const [defaultsSet, setDefaultsSet] = useState(false)
-  const [selectedChartCostType, setSelectedChartCostType] = useState<string>('unblended_cost')
+  const [selectedChartCostType, setSelectedChartCostType] = useState<CostType>(
+    COST_TYPES.UNBLENDED_COST
+  )
 
   // Get metadata dates from any region's data
   const getMetadataDates = () => {
@@ -169,11 +173,11 @@ export default function Summary() {
 
     // Define the cost types we want to include
     const costTypes = [
-      'unblended_cost',
-      'blended_cost',
-      'amortized_cost',
-      'net_amortized_cost',
-      'net_unblended_cost',
+      COST_TYPES.UNBLENDED_COST,
+      COST_TYPES.BLENDED_COST,
+      COST_TYPES.AMORTIZED_COST,
+      COST_TYPES.NET_AMORTIZED_COST,
+      COST_TYPES.NET_UNBLENDED_COST,
     ]
 
     // Process each region's cost data from API responses using aggregates
@@ -203,9 +207,9 @@ export default function Summary() {
 
       // Process aggregates using the new structure: service -> cost_type -> usage_type -> {sum, avg, max, min}
       // Only include Amazon Managed Streaming for Apache Kafka
-      Object.entries(aggregates).forEach(([service, serviceAggregates]: [string, any]) => {
+      Object.entries(aggregates).forEach(([service, serviceAggregates]) => {
         // Only include Amazon Managed Streaming for Apache Kafka
-        if (service !== 'Amazon Managed Streaming for Apache Kafka') return
+        if (service !== AWS_SERVICES.MSK) return
 
         // Process each cost type
         costTypes.forEach((costType) => {
@@ -236,7 +240,7 @@ export default function Summary() {
     Object.entries(regionCostData).forEach(([regionName, costResponse]) => {
       if (!costResponse?.results || !Array.isArray(costResponse.results)) return
 
-      costResponse.results.forEach((cost: any) => {
+      costResponse.results.forEach((cost) => {
         if (!cost || !cost.start || !cost.service || !cost.values) return
 
         // Only include Amazon Managed Streaming for Apache Kafka
@@ -257,17 +261,33 @@ export default function Summary() {
 
         // Add costs for each cost type
         costTypes.forEach((costType) => {
-          const value = parseFloat(cost.values[costType]) || 0
-          dailyRegionCosts[date][regionName][costType] += value
+          const costValue = cost.values[costType]
+          const value =
+            typeof costValue === 'string'
+              ? parseFloat(costValue)
+              : typeof costValue === 'number'
+              ? costValue
+              : 0
+          dailyRegionCosts[date][regionName][costType] += value || 0
         })
       })
     })
 
     // Create chart data
     const sortedDates = Array.from(allDates).sort()
-    const chartData = sortedDates.map((date) => {
+    const chartData: Array<{
+      date: string
+      formattedDate: string
+      epochTime: number
+      [regionName: string]: string | number
+    }> = sortedDates.map((date) => {
       const dateObj = new Date(date)
-      const dataPoint: any = {
+      const dataPoint: {
+        date: string
+        formattedDate: string
+        epochTime: number
+        [regionName: string]: string | number
+      } = {
         date: date,
         formattedDate: formatDateShort(date),
         epochTime: dateObj.getTime(),
@@ -610,17 +630,17 @@ export default function Summary() {
               </label>
               <Select
                 value={selectedChartCostType}
-                onValueChange={setSelectedChartCostType}
+                onValueChange={(value) => setSelectedChartCostType(value as CostType)}
               >
                 <SelectTrigger className="w-[200px]">
                   <SelectValue placeholder="Select cost type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="unblended_cost">Unblended Cost</SelectItem>
-                  <SelectItem value="blended_cost">Blended Cost</SelectItem>
-                  <SelectItem value="amortized_cost">Amortized Cost</SelectItem>
-                  <SelectItem value="net_amortized_cost">Net Amortized Cost</SelectItem>
-                  <SelectItem value="net_unblended_cost">Net Unblended Cost</SelectItem>
+                  <SelectItem value={COST_TYPES.UNBLENDED_COST}>Unblended Cost</SelectItem>
+                  <SelectItem value={COST_TYPES.BLENDED_COST}>Blended Cost</SelectItem>
+                  <SelectItem value={COST_TYPES.AMORTIZED_COST}>Amortized Cost</SelectItem>
+                  <SelectItem value={COST_TYPES.NET_AMORTIZED_COST}>Net Amortized Cost</SelectItem>
+                  <SelectItem value={COST_TYPES.NET_UNBLENDED_COST}>Net Unblended Cost</SelectItem>
                 </SelectContent>
               </Select>
             </div>

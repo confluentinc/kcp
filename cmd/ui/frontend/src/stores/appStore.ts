@@ -1,13 +1,9 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { Cluster, Region } from '@/types'
-import type { TerraformFiles } from '@/components/wizards/types'
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-const DEFAULT_ACTIVE_COSTS_TAB = 'chart'
-const DEFAULT_METRICS_TAB = 'chart'
+import type { TerraformFiles } from '@/components/migration/wizards/types'
+import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
+import type { WizardType } from '@/types'
 
 // ============================================================================
 // INTERFACES - Unified date filter pattern
@@ -36,9 +32,9 @@ interface WorkloadData {
 
 interface MigrationAssets {
   [clusterKey: string]: {
-    'target-infra': TerraformFiles | null
-    'migration-infra': TerraformFiles | null
-    'migration-scripts': TerraformFiles | null
+    [WIZARD_TYPES.TARGET_INFRA]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATION_INFRA]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATION_SCRIPTS]: TerraformFiles | null
   }
 }
 
@@ -77,7 +73,7 @@ const createDefaultDateFilters = (): DateFilters => ({
 
 const createDefaultRegionState = (): RegionState => ({
   ...createDefaultDateFilters(),
-  activeCostsTab: DEFAULT_ACTIVE_COSTS_TAB,
+  activeCostsTab: DEFAULT_TABS.COSTS,
 })
 
 /**
@@ -194,15 +190,8 @@ interface AppState {
   getMigrationAssetTab: (clusterKey: string) => string | undefined
 
   // Migration assets actions
-  setTerraformFiles: (
-    clusterKey: string,
-    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts',
-    files: TerraformFiles
-  ) => void
-  getTerraformFiles: (
-    clusterKey: string,
-    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts'
-  ) => TerraformFiles | null
+  setTerraformFiles: (clusterKey: string, wizardType: WizardType, files: TerraformFiles) => void
+  getTerraformFiles: (clusterKey: string, wizardType: WizardType) => TerraformFiles | null
 }
 
 export const useAppStore = create<AppState>()(
@@ -224,7 +213,7 @@ export const useAppStore = create<AppState>()(
       summaryDateFilters: createDefaultDateFilters(),
       isProcessing: false,
       error: null,
-      activeMetricsTab: DEFAULT_METRICS_TAB,
+      activeMetricsTab: DEFAULT_TABS.METRICS,
       expandedMigrationCluster: null,
       migrationAssetTabs: {},
 
@@ -352,7 +341,7 @@ export const useAppStore = create<AppState>()(
               [region]: {
                 ...createDefaultRegionState(),
                 activeCostsTab:
-                  state.regionState[region]?.activeCostsTab || DEFAULT_ACTIVE_COSTS_TAB,
+                  state.regionState[region]?.activeCostsTab || DEFAULT_TABS.COSTS,
               },
             },
           }),
@@ -462,8 +451,8 @@ export const useAppStore = create<AppState>()(
                 avgEgressThroughput: '',
                 peakEgressThroughput: '',
                 retentionDays: '',
-                partitions: '1000',
-                replicationFactor: '3',
+                partitions: DEFAULTS.PARTITIONS,
+                replicationFactor: DEFAULTS.REPLICATION_FACTOR,
                 localRetentionHours: '',
               }
             })

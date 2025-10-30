@@ -1,22 +1,21 @@
+import type { CategoricalChartFunc } from 'recharts/types/chart/types'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/components/common/ui/select'
 import { Line } from 'recharts'
-import DateRangeChart, { SimpleChartTooltip } from '@/components/charts/DateRangeChart'
+import DateRangeChart, {
+  SimpleChartTooltip,
+  type ChartDataPoint,
+} from '@/components/common/DateRangeChart'
 import MetricsAggregateStats from './MetricsAggregateStats'
 import { getWorkloadAssumptionName } from '@/lib/metricsUtils'
 
 interface ProcessedData {
-  chartData: Array<{
-    date: string
-    formattedDate: string
-    epochTime: number
-    [key: string]: string | number | null | undefined
-  }>
+  chartData: ChartDataPoint[]
   metrics: string[]
 }
 
@@ -29,13 +28,13 @@ interface MetricsChartTabProps {
   }
   inModal: boolean
   modalWorkloadAssumption?: string
-  zoomData: any[]
+  zoomData: ChartDataPoint[]
   left: number | undefined
   right: number | undefined
   refAreaLeft: number | undefined
   refAreaRight: number | undefined
-  handleMouseDown: (e: any) => void
-  handleMouseMove: (e: any) => void
+  handleMouseDown: CategoricalChartFunc
+  handleMouseMove: CategoricalChartFunc
   zoom: () => void
   transferSuccess: string | null
   handleTransferToTCO: (value: number, statType: 'min' | 'avg' | 'max') => void

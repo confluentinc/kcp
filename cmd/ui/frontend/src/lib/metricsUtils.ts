@@ -27,9 +27,22 @@ export function getWorkloadAssumptionName(metricName: string): string {
 }
 
 /**
+ * Valid TCO workload field names
+ */
+export type TCOWorkloadField =
+  | 'avgIngressThroughput'
+  | 'peakIngressThroughput'
+  | 'avgEgressThroughput'
+  | 'peakEgressThroughput'
+  | 'retentionDays'
+  | 'partitions'
+  | 'replicationFactor'
+  | 'localRetentionHours'
+
+/**
  * Map modal workload assumption to TCO field
  */
-export function getTCOFieldFromWorkloadAssumption(workloadAssumption: string): string {
+export function getTCOFieldFromWorkloadAssumption(workloadAssumption: string): TCOWorkloadField {
   switch (workloadAssumption) {
     case 'Avg Ingress Throughput (MB/s)':
       return 'avgIngressThroughput'

@@ -2,19 +2,19 @@ import { useRef, useState } from 'react'
 import TCOInputsPage from '@/components/tco/TCOInputsPage'
 import Sidebar from '@/components/explore/Sidebar'
 import MigrationAssetsPage from '@/components/migration/MigrationAssetsPage'
-import ExploreContent from '@/components/explore/ExploreContent'
-import AppHeader from '@/components/AppHeader'
+import Explore from '@/components/explore/Explore'
+import AppHeader from '@/components/common/AppHeader'
 import Tabs from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/appStore'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
 import { PageErrorBoundary } from '@/components/ErrorBoundary'
+import { TOP_LEVEL_TABS } from '@/constants'
+import type { TopLevelTab } from '@/types'
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [activeTopTab, setActiveTopTab] = useState<'explore' | 'tco-inputs' | 'migration-assets'>(
-    'explore'
-  )
+  const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
 
   // Global state from Zustand
   const {
@@ -99,78 +99,78 @@ export default function Home() {
         />
 
         <div className="flex flex-1 flex-col">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
 
-        {regions.length > 0 ? (
-          <div className="flex flex-1 flex-col">
-            <Tabs
-              tabs={[
-                { id: 'explore', label: 'Explore Costs & Metrics' },
-                { id: 'tco-inputs', label: 'Generate TCO Inputs' },
-                { id: 'migration-assets', label: 'Generate Migration Assets' },
-              ]}
-              activeId={activeTopTab}
-              onChange={(id) => setActiveTopTab(id as any)}
-              size="lg"
-            />
+          {regions.length > 0 ? (
+            <div className="flex flex-1 flex-col">
+              <Tabs
+                tabs={[
+                  { id: 'explore', label: 'Explore Costs & Metrics' },
+                  { id: 'tco-inputs', label: 'Generate TCO Inputs' },
+                  { id: 'migration-assets', label: 'Generate Migration Assets' },
+                ]}
+                activeId={activeTopTab}
+                onChange={(id) => setActiveTopTab(id as TopLevelTab)}
+                size="lg"
+              />
 
-            {activeTopTab === 'explore' && (
-              <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                <div className="flex h-full">
-                  <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
-                    <Sidebar />
+              {activeTopTab === TOP_LEVEL_TABS.EXPLORE && (
+                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                  <div className="flex h-full">
+                    <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
+                      <Sidebar />
+                    </div>
+                    <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
+                      <Explore />
+                    </main>
                   </div>
-                  <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
-                    <ExploreContent />
-                  </main>
                 </div>
-              </div>
-            )}
+              )}
 
-            {activeTopTab === 'tco-inputs' && (
-              <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                <div className="h-full overflow-auto">
-                  <TCOInputsPage />
+              {activeTopTab === TOP_LEVEL_TABS.TCO_INPUTS && (
+                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                  <div className="h-full overflow-auto">
+                    <TCOInputsPage />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {activeTopTab === 'migration-assets' && (
-              <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                <div className="h-full overflow-auto">
-                  <MigrationAssetsPage />
+              {activeTopTab === TOP_LEVEL_TABS.MIGRATION_ASSETS && (
+                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                  <div className="h-full overflow-auto">
+                    <MigrationAssetsPage />
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center max-w-md mx-auto px-6">
-              <div className="mx-auto w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mb-6">
-                <span className="text-3xl">📁</span>
-              </div>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-                Welcome to KCP
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
-                Upload a KCP state file to get started with exploring your Kafka clusters, analyzing
-                TCO inputs, and managing migration assets.
-              </p>
-              <div className="bg-blue-50 dark:bg-accent/20 border border-blue-200 dark:border-border rounded-lg p-4">
-                <p className="text-sm text-blue-800 dark:text-accent">
-                  <strong>Getting Started:</strong> Click the "Upload KCP State File" button in the
-                  header to begin.
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-md mx-auto px-6">
+                <div className="mx-auto w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mb-6">
+                  <span className="text-3xl">📁</span>
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">
+                  Welcome to KCP
+                </h2>
+                <p className="text-gray-600 dark:text-gray-400 mb-6">
+                  Upload a KCP state file to get started with exploring your Kafka clusters,
+                  analyzing TCO inputs, and managing migration assets.
                 </p>
+                <div className="bg-blue-50 dark:bg-accent/20 border border-blue-200 dark:border-border rounded-lg p-4">
+                  <p className="text-sm text-blue-800 dark:text-accent">
+                    <strong>Getting Started:</strong> Click the "Upload KCP State File" button in
+                    the header to begin.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
         </div>
       </div>
     </PageErrorBoundary>

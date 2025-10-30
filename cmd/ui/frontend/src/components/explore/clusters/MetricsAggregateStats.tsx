@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/common/ui/button'
 
 interface AggregateStatRowProps {
   type: 'min' | 'avg' | 'max'

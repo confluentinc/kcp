@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
-import { Modal } from '@/components/ui/modal'
-import { Button } from '@/components/ui/button'
+import { Modal } from '@/components/common/ui/modal'
+import { Button } from '@/components/common/ui/button'
 import { TerraformCodeViewer } from './TerraformCodeViewer'
 import {
   Wizard,
   targetInfraWizardConfig,
   migrationInfraWizardConfig,
   migrationScriptsWizardConfig,
-} from '@/components/wizards'
+} from '@/components/migration/wizards'
+import type { Cluster, WizardType } from '@/types'
+import { WIZARD_TYPES } from '@/constants'
 
 // Type definitions for File System Access API
 declare global {
@@ -36,11 +38,9 @@ declare global {
 export default function MigrationAssets() {
   const regions = useAppStore((state) => state.regions)
   const [isWizardOpen, setIsWizardOpen] = useState(false)
-  const [wizardType, setWizardType] = useState<
-    'target-infra' | 'migration-infra' | 'migration-scripts' | null
-  >(null)
+  const [wizardType, setWizardType] = useState<WizardType | null>(null)
   const [selectedClusterForWizard, setSelectedClusterForWizard] = useState<{
-    cluster: any
+    cluster: Cluster
     regionName: string
   } | null>(null)
 
@@ -62,21 +62,21 @@ export default function MigrationAssets() {
       }))
   )
 
-  const handleCreateTargetInfrastructure = (cluster: any, regionName: string) => {
+  const handleCreateTargetInfrastructure = (cluster: Cluster, regionName: string) => {
     setSelectedClusterForWizard({ cluster, regionName })
-    setWizardType('target-infra')
+    setWizardType(WIZARD_TYPES.TARGET_INFRA)
     setIsWizardOpen(true)
   }
 
-  const handleCreateMigrationInfrastructure = (cluster: any, regionName: string) => {
+  const handleCreateMigrationInfrastructure = (cluster: Cluster, regionName: string) => {
     setSelectedClusterForWizard({ cluster, regionName })
-    setWizardType('migration-infra')
+    setWizardType(WIZARD_TYPES.MIGRATION_INFRA)
     setIsWizardOpen(true)
   }
 
-  const handleCreateMigrationScripts = (cluster: any, regionName: string) => {
+  const handleCreateMigrationScripts = (cluster: Cluster, regionName: string) => {
     setSelectedClusterForWizard({ cluster, regionName })
-    setWizardType('migration-scripts')
+    setWizardType(WIZARD_TYPES.MIGRATION_SCRIPTS)
     setIsWizardOpen(true)
   }
 
@@ -86,10 +86,7 @@ export default function MigrationAssets() {
     setSelectedClusterForWizard(null)
   }
 
-  const handleWizardComplete = (
-    clusterKey: string,
-    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts'
-  ) => {
+  const handleWizardComplete = (clusterKey: string, wizardType: WizardType) => {
     // Close the wizard
     setIsWizardOpen(false)
     setWizardType(null)
@@ -107,10 +104,7 @@ export default function MigrationAssets() {
   // Get stored terraform files from Zustand
   const migrationAssets = useAppStore((state) => state.migrationAssets)
 
-  const getTerraformFiles = (
-    clusterKey: string,
-    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts'
-  ) => {
+  const getTerraformFiles = (clusterKey: string, wizardType: WizardType) => {
     return migrationAssets[clusterKey]?.[wizardType] || null
   }
 
@@ -165,7 +159,7 @@ export default function MigrationAssets() {
       const zipFileName = `${clusterName}-${wizardType}.zip`
 
       // Use File System API to save to user-selected directory
-      const directoryHandle = await (window as any).showDirectoryPicker({
+      const directoryHandle = await window.showDirectoryPicker({
         mode: 'readwrite',
         startIn: 'downloads',
       })
@@ -177,13 +171,14 @@ export default function MigrationAssets() {
       await writable.close()
 
       alert(`Successfully saved ${zipFileName} to your selected directory!`)
-    } catch (error: any) {
+    } catch (error: unknown) {
       // User canceled the picker or other error
-      if (error.name === 'AbortError' || error.message === 'The user aborted a request.') {
+      const err = error as { name?: string; message?: string; code?: string }
+      if (err.name === 'AbortError' || err.message === 'The user aborted a request.') {
         // User canceled directory selection
       } else if (
-        error.message?.includes('system files') ||
-        error.code === 'InvalidModificationError'
+        err.message?.includes('system files') ||
+        err.code === 'InvalidModificationError'
       ) {
         // Error saving to selected directory - error handling done in catch block
         alert(
@@ -243,11 +238,7 @@ export default function MigrationAssets() {
     }
   }
 
-  const renderTerraformTabs = (
-    clusterKey: string,
-    wizardType: 'target-infra' | 'migration-infra' | 'migration-scripts',
-    clusterName: string
-  ) => {
+  const renderTerraformTabs = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
     const files = getTerraformFiles(clusterKey, wizardType)
     if (!files) {
       return <p className="text-gray-600 dark:text-gray-400">No terraform files generated yet.</p>
@@ -409,9 +400,9 @@ export default function MigrationAssets() {
                     <div className="border-b border-gray-200 dark:border-border">
                       <nav className="-mb-px flex space-x-8 px-6 overflow-x-auto bg-white dark:bg-card">
                         {[
-                          { id: 'migration-infra', label: 'Migration Infrastructure' },
-                          { id: 'target-infra', label: 'Target Infrastructure' },
-                          { id: 'migration-scripts', label: 'Migration Scripts' },
+                          { id: WIZARD_TYPES.MIGRATION_INFRA, label: 'Migration Infrastructure' },
+                          { id: WIZARD_TYPES.TARGET_INFRA, label: 'Target Infrastructure' },
+                          { id: WIZARD_TYPES.MIGRATION_SCRIPTS, label: 'Migration Scripts' },
                         ].map((tab) => (
                           <button
                             key={tab.id}
@@ -429,25 +420,31 @@ export default function MigrationAssets() {
                     </div>
                     <div className="p-6">
                       {/* Migration Infrastructure Tab */}
-                      {migrationAssetTabs[clusterKey] === 'migration-infra' && (
+                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.MIGRATION_INFRA && (
                         <div>
-                          {renderTerraformTabs(clusterKey, 'migration-infra', cluster.name)}
+                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.MIGRATION_INFRA, cluster.name)}
                         </div>
                       )}
                       {/* Target Infrastructure Tab */}
-                      {migrationAssetTabs[clusterKey] === 'target-infra' && (
-                        <div>{renderTerraformTabs(clusterKey, 'target-infra', cluster.name)}</div>
+                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.TARGET_INFRA && (
+                        <div>
+                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.TARGET_INFRA, cluster.name)}
+                        </div>
                       )}
                       {/* Migration Scripts Tab */}
-                      {migrationAssetTabs[clusterKey] === 'migration-scripts' && (
+                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.MIGRATION_SCRIPTS && (
                         <div>
-                          {renderTerraformTabs(clusterKey, 'migration-scripts', cluster.name)}
+                          {renderTerraformTabs(
+                            clusterKey,
+                            WIZARD_TYPES.MIGRATION_SCRIPTS,
+                            cluster.name
+                          )}
                         </div>
                       )}
                       {/* Default view when no tab is active */}
                       {!migrationAssetTabs[clusterKey] && (
                         <div>
-                          {renderTerraformTabs(clusterKey, 'migration-infra', cluster.name)}
+                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.MIGRATION_INFRA, cluster.name)}
                         </div>
                       )}
                     </div>
@@ -479,14 +476,14 @@ export default function MigrationAssets() {
           isOpen={isWizardOpen}
           onClose={handleCloseWizard}
           title={`${
-            wizardType === 'target-infra'
+            wizardType === WIZARD_TYPES.TARGET_INFRA
               ? 'Create Target Infrastructure'
-              : wizardType === 'migration-infra'
+              : wizardType === WIZARD_TYPES.MIGRATION_INFRA
               ? 'Create Migration Infrastructure'
               : 'Create Migration Scripts'
           } - ${selectedClusterForWizard.cluster.name}`}
         >
-          {wizardType === 'target-infra' && selectedClusterForWizard && (
+          {wizardType === WIZARD_TYPES.TARGET_INFRA && selectedClusterForWizard && (
             <Wizard
               config={targetInfraWizardConfig}
               clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
@@ -512,7 +509,7 @@ export default function MigrationAssets() {
               }
             />
           )}
-          {wizardType === 'migration-scripts' && selectedClusterForWizard && (
+          {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && selectedClusterForWizard && (
             <Wizard
               config={migrationScriptsWizardConfig}
               clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
