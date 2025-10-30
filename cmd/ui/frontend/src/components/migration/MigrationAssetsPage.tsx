@@ -44,11 +44,13 @@ export default function MigrationAssets() {
     regionName: string
   } | null>(null)
 
-  // Track active tab for each cluster
-  const [activeTabs, setActiveTabs] = useState<Record<string, string>>({})
+  // Track active tab for each cluster (persisted in store)
+  const migrationAssetTabs = useAppStore((state) => state.migrationAssetTabs)
+  const setMigrationAssetTab = useAppStore((state) => state.setMigrationAssetTab)
   const [activeFileTabs, setActiveFileTabs] = useState<Record<string, string>>({})
-  // Track which cluster section is expanded (only one at a time)
-  const [expandedCluster, setExpandedCluster] = useState<string | null>(null)
+  // Track which cluster section is expanded (persisted in store)
+  const expandedCluster = useAppStore((state) => state.expandedMigrationCluster)
+  const setExpandedCluster = useAppStore((state) => state.setExpandedMigrationCluster)
 
   // Flatten all clusters from all regions
   const allClusters = regions.flatMap((region) =>
@@ -94,12 +96,12 @@ export default function MigrationAssets() {
     setSelectedClusterForWizard(null)
 
     // Open the relevant tab and expand the cluster
-    setActiveTabs((prev) => ({ ...prev, [clusterKey]: wizardType }))
+    setMigrationAssetTab(clusterKey, wizardType)
     setExpandedCluster(clusterKey)
   }
 
   const toggleCluster = (clusterKey: string) => {
-    setExpandedCluster((prev) => (prev === clusterKey ? null : clusterKey))
+    setExpandedCluster(expandedCluster === clusterKey ? null : clusterKey)
   }
 
   // Get stored terraform files from Zustand
@@ -413,13 +415,11 @@ export default function MigrationAssets() {
                         ].map((tab) => (
                           <button
                             key={tab.id}
-                            onClick={() =>
-                              setActiveTabs((prev) => ({ ...prev, [clusterKey]: tab.id }))
-                            }
+                            onClick={() => setMigrationAssetTab(clusterKey, tab.id)}
                             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
-                              activeTabs[clusterKey] === tab.id
-                                ? 'border-blue-500 text-blue-600 dark:text-accent'
-                                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-[#4A4956]'
+                              migrationAssetTabs[clusterKey] === tab.id
+                                ? 'border-blue-500 dark:border-accent text-blue-600 dark:text-accent'
+                                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-border'
                             }`}
                           >
                             {tab.label}
@@ -429,23 +429,23 @@ export default function MigrationAssets() {
                     </div>
                     <div className="p-6">
                       {/* Migration Infrastructure Tab */}
-                      {activeTabs[clusterKey] === 'migration-infra' && (
+                      {migrationAssetTabs[clusterKey] === 'migration-infra' && (
                         <div>
                           {renderTerraformTabs(clusterKey, 'migration-infra', cluster.name)}
                         </div>
                       )}
                       {/* Target Infrastructure Tab */}
-                      {activeTabs[clusterKey] === 'target-infra' && (
+                      {migrationAssetTabs[clusterKey] === 'target-infra' && (
                         <div>{renderTerraformTabs(clusterKey, 'target-infra', cluster.name)}</div>
                       )}
                       {/* Migration Scripts Tab */}
-                      {activeTabs[clusterKey] === 'migration-scripts' && (
+                      {migrationAssetTabs[clusterKey] === 'migration-scripts' && (
                         <div>
                           {renderTerraformTabs(clusterKey, 'migration-scripts', cluster.name)}
                         </div>
                       )}
                       {/* Default view when no tab is active */}
-                      {!activeTabs[clusterKey] && (
+                      {!migrationAssetTabs[clusterKey] && (
                         <div>
                           {renderTerraformTabs(clusterKey, 'migration-infra', cluster.name)}
                         </div>

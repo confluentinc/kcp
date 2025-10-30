@@ -145,6 +145,8 @@ interface AppState {
   isProcessing: boolean
   error: string | null
   activeMetricsTab: string
+  expandedMigrationCluster: string | null
+  migrationAssetTabs: Record<string, string> // Key: clusterKey, Value: tab id (migration-infra | target-infra | migration-scripts)
 
   // Actions
   setRegions: (regions: Region[]) => void
@@ -187,6 +189,9 @@ interface AppState {
   setIsProcessing: (processing: boolean) => void
   setError: (error: string | null) => void
   setActiveMetricsTab: (tab: string) => void
+  setExpandedMigrationCluster: (clusterKey: string | null) => void
+  setMigrationAssetTab: (clusterKey: string, tabId: string) => void
+  getMigrationAssetTab: (clusterKey: string) => string | undefined
 
   // Migration assets actions
   setTerraformFiles: (
@@ -220,6 +225,8 @@ export const useAppStore = create<AppState>()(
       isProcessing: false,
       error: null,
       activeMetricsTab: DEFAULT_METRICS_TAB,
+      expandedMigrationCluster: null,
+      migrationAssetTabs: {},
 
       // Data actions
       setRegions: (regions) => set({ regions }, false, 'setRegions'),
@@ -406,6 +413,26 @@ export const useAppStore = create<AppState>()(
       setError: (error) => set({ error }, false, 'setError'),
 
       setActiveMetricsTab: (tab) => set({ activeMetricsTab: tab }, false, 'setActiveMetricsTab'),
+
+      setExpandedMigrationCluster: (clusterKey) =>
+        set({ expandedMigrationCluster: clusterKey }, false, 'setExpandedMigrationCluster'),
+
+      setMigrationAssetTab: (clusterKey, tabId) =>
+        set(
+          (state) => ({
+            migrationAssetTabs: {
+              ...state.migrationAssetTabs,
+              [clusterKey]: tabId,
+            },
+          }),
+          false,
+          'setMigrationAssetTab'
+        ),
+
+      getMigrationAssetTab: (clusterKey) => {
+        const state = get()
+        return state.migrationAssetTabs[clusterKey]
+      },
 
       // TCO Actions
       setTCOWorkloadValue: (clusterKey, field, value) =>
