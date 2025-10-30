@@ -67,11 +67,7 @@ export function getStatusBadgeConfig(enabled: boolean): {
   text: string
 } {
   return {
-    className: enabled
-      ? 'text-green-600 dark:text-green-400'
-      : 'text-red-600 dark:text-red-400',
+    className: enabled ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400',
     text: enabled ? '✓' : '✗',
   }
 }
-
-

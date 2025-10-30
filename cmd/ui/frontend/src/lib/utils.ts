@@ -80,3 +80,21 @@ export function generateCostsFilename(region: string): string {
   const cleanRegion = region.replace(/[^a-zA-Z0-9-_]/g, '-')
   return `costs-${cleanRegion}`
 }
+
+/**
+ * Helper function to create StatusBadge props from an enabled boolean
+ * @param enabled - Whether the status is enabled
+ * @param enabledLabel - Label to show when enabled (default: 'Enabled')
+ * @param disabledLabel - Label to show when disabled (default: 'Disabled')
+ * @returns Props object for StatusBadge component
+ */
+export function createStatusBadgeProps(
+  enabled: boolean,
+  enabledLabel: string = 'Enabled',
+  disabledLabel: string = 'Disabled'
+): { enabled: boolean; label: string } {
+  return {
+    enabled,
+    label: enabled ? enabledLabel : disabledLabel,
+  }
+}

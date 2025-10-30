@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { Region, Cluster } from '@/types'
 import ClusterReport from '@/components/explore/views/ClusterReport'
 import RegionReport from '@/components/explore/views/RegionReport'
@@ -8,11 +8,15 @@ import ExploreNavigation from '@/components/explore/ExploreNavigation'
 import MigrationAssetsPage from '@/components/migration/MigrationAssetsPage'
 import SchemaRegistries from '@/components/explore/views/SchemaRegistries'
 import AppHeader from '@/components/AppHeader'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+// Removed Tabs UI in favor of button-based nav matching ClusterReport
+import Tabs from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/appStore'
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [activeTopTab, setActiveTopTab] = useState<'explore' | 'tco-inputs' | 'migration-assets'>(
+    'explore'
+  )
 
   // Global state from Zustand - using single selector to avoid multiple subscriptions
   const {
@@ -143,77 +147,71 @@ export default function Home() {
         />
 
         {regions.length > 0 ? (
-          <Tabs
-            defaultValue="explore"
-            className="flex flex-1 flex-col"
-          >
-            <div className="bg-white dark:bg-gray-800 border-b-2 border-gray-200 dark:border-gray-700">
-              <div className="px-6 pt-6 pb-0">
-                <TabsList className="w-full">
-                  <TabsTrigger value="explore">Explore Costs & Metrics</TabsTrigger>
-                  <TabsTrigger value="tco-inputs">Generate TCO Inputs</TabsTrigger>
-                  <TabsTrigger value="migration-assets">Generate Migration Assets</TabsTrigger>
-                </TabsList>
-              </div>
-            </div>
+          <div className="flex flex-1 flex-col">
+            <Tabs
+              tabs={[
+                { id: 'explore', label: 'Explore Costs & Metrics' },
+                { id: 'tco-inputs', label: 'Generate TCO Inputs' },
+                { id: 'migration-assets', label: 'Generate Migration Assets' },
+              ]}
+              activeId={activeTopTab}
+              onChange={(id) => setActiveTopTab(id as any)}
+            />
 
-            <TabsContent
-              value="explore"
-              className="flex-1 overflow-hidden bg-white dark:bg-gray-800"
-            >
-              <div className="flex h-full">
-                <div className="w-80 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0">
-                  <ExploreNavigation
-                    regions={regions}
-                    onClusterSelect={handleClusterSelect}
-                    onRegionSelect={handleRegionSelect}
-                    onSummarySelect={handleSummarySelect}
-                    selectedCluster={selectedCluster}
-                    selectedRegion={selectedRegion}
-                    selectedSummary={selectedSummary}
-                    selectedSchemaRegistries={selectedSchemaRegistries}
-                    onSchemaRegistriesSelect={handleSchemaRegistriesSelect}
-                  />
-                </div>
-                <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
-                  <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
-                    {selectedSummary && <Summary />}
-                    {selectedCluster && (
-                      <ClusterReport
-                        cluster={selectedCluster.cluster}
-                        regionName={selectedCluster.regionName}
-                        regionData={
-                          regions.find((r) => r.name === selectedCluster.regionName) as any
-                        }
-                      />
-                    )}
-                    {selectedRegion && <RegionReport region={selectedRegion} />}
-                    {selectedSchemaRegistries && (
-                      <SchemaRegistries schemaRegistries={schemaRegistries} />
-                    )}
+            {activeTopTab === 'explore' && (
+              <div className="flex-1 overflow-hidden bg-white dark:bg-gray-800">
+                <div className="flex h-full">
+                  <div className="w-80 bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0">
+                    <ExploreNavigation
+                      regions={regions}
+                      onClusterSelect={handleClusterSelect}
+                      onRegionSelect={handleRegionSelect}
+                      onSummarySelect={handleSummarySelect}
+                      selectedCluster={selectedCluster}
+                      selectedRegion={selectedRegion}
+                      selectedSummary={selectedSummary}
+                      selectedSchemaRegistries={selectedSchemaRegistries}
+                      onSchemaRegistriesSelect={handleSchemaRegistriesSelect}
+                    />
                   </div>
-                </main>
+                  <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
+                    <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">
+                      {selectedSummary && <Summary />}
+                      {selectedCluster && (
+                        <ClusterReport
+                          cluster={selectedCluster.cluster}
+                          regionName={selectedCluster.regionName}
+                          regionData={
+                            regions.find((r) => r.name === selectedCluster.regionName) as any
+                          }
+                        />
+                      )}
+                      {selectedRegion && <RegionReport region={selectedRegion} />}
+                      {selectedSchemaRegistries && (
+                        <SchemaRegistries schemaRegistries={schemaRegistries} />
+                      )}
+                    </div>
+                  </main>
+                </div>
               </div>
-            </TabsContent>
+            )}
 
-            <TabsContent
-              value="tco-inputs"
-              className="flex-1 overflow-hidden bg-white dark:bg-gray-800"
-            >
-              <div className="h-full overflow-auto">
-                <TCOInputsPage />
+            {activeTopTab === 'tco-inputs' && (
+              <div className="flex-1 overflow-hidden bg-white dark:bg-gray-800">
+                <div className="h-full overflow-auto">
+                  <TCOInputsPage />
+                </div>
               </div>
-            </TabsContent>
+            )}
 
-            <TabsContent
-              value="migration-assets"
-              className="flex-1 overflow-hidden bg-white dark:bg-gray-800"
-            >
-              <div className="h-full overflow-auto">
-                <MigrationAssetsPage />
+            {activeTopTab === 'migration-assets' && (
+              <div className="flex-1 overflow-hidden bg-white dark:bg-gray-800">
+                <div className="h-full overflow-auto">
+                  <MigrationAssetsPage />
+                </div>
               </div>
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md mx-auto px-6">

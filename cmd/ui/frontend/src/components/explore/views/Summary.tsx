@@ -648,7 +648,7 @@ export default function Summary() {
               <DateRangeChart
                 data={costSummary.chartData}
                 chartType="area"
-                height="100%"
+                height={400}
                 yAxisFormatter={(value) => `$${value.toFixed(2)}`}
                 customTooltip={CostChartTooltip}
                 zoomData={zoomData}

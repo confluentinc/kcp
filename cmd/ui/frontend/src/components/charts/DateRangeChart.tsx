@@ -1,8 +1,4 @@
-/**
- * DateRangeChart component
- * Unified chart wrapper for date-based charts with consistent styling and zoom functionality
- */
-
+import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 import {
   AreaChart,
@@ -22,7 +18,7 @@ interface DateRangeChartProps {
     date: string
     formattedDate?: string
     epochTime: number
-    [key: string]: string | number | undefined
+    [key: string]: string | number | null | undefined
   }>
   children: ReactNode
   chartType?: 'area' | 'line'
@@ -69,7 +65,39 @@ export default function DateRangeChart({
   onMouseMove,
   onMouseUp,
 }: DateRangeChartProps) {
-  const chartData = zoomData || data
+  const chartData = zoomData && zoomData.length > 0 ? zoomData : data
+
+  // Calculate domain from data when left/right are not provided
+  // Always use 'data' prop for domain calculation to ensure we have the full dataset
+  const xAxisDomain = useMemo(() => {
+    if (
+      left !== undefined &&
+      right !== undefined &&
+      typeof left === 'number' &&
+      typeof right === 'number'
+    ) {
+      return [left, right]
+    }
+
+    // Calculate min/max from the full data set (not zoomData) for domain
+    // This ensures we always have valid numeric values
+    if (data && data.length > 0) {
+      const epochTimes = data
+        .map((item) => item.epochTime)
+        .filter((time): time is number => typeof time === 'number')
+
+      if (epochTimes.length > 0) {
+        const min = Math.min(...epochTimes)
+        const max = Math.max(...epochTimes)
+        // Add small padding to ensure data points are fully visible
+        const padding = (max - min) * 0.01
+        return [min - padding, max + padding]
+      }
+    }
+
+    // Fallback: return a default numeric range if no data (shouldn't happen, but prevents errors)
+    return [0, Date.now()]
+  }, [data, left, right])
 
   // Default tooltip formatter
   const defaultTooltipLabelFormatter = (label: number | string) => {
@@ -104,7 +132,7 @@ export default function DateRangeChart({
           <XAxis
             allowDataOverflow
             dataKey="epochTime"
-            domain={left && right ? [left, right] : undefined}
+            domain={xAxisDomain}
             type="number"
             scale="time"
             tickFormatter={(value) => formatDateShort(new Date(value).toISOString())}

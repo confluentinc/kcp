@@ -1,7 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Calendar } from '@/components/ui/calendar'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -9,22 +7,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { CalendarIcon, X, Download } from 'lucide-react'
-import { format } from 'date-fns'
-import { cn, downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
+import { Download } from 'lucide-react'
+import { downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
 import { useRegionCostFilters } from '@/stores/appStore'
 import { useChartZoom } from '@/lib/useChartZoom'
-import { formatDateShort } from '@/lib/formatters'
-import { Area } from 'recharts'
-import DateRangeChart, { CostChartTooltip } from '@/components/charts/DateRangeChart'
+import { useRegionCostsData } from '@/hooks/useRegionCostsData'
+import DateRangePicker from '@/components/common/DateRangePicker'
+import Tabs from '@/components/common/Tabs'
+import RegionCostsChartTab from './RegionCostsChartTab'
+import RegionCostsTableTab from './RegionCostsTableTab'
+import MetricsCodeViewer from '@/components/explore/clusters/MetricsCodeViewer'
 
 interface RegionCostsProps {
   region: {
@@ -97,210 +89,7 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   }
 
   // Process costs data for table, CSV, and chart formats using backend aggregates
-  const processedData = useMemo(() => {
-    if (!costsResponse?.results || !Array.isArray(costsResponse.results)) {
-      return {
-        tableData: [],
-        filteredTableData: [],
-        csvData: '',
-        chartData: [],
-        chartOptions: [],
-        getUsageTypesForService: () => [],
-        uniqueDates: [],
-        services: [],
-        serviceTotals: {},
-      }
-    }
-
-    const costs = costsResponse.results
-    const aggregates = costsResponse.aggregates || {}
-
-    // Get all unique dates and services from the raw data
-    const allDates = new Set<string>()
-    const allServices = new Set<string>()
-    costs.forEach((cost: any) => {
-      if (cost && cost.start && typeof cost.start === 'string') {
-        allDates.add(cost.start) // Use full date string
-      }
-      if (cost && cost.service) {
-        allServices.add(cost.service)
-      }
-    })
-
-    const uniqueDates = Array.from(allDates).sort()
-    const services = Array.from(allServices).sort()
-
-    // Extract service totals from backend aggregates
-    const serviceTotals: Record<string, number> = {}
-    const usageTypeTotals: Record<string, number> = {}
-
-    // Use backend aggregates (nested structure: service -> cost_type -> usage_type -> {sum, avg, max, min})
-    // Filter out usage_quantity cost type
-    services.forEach((service) => {
-      if (aggregates[service]) {
-        const serviceAggregates = aggregates[service] as Record<string, any>
-
-        // Skip usage_quantity cost type
-        if (selectedCostType === 'usage_quantity') return
-
-        // Get service total directly from the selected cost type
-        if (serviceAggregates[selectedCostType]?.total !== undefined) {
-          serviceTotals[service] = serviceAggregates[selectedCostType].total
-        }
-
-        // Extract usage type totals for the selected cost type
-        if (serviceAggregates[selectedCostType]) {
-          const costTypeAggregates = serviceAggregates[selectedCostType]
-          Object.keys(costTypeAggregates).forEach((usageType) => {
-            if (usageType === 'total') return // Skip the service total
-
-            const usageTypeAggregate = costTypeAggregates[usageType]
-            if (usageTypeAggregate?.sum !== undefined) {
-              const usageKey = `${service}:${usageType}`
-              usageTypeTotals[usageKey] = usageTypeAggregate.sum
-            }
-          })
-        }
-      }
-    })
-
-    // Group costs by service, usage type, and date for chart data
-    // Filter out usage_quantity cost type
-    const costsByServiceAndUsage: Record<string, Record<string, Record<string, number>>> = {}
-    costs.forEach((cost: any) => {
-      if (!cost || !cost.service || !cost.usage_type || !cost.start || !cost.values) return
-
-      // Skip usage_quantity cost type
-      if (selectedCostType === 'usage_quantity') return
-
-      const service = cost.service
-      const usageType = cost.usage_type
-      const date = cost.start
-      const value = parseFloat(cost.values[selectedCostType]) || 0
-
-      // Initialize nested structure
-      if (!costsByServiceAndUsage[service]) {
-        costsByServiceAndUsage[service] = {}
-      }
-      if (!costsByServiceAndUsage[service][usageType]) {
-        costsByServiceAndUsage[service][usageType] = {}
-      }
-      if (!costsByServiceAndUsage[service][usageType][date]) {
-        costsByServiceAndUsage[service][usageType][date] = 0
-      }
-
-      costsByServiceAndUsage[service][usageType][date] += value
-    })
-
-    // Create table data using backend aggregates for totals (with fallback)
-    const tableData: any[] = []
-    services.forEach((service) => {
-      if (costsByServiceAndUsage[service]) {
-        Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
-          const usageKey = `${service}:${usageType}`
-          // Use backend aggregates (from nested structure) - NO frontend calculation
-          const total = usageTypeTotals[usageKey] || 0
-
-          tableData.push({
-            service,
-            usageType,
-            values: uniqueDates.map(
-              (date) => costsByServiceAndUsage[service][usageType][date] || 0
-            ),
-            total: total, // ✅ From backend aggregates, not calculated here
-          })
-        })
-      }
-    })
-
-    // Sort table data by service, then by usage type
-    tableData.sort((a, b) => {
-      if (a.service !== b.service) {
-        return a.service.localeCompare(b.service)
-      }
-      return a.usageType.localeCompare(b.usageType)
-    })
-
-    // Filter table data by selected service
-    const filteredTableData = selectedTableService
-      ? tableData.filter((row) => row.service === selectedTableService)
-      : tableData
-
-    // Create CSV data
-    const csvHeaders = [
-      'Service',
-      'Usage Type',
-      `Total (${selectedCostType.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())})`,
-      ...uniqueDates,
-    ]
-    const csvRows = tableData.map((row) => [
-      row.service,
-      row.usageType,
-      row.total.toFixed(2),
-      ...row.values.map((value: number) => value.toFixed(2)),
-    ])
-    const csvData = [csvHeaders, ...csvRows]
-      .map((row) => row.map((cell) => `"${cell || ''}"`).join(','))
-      .join('\n')
-
-    // Create chart data (dates with both service totals and individual usage types)
-    const chartData = uniqueDates.map((date) => {
-      const dateObj = new Date(date)
-      const dataPoint: any = {
-        date: date,
-        formattedDate: formatDateShort(date),
-        epochTime: dateObj.getTime(),
-      }
-
-      // Add service-level aggregates
-      services.forEach((service) => {
-        let serviceCostForDate = 0
-        if (costsByServiceAndUsage[service]) {
-          Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
-            serviceCostForDate += costsByServiceAndUsage[service][usageType][date] || 0
-          })
-        }
-        dataPoint[service] = serviceCostForDate
-      })
-
-      // Add individual usage types
-      services.forEach((service) => {
-        if (costsByServiceAndUsage[service]) {
-          Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
-            const usageKey = `${service}:${usageType}`
-            dataPoint[usageKey] = costsByServiceAndUsage[service][usageType][date] || 0
-          })
-        }
-      })
-
-      return dataPoint
-    })
-
-    // Create chart options (services only)
-    const chartOptions = services.map((service) => ({
-      value: service,
-      label: service,
-      type: 'service' as const,
-    }))
-
-    // Get usage types for the selected service
-    const getUsageTypesForService = (serviceName: string) => {
-      if (!costsByServiceAndUsage[serviceName]) return []
-      return Object.keys(costsByServiceAndUsage[serviceName]).sort()
-    }
-
-    return {
-      tableData,
-      filteredTableData,
-      csvData,
-      chartData,
-      chartOptions,
-      getUsageTypesForService,
-      uniqueDates,
-      services,
-      serviceTotals,
-    }
-  }, [costsResponse, selectedTableService, selectedCostType])
+  const processedData = useRegionCostsData(costsResponse, selectedTableService, selectedCostType)
 
   // Initialize zoom functionality
   const {
@@ -470,146 +259,32 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
         </div>
 
         {/* Date Picker Controls */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex flex-col space-y-2">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Start Date
-            </label>
-            <div className="relative">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      'w-[240px] justify-start text-left font-normal pr-10',
-                      !startDate && 'text-muted-foreground'
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {startDate ? format(startDate, 'PPP') : 'Pick a start date'}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-auto p-0"
-                  align="start"
-                >
-                  <Calendar
-                    mode="single"
-                    selected={startDate}
-                    onSelect={setStartDate}
-                  />
-                </PopoverContent>
-              </Popover>
-              {startDate && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    resetStartDateToMetadata()
-                  }}
-                  title="Reset to metadata start date"
-                >
-                  <X className="h-3 w-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col space-y-2">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">End Date</label>
-            <div className="relative">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      'w-[240px] justify-start text-left font-normal pr-10',
-                      !endDate && 'text-muted-foreground'
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {endDate ? format(endDate, 'PPP') : 'Pick an end date'}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-auto p-0"
-                  align="start"
-                >
-                  <Calendar
-                    mode="single"
-                    selected={endDate}
-                    onSelect={setEndDate}
-                  />
-                </PopoverContent>
-              </Popover>
-              {endDate && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 shadow-sm"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    resetEndDateToMetadata()
-                  }}
-                  title="Reset to metadata end date"
-                >
-                  <X className="h-4 w-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" />
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col justify-end">
-            <Button
-              variant="outline"
-              onClick={resetToMetadataDates}
-              className="w-full sm:w-auto"
-            >
-              Reset
-            </Button>
-          </div>
-        </div>
+        <DateRangePicker
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onResetStartDate={resetStartDateToMetadata}
+          onResetEndDate={resetEndDateToMetadata}
+          onResetBoth={resetToMetadataDates}
+          showResetBothButton={true}
+        />
       </div>
 
       {/* Results Section */}
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-          <div className="text-red-500 dark:text-red-400">
-            <p className="font-medium">Error loading costs:</p>
-            <p className="text-sm mt-1">{error}</p>
-          </div>
-        </div>
-      )}
-
       {costsResponse && (
         <div className="w-full max-w-full">
           <div className="flex items-center justify-between mb-4">
-            <div className="border-b border-gray-200 dark:border-gray-700">
-              <nav className="-mb-px flex space-x-8 overflow-x-auto">
-                {[
-                  { id: 'chart', label: 'Chart' },
-                  { id: 'table', label: 'Table' },
-                  { id: 'json', label: 'JSON' },
-                  { id: 'csv', label: 'CSV' },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveCostsTab(tab.id as any)}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
-                      activeCostsTab === tab.id
-                        ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                        : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </nav>
-            </div>
+            <Tabs
+              tabs={[
+                { id: 'chart', label: 'Chart' },
+                { id: 'table', label: 'Table' },
+                { id: 'json', label: 'JSON' },
+                { id: 'csv', label: 'CSV' },
+              ]}
+              activeId={activeCostsTab}
+              onChange={(id) => setActiveCostsTab(id as any)}
+            />
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -636,280 +311,49 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
           <div className="space-y-4 min-w-0">
             {/* Chart Tab */}
             {activeCostsTab === 'chart' && (
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
-                <div className="p-6 rounded-lg">
-                  {processedData.chartData.length > 0 && processedData.chartOptions.length > 0 ? (
-                    <div className="space-y-6">
-                      {/* Service Total Display */}
-                      {selectedService && (
-                        <div className="flex items-center justify-center mb-4">
-                          <div className="flex items-center gap-4">
-                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                              Service Total for {selectedService} (
-                              {selectedCostType
-                                .replace(/_/g, ' ')
-                                .replace(/\b\w/g, (l) => l.toUpperCase())}
-                              ):
-                            </span>
-                            <span className="text-lg font-bold text-green-600 dark:text-green-400">
-                              $
-                              {(
-                                (processedData.serviceTotals as Record<string, number>)[
-                                  selectedService
-                                ] || 0
-                              ).toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Stacked Area Chart for Usage Types */}
-                      {selectedService && (
-                        <DateRangeChart
-                          data={processedData.chartData}
-                          chartType="area"
-                          height={400}
-                          customTooltip={(props) => (
-                            <CostChartTooltip
-                              {...props}
-                              labelFormatter={(label: number | string) =>
-                                label
-                                  ? format(new Date(label), 'MMM dd, yyyy HH:mm')
-                                  : 'Unknown Date'
-                              }
-                            />
-                          )}
-                          zoomData={zoomData}
-                          left={typeof left === 'number' ? left : undefined}
-                          right={typeof right === 'number' ? right : undefined}
-                          refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
-                          refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
-                          onMouseDown={handleMouseDown}
-                          onMouseMove={handleMouseMove}
-                          onMouseUp={zoom}
-                        >
-                          {/* Generate an Area for each usage type in the selected service */}
-                          {processedData
-                            .getUsageTypesForService(selectedService)
-                            .map((usageType, index) => {
-                              const usageKey = `${selectedService}:${usageType}`
-                                  const colors = [
-                                    '#3b82f6',
-                                    '#ef4444',
-                                    '#10b981',
-                                    '#f59e0b',
-                                    '#8b5cf6',
-                                    '#06b6d4',
-                                    '#f97316',
-                                    '#84cc16',
-                                    '#ec4899',
-                                    '#6366f1',
-                                  ]
-                                  const color = colors[index % colors.length]
-
-                                  return (
-                                    <Area
-                                      key={usageKey}
-                                      type="monotone"
-                                      dataKey={usageKey}
-                                      stackId="1"
-                                      stroke={color}
-                                      fill={color}
-                                      fillOpacity={0.6}
-                                      strokeWidth={1}
-                                      name={usageType}
-                                    />
-                                  )
-                                })}
-                        </DateRangeChart>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <p className="text-gray-500 dark:text-gray-400">No chart data available</p>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <RegionCostsChartTab
+                selectedService={selectedService}
+                selectedCostType={selectedCostType}
+                processedData={processedData}
+                zoomData={zoomData}
+                left={typeof left === 'number' ? left : undefined}
+                right={typeof right === 'number' ? right : undefined}
+                refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
+                refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
+                handleMouseDown={handleMouseDown}
+                handleMouseMove={handleMouseMove}
+                zoom={zoom}
+              />
             )}
 
             {/* Table Tab */}
             {activeCostsTab === 'table' && (
-              <>
-                {/* Service Filter for Table */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-4">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Filter by Service:
-                    </label>
-                    <Select
-                      value={selectedTableService}
-                      onValueChange={setSelectedTableService}
-                    >
-                      <SelectTrigger className="w-[300px]">
-                        <SelectValue placeholder="Choose a service to filter" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {processedData.services.map((service) => (
-                          <SelectItem
-                            key={service}
-                            value={service}
-                          >
-                            {service}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                        Total (
-                        {selectedCostType
-                          .replace(/_/g, ' ')
-                          .replace(/\b\w/g, (l) => l.toUpperCase())}
-                        ):
-                      </span>
-                      <span className="text-lg font-bold text-green-600 dark:text-green-400">
-                        $
-                        {(
-                          processedData.filteredTableData?.reduce((sum, row) => {
-                            return sum + (row.total || 0)
-                          }, 0) || 0
-                        ).toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 min-w-0 max-w-full">
-                  <div className="w-full overflow-hidden rounded-lg">
-                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                      <Table className="min-w-full">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="sticky left-0 bg-white dark:bg-gray-800 z-10 w-[150px] max-w-[150px] border-r border-gray-200 dark:border-gray-600">
-                              Service
-                            </TableHead>
-                            <TableHead className="sticky left-[150px] bg-white dark:bg-gray-800 z-10 w-[250px] max-w-[250px] border-r border-gray-200 dark:border-gray-600">
-                              Usage Type
-                            </TableHead>
-                            <TableHead className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600">
-                              <div className="text-green-600 dark:text-green-400 font-semibold">
-                                Total (
-                                {selectedCostType
-                                  .replace(/_/g, ' ')
-                                  .replace(/\b\w/g, (l) => l.toUpperCase())}
-                                )
-                              </div>
-                            </TableHead>
-                            {processedData.uniqueDates.map((date, index) => (
-                              <TableHead
-                                key={index}
-                                className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-gray-600"
-                              >
-                                <div className="truncate">{date}</div>
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {(processedData.filteredTableData || []).map((row, rowIndex) => (
-                            <TableRow
-                              key={rowIndex}
-                              className="hover:bg-gray-50 dark:hover:bg-gray-700"
-                            >
-                              <TableCell className="sticky left-0 bg-white dark:bg-gray-800 z-10 font-medium border-r border-gray-200 dark:border-gray-600 w-[150px] max-w-[150px]">
-                                <div
-                                  className="truncate pr-2"
-                                  title={row.service}
-                                >
-                                  {row.service}
-                                </div>
-                              </TableCell>
-
-                              <TableCell className="sticky left-[150px] bg-white dark:bg-gray-800 z-10 border-r border-gray-200 dark:border-gray-600 w-[250px] max-w-[250px]">
-                                <div
-                                  className="truncate pr-2 text-sm"
-                                  title={row.usageType}
-                                >
-                                  {row.usageType}
-                                </div>
-                              </TableCell>
-
-                              {/* Total column */}
-                              <TableCell className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]">
-                                <div className="font-mono text-sm truncate text-green-600 dark:text-green-400 font-semibold">
-                                  ${row.total.toFixed(2)}
-                                </div>
-                              </TableCell>
-
-                              {/* Daily cost columns */}
-                              {row.values.map((value: number, valueIndex: number) => (
-                                <TableCell
-                                  key={valueIndex}
-                                  className="text-center border-r border-gray-200 dark:border-gray-600 w-[120px] min-w-[120px] max-w-[120px]"
-                                >
-                                  <div className="font-mono text-sm truncate">
-                                    ${value.toFixed(2)}
-                                  </div>
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                </div>
-              </>
+              <RegionCostsTableTab
+                processedData={processedData}
+                selectedCostType={selectedCostType}
+                selectedTableService={selectedTableService}
+                setSelectedTableService={setSelectedTableService}
+              />
             )}
 
             {/* JSON Tab */}
             {activeCostsTab === 'json' && (
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-w-0 max-w-full">
-                <div className="flex items-center mb-2">
-                  <div className="flex-1" />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      navigator.clipboard.writeText(JSON.stringify(costsResponse, null, 2))
-                    }
-                    className="text-xs flex-shrink-0"
-                  >
-                    Copy JSON
-                  </Button>
-                </div>
-                <div className="w-full overflow-hidden">
-                  <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-white dark:bg-gray-800 p-4 rounded border max-w-full">
-                    {JSON.stringify(costsResponse, null, 2)}
-                  </pre>
-                </div>
-              </div>
+              <MetricsCodeViewer
+                data={JSON.stringify(costsResponse, null, 2)}
+                label="JSON"
+                onCopy={() => navigator.clipboard.writeText(JSON.stringify(costsResponse, null, 2))}
+                isJSON={true}
+              />
             )}
 
             {/* CSV Tab */}
             {activeCostsTab === 'csv' && (
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-w-0 max-w-full">
-                <div className="flex items-center mb-2">
-                  <div className="flex-1" />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigator.clipboard.writeText(processedData.csvData)}
-                    className="text-xs flex-shrink-0"
-                  >
-                    Copy CSV
-                  </Button>
-                </div>
-                <div className="w-full overflow-hidden">
-                  <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-white dark:bg-gray-800 p-4 rounded border font-mono max-w-full">
-                    {processedData.csvData}
-                  </pre>
-                </div>
-              </div>
+              <MetricsCodeViewer
+                data={processedData.csvData}
+                label="CSV"
+                onCopy={() => navigator.clipboard.writeText(processedData.csvData)}
+                isJSON={false}
+              />
             )}
           </div>
         </div>
