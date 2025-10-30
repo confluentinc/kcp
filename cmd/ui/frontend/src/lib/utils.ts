@@ -46,7 +46,7 @@ export function downloadCSV(csvData: string, filename: string): void {
  * @param jsonData - The JSON data object or string
  * @param filename - The filename without extension (e.g., 'metrics-cluster-region')
  */
-export function downloadJSON(jsonData: any, filename: string): void {
+export function downloadJSON(jsonData: unknown, filename: string): void {
   const jsonString = typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData, null, 2)
   const blob = new Blob([jsonString], { type: 'application/json' })
   const url = window.URL.createObjectURL(blob)

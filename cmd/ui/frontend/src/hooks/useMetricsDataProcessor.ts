@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { formatDateShort } from '@/lib/formatters'
+import type { MetricsApiResponse, MetricResult } from '@/types/api'
 
 interface ProcessedMetricsData {
   tableData: Array<{
@@ -20,7 +21,9 @@ interface ProcessedMetricsData {
 /**
  * Hook to process raw metrics response into formatted data for charts, tables, and CSV
  */
-export function useMetricsDataProcessor(metricsResponse: any): ProcessedMetricsData {
+export function useMetricsDataProcessor(
+  metricsResponse: MetricsApiResponse | null | undefined
+): ProcessedMetricsData {
   return useMemo(() => {
     if (!metricsResponse?.results || !Array.isArray(metricsResponse.results)) {
       return { tableData: [], csvData: '', chartData: [], uniqueDates: [], metrics: [] }
@@ -30,7 +33,7 @@ export function useMetricsDataProcessor(metricsResponse: any): ProcessedMetricsD
 
     // Get all unique dates and sort them
     const allDates = new Set<string>()
-    metrics.forEach((metric: any) => {
+    metrics.forEach((metric: MetricResult) => {
       if (metric && metric.start && typeof metric.start === 'string') {
         allDates.add(metric.start.split('T')[0]) // Get date part only
       }
@@ -39,7 +42,7 @@ export function useMetricsDataProcessor(metricsResponse: any): ProcessedMetricsD
 
     // Group metrics by label
     const metricsByLabel: Record<string, Record<string, number | null>> = {}
-    metrics.forEach((metric: any) => {
+    metrics.forEach((metric: MetricResult) => {
       if (!metric || !metric.label) return
 
       if (!metricsByLabel[metric.label]) {
@@ -74,9 +77,9 @@ export function useMetricsDataProcessor(metricsResponse: any): ProcessedMetricsD
       .join('\n')
 
     // Create chart data
-    const chartData = uniqueDates.map((date) => {
+    const chartData: ProcessedMetricsData['chartData'] = uniqueDates.map((date) => {
       const dateObj = new Date(date)
-      const dataPoint: any = {
+      const dataPoint: ProcessedMetricsData['chartData'][number] = {
         date: date,
         formattedDate: formatDateShort(date),
         epochTime: dateObj.getTime(),

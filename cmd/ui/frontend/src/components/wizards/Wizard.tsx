@@ -64,8 +64,8 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
       if (onComplete) {
         onComplete()
       }
-    } catch (err) {
-      console.error('Failed to generate terraform:', err)
+    } catch {
+      // Failed to generate terraform - error is already logged by useWizardAPI
     }
   }
 
@@ -89,7 +89,7 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
 
   // Handle regular form steps
   if (!currentStep) {
-    console.log('Invalid step configuration from Wizard.tsx', currentStep)
+    // Invalid step configuration - this should not happen in normal operation
     return <div className="text-gray-900 dark:text-gray-100">Invalid step configuration</div>
   }
 

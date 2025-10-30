@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { apiClient } from '@/services/apiClient'
 import type { TerraformFiles } from '../types'
 
 export function useWizardAPI(apiEndpoint: string) {
@@ -12,25 +13,18 @@ export function useWizardAPI(apiEndpoint: string) {
         setIsLoading(true)
         setError(null)
 
-        const response = await fetch(apiEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(wizardData),
-        })
+        const files = await apiClient.wizard.generateTerraform<TerraformFiles>(
+          apiEndpoint,
+          wizardData
+        )
 
-        if (response.ok) {
-          const files = (await response.json()) as TerraformFiles
-          setTerraformFiles(files)
-          return files
-        } else {
-          throw new Error('Failed to generate Terraform files')
-        }
+        setTerraformFiles(files)
+        return files
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred'
+        const errorMessage =
+          err instanceof Error ? err.message : 'Failed to generate Terraform files'
         setError(errorMessage)
-        console.error('API Error:', err)
+        // API Error - error is thrown and can be handled by caller
         throw err
       } finally {
         setIsLoading(false)

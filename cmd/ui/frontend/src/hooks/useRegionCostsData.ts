@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { formatDateShort } from '@/lib/formatters'
 import { formatCostTypeLabel } from '@/lib/costTypeUtils'
+import type { CostsApiResponse, CostResult } from '@/types/api'
 
 interface ProcessedData {
   tableData: Array<{
@@ -34,7 +35,7 @@ interface ProcessedData {
 }
 
 export function useRegionCostsData(
-  costsResponse: any,
+  costsResponse: CostsApiResponse | null | undefined,
   selectedTableService: string,
   selectedCostType: string
 ): ProcessedData {
@@ -59,7 +60,7 @@ export function useRegionCostsData(
     // Get all unique dates and services from the raw data
     const allDates = new Set<string>()
     const allServices = new Set<string>()
-    costs.forEach((cost: any) => {
+    costs.forEach((cost: CostResult) => {
       if (cost && cost.start && typeof cost.start === 'string') {
         allDates.add(cost.start) // Use full date string
       }
@@ -79,7 +80,7 @@ export function useRegionCostsData(
     // Filter out usage_quantity cost type
     services.forEach((service) => {
       if (aggregates[service]) {
-        const serviceAggregates = aggregates[service] as Record<string, any>
+        const serviceAggregates = aggregates[service]
 
         // Skip usage_quantity cost type
         if (selectedCostType === 'usage_quantity') return
@@ -96,7 +97,13 @@ export function useRegionCostsData(
             if (usageType === 'total') return // Skip the service total
 
             const usageTypeAggregate = costTypeAggregates[usageType]
-            if (usageTypeAggregate?.sum !== undefined) {
+            // Check if it's a UsageTypeAggregate object with sum property
+            if (
+              typeof usageTypeAggregate === 'object' &&
+              usageTypeAggregate !== null &&
+              'sum' in usageTypeAggregate &&
+              usageTypeAggregate.sum !== undefined
+            ) {
               const usageKey = `${service}:${usageType}`
               usageTypeTotals[usageKey] = usageTypeAggregate.sum
             }
@@ -108,7 +115,7 @@ export function useRegionCostsData(
     // Group costs by service, usage type, and date for chart data
     // Filter out usage_quantity cost type
     const costsByServiceAndUsage: Record<string, Record<string, Record<string, number>>> = {}
-    costs.forEach((cost: any) => {
+    costs.forEach((cost: CostResult) => {
       if (!cost || !cost.service || !cost.usage_type || !cost.start || !cost.values) return
 
       // Skip usage_quantity cost type
@@ -117,7 +124,8 @@ export function useRegionCostsData(
       const service = cost.service
       const usageType = cost.usage_type
       const date = cost.start
-      const value = parseFloat(cost.values[selectedCostType]) || 0
+      const costValue = cost.values[selectedCostType]
+      const value = costValue !== undefined ? parseFloat(String(costValue)) || 0 : 0
 
       // Initialize nested structure
       if (!costsByServiceAndUsage[service]) {
@@ -134,7 +142,12 @@ export function useRegionCostsData(
     })
 
     // Create table data using backend aggregates for totals (with fallback)
-    const tableData: any[] = []
+    const tableData: Array<{
+      service: string
+      usageType: string
+      values: number[]
+      total: number
+    }> = []
     services.forEach((service) => {
       if (costsByServiceAndUsage[service]) {
         Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
@@ -185,9 +198,9 @@ export function useRegionCostsData(
       .join('\n')
 
     // Create chart data (dates with both service totals and individual usage types)
-    const chartData = uniqueDates.map((date) => {
+    const chartData: ProcessedData['chartData'] = uniqueDates.map((date) => {
       const dateObj = new Date(date)
-      const dataPoint: any = {
+      const dataPoint: ProcessedData['chartData'][number] = {
         date: date,
         formattedDate: formatDateShort(date),
         epochTime: dateObj.getTime(),

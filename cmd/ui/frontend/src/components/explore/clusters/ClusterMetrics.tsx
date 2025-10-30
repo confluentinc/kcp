@@ -11,6 +11,8 @@ import DateRangePicker from '@/components/common/DateRangePicker'
 import MetricsChartTab from './MetricsChartTab'
 import MetricsTableTab from './MetricsTableTab'
 import MetricsCodeViewer from './MetricsCodeViewer'
+import { apiClient } from '@/services/apiClient'
+import type { MetricsApiResponse } from '@/types/api'
 
 interface ClusterMetricsProps {
   cluster: {
@@ -31,7 +33,7 @@ export default function ClusterMetrics({
   modalWorkloadAssumption,
 }: ClusterMetricsProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const [metricsResponse, setMetricsResponse] = useState<any>(null)
+  const [metricsResponse, setMetricsResponse] = useState<MetricsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<string>('')
   const [defaultsSet, setDefaultsSet] = useState(false)
@@ -178,39 +180,21 @@ export default function ClusterMetrics({
       setError(null)
 
       try {
-        // Use cluster.region if available, otherwise fallback to 'unknown'
         const region = cluster.region || 'unknown'
         const clusterName = cluster.name
 
-        console.log(`Fetching metrics for region: ${region}, cluster: ${clusterName}`)
+        const data = await apiClient.metrics.getMetrics(region, clusterName, {
+          startDate,
+          endDate,
+        })
 
-        // Build URL with optional date parameters
-        let url = `/metrics/${region}/${clusterName}`
-        const params = new URLSearchParams()
-
-        if (startDate) {
-          params.append('startDate', startDate.toISOString())
-        }
-        if (endDate) {
-          params.append('endDate', endDate.toISOString())
-        }
-
-        if (params.toString()) {
-          url += `?${params.toString()}`
-        }
-
-        const response = await fetch(url)
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch metrics: ${response.status} ${response.statusText}`)
-        }
-
-        const data = await response.json()
         setMetricsResponse(data)
-        console.log('Metrics response:', data)
       } catch (err) {
-        console.error('Error fetching metrics:', err)
-        setError(err instanceof Error ? err.message : 'Failed to fetch metrics')
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to fetch metrics'
+        )
       } finally {
         setIsLoading(false)
       }

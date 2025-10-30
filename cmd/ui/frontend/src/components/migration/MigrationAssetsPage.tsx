@@ -180,17 +180,17 @@ export default function MigrationAssets() {
     } catch (error: any) {
       // User canceled the picker or other error
       if (error.name === 'AbortError' || error.message === 'The user aborted a request.') {
-        console.log('User canceled directory selection')
+        // User canceled directory selection
       } else if (
         error.message?.includes('system files') ||
         error.code === 'InvalidModificationError'
       ) {
-        console.error('Cannot save to selected directory:', error)
+        // Error saving to selected directory - error handling done in catch block
         alert(
           'Cannot save to this directory. Please select a different folder (e.g., Desktop, Documents, or a subfolder).'
         )
       } else {
-        console.error('Failed to save files:', error)
+        // Failed to save files - error handling done in catch block
         alert('Failed to save files. Please try again or use "Download ZIP" instead.')
       }
     }
@@ -237,8 +237,8 @@ export default function MigrationAssets() {
       a.click()
       document.body.removeChild(a)
       window.URL.revokeObjectURL(url)
-    } catch (error: any) {
-      console.error('Failed to create zip file:', error)
+    } catch {
+      // Failed to create zip file - error handling done in catch block
       alert('Failed to create zip file. Please try again.')
     }
   }

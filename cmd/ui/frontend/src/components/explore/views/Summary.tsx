@@ -17,6 +17,8 @@ import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useChartZoom } from '@/lib/useChartZoom'
 import { formatDateShort } from '@/lib/formatters'
+import { apiClient } from '@/services/apiClient'
+import type { CostsApiResponse } from '@/types/api'
 
 interface CostSummaryData {
   startDate: string | null
@@ -40,7 +42,7 @@ interface CostSummaryData {
 export default function Summary() {
   const regions = useRegions()
   const { startDate, endDate, setStartDate, setEndDate } = useSummaryDateFilters()
-  const [regionCostData, setRegionCostData] = useState<Record<string, any>>({})
+  const [regionCostData, setRegionCostData] = useState<Record<string, CostsApiResponse>>({})
   const [error, setError] = useState<string | null>(null)
   const [defaultsSet, setDefaultsSet] = useState(false)
   const [selectedChartCostType, setSelectedChartCostType] = useState<string>('unblended_cost')
@@ -127,33 +129,15 @@ export default function Summary() {
 
       try {
         const costPromises = regions.map(async (region) => {
-          // Build URL with optional date parameters
-          let url = `/costs/${encodeURIComponent(region.name)}`
-          const params = new URLSearchParams()
-
-          if (startDate) {
-            params.append('startDate', startDate.toISOString())
-          }
-          if (endDate) {
-            params.append('endDate', endDate.toISOString())
-          }
-
-          if (params.toString()) {
-            url += `?${params.toString()}`
-          }
-
-          const response = await fetch(url)
-
-          if (!response.ok) {
-            throw new Error(`Failed to fetch costs for ${region.name}: ${response.status}`)
-          }
-
-          const data = await response.json()
+          const data = await apiClient.costs.getCosts(region.name, {
+            startDate,
+            endDate,
+          })
           return { regionName: region.name, data }
         })
 
         const results = await Promise.all(costPromises)
-        const costData: Record<string, any> = {}
+        const costData: Record<string, CostsApiResponse> = {}
 
         results.forEach(({ regionName, data }) => {
           costData[regionName] = data
@@ -161,7 +145,6 @@ export default function Summary() {
 
         setRegionCostData(costData)
       } catch (err) {
-        console.error('Error fetching region costs:', err)
         setError(err instanceof Error ? err.message : 'Failed to fetch cost data')
       }
     }

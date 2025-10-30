@@ -17,6 +17,8 @@ import Tabs from '@/components/common/Tabs'
 import RegionCostsChartTab from './RegionCostsChartTab'
 import RegionCostsTableTab from './RegionCostsTableTab'
 import MetricsCodeViewer from '@/components/explore/clusters/MetricsCodeViewer'
+import { apiClient } from '@/services/apiClient'
+import type { CostsApiResponse } from '@/types/api'
 
 interface RegionCostsProps {
   region: {
@@ -27,7 +29,7 @@ interface RegionCostsProps {
 
 export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const [costsResponse, setCostsResponse] = useState<any>(null)
+  const [costsResponse, setCostsResponse] = useState<CostsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedService, setSelectedService] = useState<string>('')
   const [selectedTableService, setSelectedTableService] = useState<string>('')
@@ -147,34 +149,18 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
       setError(null)
 
       try {
-        console.log(`Fetching costs for region: ${region.name}`)
+        const data = await apiClient.costs.getCosts(region.name, {
+          startDate,
+          endDate,
+        })
 
-        // Build URL with optional date parameters
-        let url = `/costs/${encodeURIComponent(region.name)}`
-        const params = new URLSearchParams()
-
-        if (startDate) {
-          params.append('startDate', startDate.toISOString())
-        }
-        if (endDate) {
-          params.append('endDate', endDate.toISOString())
-        }
-
-        if (params.toString()) {
-          url += `?${params.toString()}`
-        }
-
-        const response = await fetch(url)
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch costs: ${response.status} ${response.statusText}`)
-        }
-
-        const data = await response.json()
         setCostsResponse(data)
       } catch (err) {
-        console.error('Error fetching costs:', err)
-        setError(err instanceof Error ? err.message : 'Failed to fetch costs')
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to fetch costs'
+        )
       } finally {
         setIsLoading(false)
       }

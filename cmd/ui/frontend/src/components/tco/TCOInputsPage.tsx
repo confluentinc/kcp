@@ -169,8 +169,8 @@ export default function TCOInputs() {
       await navigator.clipboard.writeText(csvContent)
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 1000) // Hide tick after 2 seconds
-    } catch (err) {
-      console.error('Failed to copy to clipboard:', err)
+    } catch {
+      // Failed to copy to clipboard - silently fail as this is not critical
     }
   }
 

@@ -6,6 +6,9 @@ import ExploreContent from '@/components/explore/ExploreContent'
 import AppHeader from '@/components/AppHeader'
 import Tabs from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/appStore'
+import { apiClient } from '@/services/apiClient'
+import type { StateUploadRequest } from '@/types/api'
+import { PageErrorBoundary } from '@/components/ErrorBoundary'
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -40,26 +43,13 @@ export default function Home() {
     reader.onload = async (e) => {
       try {
         const content = e.target?.result as string
-        const parsed = JSON.parse(content)
+        const parsed = JSON.parse(content) as StateUploadRequest
 
-        console.log(parsed)
         // Validate that we have a Discovery object with regions
         if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
           // Call the /upload-state endpoint to process the discovery data
-          const response = await fetch('/upload-state', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(parsed),
-          })
+          const result = await apiClient.state.uploadState(parsed)
 
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}))
-            throw new Error(errorData.message || `Server error: ${response.status}`)
-          }
-
-          const result = await response.json()
           // Extract the processed regions from the API response
           if (result && result.regions) {
             const processedRegions = result.regions
@@ -81,7 +71,6 @@ export default function Home() {
           throw new Error('Invalid file format. Expected a KCP state file with regions.')
         }
       } catch (err) {
-        console.error('Error processing file:', err)
         setError(err instanceof Error ? err.message : 'Failed to process file')
         setRegions([])
         setSchemaRegistries([])
@@ -101,14 +90,15 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-card transition-colors">
-      <AppHeader
-        onFileUpload={triggerFileUpload}
-        isProcessing={isProcessing}
-        error={error}
-      />
+    <PageErrorBoundary>
+      <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-card transition-colors">
+        <AppHeader
+          onFileUpload={triggerFileUpload}
+          isProcessing={isProcessing}
+          error={error}
+        />
 
-      <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col">
         <input
           ref={fileInputRef}
           type="file"
@@ -181,7 +171,8 @@ export default function Home() {
             </div>
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </PageErrorBoundary>
   )
 }
