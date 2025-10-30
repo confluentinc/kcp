@@ -4,6 +4,7 @@ interface ClusterOverviewProps {
   brokerInfo: any
   regionName: string
   regionData?: any
+  bootstrapBrokers?: any
 }
 
 export default function ClusterOverview({
@@ -11,6 +12,7 @@ export default function ClusterOverview({
   provisioned,
   brokerInfo,
   regionData,
+  bootstrapBrokers,
 }: ClusterOverviewProps) {
   const formatDate = (dateString: string) =>
     new Date(dateString).toLocaleDateString('en-US', {
@@ -66,6 +68,141 @@ export default function ClusterOverview({
           <div className="text-sm text-gray-600 dark:text-gray-400">Kafka Version</div>
         </div>
       </div>
+      
+      {/* Bootstrap Brokers */}
+      {bootstrapBrokers && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-colors">
+          <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
+            Bootstrap Brokers
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-600">
+                  <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+                    Broker Type
+                  </th>
+                  <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+                    Addresses
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
+                {bootstrapBrokers.BootstrapBrokerString && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">Plaintext</td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerString}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringTls && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">TLS</td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringTls}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringPublicTls && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">Public TLS</td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringPublicTls}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringSaslScram && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">SASL/SCRAM</td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringSaslScram}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringPublicSaslScram && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                      Public SASL/SCRAM
+                    </td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringPublicSaslScram}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringSaslIam && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">SASL/IAM</td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringSaslIam}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringPublicSaslIam && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                      Public SASL/IAM
+                    </td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringPublicSaslIam}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringVpcConnectivitySaslIam && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                      VPC Connectivity SASL/IAM
+                    </td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringVpcConnectivitySaslIam}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringVpcConnectivitySaslScram && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                      VPC Connectivity SASL/SCRAM
+                    </td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringVpcConnectivitySaslScram}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {bootstrapBrokers.BootstrapBrokerStringVpcConnectivityTls && (
+                  <tr>
+                    <td className="py-2 font-medium text-gray-900 dark:text-gray-100">
+                      VPC Connectivity TLS
+                    </td>
+                    <td className="py-2">
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors">
+                        {bootstrapBrokers.BootstrapBrokerStringVpcConnectivityTls}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Configuration Details */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
