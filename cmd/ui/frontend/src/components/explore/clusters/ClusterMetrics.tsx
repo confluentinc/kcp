@@ -6,6 +6,7 @@ import { downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/store'
 import { useChartZoom } from '@/lib/useChartZoom'
 import { useMetricsDataProcessor } from '@/hooks/useMetricsDataProcessor'
+import { useDateFiltersWithMetadata } from '@/hooks/useDateFiltersWithMetadata'
 import { convertBytesToMB, getTCOFieldFromWorkloadAssumption } from '@/lib/metricsUtils'
 import DateRangePicker from '@/components/common/DateRangePicker'
 import MetricsChartTab from './MetricsChartTab'
@@ -44,7 +45,6 @@ export default function ClusterMetrics({
   const [metricsResponse, setMetricsResponse] = useState<MetricsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<string>('')
-  const [defaultsSet, setDefaultsSet] = useState(false)
   const modalDatesResetRef = useRef(false)
   const previousModalStateRef = useRef(false)
 
@@ -94,7 +94,6 @@ export default function ClusterMetrics({
   useEffect(() => {
     setHasUsedPreselectedMetric(false)
     modalDatesResetRef.current = false // Reset the flag when cluster changes
-    setDefaultsSet(false) // Reset defaults flag to allow date initialization for new cluster
     // Reset modal dates when cluster changes
     if (inModal) {
       setModalStartDate(undefined)
@@ -125,56 +124,6 @@ export default function ClusterMetrics({
   // Active tab state from Zustand
   const activeMetricsTab = useAppStore((state) => state.activeMetricsTab)
   const setActiveMetricsTab = useAppStore((state) => state.setActiveMetricsTab)
-
-  // Set default dates from metadata when data is first loaded (only for non-modal mode)
-  useEffect(() => {
-    if (inModal || defaultsSet || !metricsResponse?.metadata) return
-
-    const metaStartDate = metricsResponse.metadata.start_date
-    const metaEndDate = metricsResponse.metadata.end_date
-
-    // Only set defaults if both dates are valid and no user selection has been made
-    if (
-      !startDate &&
-      !endDate &&
-      metaStartDate &&
-      metaEndDate &&
-      !isNaN(new Date(metaStartDate).getTime()) &&
-      !isNaN(new Date(metaEndDate).getTime())
-    ) {
-      setStartDate(new Date(metaStartDate))
-      setEndDate(new Date(metaEndDate))
-      setDefaultsSet(true)
-    }
-  }, [inModal, metricsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
-
-  // Custom reset functions that use metadata dates
-  const resetToMetadataDates = () => {
-    if (metricsResponse?.metadata) {
-      const metaStartDate = metricsResponse.metadata.start_date
-      const metaEndDate = metricsResponse.metadata.end_date
-
-      if (metaStartDate && metaEndDate) {
-        setStartDate(new Date(metaStartDate))
-        setEndDate(new Date(metaEndDate))
-        resetZoom() // Reset chart zoom when dates are reset
-      }
-    }
-  }
-
-  const resetStartDateToMetadata = () => {
-    if (metricsResponse?.metadata?.start_date) {
-      setStartDate(new Date(metricsResponse.metadata.start_date))
-      resetZoom() // Reset chart zoom when start date is reset
-    }
-  }
-
-  const resetEndDateToMetadata = () => {
-    if (metricsResponse?.metadata?.end_date) {
-      setEndDate(new Date(metricsResponse.metadata.end_date))
-      resetZoom() // Reset chart zoom when end date is reset
-    }
-  }
 
   // Process metrics data using hook
   const processedData = useMetricsDataProcessor(metricsResponse)
@@ -210,6 +159,19 @@ export default function ClusterMetrics({
   useEffect(() => {
     resetZoom()
   }, [cluster.name, cluster.region, resetZoom])
+
+  // Use date filters hook with metadata for auto-initialization and reset functions
+  // Note: Only auto-set defaults in non-modal mode (modal has separate initialization logic)
+  const { resetToMetadataDates, resetStartDateToMetadata, resetEndDateToMetadata } =
+    useDateFiltersWithMetadata({
+      startDate,
+      endDate,
+      setStartDate,
+      setEndDate,
+      metadata: metricsResponse?.metadata,
+      onReset: resetZoom,
+      autoSetDefaults: !inModal, // Disable auto-set in modal mode
+    })
 
   // Reset dates to metadata when opened in modal mode (use local state, not store)
   useEffect(() => {

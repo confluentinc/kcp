@@ -98,6 +98,13 @@ export function useDateFiltersWithMetadata({
     metadataDates.startDate && metadataDates.endDate
   )
 
+  // Reset defaultsSet flag when dates are cleared (e.g., when switching clusters)
+  useEffect(() => {
+    if (!startDate && !endDate && defaultsSet) {
+      setDefaultsSet(false)
+    }
+  }, [startDate, endDate, defaultsSet])
+
   // Set default dates from metadata when data is first loaded
   useEffect(() => {
     if (!autoSetDefaults || defaultsSet || !hasMetadataDates) return
