@@ -313,7 +313,23 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
-	return c.JSON(http.StatusCreated, "todo")
+	var req types.MigrateSchemasRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
 func (ui *UI) handleMigrationScripts(c echo.Context) error {

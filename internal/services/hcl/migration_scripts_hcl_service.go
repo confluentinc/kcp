@@ -24,11 +24,18 @@ func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.Mir
 }
 
 func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.TerraformFiles, error) {
-
 	return types.TerraformFiles{
 		MainTf:      s.generateMigrateACLsMainTf(),
 		ProvidersTf: s.generateProvidersTf(),
 		VariablesTf: s.generateMigrateACLsVariablesTf(),
+	}, nil
+}
+
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.TerraformFiles, error) {
+	return types.TerraformFiles{
+		MainTf:      s.generateMigrateSchemasMainTf(),
+		ProvidersTf: s.generateProvidersTf(),
+		VariablesTf: s.generateMigrateSchemasVariablesTf(),
 	}, nil
 }
 
@@ -136,6 +143,24 @@ func (s *MigrationScriptsHCLService) generateMigrateConnectorsMainTf() string {
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() string {
+	f := hclwrite.NewEmptyFile()
+	// rootBody := f.Body()
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// Migrate Schemas Generation Methods
+// ============================================================================
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf() string {
+	f := hclwrite.NewEmptyFile()
+	// rootBody := f.Body()
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	// rootBody := f.Body()
 

@@ -157,3 +157,5 @@ type MirrorTopicsRequest struct {
 	ConfluentCloudClusterId           string   `json:"confluent_cloud_cluster_id"`
 	ConfluentCloudClusterRestEndpoint string   `json:"confluent_cloud_cluster_rest_endpoint"`
 }
+
+type MigrateSchemasRequest struct {}
