@@ -29,7 +29,16 @@ export default function TCOInputs() {
   // Modal state for ClusterMetrics
   const [modalState, setModalState] = useState<{
     isOpen: boolean
-    cluster: { name: string; region: string } | null
+    cluster: {
+      name: string
+      region: string
+      metrics?: {
+        metadata?: {
+          start_date?: string
+          end_date?: string
+        }
+      }
+    } | null
     preselectedMetric: string | null
     workloadAssumption: string | null
   }>({
@@ -104,7 +113,11 @@ export default function TCOInputs() {
 
       setModalState({
         isOpen: true,
-        cluster: { name: clusterObj.name, region: region.name },
+        cluster: {
+          name: clusterObj.name,
+          region: region.name,
+          metrics: clusterObj.metrics,
+        },
         preselectedMetric,
         workloadAssumption,
       })

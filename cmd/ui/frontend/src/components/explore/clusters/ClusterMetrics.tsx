@@ -20,6 +20,12 @@ interface ClusterMetricsProps {
   cluster: {
     name: string
     region?: string
+    metrics?: {
+      metadata?: {
+        start_date?: string
+        end_date?: string
+      }
+    }
   }
   isActive?: boolean
   inModal?: boolean
@@ -47,11 +53,53 @@ export default function ClusterMetrics({
   const [hasUsedPreselectedMetric, setHasUsedPreselectedMetric] = useState(false)
   const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
 
+  // Local date state for modal mode (not persisted to store)
+  const [modalStartDate, setModalStartDate] = useState<Date | undefined>(undefined)
+  const [modalEndDate, setModalEndDate] = useState<Date | undefined>(undefined)
+
+  // Cluster-specific date state from Zustand (only used in non-modal mode)
+  const storeDateFilters = useClusterDateFilters(cluster.region || 'unknown', cluster.name)
+
+  // Use local state in modal mode, store state otherwise
+  const startDate = inModal ? modalStartDate : storeDateFilters.startDate
+  const endDate = inModal ? modalEndDate : storeDateFilters.endDate
+  const setStartDate = inModal ? setModalStartDate : storeDateFilters.setStartDate
+  const setEndDate = inModal ? setModalEndDate : storeDateFilters.setEndDate
+
+  // Initialize modal dates from cluster metadata if available (from state file)
+  useEffect(() => {
+    if (inModal && cluster.metrics?.metadata?.start_date && cluster.metrics?.metadata?.end_date) {
+      const metaStartDate = cluster.metrics.metadata.start_date
+      const metaEndDate = cluster.metrics.metadata.end_date
+
+      if (
+        !isNaN(new Date(metaStartDate).getTime()) &&
+        !isNaN(new Date(metaEndDate).getTime()) &&
+        !modalStartDate &&
+        !modalEndDate
+      ) {
+        setModalStartDate(new Date(metaStartDate))
+        setModalEndDate(new Date(metaEndDate))
+      }
+    }
+  }, [
+    inModal,
+    cluster.metrics?.metadata?.start_date,
+    cluster.metrics?.metadata?.end_date,
+    modalStartDate,
+    modalEndDate,
+  ])
+
   // Reset preselected metric flag when cluster changes
   useEffect(() => {
     setHasUsedPreselectedMetric(false)
     modalDatesResetRef.current = false // Reset the flag when cluster changes
-  }, [cluster.name, cluster.region])
+    // Reset modal dates when cluster changes
+    if (inModal) {
+      setModalStartDate(undefined)
+      setModalEndDate(undefined)
+    }
+  }, [cluster.name, cluster.region, inModal])
 
   // Determine the TCO field based on the modal workload assumption
   const tcoField = modalWorkloadAssumption
@@ -73,19 +121,13 @@ export default function ClusterMetrics({
     setTimeout(() => setTransferSuccess(null), 500)
   }
 
-  // Cluster-specific date state from Zustand
-  const { startDate, endDate, setStartDate, setEndDate } = useClusterDateFilters(
-    cluster.region || 'unknown',
-    cluster.name
-  )
-
   // Active tab state from Zustand
   const activeMetricsTab = useAppStore((state) => state.activeMetricsTab)
   const setActiveMetricsTab = useAppStore((state) => state.setActiveMetricsTab)
 
-  // Set default dates from metadata when data is first loaded
+  // Set default dates from metadata when data is first loaded (only for non-modal mode)
   useEffect(() => {
-    if (defaultsSet || !metricsResponse?.metadata) return
+    if (inModal || defaultsSet || !metricsResponse?.metadata) return
 
     const metaStartDate = metricsResponse.metadata.start_date
     const metaEndDate = metricsResponse.metadata.end_date
@@ -103,8 +145,7 @@ export default function ClusterMetrics({
       setEndDate(new Date(metaEndDate))
       setDefaultsSet(true)
     }
-  }, [metricsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
-
+  }, [inModal, metricsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
 
   // Custom reset functions that use metadata dates
   const resetToMetadataDates = () => {
@@ -164,22 +205,30 @@ export default function ClusterMetrics({
     updateData(processedData.chartData)
   }, [processedData.chartData, updateData])
 
-  // Reset dates to metadata when opened in modal mode
+  // Reset dates to metadata when opened in modal mode (use local state, not store)
   useEffect(() => {
     const isModalActive = inModal && (isActive ?? false)
-    const modalJustOpened = isModalActive && !previousModalStateRef.current
-    
+
     // Track previous modal state
+    const wasModalActive = previousModalStateRef.current
     previousModalStateRef.current = isModalActive
-    
-    // Reset the flag when modal closes
+
+    // Reset local state when modal closes
     if (!isModalActive) {
       modalDatesResetRef.current = false
+      setModalStartDate(undefined)
+      setModalEndDate(undefined)
       return
     }
-    
-    // Only reset when modal just opened and we haven't reset yet
-    if (modalJustOpened && !modalDatesResetRef.current && metricsResponse?.metadata) {
+
+    // When modal opens (transitions from closed to open), reset the flag so dates can be set
+    if (isModalActive && !wasModalActive) {
+      modalDatesResetRef.current = false
+    }
+
+    // Set dates to metadata values whenever modal is active and metadata is available
+    // This handles both initial open and when metadata loads after fetch
+    if (isModalActive && !modalDatesResetRef.current && metricsResponse?.metadata) {
       const metaStartDate = metricsResponse.metadata.start_date
       const metaEndDate = metricsResponse.metadata.end_date
 
@@ -191,11 +240,11 @@ export default function ClusterMetrics({
       ) {
         // Mark that we've reset to prevent re-running
         modalDatesResetRef.current = true
-        
-        // Reset dates to metadata values
-        setStartDate(new Date(metaStartDate))
-        setEndDate(new Date(metaEndDate))
-        
+
+        // Reset local modal dates to metadata values (not store)
+        setModalStartDate(new Date(metaStartDate))
+        setModalEndDate(new Date(metaEndDate))
+
         // Reset zoom after dates are set
         setTimeout(() => {
           try {
@@ -207,7 +256,7 @@ export default function ClusterMetrics({
         }, 0)
       }
     }
-  }, [inModal, isActive, metricsResponse?.metadata?.start_date, metricsResponse?.metadata?.end_date, setStartDate, setEndDate, resetZoom])
+  }, [inModal, isActive, metricsResponse?.metadata, resetZoom])
 
   const handleDownloadCSV = () => {
     const filename = generateMetricsFilename(cluster.name, cluster.region)
@@ -241,11 +290,7 @@ export default function ClusterMetrics({
 
         setMetricsResponse(data)
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Failed to fetch metrics'
-        )
+        setError(err instanceof Error ? err.message : 'Failed to fetch metrics')
       } finally {
         setIsLoading(false)
       }
