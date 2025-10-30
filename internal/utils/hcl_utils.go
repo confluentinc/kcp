@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // FormatHclResourceName ensures that resources are all 'snake_case'.
@@ -53,6 +54,16 @@ func TokensForList(items []string) hclwrite.Tokens {
 
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
 	return tokens
+}
+
+// TokensForStringList creates tokens for a list of quoted strings (e.g., ["item1", "item2"])
+func TokensForStringList(items []string) hclwrite.Tokens {
+	values := make([]cty.Value, len(items))
+	for i, item := range items {
+		values[i] = cty.StringVal(item)
+	}
+
+	return hclwrite.TokensForValue(cty.ListVal(values))
 }
 
 // TokensForFunctionCall creates tokens for a function call with a string template argument

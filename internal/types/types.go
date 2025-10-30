@@ -137,6 +137,12 @@ type TerraformFiles struct {
 	VariablesTf string `json:"variables_tf"`
 }
 
+type TerraformVariable struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Sensitive   bool   `json:"sensitive"`
+}
+
 type MigrationWizardRequest struct {
 	MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
 	AuthenticationMethod         string `json:"authentication_method"`

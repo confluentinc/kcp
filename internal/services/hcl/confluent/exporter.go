@@ -3,7 +3,6 @@ package confluent
 import (
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -18,22 +17,15 @@ const (
 	VarConfluentCloudSchemaRegistrySecret = "confluent_cloud_schema_registry_api_secret"
 )
 
-// SchemaExporterVariable defines a Terraform variable for schema exporters
-type SchemaExporterVariable struct {
-	Name        string
-	Description string
-	Sensitive   bool
-}
-
 // SchemaExporterVariables defines all the variables needed for schema exporter resources
-var SchemaExporterVariables = []SchemaExporterVariable{
-	{VarSourceSchemaRegistryID, "ID of the source schema registry", false},
-	{VarSourceSchemaRegistryURL, "URL of the source schema registry", false},
-	{VarSourceSchemaRegistryUsername, "Username for source schema registry authentication", false},
-	{VarSourceSchemaRegistryPassword, "Password for source schema registry authentication", true},
-	{VarConfluentCloudSchemaRegistryURL, "URL of the target schema registry (Confluent Cloud)", false},
-	{VarConfluentCloudSchemaRegistryAPIKey, "API key for the target schema registry (Confluent Cloud)", false},
-	{VarConfluentCloudSchemaRegistrySecret, "API secret for the target schema registry (Confluent Cloud)", true},
+var SchemaExporterVariables = []types.TerraformVariable{
+	{Name: VarSourceSchemaRegistryID, Description: "ID of the source schema registry", Sensitive: false},
+	{Name: VarSourceSchemaRegistryURL, Description: "URL of the source schema registry", Sensitive: false},
+	{Name: VarSourceSchemaRegistryUsername, Description: "Username for source schema registry authentication", Sensitive: false},
+	{Name: VarSourceSchemaRegistryPassword, Description: "Password for source schema registry authentication", Sensitive: true},
+	{Name: VarConfluentCloudSchemaRegistryURL, Description: "URL of the target schema registry (Confluent Cloud)", Sensitive: false},
+	{Name: VarConfluentCloudSchemaRegistryAPIKey, Description: "API key for the target schema registry (Confluent Cloud)", Sensitive: false},
+	{Name: VarConfluentCloudSchemaRegistrySecret, Description: "API secret for the target schema registry (Confluent Cloud)", Sensitive: true},
 }
 
 // GenerateSchemaExporter creates a Terraform resource for a single confluent_schema_exporter
@@ -62,18 +54,7 @@ func GenerateSchemaExporter(exporter types.Exporter) *hclwrite.Block {
 	exporterBlock.Body().AppendNewline()
 
 	// subjects attribute
-	subjectsTokens := hclwrite.Tokens{}
-	subjectsTokens = append(subjectsTokens, &hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")})
-	for i, subject := range exporter.Subjects {
-		subjectsTokens = append(subjectsTokens, &hclwrite.Token{Type: hclsyntax.TokenOQuote, Bytes: []byte(`"`)})
-		subjectsTokens = append(subjectsTokens, &hclwrite.Token{Type: hclsyntax.TokenQuotedLit, Bytes: []byte(subject)})
-		subjectsTokens = append(subjectsTokens, &hclwrite.Token{Type: hclsyntax.TokenCQuote, Bytes: []byte(`"`)})
-		if i < len(exporter.Subjects)-1 {
-			subjectsTokens = append(subjectsTokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")})
-		}
-	}
-	subjectsTokens = append(subjectsTokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
-	exporterBlock.Body().SetAttributeRaw("subjects", subjectsTokens)
+	exporterBlock.Body().SetAttributeRaw("subjects", utils.TokensForStringList(exporter.Subjects))
 
 	// context_type and context attributes
 	exporterBlock.Body().SetAttributeValue("context_type", cty.StringVal(exporter.ContextType))
