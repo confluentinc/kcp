@@ -94,6 +94,7 @@ export default function ClusterMetrics({
   useEffect(() => {
     setHasUsedPreselectedMetric(false)
     modalDatesResetRef.current = false // Reset the flag when cluster changes
+    setDefaultsSet(false) // Reset defaults flag to allow date initialization for new cluster
     // Reset modal dates when cluster changes
     if (inModal) {
       setModalStartDate(undefined)
@@ -204,6 +205,11 @@ export default function ClusterMetrics({
   useEffect(() => {
     updateData(processedData.chartData)
   }, [processedData.chartData, updateData])
+
+  // Reset zoom state when cluster changes to prevent stale domain values
+  useEffect(() => {
+    resetZoom()
+  }, [cluster.name, cluster.region, resetZoom])
 
   // Reset dates to metadata when opened in modal mode (use local state, not store)
   useEffect(() => {
