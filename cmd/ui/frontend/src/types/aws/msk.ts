@@ -22,6 +22,15 @@ export interface StorageInfo {
 }
 
 /**
+ * Connectivity Information
+ */
+export interface ConnectivityInfo {
+  PublicAccess?: {
+    Type?: string
+  }
+}
+
+/**
  * Broker Node Group Information
  */
 export interface BrokerNodeGroupInfo {
@@ -31,6 +40,7 @@ export interface BrokerNodeGroupInfo {
   BrokerAZDistribution?: string
   ZoneIds?: string[]
   StorageInfo?: StorageInfo
+  ConnectivityInfo?: ConnectivityInfo
 }
 
 /**

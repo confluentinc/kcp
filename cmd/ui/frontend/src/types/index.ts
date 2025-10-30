@@ -32,6 +32,9 @@ export interface Cluster {
   aws_client_information: {
     msk_cluster_config?: MSKClusterConfig
     connectors?: MSKConnector[]
+    bootstrap_brokers?: {
+      [key: string]: string | null
+    }
   }
   kafka_admin_client_information: KafkaAdminInfo
   timestamp?: string

@@ -2,11 +2,11 @@ import KeyValueGrid from '@/components/common/KeyValueGrid'
 import KeyValuePair from '@/components/common/KeyValuePair'
 import BooleanStatus from '@/components/common/BooleanStatus'
 import AuthenticationStatus from './AuthenticationStatus'
-import StorageInfo from './StorageInfo'
 import StatusBadge from '@/components/common/StatusBadge'
 import { createStatusBadgeProps } from '@/lib/utils'
 import { formatDate } from '@/lib/formatters'
 import { decodeBase64 } from '@/lib/clusterUtils'
+import { BOOTSTRAP_BROKER_LABELS } from '@/constants'
 import type { MSKProvisionedCluster, BrokerNodeGroupInfo } from '@/types'
 import type { MSKConfiguration } from '@/types'
 
@@ -16,6 +16,11 @@ interface ClusterConfigurationSectionProps {
       metadata: {
         follower_fetching: boolean
         tiered_storage: boolean
+      }
+    }
+    aws_client_information?: {
+      bootstrap_brokers?: {
+        [key: string]: string | null
       }
     }
   }
@@ -50,18 +55,28 @@ export default function ClusterConfigurationSection({
               value: brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0,
             },
             {
+              label: 'AZ Distribution:',
+              value: brokerInfo.BrokerAZDistribution || 'Unknown',
+            },
+            {
               label: 'Total Storage (GB):',
               value:
                 (brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0) *
                 (provisioned.NumberOfBrokerNodes || 0),
             },
             {
-              label: 'AZ Distribution:',
-              value: brokerInfo.BrokerAZDistribution || 'Unknown',
-            },
-            {
               label: 'Availability Zones:',
               value: brokerInfo.ZoneIds?.length || 0,
+            },
+            {
+              label: 'Public Access:',
+              value: (
+                <BooleanStatus
+                  value={
+                    brokerInfo.ConnectivityInfo?.PublicAccess?.Type === 'SERVICE_PROVIDED_EIPS'
+                  }
+                />
+              ),
             },
             {
               label: 'Follower Fetching:',
@@ -75,77 +90,129 @@ export default function ClusterConfigurationSection({
         />
       </div>
 
-      {/* Authentication Status */}
-      <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          Authentication Status
-        </h3>
-            <AuthenticationStatus
-              clientAuthentication={
-                provisioned.ClientAuthentication
-                  ? {
-                      Unauthenticated: provisioned.ClientAuthentication.Unauthenticated?.Enabled
-                        ? { Enabled: true }
-                        : undefined,
-                      Sasl: provisioned.ClientAuthentication.Sasl
-                        ? {
-                            Iam: provisioned.ClientAuthentication.Sasl.Iam?.Enabled
-                              ? { Enabled: true }
-                              : undefined,
-                            Scram: provisioned.ClientAuthentication.Sasl.Scram?.Enabled
-                              ? { Enabled: true }
-                              : undefined,
-                          }
-                        : undefined,
-                      Tls: provisioned.ClientAuthentication.Tls?.CertificateAuthorityArnList
-                        ? { Enabled: true }
-                        : undefined,
-                    }
-                  : {}
-              }
-              displayMode="table"
-            />
-      </div>
-
-      {/* Network Configuration */}
-      <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          Network Configuration
-        </h3>
+      {/* Authentication Status and Network Configuration - Side by Side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Authentication Status */}
         <div>
-          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Client Subnets</h4>
-          <div className="space-y-2">
-            {(brokerInfo.ClientSubnets || []).map((subnet: string, index: number) => (
-              <div
-                key={index}
-                className="flex items-center justify-between p-2 bg-gray-50 dark:bg-card rounded transition-colors"
-              >
-                <span className="font-mono text-sm text-gray-900 dark:text-gray-100">{subnet}</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  AZ: {brokerInfo.ZoneIds?.[index] || 'Unknown'}
-                </span>
-              </div>
-            ))}
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+            Authentication Status
+          </h3>
+          <AuthenticationStatus
+            clientAuthentication={
+              provisioned.ClientAuthentication
+                ? {
+                    Unauthenticated: provisioned.ClientAuthentication.Unauthenticated?.Enabled
+                      ? { Enabled: true }
+                      : undefined,
+                    Sasl: provisioned.ClientAuthentication.Sasl
+                      ? {
+                          Iam: provisioned.ClientAuthentication.Sasl.Iam?.Enabled
+                            ? { Enabled: true }
+                            : undefined,
+                          Scram: provisioned.ClientAuthentication.Sasl.Scram?.Enabled
+                            ? { Enabled: true }
+                            : undefined,
+                        }
+                      : undefined,
+                    Tls: provisioned.ClientAuthentication.Tls?.CertificateAuthorityArnList
+                      ? { Enabled: true }
+                      : undefined,
+                  }
+                : {}
+            }
+            displayMode="table"
+          />
+        </div>
+
+        {/* Network Configuration */}
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+            Network Configuration
+          </h3>
+          <div>
+            <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Client Subnets</h4>
+            <div className="space-y-2">
+              {(brokerInfo.ClientSubnets || []).map((subnet: string, index: number) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between p-2 bg-gray-50 dark:bg-card rounded transition-colors"
+                >
+                  <span className="font-mono text-sm text-gray-900 dark:text-gray-100">
+                    {subnet}
+                  </span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    AZ: {brokerInfo.ZoneIds?.[index] || 'Unknown'}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Storage Configuration */}
-      <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          Storage Configuration
-        </h3>
-        <StorageInfo
-          volumeSize={brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0}
-          brokerNodes={provisioned.NumberOfBrokerNodes || 0}
-          provisionedThroughput={
-            brokerInfo.StorageInfo?.EbsStorageInfo?.ProvisionedThroughput?.Enabled !== undefined
-              ? { Enabled: brokerInfo.StorageInfo.EbsStorageInfo.ProvisionedThroughput.Enabled }
-              : undefined
-          }
-          displayMode="detailed"
-        />
-      </div>
+      {/* Bootstrap Endpoints */}
+      {cluster.aws_client_information?.bootstrap_brokers &&
+        (() => {
+          const entries = Object.entries(cluster.aws_client_information.bootstrap_brokers)
+            .filter(([, value]) => value !== null && typeof value === 'string')
+            .map(([key, value]) => {
+              // Direct lookup from constants, fallback to key if not found
+              const label = BOOTSTRAP_BROKER_LABELS[key] || key
+              // Split comma-separated servers
+              const servers = String(value)
+                .split(',')
+                .map((s) => s.trim())
+              return { key, label, servers }
+            })
+
+          if (entries.length === 0) return null
+
+          return (
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                Bootstrap Endpoints
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-border">
+                  <thead className="bg-gray-50 dark:bg-card">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Type
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Endpoints
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-border">
+                    {entries.map(({ key, label, servers }) => (
+                      <tr
+                        key={key}
+                        className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {label}
+                        </td>
+                        <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">
+                          <div className="space-y-1">
+                            {servers.map((server, idx) => (
+                              <div
+                                key={idx}
+                                className="break-all"
+                              >
+                                {server}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        })()}
 
       {/* Security Configuration */}
       <div>
@@ -198,8 +265,9 @@ export default function ClusterConfigurationSection({
                 <div className="bg-gray-50 dark:bg-card rounded-lg transition-colors p-3">
                   <div className="text-sm text-gray-600 dark:text-gray-400">KMS Key ID:</div>
                   <div className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors mt-1">
-                    {provisioned.EncryptionInfo?.EncryptionAtRest?.DataVolumeKMSKeyId?.split('/').pop() ||
-                      'Not configured'}
+                    {provisioned.EncryptionInfo?.EncryptionAtRest?.DataVolumeKMSKeyId?.split(
+                      '/'
+                    ).pop() || 'Not configured'}
                   </div>
                 </div>
               </div>
@@ -279,7 +347,9 @@ export default function ClusterConfigurationSection({
               label="S3 Logs:"
               value={
                 <StatusBadge
-                  {...createStatusBadgeProps(provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled || false)}
+                  {...createStatusBadgeProps(
+                    provisioned.LoggingInfo?.BrokerLogs?.S3?.Enabled || false
+                  )}
                 />
               }
               alignItems="center"
@@ -355,4 +425,3 @@ export default function ClusterConfigurationSection({
     </div>
   )
 }
-

@@ -98,3 +98,24 @@ export const AWS_SERVICES = {
  * Request timeout (in milliseconds)
  */
 export const REQUEST_TIMEOUT = 30000 // 30 seconds
+
+/**
+ * Bootstrap Broker Type Labels
+ * Direct mapping from AWS state file keys to human-readable labels
+ */
+export const BOOTSTRAP_BROKER_LABELS: Record<string, string> = {
+  // VPC Connectivity endpoints
+  BootstrapBrokerStringVpcConnectivitySaslIam: 'VPC Connectivity SASL IAM',
+  BootstrapBrokerStringVpcConnectivitySaslScram: 'VPC Connectivity SASL SCRAM',
+  BootstrapBrokerStringVpcConnectivityTls: 'VPC Connectivity TLS',
+  // Public endpoints
+  BootstrapBrokerStringPublicSaslIam: 'Public SASL IAM',
+  BootstrapBrokerStringPublicSaslScram: 'Public SASL SCRAM',
+  BootstrapBrokerStringPublicTls: 'Public TLS',
+  // Private endpoints
+  BootstrapBrokerStringSaslIam: 'SASL IAM',
+  BootstrapBrokerStringSaslScram: 'SASL SCRAM',
+  BootstrapBrokerStringTls: 'TLS',
+  // Plaintext
+  BootstrapBrokerString: 'Plaintext',
+}

@@ -46,9 +46,16 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
               <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                 Cluster:&nbsp;{cluster.name}
               </h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'}
-              </p>
+              <div className="mt-2 space-y-1">
+                {mskConfig.ClusterArn && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                    ARN: {mskConfig.ClusterArn}
+                  </p>
+                )}
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'}
+                </p>
+              </div>
             </div>
           </div>
 
