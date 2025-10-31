@@ -61,6 +61,8 @@ func GenerateKafkaAPIKey(envName string, isNewEnv bool) *hclwrite.Block {
 	apiKeyBlock.Body().AppendBlock(managedResourceBlock)
 	apiKeyBlock.Body().AppendNewline()
 
+	apiKeyBlock.Body().SetAttributeValue("disable_wait_for_ready", cty.BoolVal(true))
+
 	apiKeyBlock.Body().SetAttributeRaw("depends_on", utils.TokensForList([]string{
 		"confluent_role_binding.app-manager-kafka-cluster-admin",
 	}))

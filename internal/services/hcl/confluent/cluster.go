@@ -10,14 +10,20 @@ import (
 func GenerateKafkaClusterResource(name, clusterType, region string, isNewEnv bool) *hclwrite.Block {
 	clusterBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_cluster", "cluster"})
 	clusterBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
-	clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("SINGLE_ZONE"))
 	clusterBlock.Body().SetAttributeValue("cloud", cty.StringVal("AWS"))
 	clusterBlock.Body().SetAttributeValue("region", cty.StringVal(region))
-	clusterBlock.Body().AppendNewline()
-
-	if clusterType == "dedicated" {
+	
+	switch clusterType {
+	case "dedicated":
+		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("MULTI_ZONE"))
+		clusterBlock.Body().AppendNewline()
 		dedicatedBlock := clusterBlock.Body().AppendNewBlock("dedicated", nil)
 		dedicatedBlock.Body().SetAttributeValue("cku", cty.NumberIntVal(1))
+	case "enterprise":
+		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("HIGH"))
+		clusterBlock.Body().AppendNewline()
+		enterpriseBlock := clusterBlock.Body().AppendNewBlock("enterprise", nil)
+		enterpriseBlock.Body().Clear()
 	}
 
 	clusterBlock.Body().AppendNewline()

@@ -3,6 +3,7 @@ package hcl
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -20,7 +21,7 @@ func NewTargetInfraHCLService() *TargetInfraHCLService {
 func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) (types.TerraformFiles, error) {
 	terraformFiles := types.TerraformFiles{
 		MainTf:      ti.generateMainTf(request),
-		ProvidersTf: ti.generateProvidersTf(),
+		ProvidersTf: ti.generateProvidersTf(request),
 		VariablesTf: ti.generateVariablesTf(),
 	}
 
@@ -31,6 +32,8 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
+
+	request.Region = "eu-west-3"
 
 	// Add environment (create or use data source)
 	if request.NeedsEnvironment {
@@ -43,7 +46,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 
 	// Add Kafka cluster (create if needed)
 	if request.NeedsCluster || request.NeedsEnvironment {
-		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(request.ClusterName, request.ClusterType, "us-east-1", request.NeedsEnvironment))
+		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(request.ClusterName, request.ClusterType, request.Region, request.NeedsEnvironment))
 		rootBody.AppendNewline()
 	}
 
@@ -82,37 +85,6 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 	))
 	rootBody.AppendNewline()
 
-	// Add Kafka ACLs
-	rootBody.AppendBlock(confluent.GenerateKafkaACL(
-		"app-manager-create-on-cluster",
-		"CLUSTER",
-		"kafka-cluster",
-		"LITERAL",
-		"User:${confluent_service_account.app-manager.id}",
-		"CREATE",
-	))
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(confluent.GenerateKafkaACL(
-		"app-manager-describe-on-cluster",
-		"CLUSTER",
-		"kafka-cluster",
-		"LITERAL",
-		"User:${confluent_service_account.app-manager.id}",
-		"DESCRIBE",
-	))
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(confluent.GenerateKafkaACL(
-		"app-manager-read-all-consumer-groups",
-		"GROUP",
-		"*",
-		"PREFIXED",
-		"User:${confluent_service_account.app-manager.id}",
-		"READ",
-	))
-	rootBody.AppendNewline()
-
 	// Add API Keys
 	rootBody.AppendBlock(confluent.GenerateSchemaRegistryAPIKey(request.EnvironmentName, request.NeedsEnvironment))
 	rootBody.AppendNewline()
@@ -120,35 +92,78 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 	rootBody.AppendBlock(confluent.GenerateKafkaAPIKey(request.EnvironmentName, request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
+	if request.NeedsPrivateLink {
+		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachment(request.ClusterName + "_private_link_attachment", request.Region))
+		rootBody.AppendNewline()
+
+		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnection(request.ClusterName + "_private_link_attachment_connection"))
+		rootBody.AppendNewline()
+
+		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource())
+		rootBody.AppendNewline()
+
+		rootBody.AppendBlock(aws.GenerateVpcEndpoint(request.VpcId)) // TODO: retrieve vpc id from statefile instead of asking user to pass it in?
+		rootBody.AppendNewline()
+
+		for i, subnetCidrRange := range request.SubnetCidrRanges {
+			rootBody.AppendBlock(aws.GenerateSubnets(request.VpcId, subnetCidrRange, i))
+			
+			if i < len(request.SubnetCidrRanges) {
+				rootBody.AppendNewline()
+			}
+		}
+
+		rootBody.AppendBlock(aws.GenerateRoute53Zone(request.VpcId)) // TODO: retrieve vpc id from statefile instead of asking user to pass it in?
+		rootBody.AppendNewline()
+
+		rootBody.AppendBlock(aws.GenerateRoute53Record())
+		rootBody.AppendNewline()
+
+		rootBody.AppendBlock(aws.GenerateSecurityGroup(request.VpcId, []int{80, 443, 9092}, []int{0}))
+		rootBody.AppendNewline()
+	}
+
 	return string(f.Bytes())
 }
 
 // GenerateProvidersTf generates the providers.tf file content
-func (ti *TargetInfraHCLService) generateProvidersTf() string {
+func (ti *TargetInfraHCLService) generateProvidersTf(request types.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	// Terraform block
+	request.Region = "eu-west-3"
+
 	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
 	terraformBody := terraformBlock.Body()
 
-	// Required providers block
 	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
-	// Confluent provider
 	requiredProvidersBody.SetAttributeValue("confluent", cty.ObjectVal(map[string]cty.Value{
 		"source":  cty.StringVal("confluentinc/confluent"),
 		"version": cty.StringVal("2.50.0"),
 	}))
 
+	if request.NeedsPrivateLink {
+		requiredProvidersBody.SetAttributeValue("aws", cty.ObjectVal(map[string]cty.Value{
+			"source":  cty.StringVal("hashicorp/aws"),
+			"version": cty.StringVal("6.18.0"),
+		}))
+	}
+
 	rootBody.AppendNewline()
 
-	// Provider block
 	providerBlock := rootBody.AppendNewBlock("provider", []string{"confluent"})
 	providerBody := providerBlock.Body()
 	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForResourceReference("var.confluent_cloud_api_key"))
 	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForResourceReference("var.confluent_cloud_api_secret"))
+
+	if request.NeedsPrivateLink {
+		rootBody.AppendNewline()
+		awsProviderBlock := rootBody.AppendNewBlock("provider", []string{"aws"})
+		awsProviderBody := awsProviderBlock.Body()
+		awsProviderBody.SetAttributeRaw("region", utils.TokensForStringTemplate(request.Region))
+	}
 
 	return string(f.Bytes())
 }
