@@ -12,10 +12,14 @@ func GenerateKafkaClusterResource(name, clusterType, region string, isNewEnv boo
 	clusterBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
 	clusterBlock.Body().SetAttributeValue("cloud", cty.StringVal("AWS"))
 	clusterBlock.Body().SetAttributeValue("region", cty.StringVal(region))
-	
+
 	switch clusterType {
 	case "dedicated":
-		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("MULTI_ZONE"))
+		/*
+			When we begin work on sizing the Confluent Cloud dedicated cluster based on the MSK cluster, we need to beware that
+			`MULTI_ZONE` is required if CKUs exceed 1.
+		*/
+		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("SINGLE_ZONE"))
 		clusterBlock.Body().AppendNewline()
 		dedicatedBlock := clusterBlock.Body().AppendNewBlock("dedicated", nil)
 		dedicatedBlock.Body().SetAttributeValue("cku", cty.NumberIntVal(1))
