@@ -68,7 +68,8 @@ func (s *MigrationScriptsHCLService) generateMirrorTopicsTf(request types.Mirror
 	rootBody := f.Body()
 
 	for _, topic := range request.SelectedTopics {
-		rootBody.AppendBlock(confluent.GenerateMirrorTopic(topic, request.ClusterLinkName, request.ConfluentCloudClusterId, request.ConfluentCloudClusterRestEndpoint))
+		tfResourceName := utils.FormatHclResourceName(topic)
+		rootBody.AppendBlock(confluent.GenerateMirrorTopic(tfResourceName, topic, request.ClusterLinkName, request.ConfluentCloudClusterId, request.ConfluentCloudClusterRestEndpoint))
 		rootBody.AppendNewline()
 	}
 

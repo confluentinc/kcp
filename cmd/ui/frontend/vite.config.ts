@@ -33,4 +33,63 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // React and React-related libraries
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+            return 'react-vendor'
+          }
+
+          // Large charting library
+          if (id.includes('node_modules/recharts')) {
+            return 'recharts'
+          }
+
+          // JSON Schema Form libraries
+          if (id.includes('node_modules/@rjsf/')) {
+            return 'rjsf'
+          }
+
+          // State management
+          if (
+            id.includes('node_modules/xstate') ||
+            id.includes('node_modules/@xstate/') ||
+            id.includes('node_modules/zustand')
+          ) {
+            return 'state-management'
+          }
+
+          // Radix UI components
+          if (id.includes('node_modules/@radix-ui/')) {
+            return 'radix-ui'
+          }
+
+          // Date utilities
+          if (
+            id.includes('node_modules/date-fns') ||
+            id.includes('node_modules/react-day-picker')
+          ) {
+            return 'date-utils'
+          }
+
+          // Lucide icons (depends on React, keep separate)
+          if (id.includes('node_modules/lucide-react')) {
+            return 'lucide-icons'
+          }
+
+          // Other vendor utilities
+          if (
+            id.includes('node_modules/jszip') ||
+            id.includes('node_modules/clsx') ||
+            id.includes('node_modules/tailwind-merge') ||
+            id.includes('node_modules/class-variance-authority')
+          ) {
+            return 'utils'
+          }
+        },
+      },
+    },
+  },
 })
