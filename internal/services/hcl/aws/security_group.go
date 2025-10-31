@@ -5,8 +5,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GenerateSecurityGroup(vpcId string, ingressPorts []int, egressPorts []int) *hclwrite.Block {
-	securityGroupBlock := hclwrite.NewBlock("resource", []string{"aws_security_group", "cflt_private_link_sg"})
+func GenerateSecurityGroup(tfResourceName, vpcId string, ingressPorts []int, egressPorts []int) *hclwrite.Block {
+	securityGroupBlock := hclwrite.NewBlock("resource", []string{"aws_security_group", tfResourceName})
 	securityGroupBlock.Body().SetAttributeValue("vpc_id", cty.StringVal(vpcId))
 	securityGroupBlock.Body().AppendNewline()
 

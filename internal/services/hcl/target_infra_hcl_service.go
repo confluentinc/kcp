@@ -11,11 +11,60 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+type TerraformResourceNames struct {
+	Environment                     string
+	Cluster                         string
+	SchemaRegistry                  string
+	ServiceAccount                  string
+	SchemaRegistryAPIKey            string
+	KafkaAPIKey                     string
+	PrivateLinkAttachment           string
+	PrivateLinkAttachmentConnection string
+	SubjectResourceOwnerRoleBinding string
+	KafkaClusterAdminRoleBinding    string
+	DataStewardRoleBinding          string
+
+	AvailabilityZones string
+	VpcEndpoint       string
+	Route53Zone       string
+	Route53Record     string
+	SecurityGroup     string
+	SubnetPrefix      string
+}
+
 type TargetInfraHCLService struct {
+	ResourceNames TerraformResourceNames
+}
+
+func NewTerraformResourceNames() TerraformResourceNames {
+	return TerraformResourceNames{
+		// Confluent Resources
+		Environment:                     "environment",
+		Cluster:                         "cluster",
+		SchemaRegistry:                  "schema_registry",
+		ServiceAccount:                  "app-manager",
+		SchemaRegistryAPIKey:            "env-manager-schema-registry-api-key",
+		KafkaAPIKey:                     "app-manager-kafka-api-key",
+		PrivateLinkAttachment:           "private_link_attachment",
+		PrivateLinkAttachmentConnection: "private_link_attachment_connection",
+		SubjectResourceOwnerRoleBinding: "subject-resource-owner",
+		KafkaClusterAdminRoleBinding:    "app-manager-kafka-cluster-admin",
+		DataStewardRoleBinding:          "app-manager-kafka-data-steward",
+
+		// AWS Resources
+		AvailabilityZones: "available",
+		VpcEndpoint:       "cflt_private_link_vpc_endpoint",
+		Route53Zone:       "cflt_private_link_zone",
+		Route53Record:     "cflt_route_entries",
+		SecurityGroup:     "cflt_private_link_sg",
+		SubnetPrefix:      "cflt_private_link_subnet",
+	}
 }
 
 func NewTargetInfraHCLService() *TargetInfraHCLService {
-	return &TargetInfraHCLService{}
+	return &TargetInfraHCLService{
+		ResourceNames: NewTerraformResourceNames(),
+	}
 }
 
 func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) (types.TerraformFiles, error) {
@@ -33,93 +82,137 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
+	// TODO: Retrieve the region from the statefile.
 	request.Region = "eu-west-3"
 
-	// Add environment (create or use data source)
+	// Add environment (create or use data source if user states an environment already exists).
 	if request.NeedsEnvironment {
-		rootBody.AppendBlock(confluent.GenerateEnvironmentResource(request.EnvironmentName))
+		rootBody.AppendBlock(confluent.GenerateEnvironmentResource(ti.ResourceNames.Environment, request.EnvironmentName))
 		rootBody.AppendNewline()
 	} else {
-		rootBody.AppendBlock(confluent.GenerateEnvironmentDataSource(request.EnvironmentId))
+		rootBody.AppendBlock(confluent.GenerateEnvironmentDataSource(ti.ResourceNames.Environment, request.EnvironmentId))
 		rootBody.AppendNewline()
 	}
 
-	// Add Kafka cluster (create if needed)
+	// Add Kafka cluster (create or use data source if user states a cluster already exists).
 	if request.NeedsCluster || request.NeedsEnvironment {
-		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(request.ClusterName, request.ClusterType, request.Region, request.NeedsEnvironment))
+		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, request.ClusterName, request.ClusterType, request.Region, request.NeedsEnvironment))
 		rootBody.AppendNewline()
 	}
 
-	// Add Schema Registry data source
-	rootBody.AppendBlock(confluent.GenerateSchemaRegistryDataSource(request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateSchemaRegistryDataSource(ti.ResourceNames.SchemaRegistry, request.NeedsEnvironment))
 	rootBody.AppendNewline()
 
-	// Add Service Account
 	description := fmt.Sprintf("Service account to manage the %s environment.", request.EnvironmentName)
-	rootBody.AppendBlock(confluent.GenerateServiceAccount("app-manager", description))
+	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, "app-manager", description))
 	rootBody.AppendNewline()
 
-	// Add Role Bindings
+	serviceAccountRef := fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount)
 	rootBody.AppendBlock(confluent.GenerateRoleBinding(
-		"subject-resource-owner",
-		"User:${confluent_service_account.app-manager.id}",
+		ti.ResourceNames.SubjectResourceOwnerRoleBinding,
+		fmt.Sprintf("User:${%s}", serviceAccountRef),
 		"ResourceOwner",
-		utils.TokensForStringTemplate("${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"),
+		utils.TokensForStringTemplate(fmt.Sprintf("${data.confluent_schema_registry_cluster.%s.resource_name}/subject=*", ti.ResourceNames.SchemaRegistry)),
 	))
 	rootBody.AppendNewline()
 
+	clusterRef := fmt.Sprintf("confluent_kafka_cluster.%s.rbac_crn", ti.ResourceNames.Cluster)
 	rootBody.AppendBlock(confluent.GenerateRoleBinding(
-		"app-manager-kafka-cluster-admin",
-		"User:${confluent_service_account.app-manager.id}",
+		ti.ResourceNames.KafkaClusterAdminRoleBinding,
+		fmt.Sprintf("User:${%s}", serviceAccountRef),
 		"CloudClusterAdmin",
-		utils.TokensForResourceReference("confluent_kafka_cluster.cluster.rbac_crn"),
+		utils.TokensForResourceReference(clusterRef),
 	))
 	rootBody.AppendNewline()
 
 	envResourceName := confluent.GetEnvironmentResourceName(request.NeedsEnvironment)
 	rootBody.AppendBlock(confluent.GenerateRoleBinding(
-		"app-manager-kafka-data-steward",
-		"User:${confluent_service_account.app-manager.id}",
+		ti.ResourceNames.DataStewardRoleBinding,
+		fmt.Sprintf("User:${%s}", serviceAccountRef),
 		"DataSteward",
 		utils.TokensForResourceReference(envResourceName),
 	))
 	rootBody.AppendNewline()
 
-	// Add API Keys
-	rootBody.AppendBlock(confluent.GenerateSchemaRegistryAPIKey(request.EnvironmentName, request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateSchemaRegistryAPIKey(
+		ti.ResourceNames.SchemaRegistryAPIKey,
+		request.EnvironmentName,
+		ti.ResourceNames.ServiceAccount,
+		ti.ResourceNames.SchemaRegistry,
+		request.NeedsEnvironment,
+	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(confluent.GenerateKafkaAPIKey(request.EnvironmentName, request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateKafkaAPIKey(
+		ti.ResourceNames.KafkaAPIKey,
+		request.EnvironmentName,
+		ti.ResourceNames.ServiceAccount,
+		ti.ResourceNames.Cluster,
+		ti.ResourceNames.KafkaClusterAdminRoleBinding,
+		request.NeedsEnvironment,
+	))
 	rootBody.AppendNewline()
 
 	if request.NeedsPrivateLink {
-		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachment(request.ClusterName + "_private_link_attachment", request.Region))
+		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachment(
+			ti.ResourceNames.PrivateLinkAttachment,
+			request.ClusterName+"_private_link_attachment",
+			request.Region,
+			ti.ResourceNames.Environment,
+		))
 		rootBody.AppendNewline()
 
-		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnection(request.ClusterName + "_private_link_attachment_connection"))
+		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnection(
+			ti.ResourceNames.PrivateLinkAttachmentConnection,
+			request.ClusterName+"_private_link_attachment_connection",
+			ti.ResourceNames.Environment,
+			ti.ResourceNames.VpcEndpoint,
+			ti.ResourceNames.PrivateLinkAttachment,
+		))
 		rootBody.AppendNewline()
 
-		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource())
+		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource(ti.ResourceNames.AvailabilityZones))
 		rootBody.AppendNewline()
 
-		rootBody.AppendBlock(aws.GenerateVpcEndpoint(request.VpcId)) // TODO: retrieve vpc id from statefile instead of asking user to pass it in?
+		rootBody.AppendBlock(aws.GenerateVpcEndpoint(
+			ti.ResourceNames.VpcEndpoint,
+			request.VpcId,
+			ti.ResourceNames.PrivateLinkAttachment,
+			ti.ResourceNames.SecurityGroup,
+			ti.ResourceNames.SubnetPrefix,
+			len(request.SubnetCidrRanges),
+		)) // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
 		rootBody.AppendNewline()
 
 		for i, subnetCidrRange := range request.SubnetCidrRanges {
-			rootBody.AppendBlock(aws.GenerateSubnets(request.VpcId, subnetCidrRange, i))
-			
+			rootBody.AppendBlock(aws.GenerateSubnets(
+				ti.ResourceNames.SubnetPrefix,
+				request.VpcId,
+				subnetCidrRange,
+				ti.ResourceNames.AvailabilityZones,
+				i,
+			))
+
 			if i < len(request.SubnetCidrRanges) {
 				rootBody.AppendNewline()
 			}
 		}
 
-		rootBody.AppendBlock(aws.GenerateRoute53Zone(request.VpcId)) // TODO: retrieve vpc id from statefile instead of asking user to pass it in?
+		rootBody.AppendBlock(aws.GenerateRoute53Zone(
+			ti.ResourceNames.Route53Zone,
+			request.VpcId,
+			ti.ResourceNames.PrivateLinkAttachment,
+		)) // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
 		rootBody.AppendNewline()
 
-		rootBody.AppendBlock(aws.GenerateRoute53Record())
+		rootBody.AppendBlock(aws.GenerateRoute53Record(
+			ti.ResourceNames.Route53Record,
+			ti.ResourceNames.Route53Zone,
+			ti.ResourceNames.VpcEndpoint,
+		))
 		rootBody.AppendNewline()
 
-		rootBody.AppendBlock(aws.GenerateSecurityGroup(request.VpcId, []int{80, 443, 9092}, []int{0}))
+		rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, request.VpcId, []int{80, 443, 9092}, []int{0}))
 		rootBody.AppendNewline()
 	}
 
@@ -131,6 +224,7 @@ func (ti *TargetInfraHCLService) generateProvidersTf(request types.TargetCluster
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
+	// TODO: Retrieve the region from the statefile.
 	request.Region = "eu-west-3"
 
 	terraformBlock := rootBody.AppendNewBlock("terraform", nil)

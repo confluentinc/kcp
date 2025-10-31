@@ -5,8 +5,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GenerateAvailabilityZonesDataSource() *hclwrite.Block {
-	availabilityZoneBlock := hclwrite.NewBlock("data", []string{"aws_availability_zones", "available"})
+func GenerateAvailabilityZonesDataSource(tfResourceName string) *hclwrite.Block {
+	availabilityZoneBlock := hclwrite.NewBlock("data", []string{"aws_availability_zones", tfResourceName})
 	availabilityZoneBlock.Body().SetAttributeValue("state", cty.StringVal("available"))
 	availabilityZoneBlock.Body().AppendNewline()
 

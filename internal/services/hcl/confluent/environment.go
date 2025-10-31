@@ -6,8 +6,8 @@ import (
 )
 
 // GenerateEnvironmentResource creates a new Confluent environment resource
-func GenerateEnvironmentResource(name string) *hclwrite.Block {
-	environmentBlock := hclwrite.NewBlock("resource", []string{"confluent_environment", "environment"})
+func GenerateEnvironmentResource(tfResourceName, name string) *hclwrite.Block {
+	environmentBlock := hclwrite.NewBlock("resource", []string{"confluent_environment", tfResourceName})
 	environmentBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
 	environmentBlock.Body().AppendNewline()
 
@@ -19,8 +19,8 @@ func GenerateEnvironmentResource(name string) *hclwrite.Block {
 }
 
 // GenerateEnvironmentDataSource creates a data source for an existing environment
-func GenerateEnvironmentDataSource(id string) *hclwrite.Block {
-	environmentDataBlock := hclwrite.NewBlock("data", []string{"confluent_environment", "environment"})
+func GenerateEnvironmentDataSource(tfResourceName, id string) *hclwrite.Block {
+	environmentDataBlock := hclwrite.NewBlock("data", []string{"confluent_environment", tfResourceName})
 	environmentDataBlock.Body().SetAttributeValue("id", cty.StringVal(id))
 	return environmentDataBlock
 }
