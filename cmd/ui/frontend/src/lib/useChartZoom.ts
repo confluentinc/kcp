@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
+import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
 interface ZoomState {
-  data: any[]
+  data: ChartDataPoint[]
   left: string | number
   right: string | number
   refAreaLeft: string | number
@@ -12,7 +13,7 @@ interface ZoomState {
 }
 
 interface UseChartZoomProps {
-  initialData: any[]
+  initialData: ChartDataPoint[]
   dataKey?: string
   yAxisKey?: string
   yAxisOffset?: number
@@ -49,31 +50,45 @@ export const useChartZoom = ({
       const refData = initialData.slice(from - 1, to)
       if (refData.length === 0) return [0, 100]
 
-      let bottom = refData[0][ref] || 0
-      let top = refData[0][ref] || 0
+      const firstValue = refData[0][ref]
+      if (firstValue === null || firstValue === undefined || typeof firstValue !== 'number') {
+        return [0, 100]
+      }
+
+      let bottom: number = firstValue
+      let top: number = firstValue
 
       refData.forEach((d) => {
-        if (d[ref] > top) top = d[ref]
-        if (d[ref] < bottom) bottom = d[ref]
+        const value = d[ref]
+        if (value !== null && value !== undefined && typeof value === 'number') {
+          if (value > top) top = value
+          if (value < bottom) bottom = value
+        }
       })
 
-      return [(bottom | 0) - offset, (top | 0) + offset]
+      return [Math.floor(bottom) - offset, Math.floor(top) + offset]
     },
     [initialData]
   )
 
+  // Recharts mouse event with activeLabel property
+  interface RechartsMouseEvent {
+    activeLabel?: string | number
+    [key: string]: unknown
+  }
+
   // Handle mouse down event
-  const handleMouseDown = useCallback((e: any) => {
+  const handleMouseDown = useCallback((e: RechartsMouseEvent) => {
     if (e && e.activeLabel !== undefined) {
       setState((prevState) => ({
         ...prevState,
-        refAreaLeft: e.activeLabel,
+        refAreaLeft: e.activeLabel as string | number,
       }))
     }
   }, [])
 
   // Handle mouse move event
-  const handleMouseMove = useCallback((e: any) => {
+  const handleMouseMove = useCallback((e: RechartsMouseEvent) => {
     setState((prevState) => {
       if (prevState.refAreaLeft && e && e.activeLabel !== undefined) {
         return {
@@ -109,17 +124,22 @@ export const useChartZoom = ({
       let leftValue: string | number = refAreaLeft
       let rightValue: string | number = refAreaRight
 
-      if (isNumericAxis) {
+      if (isNumericAxis && typeof refAreaLeft === 'number' && typeof refAreaRight === 'number') {
         // For numeric axis (like epoch time), use the values directly
         leftValue = refAreaLeft
         rightValue = refAreaRight
 
         // Find indices for Y-axis calculation
-        leftIndex = data.findIndex((item) => item[dataKey] >= refAreaLeft)
-        rightIndex = data.findIndex((item) => item[dataKey] >= refAreaRight)
-
-        if (leftIndex === -1) leftIndex = 0
-        if (rightIndex === -1) rightIndex = data.length - 1
+        const leftItem = data.find((item) => {
+          const keyValue = item[dataKey]
+          return keyValue !== null && keyValue !== undefined && Number(keyValue) >= refAreaLeft
+        })
+        const rightItem = data.find((item) => {
+          const keyValue = item[dataKey]
+          return keyValue !== null && keyValue !== undefined && Number(keyValue) >= refAreaRight
+        })
+        leftIndex = leftItem ? data.indexOf(leftItem) : 0
+        rightIndex = rightItem ? data.indexOf(rightItem) : data.length - 1
       } else {
         // For string-based X-axis (like formatted dates), use the string values directly
         if (typeof refAreaLeft === 'string' && typeof refAreaRight === 'string') {
@@ -186,7 +206,7 @@ export const useChartZoom = ({
   }, [initialData])
 
   // Update data when initialData changes
-  const updateData = useCallback((newData: any[]) => {
+  const updateData = useCallback((newData: ChartDataPoint[]) => {
     setState((prevState) => ({
       ...prevState,
       data: newData,

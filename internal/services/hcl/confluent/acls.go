@@ -7,11 +7,11 @@ import (
 )
 
 // GenerateKafkaACL creates a Kafka ACL resource
-func GenerateKafkaACL(name, resourceType, resourceName, patternType, principal, operation string) *hclwrite.Block {
-	aclBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", name})
+func GenerateKafkaACL(tfResourceName, resourceType, resourceName, patternType, principal, operation, clusterIdRef, clusterRestEndpointRef, apiKeyIdRef, apiKeySecretRef string) *hclwrite.Block {
+	aclBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", tfResourceName})
 
 	kafkaClusterBlock := hclwrite.NewBlock("kafka_cluster", nil)
-	kafkaClusterBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference("confluent_kafka_cluster.cluster.id"))
+	kafkaClusterBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(clusterIdRef))
 	aclBlock.Body().AppendBlock(kafkaClusterBlock)
 	aclBlock.Body().AppendNewline()
 
@@ -22,12 +22,12 @@ func GenerateKafkaACL(name, resourceType, resourceName, patternType, principal, 
 	aclBlock.Body().SetAttributeValue("host", cty.StringVal("*"))
 	aclBlock.Body().SetAttributeValue("operation", cty.StringVal(operation))
 	aclBlock.Body().SetAttributeValue("permission", cty.StringVal("ALLOW"))
-	aclBlock.Body().SetAttributeRaw("rest_endpoint", utils.TokensForResourceReference("confluent_kafka_cluster.cluster.rest_endpoint"))
+	aclBlock.Body().SetAttributeRaw("rest_endpoint", utils.TokensForResourceReference(clusterRestEndpointRef))
 	aclBlock.Body().AppendNewline()
 
 	credentialsBlock := hclwrite.NewBlock("credentials", nil)
-	credentialsBlock.Body().SetAttributeRaw("key", utils.TokensForResourceReference("confluent_api_key.app-manager-kafka-api-key.id"))
-	credentialsBlock.Body().SetAttributeRaw("secret", utils.TokensForResourceReference("confluent_api_key.app-manager-kafka-api-key.secret"))
+	credentialsBlock.Body().SetAttributeRaw("key", utils.TokensForResourceReference(apiKeyIdRef))
+	credentialsBlock.Body().SetAttributeRaw("secret", utils.TokensForResourceReference(apiKeySecretRef))
 	aclBlock.Body().AppendBlock(credentialsBlock)
 
 	return aclBlock

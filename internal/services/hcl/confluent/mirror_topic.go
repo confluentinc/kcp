@@ -6,8 +6,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GenerateMirrorTopic(topicName, clusterLinkName, clusterId, clusterRestEndpoint string) *hclwrite.Block {
-	mirrorTopicBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_mirror_topic", utils.FormatHclResourceName(topicName)})
+func GenerateMirrorTopic(tfResourceName, topicName, clusterLinkName, clusterId, clusterRestEndpoint string) *hclwrite.Block {
+	mirrorTopicBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_mirror_topic", tfResourceName})
 
 	sourceKafkaTopicBlock := hclwrite.NewBlock("source_kafka_topic", nil)
 	sourceKafkaTopicBlock.Body().SetAttributeValue("topic_name", cty.StringVal(topicName))

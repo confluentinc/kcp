@@ -32,7 +32,7 @@ func (mi *MigrationInfraHCLService) generateMainTf(request types.MigrationWizard
 	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(request))
+	rootBody.AppendBlock(confluent.GenerateClusterLinkResource("confluent_cluster_link", request))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
