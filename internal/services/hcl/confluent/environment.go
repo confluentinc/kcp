@@ -1,6 +1,8 @@
 package confluent
 
 import (
+	"fmt"
+
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -25,18 +27,18 @@ func GenerateEnvironmentDataSource(tfResourceName, id string) *hclwrite.Block {
 	return environmentDataBlock
 }
 
-// GetEnvironmentReference returns the reference string for the environment ID
-func GetEnvironmentReference(isNewEnv bool) string {
+// GetEnvironmentReference returns the reference string for the environment ID - either a resource or data source reference.
+func GetEnvironmentReference(isNewEnv bool, environmentResourceName string) string {
 	if isNewEnv {
-		return "confluent_environment.environment.id"
+		return fmt.Sprintf("confluent_environment.%s.id", environmentResourceName)
 	}
-	return "data.confluent_environment.environment.id"
+	return fmt.Sprintf("data.confluent_environment.%s.id", environmentResourceName)
 }
 
-// GetEnvironmentResourceName returns the reference string for the environment resource name
-func GetEnvironmentResourceName(isNewEnv bool) string {
+// GetEnvironmentResourceName returns the reference string for the environment resource name - either a resource or data source reference.
+func GetEnvironmentResourceName(isNewEnv bool, environmentResourceName string) string {
 	if isNewEnv {
-		return "confluent_environment.environment.resource_name"
+		return fmt.Sprintf("confluent_environment.%s.resource_name", environmentResourceName)
 	}
-	return "data.confluent_environment.environment.resource_name"
+	return fmt.Sprintf("data.confluent_environment.%s.resource_name", environmentResourceName)
 }

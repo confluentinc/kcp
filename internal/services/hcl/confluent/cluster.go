@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateKafkaClusterResource creates a new Confluent Kafka cluster resource
-func GenerateKafkaClusterResource(tfResourceName, name, clusterType, region string, isNewEnv bool) *hclwrite.Block {
+func GenerateKafkaClusterResource(tfResourceName, name, clusterType, region, environmentIdRef string) *hclwrite.Block {
 	clusterBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_cluster", tfResourceName})
 	clusterBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
 	clusterBlock.Body().SetAttributeValue("cloud", cty.StringVal("AWS"))
@@ -32,21 +32,19 @@ func GenerateKafkaClusterResource(tfResourceName, name, clusterType, region stri
 
 	clusterBlock.Body().AppendNewline()
 	environmentRefBlock := hclwrite.NewBlock("environment", nil)
-	envRef := GetEnvironmentReference(isNewEnv)
-	environmentRefBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(envRef))
+	environmentRefBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
 
 	clusterBlock.Body().AppendBlock(environmentRefBlock)
 	return clusterBlock
 }
 
 // GenerateKafkaClusterDataSource creates a data source for an existing cluster
-func GenerateKafkaClusterDataSource(tfResourceName, id string, isNewEnv bool) *hclwrite.Block {
+func GenerateKafkaClusterDataSource(tfResourceName, id, environmentIdRef string) *hclwrite.Block {
 	clusterDataBlock := hclwrite.NewBlock("data", []string{"confluent_kafka_cluster", tfResourceName})
 	clusterDataBlock.Body().SetAttributeValue("id", cty.StringVal(id))
 
 	environmentRefBlock := hclwrite.NewBlock("environment", nil)
-	envRef := GetEnvironmentReference(isNewEnv)
-	environmentRefBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(envRef))
+	environmentRefBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
 
 	clusterDataBlock.Body().AppendBlock(environmentRefBlock)
 	return clusterDataBlock

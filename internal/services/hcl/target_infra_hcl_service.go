@@ -94,13 +94,19 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 		rootBody.AppendNewline()
 	}
 
+	envIdRef := confluent.GetEnvironmentReference(request.NeedsEnvironment, ti.ResourceNames.Environment)
+
 	// Add Kafka cluster (create or use data source if user states a cluster already exists).
 	if request.NeedsCluster || request.NeedsEnvironment {
-		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, request.ClusterName, request.ClusterType, request.Region, request.NeedsEnvironment))
+		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, request.ClusterName, request.ClusterType, request.Region, envIdRef))
 		rootBody.AppendNewline()
 	}
 
-	rootBody.AppendBlock(confluent.GenerateSchemaRegistryDataSource(ti.ResourceNames.SchemaRegistry, request.NeedsEnvironment))
+	rootBody.AppendBlock(confluent.GenerateSchemaRegistryDataSource(
+		ti.ResourceNames.SchemaRegistry,
+		envIdRef,
+		fmt.Sprintf("confluent_api_key.%s", ti.ResourceNames.KafkaAPIKey),
+	))
 	rootBody.AppendNewline()
 
 	description := fmt.Sprintf("Service account to manage the %s environment.", request.EnvironmentName)
@@ -125,7 +131,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 	))
 	rootBody.AppendNewline()
 
-	envResourceName := confluent.GetEnvironmentResourceName(request.NeedsEnvironment)
+	envResourceName := confluent.GetEnvironmentResourceName(request.NeedsEnvironment, ti.ResourceNames.Environment)
 	rootBody.AppendBlock(confluent.GenerateRoleBinding(
 		ti.ResourceNames.DataStewardRoleBinding,
 		fmt.Sprintf("User:${%s}", serviceAccountRef),
@@ -137,19 +143,27 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 	rootBody.AppendBlock(confluent.GenerateSchemaRegistryAPIKey(
 		ti.ResourceNames.SchemaRegistryAPIKey,
 		request.EnvironmentName,
-		ti.ResourceNames.ServiceAccount,
-		ti.ResourceNames.SchemaRegistry,
-		request.NeedsEnvironment,
+		fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount),
+		fmt.Sprintf("confluent_service_account.%s.api_version", ti.ResourceNames.ServiceAccount),
+		fmt.Sprintf("confluent_service_account.%s.kind", ti.ResourceNames.ServiceAccount),
+		fmt.Sprintf("data.confluent_schema_registry_cluster.%s.id", ti.ResourceNames.SchemaRegistry),
+		fmt.Sprintf("data.confluent_schema_registry_cluster.%s.api_version", ti.ResourceNames.SchemaRegistry),
+		fmt.Sprintf("data.confluent_schema_registry_cluster.%s.kind", ti.ResourceNames.SchemaRegistry),
+		envIdRef,
 	))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(confluent.GenerateKafkaAPIKey(
 		ti.ResourceNames.KafkaAPIKey,
 		request.EnvironmentName,
-		ti.ResourceNames.ServiceAccount,
-		ti.ResourceNames.Cluster,
-		ti.ResourceNames.KafkaClusterAdminRoleBinding,
-		request.NeedsEnvironment,
+		fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount),
+		fmt.Sprintf("confluent_service_account.%s.api_version", ti.ResourceNames.ServiceAccount),
+		fmt.Sprintf("confluent_service_account.%s.kind", ti.ResourceNames.ServiceAccount),
+		fmt.Sprintf("confluent_kafka_cluster.%s.id", ti.ResourceNames.Cluster),
+		fmt.Sprintf("confluent_kafka_cluster.%s.api_version", ti.ResourceNames.Cluster),
+		fmt.Sprintf("confluent_kafka_cluster.%s.kind", ti.ResourceNames.Cluster),
+		envIdRef,
+		fmt.Sprintf("confluent_role_binding.%s", ti.ResourceNames.KafkaClusterAdminRoleBinding),
 	))
 	rootBody.AppendNewline()
 
@@ -158,61 +172,66 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 			ti.ResourceNames.PrivateLinkAttachment,
 			request.ClusterName+"_private_link_attachment",
 			request.Region,
-			ti.ResourceNames.Environment,
-		))
-		rootBody.AppendNewline()
-
-		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnection(
-			ti.ResourceNames.PrivateLinkAttachmentConnection,
-			request.ClusterName+"_private_link_attachment_connection",
-			ti.ResourceNames.Environment,
-			ti.ResourceNames.VpcEndpoint,
-			ti.ResourceNames.PrivateLinkAttachment,
+			envIdRef,
 		))
 		rootBody.AppendNewline()
 
 		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource(ti.ResourceNames.AvailabilityZones))
 		rootBody.AppendNewline()
 
-		rootBody.AppendBlock(aws.GenerateVpcEndpoint(
-			ti.ResourceNames.VpcEndpoint,
-			request.VpcId,
-			ti.ResourceNames.PrivateLinkAttachment,
-			ti.ResourceNames.SecurityGroup,
-			ti.ResourceNames.SubnetPrefix,
-			len(request.SubnetCidrRanges),
-		)) // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
+		rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, request.VpcId, []int{80, 443, 9092}, []int{0}))
 		rootBody.AppendNewline()
 
+		// Generate subnets so we can reference them in VPC endpoint
+		subnetRefs := make([]string, len(request.SubnetCidrRanges))
 		for i, subnetCidrRange := range request.SubnetCidrRanges {
+			subnetTfName := fmt.Sprintf("%s_%d", ti.ResourceNames.SubnetPrefix, i)
+			availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.%s.names[%d]", ti.ResourceNames.AvailabilityZones, i)
 			rootBody.AppendBlock(aws.GenerateSubnets(
 				ti.ResourceNames.SubnetPrefix,
 				request.VpcId,
 				subnetCidrRange,
-				ti.ResourceNames.AvailabilityZones,
+				availabilityZoneRef,
 				i,
 			))
+			subnetRefs[i] = fmt.Sprintf("aws_subnet.%s.id", subnetTfName)
 
 			if i < len(request.SubnetCidrRanges) {
 				rootBody.AppendNewline()
 			}
 		}
 
+		rootBody.AppendBlock(aws.GenerateVpcEndpoint(
+			ti.ResourceNames.VpcEndpoint,
+			request.VpcId, // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
+			fmt.Sprintf("confluent_private_link_attachment.%s.aws[0].vpc_endpoint_service_name", ti.ResourceNames.PrivateLinkAttachment),
+			fmt.Sprintf("aws_security_group.%s[*].id", ti.ResourceNames.SecurityGroup),
+			subnetRefs,
+			[]string{fmt.Sprintf("confluent_private_link_attachment.%s", ti.ResourceNames.PrivateLinkAttachment)},
+		))
+		rootBody.AppendNewline()
+
+		rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnection(
+			ti.ResourceNames.PrivateLinkAttachmentConnection,
+			request.ClusterName+"_private_link_attachment_connection",
+			envIdRef,
+			fmt.Sprintf("aws_vpc_endpoint.%s.id", ti.ResourceNames.VpcEndpoint),
+			fmt.Sprintf("confluent_private_link_attachment.%s.id", ti.ResourceNames.PrivateLinkAttachment),
+		))
+		rootBody.AppendNewline()
+
 		rootBody.AppendBlock(aws.GenerateRoute53Zone(
 			ti.ResourceNames.Route53Zone,
-			request.VpcId,
-			ti.ResourceNames.PrivateLinkAttachment,
-		)) // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
+			request.VpcId, // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
+			fmt.Sprintf("confluent_private_link_attachment.%s.dns_domain", ti.ResourceNames.PrivateLinkAttachment),
+		))
 		rootBody.AppendNewline()
 
 		rootBody.AppendBlock(aws.GenerateRoute53Record(
 			ti.ResourceNames.Route53Record,
-			ti.ResourceNames.Route53Zone,
-			ti.ResourceNames.VpcEndpoint,
+			fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone),
+			fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
 		))
-		rootBody.AppendNewline()
-
-		rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, request.VpcId, []int{80, 443, 9092}, []int{0}))
 		rootBody.AppendNewline()
 	}
 
@@ -233,30 +252,19 @@ func (ti *TargetInfraHCLService) generateProvidersTf(request types.TargetCluster
 	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
-	requiredProvidersBody.SetAttributeValue("confluent", cty.ObjectVal(map[string]cty.Value{
-		"source":  cty.StringVal("confluentinc/confluent"),
-		"version": cty.StringVal("2.50.0"),
-	}))
+	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
 
 	if request.NeedsPrivateLink {
-		requiredProvidersBody.SetAttributeValue("aws", cty.ObjectVal(map[string]cty.Value{
-			"source":  cty.StringVal("hashicorp/aws"),
-			"version": cty.StringVal("6.18.0"),
-		}))
+		requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
 	}
 
 	rootBody.AppendNewline()
 
-	providerBlock := rootBody.AppendNewBlock("provider", []string{"confluent"})
-	providerBody := providerBlock.Body()
-	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForResourceReference("var.confluent_cloud_api_key"))
-	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForResourceReference("var.confluent_cloud_api_secret"))
+	rootBody.AppendBlock(confluent.GenerateProviderBlock())
+	rootBody.AppendNewline()
 
 	if request.NeedsPrivateLink {
-		rootBody.AppendNewline()
-		awsProviderBlock := rootBody.AppendNewBlock("provider", []string{"aws"})
-		awsProviderBody := awsProviderBlock.Body()
-		awsProviderBody.SetAttributeRaw("region", utils.TokensForStringTemplate(request.Region))
+		rootBody.AppendBlock(aws.GenerateProviderBlock(request.Region))
 	}
 
 	return string(f.Bytes())
