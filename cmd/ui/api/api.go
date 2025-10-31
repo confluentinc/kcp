@@ -213,13 +213,16 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.MskClusterId == "" || req.MskSaslScramBootstrapServers == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid configuration",
-			"message": "authenticationMethod, targetClusterType, targetEnvironmentId, targetClusterId, targetRestEndpoint, mskClusterId, and mskSaslScramBootstrapServers are required",
-		})
+	// todo - don't know about this as some of these values will be presnet in both public and private cases
+	// - should we create nested strcuts thats houses the public and private values?
+	if req.TargetEndpointsPublic {
+		if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid configuration",
+				"message": "targetEnvironmentId, targetClusterId, targetBootstrapServers, clusterLinkName, mskSaslScramBootstrapServers are required",
+			})
+		}
 	}
-
 	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{

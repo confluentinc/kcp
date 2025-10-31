@@ -148,12 +148,23 @@ type TerraformVariable struct {
 }
 
 type MigrationWizardRequest struct {
-	MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
-	AuthenticationMethod         string `json:"authentication_method"`
-	TargetClusterType            string `json:"target_cluster_type"`
+	// old
+	// MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
+	// AuthenticationMethod         string `json:"authentication_method"`
+	// TargetClusterType            string `json:"target_cluster_type"`
+	// TargetEnvironmentId          string `json:"target_environment_id"`
+	// TargetClusterId              string `json:"target_cluster_id"`
+	// TargetRestEndpoint           string `json:"target_rest_endpoint"`
+	// MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+
+	// todo -
+	TargetEndpointsPublic        bool   `json:"target_endpoints_public"`
 	TargetEnvironmentId          string `json:"target_environment_id"`
 	TargetClusterId              string `json:"target_cluster_id"`
+	TargetBootstrapServers       string `json:"target_bootstrap_servers"`
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
+	ClusterLinkName              string `json:"cluster_link_name"`
+	MskVPCId                     string `json:"msk_vpc_id"`
 	MskClusterId                 string `json:"msk_cluster_id"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }
