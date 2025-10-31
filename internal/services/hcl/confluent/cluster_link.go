@@ -52,8 +52,8 @@ SASL/SCRAM only supports the 'SCRAM-SHA-512' mechanism.
 Error: error creating Cluster Link: 401 Unauthorized: Unable to validate cluster link due to error: Client SASL mechanism
 'PLAIN' not enabled in the server, enabled mechanisms are [SCRAM-SHA-512]
 */
-func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite.Block {
-	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", "confluent_cluster_link"})
+func GenerateClusterLinkResource(tfResourceName string, request types.MigrationWizardRequest) *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", tfResourceName})
 
 	triggersMap := map[string]hclwrite.Tokens{
 		"source_cluster_id":      utils.TokensForStringTemplate(request.MskClusterId),

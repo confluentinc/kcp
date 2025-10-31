@@ -67,7 +67,7 @@ export const targetInfraWizardConfig: WizardConfig = {
             },
             cluster_type: {
               type: 'string',
-              enum: ['dedicated'],
+              enum: ['dedicated', 'enterprise'],
               title: 'Cluster Type',
               description: 'Select the type of cluster',
             },
@@ -88,7 +88,7 @@ export const targetInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: {
-          target: 'confirmation',
+          target: 'private_link_question',
           actions: 'save_step_data',
         },
         BACK: {
@@ -154,7 +154,7 @@ export const targetInfraWizardConfig: WizardConfig = {
             },
             cluster_type: {
               type: 'string',
-              enum: ['dedicated'],
+              enum: ['dedicated', 'enterprise'],
               title: 'Cluster Type',
               description: 'Select the type of cluster',
             },
@@ -175,11 +175,98 @@ export const targetInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: {
-          target: 'confirmation',
+          target: 'private_link_question',
           actions: 'save_step_data',
         },
         BACK: {
           target: 'cluster_question',
+        },
+      },
+    },
+    private_link_question: {
+      meta: {
+        title: 'Setup private linking',
+        schema: {
+          type: 'object',
+          properties: {
+            needs_private_link: {
+              type: 'boolean',
+              title: 'Setup private linking for your Confluent Cloud cluster',
+              default: true,
+            },
+          },
+          required: ['needs_private_link'],
+        },
+        uiSchema: {
+          needs_private_link: {
+            'ui:widget': 'radio',
+          },
+        },
+      },
+      on: {
+        NEXT:[ 
+          {
+            target: 'create_private_link',
+            actions: 'save_step_data',
+          },
+          {
+            target: 'confirmation',
+            guard: 'does_not_need_private_link',
+            actions: 'save_step_data',
+          }
+        ],
+        BACK: {
+          target: 'create_cluster',
+        },
+      },
+    },
+    create_private_link: {
+      meta: {
+        title: 'Private Link Configuration',
+        description: 'Enter details for your private link configuration',
+        schema: {
+          type: 'object',
+          properties: {
+            vpc_id: {
+              type: 'string',
+              title: 'VPC ID',
+            },
+            subnet_cidr_ranges: {
+              type: 'array',
+              title: 'Private link new subnets CIDR ranges',
+              items: {
+                type: 'string',
+              },
+              minItems: 3,
+              maxItems: 3,
+              default: ['', '', ''],
+            }
+          },
+          required: ['vpc_id', 'subnet_cidr_ranges'],
+        },
+        uiSchema: {
+          vpc_id: {
+            'ui:placeholder': 'e.g., vpc-xxxx',
+          },
+          subnet_cidr_ranges: {
+            items: {
+              'ui:placeholder': 'e.g., 10.0.1.0/24',
+            },
+            'ui:options': {
+              'addable': false,
+              'orderable': false,
+              'removable': false
+            }
+          }
+        },
+      },
+      on: {
+        NEXT: {
+          target: 'confirmation',
+          actions: 'save_step_data',
+        },
+        BACK: {
+          target: 'private_link_question',
         },
       },
     },
@@ -218,6 +305,9 @@ export const targetInfraWizardConfig: WizardConfig = {
     },
     does_not_need_cluster: ({ event }) => {
       return event.data?.needs_cluster === false
+    },
+    does_not_need_private_link: ({ event }) => {
+      return event.data?.needs_private_link === false
     },
     came_from_create_environment: ({ context }) => {
       return context.previousStep === 'create_environment'
