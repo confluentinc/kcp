@@ -380,7 +380,9 @@ export default function MigrationAssets() {
                       >
                         Create Target Infrastructure
                       </Button>
+                      {/*TODO: show this button when the migration scripts wizard is implemented */}
                       <Button
+                        hidden
                         variant="outline"
                         size="sm"
                         onClick={() => handleCreateMigrationScripts(cluster, regionName)}
@@ -399,7 +401,8 @@ export default function MigrationAssets() {
                         {[
                           { id: WIZARD_TYPES.MIGRATION_INFRA, label: 'Migration Infrastructure' },
                           { id: WIZARD_TYPES.TARGET_INFRA, label: 'Target Infrastructure' },
-                          { id: WIZARD_TYPES.MIGRATION_SCRIPTS, label: 'Migration Scripts' },
+                          // TODO: show this tab when the migration scripts wizard is ready
+                          // { id: WIZARD_TYPES.MIGRATION_SCRIPTS, label: 'Migration Scripts' },
                         ].map((tab) => (
                           <button
                             key={tab.id}
