@@ -1,9 +1,4 @@
-import type {
-  MSKClusterConfig,
-  MSKConnector,
-  KafkaAdminInfo,
-  MSKConfiguration,
-} from './aws/msk'
+import type { MSKClusterConfig, MSKConnector, KafkaAdminInfo, MSKConfiguration } from './aws/msk'
 import type { CostsApiResponse } from './api/costs'
 
 // Shared types for the application
