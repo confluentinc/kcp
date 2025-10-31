@@ -30,8 +30,7 @@ export default function Sidebar() {
   }
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-gray-200 dark:border-border">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Navigation</h2>
+      <div className="p-4 pb-0">
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
           Explore regions and clusters
         </p>
@@ -57,7 +56,7 @@ export default function Sidebar() {
                     }`}
                   ></div>
                   <h4
-                    className={`text-sm font-medium whitespace-nowrap ${
+                    className={`text-sm whitespace-nowrap ${
                       selectedSummary
                         ? 'text-blue-900 dark:text-accent'
                         : 'text-gray-800 dark:text-gray-200'
@@ -153,6 +152,12 @@ export default function Sidebar() {
 
         {/* Schema Registries Section */}
         <div className="space-y-2 mt-6 pt-4 border-t border-gray-200 dark:border-border">
+          <div className="p-4 pb-0">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Explore Schema Registries
+            </p>
+          </div>
+
           <button
             onClick={handleSchemaRegistriesSelect}
             className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
@@ -168,7 +173,7 @@ export default function Sidebar() {
                 }`}
               ></div>
               <h4
-                className={`text-base font-medium whitespace-nowrap ${
+                className={`text-sm whitespace-nowrap ${
                   selectedSchemaRegistries
                     ? 'text-blue-900 dark:text-accent'
                     : 'text-gray-800 dark:text-gray-200'
@@ -183,4 +188,3 @@ export default function Sidebar() {
     </div>
   )
 }
-
