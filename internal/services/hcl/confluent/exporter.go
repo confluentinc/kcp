@@ -12,9 +12,9 @@ const (
 	VarSourceSchemaRegistryURL            = "source_schema_registry_url"
 	VarSourceSchemaRegistryUsername       = "source_schema_registry_username"
 	VarSourceSchemaRegistryPassword       = "source_schema_registry_password"
-	VarConfluentCloudSchemaRegistryURL    = "confluent_cloud_schema_registry_url"
-	VarConfluentCloudSchemaRegistryAPIKey = "confluent_cloud_schema_registry_api_key"
-	VarConfluentCloudSchemaRegistrySecret = "confluent_cloud_schema_registry_api_secret"
+	VarConfluentCloudSchemaRegistryURL    = "target_schema_registry_url"
+	VarConfluentCloudSchemaRegistryAPIKey = "target_schema_registry_api_key"
+	VarConfluentCloudSchemaRegistrySecret = "target_schema_registry_api_secret"
 )
 
 // SchemaExporterVariables defines all the variables needed for schema exporter resources
