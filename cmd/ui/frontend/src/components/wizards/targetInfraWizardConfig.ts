@@ -186,12 +186,13 @@ export const targetInfraWizardConfig: WizardConfig = {
     private_link_question: {
       meta: {
         title: 'Setup private linking',
-        description: 'Setup private linking for your Confluent Cloud cluster',
         schema: {
           type: 'object',
           properties: {
             needs_private_link: {
               type: 'boolean',
+              title: 'Setup private linking for your Confluent Cloud cluster',
+              default: true,
             },
           },
           required: ['needs_private_link'],
