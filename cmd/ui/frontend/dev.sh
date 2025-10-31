@@ -30,6 +30,8 @@ case $choice in
         yarn dev
         ;;
     2)
+        echo "Clearing dist folder..."
+        rm -rf dist
         echo "Starting frontend + backend..."
         echo "Starting yarn devfebe in background..."
         yarn devfebe &

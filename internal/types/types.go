@@ -123,12 +123,16 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	NeedsEnvironment bool   `json:"needs_environment"`
-	EnvironmentName  string `json:"environment_name"`
-	EnvironmentId    string `json:"environment_id"`
-	NeedsCluster     bool   `json:"needs_cluster"`
-	ClusterName      string `json:"cluster_name"`
-	ClusterType      string `json:"cluster_type"`
+	Region           string   `json:"region"`
+	NeedsEnvironment bool     `json:"needs_environment"`
+	EnvironmentName  string   `json:"environment_name"`
+	EnvironmentId    string   `json:"environment_id"`
+	NeedsCluster     bool     `json:"needs_cluster"`
+	ClusterName      string   `json:"cluster_name"`
+	ClusterType      string   `json:"cluster_type"`
+	NeedsPrivateLink bool     `json:"needs_private_link"`
+	VpcId            string   `json:"vpc_id"`
+	SubnetCidrRanges []string `json:"subnet_cidr_ranges"`
 }
 
 type TerraformFiles struct {

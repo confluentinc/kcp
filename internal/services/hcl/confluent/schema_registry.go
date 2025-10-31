@@ -6,18 +6,17 @@ import (
 )
 
 // GenerateSchemaRegistryDataSource creates a data source for the Schema Registry cluster
-func GenerateSchemaRegistryDataSource(isNewEnv bool) *hclwrite.Block {
-	schemaRegistryDataBlock := hclwrite.NewBlock("data", []string{"confluent_schema_registry_cluster", "schema_registry"})
+func GenerateSchemaRegistryDataSource(tfResourceName, environmentIdRef, dependsOnApiKeyRef string) *hclwrite.Block {
+	schemaRegistryDataBlock := hclwrite.NewBlock("data", []string{"confluent_schema_registry_cluster", tfResourceName})
 
 	environmentSRBlock := hclwrite.NewBlock("environment", nil)
-	envRef := GetEnvironmentReference(isNewEnv)
-	environmentSRBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(envRef))
+	environmentSRBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
 
 	schemaRegistryDataBlock.Body().AppendBlock(environmentSRBlock)
 	schemaRegistryDataBlock.Body().AppendNewline()
 
 	schemaRegistryDataBlock.Body().SetAttributeRaw("depends_on", utils.TokensForList([]string{
-		"confluent_api_key.app-manager-kafka-api-key",
+		dependsOnApiKeyRef,
 	}))
 
 	return schemaRegistryDataBlock
