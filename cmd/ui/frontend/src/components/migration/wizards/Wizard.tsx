@@ -52,7 +52,41 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   }
 
   const handleBack = () => {
-    send({ type: 'BACK' })
+    const context = state.context as WizardContext
+    const visitedSteps = context.visitedSteps || []
+
+    // Always use the last visited step as the back target
+    let backTarget: string | undefined
+
+    if (visitedSteps.length > 0) {
+      backTarget = visitedSteps[visitedSteps.length - 1]
+    } else {
+      // Fallback: Try to get configured BACK target
+      const currentStateConfig = config.states[currentStateId] as
+        | { on?: { BACK?: { target?: string } | Array<{ target?: string }> } }
+        | undefined
+
+      const backConfig = currentStateConfig?.on?.BACK
+      if (Array.isArray(backConfig)) {
+        backTarget = backConfig[backConfig.length - 1]?.target
+      } else if (backConfig && typeof backConfig === 'object') {
+        backTarget = backConfig.target
+      }
+    }
+
+    if (!backTarget) {
+      console.error(`⚠️ No back target found for step '${currentStateId}'`)
+      return
+    }
+
+    send({
+      type: 'BACK',
+      stepId: backTarget,
+      data: {
+        targetStepId: backTarget,
+        currentStepId: currentStateId,
+      },
+    })
   }
 
   const handleConfirmation = async () => {
