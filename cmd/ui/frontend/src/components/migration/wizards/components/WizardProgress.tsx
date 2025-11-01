@@ -1,22 +1,19 @@
 interface WizardProgressProps {
   currentStepNumber: number
+  totalSteps: number
 }
 
-export function WizardProgress({ currentStepNumber }: WizardProgressProps) {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-500 dark:text-gray-400">
-          Step {currentStepNumber}
-        </div>
-      </div>
+export function WizardProgress({ currentStepNumber, totalSteps }: WizardProgressProps) {
+  // Calculate progress percentage (0-100)
+  // Show progress based on current step position (so step 1 shows some progress, not 0%)
+  const progress = totalSteps > 0 ? (currentStepNumber / totalSteps) * 100 : 0
 
-      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-        <div
-          className="bg-blue-600 dark:bg-accent h-2 rounded-full transition-all duration-300 animate-pulse"
-          style={{ width: '100%' }}
-        />
-      </div>
+  return (
+    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+      <div
+        className="bg-blue-600 dark:bg-accent h-2 rounded-full transition-all duration-300"
+        style={{ width: `${Math.min(Math.max(progress, 0), 100)}%` }}
+      />
     </div>
   )
 }

@@ -15,9 +15,10 @@ interface WizardProps {
   clusterKey?: string
   wizardType?: WizardType
   onComplete?: () => void
+  onClose?: () => void
 }
 
-export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardProps) {
+export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: WizardProps) {
   // Create the wizard machine
   const wizardMachine = useMemo(() => createWizardMachine(config), [config])
   const [state, send] = useMachine(wizardMachine)
@@ -38,6 +39,13 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   const context = state.context as WizardContext
   const visitedSteps = context.visitedSteps || []
   const currentStepNumber = visitedSteps.length + 1 // Current step is the next one after visited
+
+  // Calculate total number of form steps (excluding confirmation state)
+  const totalSteps = useMemo(() => {
+    return Object.keys(config.states).filter(
+      (stateId) => stateId !== 'confirmation' && (config.states[stateId] as { meta?: unknown })?.meta
+    ).length
+  }, [config.states])
 
   const handleFormSubmit = async (formData: Record<string, unknown>) => {
     // Send the event with form data
@@ -107,7 +115,7 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   if (currentStateId === 'confirmation') {
     return (
       <div className="max-w-4xl mx-auto p-6 space-y-6">
-        <WizardProgress currentStepNumber={currentStepNumber} />
+        <WizardProgress currentStepNumber={currentStepNumber} totalSteps={totalSteps} />
         <WizardConfirmation
           data={flattenedData}
           onConfirm={handleConfirmation}
@@ -129,13 +137,14 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
-      <WizardProgress currentStepNumber={currentStepNumber} />
+      <WizardProgress currentStepNumber={currentStepNumber} totalSteps={totalSteps} />
 
       <WizardStepForm
         step={currentStep as WizardStep}
         formData={stepData}
         onSubmit={handleFormSubmit}
         onBack={handleBack}
+        onClose={onClose}
         canGoBack={currentStepNumber > 1}
         isLoading={isLoading}
       />

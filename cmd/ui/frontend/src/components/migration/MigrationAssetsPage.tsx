@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/stores/store'
 import { Modal } from '@/components/common/ui/modal'
 import { Button } from '@/components/common/ui/button'
@@ -11,6 +11,7 @@ import {
 } from '@/components/migration/wizards'
 import type { Cluster, WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
+import { Server, Network, Code, CheckCircle2, ArrowRight } from 'lucide-react'
 
 // Type definitions for File System Access API
 declare global {
@@ -62,6 +63,14 @@ export default function MigrationAssets() {
       }))
   )
 
+  // Expand first cluster by default when clusters are loaded
+  useEffect(() => {
+    if (allClusters.length > 0 && !expandedCluster) {
+      const firstClusterKey = `${allClusters[0].regionName}-${allClusters[0].cluster.name}`
+      setExpandedCluster(firstClusterKey)
+    }
+  }, [allClusters, expandedCluster, setExpandedCluster])
+
   const handleCreateTargetInfrastructure = (cluster: Cluster, regionName: string) => {
     setSelectedClusterForWizard({ cluster, regionName })
     setWizardType(WIZARD_TYPES.TARGET_INFRA)
@@ -106,6 +115,152 @@ export default function MigrationAssets() {
 
   const getTerraformFiles = (clusterKey: string, wizardType: WizardType) => {
     return migrationAssets[clusterKey]?.[wizardType] || null
+  }
+
+  const getPhaseStatus = (clusterKey: string, wizardType: WizardType) => {
+    const files = getTerraformFiles(clusterKey, wizardType)
+    return files ? 'completed' : 'pending'
+  }
+
+  const renderMigrationFlow = (clusterKey: string, cluster: Cluster, regionName: string) => {
+    const phases = [
+      {
+        step: 1,
+        id: WIZARD_TYPES.TARGET_INFRA,
+        title: 'Create Target Infrastructure',
+        description: 'Set up your target infrastructure',
+        icon: Server,
+        handler: () => handleCreateTargetInfrastructure(cluster, regionName),
+      },
+      {
+        step: 2,
+        id: WIZARD_TYPES.MIGRATION_INFRA,
+        title: 'Create Migration Infrastructure',
+        description: 'Configure migration infrastructure',
+        icon: Network,
+        handler: () => handleCreateMigrationInfrastructure(cluster, regionName),
+      },
+      {
+        step: 3,
+        id: WIZARD_TYPES.MIGRATION_SCRIPTS,
+        title: 'Create Migration Scripts',
+        description: 'Generate migration automation scripts',
+        icon: Code,
+        handler: () => handleCreateMigrationScripts(cluster, regionName),
+      },
+    ]
+
+    return (
+      <div className="py-6 px-6">
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+            Migration Flow
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Complete each phase in order from left to right
+          </p>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          {phases.map((phase, index) => {
+            const status = getPhaseStatus(clusterKey, phase.id)
+            const isCompleted = status === 'completed'
+            const Icon = phase.icon
+
+            return (
+              <div
+                key={phase.id}
+                className="flex items-center flex-1"
+              >
+                {/* Phase Card */}
+                <div
+                  className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border-2 transition-all ${
+                    isCompleted
+                      ? 'border-green-500 dark:border-green-600 bg-green-50 dark:bg-green-950/20'
+                      : 'border-gray-200 dark:border-border bg-white dark:bg-card hover:border-gray-300 dark:hover:border-gray-600'
+                  }`}
+                >
+                  {/* Step Number Badge */}
+                  <div
+                    className={`absolute -top-3 -left-3 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 ${
+                      isCompleted
+                        ? 'bg-green-500 dark:bg-green-600 text-white border-white dark:border-gray-900'
+                        : 'bg-white dark:bg-card text-gray-600 dark:text-gray-400 border-gray-300 dark:border-border'
+                    }`}
+                  >
+                    {phase.step}
+                  </div>
+
+                  {/* Icon */}
+                  <div
+                    className={`mb-4 p-3 rounded-full ${
+                      isCompleted
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+                    }`}
+                  >
+                    <Icon className="w-6 h-6" />
+                  </div>
+
+                  {/* Status Indicator */}
+                  {isCompleted && (
+                    <div className="mb-2">
+                      <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
+                    </div>
+                  )}
+
+                  {/* Title */}
+                  <h4
+                    className={`text-sm font-semibold mb-1 text-center ${
+                      isCompleted
+                        ? 'text-green-700 dark:text-green-300'
+                        : 'text-gray-900 dark:text-gray-100'
+                    }`}
+                  >
+                    {phase.title}
+                  </h4>
+
+                  {/* Description */}
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-4">
+                    {phase.description}
+                  </p>
+
+                  {/* Action Button */}
+                  <Button
+                    variant={isCompleted ? 'secondary' : 'default'}
+                    size="sm"
+                    onClick={() => {
+                      if (isCompleted) {
+                        // Navigate to the tab for this phase
+                        setMigrationAssetTab(clusterKey, phase.id)
+                      } else {
+                        // Start the wizard
+                        phase.handler()
+                      }
+                    }}
+                    className="w-full"
+                  >
+                    {isCompleted ? 'View Files' : 'Start'}
+                  </Button>
+                </div>
+
+                {/* Connector Arrow */}
+                {index < phases.length - 1 && (
+                  <div className="px-2 flex-shrink-0">
+                    <ArrowRight
+                      className={`w-5 h-5 ${
+                        isCompleted
+                          ? 'text-green-500 dark:text-green-600'
+                          : 'text-gray-300 dark:text-gray-600'
+                      }`}
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   const handleCopyToClipboard = (text: string) => {
@@ -176,10 +331,7 @@ export default function MigrationAssets() {
       const err = error as { name?: string; message?: string; code?: string }
       if (err.name === 'AbortError' || err.message === 'The user aborted a request.') {
         // User canceled directory selection
-      } else if (
-        err.message?.includes('system files') ||
-        err.code === 'InvalidModificationError'
-      ) {
+      } else if (err.message?.includes('system files') || err.code === 'InvalidModificationError') {
         // Error saving to selected directory - error handling done in catch block
         alert(
           'Cannot save to this directory. Please select a different folder (e.g., Desktop, Documents, or a subfolder).'
@@ -344,11 +496,19 @@ export default function MigrationAssets() {
             return (
               <div
                 key={clusterKey}
-                className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border overflow-hidden"
+                className={`bg-white dark:bg-card rounded-lg border overflow-hidden transition-all ${
+                  isExpanded
+                    ? 'border-accent shadow-md dark:border-accent'
+                    : 'border-gray-200 dark:border-border'
+                }`}
               >
                 {/* Cluster Header Row - Clickable */}
                 <div
-                  className="px-6 py-4 border-b border-gray-200 dark:border-border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  className={`px-6 py-4 border-b border-gray-200 dark:border-border cursor-pointer transition-colors ${
+                    isExpanded
+                      ? 'bg-accent/5 dark:bg-accent/10'
+                      : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+                  }`}
                   onClick={() => toggleCluster(clusterKey)}
                 >
                   <div className="flex items-center justify-between">
@@ -362,43 +522,24 @@ export default function MigrationAssets() {
                         </h3>
                       </div>
                     </div>
-                    <div
-                      className="flex items-center space-x-2"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCreateMigrationInfrastructure(cluster, regionName)}
-                      >
-                        Create Migration Infrastructure
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCreateTargetInfrastructure(cluster, regionName)}
-                      >
-                        Create Target Infrastructure
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCreateMigrationScripts(cluster, regionName)}
-                      >
-                        Create Migration Scripts
-                      </Button>
-                    </div>
                   </div>
                 </div>
 
-                {/* Tabbed Content - Collapsible */}
+                {/* Migration Flow - Only shown when expanded */}
+                {isExpanded && (
+                  <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                    {renderMigrationFlow(clusterKey, cluster, regionName)}
+                  </div>
+                )}
+
+                {/* Tabbed Content - Collapsible - Only shown when expanded */}
                 {isExpanded && (
                   <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
                     <div className="border-b border-gray-200 dark:border-border">
                       <nav className="-mb-px flex space-x-8 px-6 overflow-x-auto bg-white dark:bg-card">
                         {[
-                          { id: WIZARD_TYPES.MIGRATION_INFRA, label: 'Migration Infrastructure' },
                           { id: WIZARD_TYPES.TARGET_INFRA, label: 'Target Infrastructure' },
+                          { id: WIZARD_TYPES.MIGRATION_INFRA, label: 'Migration Infrastructure' },
                           { id: WIZARD_TYPES.MIGRATION_SCRIPTS, label: 'Migration Scripts' },
                         ].map((tab) => (
                           <button
@@ -416,16 +557,20 @@ export default function MigrationAssets() {
                       </nav>
                     </div>
                     <div className="p-6">
-                      {/* Migration Infrastructure Tab */}
-                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.MIGRATION_INFRA && (
-                        <div>
-                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.MIGRATION_INFRA, cluster.name)}
-                        </div>
-                      )}
                       {/* Target Infrastructure Tab */}
                       {migrationAssetTabs[clusterKey] === WIZARD_TYPES.TARGET_INFRA && (
                         <div>
                           {renderTerraformTabs(clusterKey, WIZARD_TYPES.TARGET_INFRA, cluster.name)}
+                        </div>
+                      )}
+                      {/* Migration Infrastructure Tab */}
+                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.MIGRATION_INFRA && (
+                        <div>
+                          {renderTerraformTabs(
+                            clusterKey,
+                            WIZARD_TYPES.MIGRATION_INFRA,
+                            cluster.name
+                          )}
                         </div>
                       )}
                       {/* Migration Scripts Tab */}
@@ -441,7 +586,7 @@ export default function MigrationAssets() {
                       {/* Default view when no tab is active */}
                       {!migrationAssetTabs[clusterKey] && (
                         <div>
-                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.MIGRATION_INFRA, cluster.name)}
+                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.TARGET_INFRA, cluster.name)}
                         </div>
                       )}
                     </div>
@@ -491,9 +636,10 @@ export default function MigrationAssets() {
                   wizardType
                 )
               }
+              onClose={handleCloseWizard}
             />
           )}
-          {wizardType === 'migration-infra' && selectedClusterForWizard && (
+          {wizardType === WIZARD_TYPES.MIGRATION_INFRA && selectedClusterForWizard && (
             <Wizard
               config={migrationInfraWizardConfig}
               clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
@@ -504,6 +650,7 @@ export default function MigrationAssets() {
                   wizardType
                 )
               }
+              onClose={handleCloseWizard}
             />
           )}
           {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && selectedClusterForWizard && (
@@ -517,6 +664,7 @@ export default function MigrationAssets() {
                   wizardType
                 )
               }
+              onClose={handleCloseWizard}
             />
           )}
         </Modal>
