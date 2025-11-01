@@ -210,6 +210,7 @@ export const targetInfraWizardConfig: WizardConfig = {
         NEXT: [
           {
             target: 'create_private_link',
+            guard: 'needs_private_link',
             actions: 'save_step_data',
           },
           {
@@ -338,6 +339,9 @@ export const targetInfraWizardConfig: WizardConfig = {
     },
     does_not_need_private_link: ({ event }) => {
       return event.data?.needs_private_link === false
+    },
+    needs_private_link: ({ event }) => {
+      return event.data?.needs_private_link === true
     },
     came_from_create_environment: ({ context }) => {
       return context.previousStep === 'create_environment'
