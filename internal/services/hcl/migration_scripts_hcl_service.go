@@ -15,20 +15,27 @@ func NewMigrationScriptsHCLService() *MigrationScriptsHCLService {
 	return &MigrationScriptsHCLService{}
 }
 
-func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.MirrorTopicsRequest) (types.TerraformFiles, error) {
+func (s *MigrationScriptsHCLService) GenerateMigrateTopicsFiles(request types.MigrateTopicsRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:      s.generateMirrorTopicsTf(request),
+		MainTf:      s.generateMigrateTopicsTf(request),
 		ProvidersTf: s.generateProvidersTf(),
 		VariablesTf: s.generateMirrorTopicsVariablesTf(),
 	}, nil
 }
 
 func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.TerraformFiles, error) {
-
 	return types.TerraformFiles{
 		MainTf:      s.generateMigrateACLsMainTf(),
 		ProvidersTf: s.generateProvidersTf(),
 		VariablesTf: s.generateMigrateACLsVariablesTf(),
+	}, nil
+}
+
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.TerraformFiles, error) {
+	return types.TerraformFiles{
+		MainTf:      s.generateMigrateSchemasMainTf(request),
+		ProvidersTf: s.generateMigrateSchemasProvidersTf(),
+		VariablesTf: s.generateMigrateSchemasVariablesTf(),
 	}, nil
 }
 
@@ -60,10 +67,10 @@ func (s *MigrationScriptsHCLService) generateProvidersTf() string {
 }
 
 // ============================================================================
-// Mirror Topics Generation Methods
+// Migrate Topics Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMirrorTopicsTf(request types.MirrorTopicsRequest) string {
+func (s *MigrationScriptsHCLService) generateMigrateTopicsTf(request types.MigrateTopicsRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -139,6 +146,61 @@ func (s *MigrationScriptsHCLService) generateMigrateConnectorsMainTf() string {
 func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	// rootBody := f.Body()
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// Migrate Schemas Generation Methods
+// ============================================================================
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(request types.MigrateSchemasRequest) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	for _, exporter := range request.Exporters {
+		rootBody.AppendBlock(confluent.GenerateSchemaExporter(exporter))
+		rootBody.AppendNewline()
+	}
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
+	terraformBody := terraformBlock.Body()
+
+	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
+	requiredProvidersBody := requiredProvidersBlock.Body()
+
+	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(confluent.GenerateEmptyProviderBlock())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	for _, v := range confluent.SchemaExporterVariables {
+		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
+		variableBody := variableBlock.Body()
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
+		if v.Description != "" {
+			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
+		}
+		if v.Sensitive {
+			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
+		}
+		rootBody.AppendNewline()
+	}
 
 	return string(f.Bytes())
 }
