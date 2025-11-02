@@ -45,9 +45,6 @@ export default function MigrationAssets() {
     regionName: string
   } | null>(null)
 
-  // Track active tab for each cluster (persisted in store)
-  const migrationAssetTabs = useAppStore((state) => state.migrationAssetTabs)
-  const setMigrationAssetTab = useAppStore((state) => state.setMigrationAssetTab)
   const [activeFileTabs, setActiveFileTabs] = useState<Record<string, string>>({})
   // Track which cluster section is expanded (persisted in store)
   const expandedCluster = useAppStore((state) => state.expandedMigrationCluster)
@@ -107,14 +104,13 @@ export default function MigrationAssets() {
     setSelectedClusterForWizard(null)
   }
 
-  const handleWizardComplete = (clusterKey: string, wizardType: WizardType) => {
+  const handleWizardComplete = (clusterKey: string) => {
     // Close the wizard
     setIsWizardOpen(false)
     setWizardType(null)
     setSelectedClusterForWizard(null)
 
-    // Open the relevant tab and expand the cluster
-    setMigrationAssetTab(clusterKey, wizardType)
+    // Expand the cluster
     setExpandedCluster(clusterKey)
   }
 
@@ -139,8 +135,8 @@ export default function MigrationAssets() {
       {
         step: 1,
         id: WIZARD_TYPES.TARGET_INFRA,
-        title: 'Target Infrastructure',
-        description: 'Set up your target infrastructure',
+        title: 'Confluent Cloud Infrastructure',
+        description: 'Generate Terraform for Your Target Infrastructure',
         icon: Server,
         handler: () => handleCreateTargetInfrastructure(cluster, regionName),
       },
@@ -148,15 +144,15 @@ export default function MigrationAssets() {
         step: 2,
         id: WIZARD_TYPES.MIGRATION_INFRA,
         title: 'Migration Infrastructure',
-        description: 'Configure migration infrastructure',
+        description: 'Generate Terraform for Your Migration Infrastructure',
         icon: Network,
         handler: () => handleCreateMigrationInfrastructure(cluster, regionName),
       },
       {
         step: 3,
         id: WIZARD_TYPES.MIGRATION_SCRIPTS,
-        title: 'Migration Scripts',
-        description: 'Generate migration automation scripts',
+        title: 'Migration Assets',
+        description: 'Generate Migration Assets to Move Data from MSK to Confluent Cloud',
         icon: Code,
         handler: () => handleCreateMigrationScripts(cluster, regionName),
       },
@@ -165,12 +161,9 @@ export default function MigrationAssets() {
     return (
       <div className="py-6 px-6">
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-            Migration Flow
+          <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300">
+            Migration Steps
           </h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Complete each phase in order from left to right
-          </p>
         </div>
         <div className="flex items-stretch justify-between gap-4">
           {phases.map((phase, index) => {
@@ -205,7 +198,7 @@ export default function MigrationAssets() {
 
                     {/* Title */}
                     <h4
-                      className={`text-sm font-semibold mb-1 text-center flex items-center gap-1.5 justify-center ${
+                      className={`text-lg font-semibold mb-2 text-center flex items-center gap-1.5 justify-center ${
                         isCompleted ? 'text-accent' : 'text-gray-900 dark:text-gray-100'
                       }`}
                     >
@@ -229,10 +222,12 @@ export default function MigrationAssets() {
                           onClick={() => phase.handler()}
                           className="flex-1"
                         >
-                          Start Over
+                          {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
+                            ? 'Generate Migration Assets'
+                            : 'Generate Terraform'}
                         </Button>
                         <Button
-                          variant="secondary"
+                          variant="outline"
                           size="sm"
                           onClick={() => {
                             setFileViewerModal({
@@ -244,7 +239,7 @@ export default function MigrationAssets() {
                           }}
                           className="flex-1"
                         >
-                          View Files
+                          View Terraform
                         </Button>
                       </div>
                     ) : (
@@ -255,7 +250,7 @@ export default function MigrationAssets() {
                         className="w-auto"
                       >
                         {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
-                          ? 'Generate Scripts'
+                          ? 'Generate Assets'
                           : 'Generate Terraform'}
                       </Button>
                     )}
@@ -429,9 +424,9 @@ export default function MigrationAssets() {
     const activeContent = fileEntries.find(([key]) => key === activeFileTab)?.[1] || ''
 
     return (
-      <div className="space-y-4">
+      <div className="flex flex-col h-full w-full">
         {/* File Tabs Navigation */}
-        <div className="border-b border-gray-200 dark:border-border">
+        <div className="border-b border-gray-200 dark:border-border flex-shrink-0">
           <div className="flex items-center justify-between">
             <nav className="-mb-px flex space-x-2 overflow-x-auto px-4 flex-1">
               {fileEntries.map(([key]) => (
@@ -478,7 +473,7 @@ export default function MigrationAssets() {
         </div>
 
         {/* File Content */}
-        <div className="mt-4">
+        <div className="mt-4 w-full flex-1 min-h-0">
           {fileEntries.map(([key, content]) => {
             if (activeFileTab === key && content) {
               return (
@@ -550,67 +545,6 @@ export default function MigrationAssets() {
                     {renderMigrationFlow(clusterKey, cluster, regionName)}
                   </div>
                 )}
-
-                {/* Tabbed Content - Collapsible - Only shown when expanded */}
-                {isExpanded && (
-                  <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
-                    <div className="border-b border-gray-200 dark:border-border">
-                      <nav className="-mb-px flex space-x-8 px-6 overflow-x-auto bg-white dark:bg-card">
-                        {[
-                          { id: WIZARD_TYPES.TARGET_INFRA, label: 'Target Infrastructure' },
-                          { id: WIZARD_TYPES.MIGRATION_INFRA, label: 'Migration Infrastructure' },
-                          { id: WIZARD_TYPES.MIGRATION_SCRIPTS, label: 'Migration Scripts' },
-                        ].map((tab) => (
-                          <button
-                            key={tab.id}
-                            onClick={() => setMigrationAssetTab(clusterKey, tab.id)}
-                            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
-                              migrationAssetTabs[clusterKey] === tab.id
-                                ? 'border-accent text-accent'
-                                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-border'
-                            }`}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </nav>
-                    </div>
-                    <div className="p-6">
-                      {/* Target Infrastructure Tab */}
-                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.TARGET_INFRA && (
-                        <div>
-                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.TARGET_INFRA, cluster.name)}
-                        </div>
-                      )}
-                      {/* Migration Infrastructure Tab */}
-                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.MIGRATION_INFRA && (
-                        <div>
-                          {renderTerraformTabs(
-                            clusterKey,
-                            WIZARD_TYPES.MIGRATION_INFRA,
-                            cluster.name
-                          )}
-                        </div>
-                      )}
-                      {/* Migration Scripts Tab */}
-                      {migrationAssetTabs[clusterKey] === WIZARD_TYPES.MIGRATION_SCRIPTS && (
-                        <div>
-                          {renderTerraformTabs(
-                            clusterKey,
-                            WIZARD_TYPES.MIGRATION_SCRIPTS,
-                            cluster.name
-                          )}
-                        </div>
-                      )}
-                      {/* Default view when no tab is active */}
-                      {!migrationAssetTabs[clusterKey] && (
-                        <div>
-                          {renderTerraformTabs(clusterKey, WIZARD_TYPES.TARGET_INFRA, cluster.name)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             )
           })}
@@ -651,8 +585,7 @@ export default function MigrationAssets() {
               wizardType={wizardType}
               onComplete={() =>
                 handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`,
-                  wizardType
+                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
                 )
               }
               onClose={handleCloseWizard}
@@ -665,8 +598,7 @@ export default function MigrationAssets() {
               wizardType={wizardType}
               onComplete={() =>
                 handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`,
-                  wizardType
+                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
                 )
               }
               onClose={handleCloseWizard}
@@ -679,8 +611,7 @@ export default function MigrationAssets() {
               wizardType={wizardType}
               onComplete={() =>
                 handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`,
-                  wizardType
+                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
                 )
               }
               onClose={handleCloseWizard}
@@ -712,7 +643,7 @@ export default function MigrationAssets() {
                 : 'Migration Scripts Files'
             } - ${fileViewerModal.clusterName}`}
           >
-            <div className="max-w-4xl">
+            <div className="w-full">
               {renderTerraformTabs(
                 fileViewerModal.clusterKey,
                 fileViewerModal.wizardType,
