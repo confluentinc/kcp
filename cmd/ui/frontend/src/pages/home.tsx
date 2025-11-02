@@ -111,9 +111,9 @@ export default function Home() {
             <div className="flex flex-1 flex-col">
               <Tabs
                 tabs={[
-                  { id: 'explore', label: 'Explore Costs & Metrics' },
-                  { id: 'tco-inputs', label: 'Generate TCO Inputs' },
-                  { id: 'migration-assets', label: 'Generate Migration Assets' },
+                  { id: 'explore', label: 'Explore' },
+                  { id: 'migration-assets', label: 'Migrate' },
+                  { id: 'tco-inputs', label: 'TCO Inputs' },
                 ]}
                 activeId={activeTopTab}
                 onChange={(id) => setActiveTopTab(id as TopLevelTab)}
