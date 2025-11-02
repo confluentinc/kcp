@@ -72,6 +72,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         ],
         BACK: {
           target: 'authentication_method_question',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -116,6 +117,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'cluster_type_question',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -171,6 +173,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'dedicated_inputs',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -185,6 +188,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'statefile_inputs',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -214,5 +218,6 @@ export const migrationInfraWizardConfig: WizardConfig = {
 
   actions: {
     save_step_data: 'save_step_data',
+    undo_save_step_data: 'undo_save_step_data',
   },
 }

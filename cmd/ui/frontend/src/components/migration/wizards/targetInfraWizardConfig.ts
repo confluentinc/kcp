@@ -93,6 +93,7 @@ export const targetInfraWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'environment_question',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -132,6 +133,7 @@ export const targetInfraWizardConfig: WizardConfig = {
         ],
         BACK: {
           target: 'environment_question',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -180,6 +182,7 @@ export const targetInfraWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'cluster_question',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -204,20 +207,34 @@ export const targetInfraWizardConfig: WizardConfig = {
         },
       },
       on: {
-        NEXT:[ 
+        NEXT: [
           {
             target: 'create_private_link',
+            guard: 'needs_private_link',
             actions: 'save_step_data',
           },
           {
             target: 'confirmation',
             guard: 'does_not_need_private_link',
             actions: 'save_step_data',
-          }
+          },
         ],
-        BACK: {
-          target: 'create_cluster',
-        },
+        BACK: [
+          {
+            target: 'create_environment',
+            guard: 'came_from_create_environment',
+            actions: 'undo_save_step_data',
+          },
+          {
+            target: 'create_cluster',
+            guard: 'came_from_create_cluster',
+            actions: 'undo_save_step_data',
+          },
+          {
+            target: 'cluster_question',
+            actions: 'undo_save_step_data',
+          },
+        ],
       },
     },
     create_private_link: {
@@ -240,7 +257,7 @@ export const targetInfraWizardConfig: WizardConfig = {
               minItems: 3,
               maxItems: 3,
               default: ['', '', ''],
-            }
+            },
           },
           required: ['vpc_id', 'subnet_cidr_ranges'],
         },
@@ -253,11 +270,11 @@ export const targetInfraWizardConfig: WizardConfig = {
               'ui:placeholder': 'e.g., 10.0.1.0/24',
             },
             'ui:options': {
-              'addable': false,
-              'orderable': false,
-              'removable': false
-            }
-          }
+              addable: false,
+              orderable: false,
+              removable: false,
+            },
+          },
         },
       },
       on: {
@@ -267,6 +284,7 @@ export const targetInfraWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'private_link_question',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -279,9 +297,22 @@ export const targetInfraWizardConfig: WizardConfig = {
         CONFIRM: {
           target: 'complete',
         },
-        BACK: {
-          target: 'cluster_question',
-        },
+        BACK: [
+          {
+            target: 'create_private_link',
+            guard: 'came_from_create_private_link',
+            actions: 'undo_save_step_data',
+          },
+          {
+            target: 'private_link_question',
+            guard: 'came_from_private_link_question',
+            actions: 'undo_save_step_data',
+          },
+          {
+            target: 'cluster_question',
+            actions: 'undo_save_step_data',
+          },
+        ],
       },
     },
     complete: {
@@ -309,6 +340,9 @@ export const targetInfraWizardConfig: WizardConfig = {
     does_not_need_private_link: ({ event }) => {
       return event.data?.needs_private_link === false
     },
+    needs_private_link: ({ event }) => {
+      return event.data?.needs_private_link === true
+    },
     came_from_create_environment: ({ context }) => {
       return context.previousStep === 'create_environment'
     },
@@ -318,9 +352,16 @@ export const targetInfraWizardConfig: WizardConfig = {
     came_from_cluster_question: ({ context }) => {
       return context.previousStep === 'cluster_question'
     },
+    came_from_create_private_link: ({ context }) => {
+      return context.previousStep === 'create_private_link'
+    },
+    came_from_private_link_question: ({ context }) => {
+      return context.previousStep === 'private_link_question'
+    },
   },
 
   actions: {
     save_step_data: 'save_step_data',
+    undo_save_step_data: 'undo_save_step_data',
   },
 }
