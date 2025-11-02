@@ -491,6 +491,12 @@ export default function MigrationAssets() {
     )
   }
 
+  const shouldShowFileViewerModal =
+    fileViewerModal.isOpen &&
+    fileViewerModal.clusterKey &&
+    fileViewerModal.wizardType &&
+    fileViewerModal.clusterName
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -621,38 +627,35 @@ export default function MigrationAssets() {
       )}
 
       {/* File Viewer Modal */}
-      {fileViewerModal.isOpen &&
-        fileViewerModal.clusterKey &&
-        fileViewerModal.wizardType &&
-        fileViewerModal.clusterName && (
-          <Modal
-            isOpen={fileViewerModal.isOpen}
-            onClose={() =>
-              setFileViewerModal({
-                isOpen: false,
-                clusterKey: null,
-                wizardType: null,
-                clusterName: null,
-              })
-            }
-            title={`${
-              fileViewerModal.wizardType === WIZARD_TYPES.TARGET_INFRA
-                ? 'Target Infrastructure Files'
-                : fileViewerModal.wizardType === WIZARD_TYPES.MIGRATION_INFRA
-                ? 'Migration Infrastructure Files'
-                : 'Migration Scripts Files'
-            } - ${fileViewerModal.clusterName}`}
-            className="[&>div>div:last-child]:overflow-hidden [&>div>div:last-child>div]:overflow-hidden [&>div>div:last-child>div]:p-0"
-          >
-            <div className="w-full h-full">
-              {renderTerraformTabs(
-                fileViewerModal.clusterKey,
-                fileViewerModal.wizardType,
-                fileViewerModal.clusterName
-              )}
-            </div>
-          </Modal>
-        )}
+      {shouldShowFileViewerModal && (
+        <Modal
+          isOpen={true}
+          onClose={() =>
+            setFileViewerModal({
+              isOpen: false,
+              clusterKey: null,
+              wizardType: null,
+              clusterName: null,
+            })
+          }
+          title={`${
+            fileViewerModal.wizardType === WIZARD_TYPES.TARGET_INFRA
+              ? 'Target Infrastructure Files'
+              : fileViewerModal.wizardType === WIZARD_TYPES.MIGRATION_INFRA
+              ? 'Migration Infrastructure Files'
+              : 'Migration Scripts Files'
+          } - ${fileViewerModal.clusterName}`}
+          className="[&>div>div:last-child]:overflow-hidden [&>div>div:last-child>div]:overflow-hidden [&>div>div:last-child>div]:p-0"
+        >
+          <div className="w-full h-full">
+            {renderTerraformTabs(
+              fileViewerModal.clusterKey!,
+              fileViewerModal.wizardType!,
+              fileViewerModal.clusterName!
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }
