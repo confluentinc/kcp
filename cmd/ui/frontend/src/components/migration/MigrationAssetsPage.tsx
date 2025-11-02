@@ -52,6 +52,18 @@ export default function MigrationAssets() {
   // Track which cluster section is expanded (persisted in store)
   const expandedCluster = useAppStore((state) => state.expandedMigrationCluster)
   const setExpandedCluster = useAppStore((state) => state.setExpandedMigrationCluster)
+  // Track file viewer modal state
+  const [fileViewerModal, setFileViewerModal] = useState<{
+    isOpen: boolean
+    clusterKey: string | null
+    wizardType: WizardType | null
+    clusterName: string | null
+  }>({
+    isOpen: false,
+    clusterKey: null,
+    wizardType: null,
+    clusterName: null,
+  })
 
   // Flatten all clusters from all regions
   const allClusters = regions.flatMap((region) =>
@@ -173,10 +185,10 @@ export default function MigrationAssets() {
               >
                 {/* Phase Card */}
                 <div
-                  className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border-2 transition-all ${
+                  className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border-2 transition-all bg-white dark:bg-card hover:border-gray-300 dark:hover:border-gray-600 ${
                     isCompleted
-                      ? 'border-green-500 dark:border-green-600 bg-green-50 dark:bg-green-950/20'
-                      : 'border-gray-200 dark:border-border bg-white dark:bg-card hover:border-gray-300 dark:hover:border-gray-600'
+                      ? 'border-green-400 dark:border-green-500'
+                      : 'border-gray-200 dark:border-border'
                   }`}
                 >
                   {/* Step Number Badge */}
@@ -187,35 +199,22 @@ export default function MigrationAssets() {
                         : 'bg-white dark:bg-card text-gray-600 dark:text-gray-400 border-gray-300 dark:border-border'
                     }`}
                   >
-                    {phase.step}
+                    {isCompleted ? (
+                      <CheckCircle2 className="w-5 h-5" />
+                    ) : (
+                      phase.step
+                    )}
                   </div>
 
                   {/* Icon */}
                   <div
-                    className={`mb-4 p-3 rounded-full ${
-                      isCompleted
-                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                        : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
-                    }`}
+                    className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
                   >
                     <Icon className="w-6 h-6" />
                   </div>
 
-                  {/* Status Indicator */}
-                  {isCompleted && (
-                    <div className="mb-2">
-                      <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
-                    </div>
-                  )}
-
                   {/* Title */}
-                  <h4
-                    className={`text-sm font-semibold mb-1 text-center ${
-                      isCompleted
-                        ? 'text-green-700 dark:text-green-300'
-                        : 'text-gray-900 dark:text-gray-100'
-                    }`}
-                  >
+                  <h4 className="text-sm font-semibold mb-1 text-center text-gray-900 dark:text-gray-100">
                     {phase.title}
                   </h4>
 
@@ -224,23 +223,43 @@ export default function MigrationAssets() {
                     {phase.description}
                   </p>
 
-                  {/* Action Button */}
-                  <Button
-                    variant={isCompleted ? 'secondary' : 'default'}
-                    size="sm"
-                    onClick={() => {
-                      if (isCompleted) {
-                        // Navigate to the tab for this phase
-                        setMigrationAssetTab(clusterKey, phase.id)
-                      } else {
-                        // Start the wizard
-                        phase.handler()
-                      }
-                    }}
-                    className="w-full"
-                  >
-                    {isCompleted ? 'View Files' : 'Start'}
-                  </Button>
+                  {/* Action Buttons */}
+                  {isCompleted ? (
+                    <div className="flex gap-2 w-full">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => phase.handler()}
+                        className="flex-1"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setFileViewerModal({
+                            isOpen: true,
+                            clusterKey,
+                            wizardType: phase.id,
+                            clusterName: cluster.name,
+                          })
+                        }}
+                        className="flex-1"
+                      >
+                        View Files
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => phase.handler()}
+                      className="w-full"
+                    >
+                      Start
+                    </Button>
+                  )}
                 </div>
 
                 {/* Connector Arrow */}
@@ -669,6 +688,39 @@ export default function MigrationAssets() {
           )}
         </Modal>
       )}
+
+      {/* File Viewer Modal */}
+      {fileViewerModal.isOpen &&
+        fileViewerModal.clusterKey &&
+        fileViewerModal.wizardType &&
+        fileViewerModal.clusterName && (
+          <Modal
+            isOpen={fileViewerModal.isOpen}
+            onClose={() =>
+              setFileViewerModal({
+                isOpen: false,
+                clusterKey: null,
+                wizardType: null,
+                clusterName: null,
+              })
+            }
+            title={`${
+              fileViewerModal.wizardType === WIZARD_TYPES.TARGET_INFRA
+                ? 'Target Infrastructure Files'
+                : fileViewerModal.wizardType === WIZARD_TYPES.MIGRATION_INFRA
+                ? 'Migration Infrastructure Files'
+                : 'Migration Scripts Files'
+            } - ${fileViewerModal.clusterName}`}
+          >
+            <div className="max-w-4xl">
+              {renderTerraformTabs(
+                fileViewerModal.clusterKey,
+                fileViewerModal.wizardType,
+                fileViewerModal.clusterName
+              )}
+            </div>
+          </Modal>
+        )}
     </div>
   )
 }

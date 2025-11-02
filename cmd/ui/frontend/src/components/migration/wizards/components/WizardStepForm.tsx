@@ -54,13 +54,23 @@ export function WizardStepForm({
         }}
       >
         <div className="flex gap-4 mt-6">
+          {canGoBack && (
+            <Button
+              type="button"
+              onClick={onBack}
+              variant="outline"
+              disabled={isLoading}
+            >
+              Back
+            </Button>
+          )}
           <Button
             type="button"
-            onClick={canGoBack ? onBack : onClose}
+            onClick={onClose}
             variant="outline"
-            disabled={isLoading || (!canGoBack && !onClose)}
+            disabled={isLoading || !onClose}
           >
-            {canGoBack ? 'Back' : 'Close'}
+            Close
           </Button>
           <Button
             type="submit"

@@ -40,13 +40,6 @@ export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: 
   const visitedSteps = context.visitedSteps || []
   const currentStepNumber = visitedSteps.length + 1 // Current step is the next one after visited
 
-  // Calculate total number of form steps (excluding confirmation state)
-  const totalSteps = useMemo(() => {
-    return Object.keys(config.states).filter(
-      (stateId) => stateId !== 'confirmation' && (config.states[stateId] as { meta?: unknown })?.meta
-    ).length
-  }, [config.states])
-
   const handleFormSubmit = async (formData: Record<string, unknown>) => {
     // Send the event with form data
     send({
@@ -115,7 +108,7 @@ export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: 
   if (currentStateId === 'confirmation') {
     return (
       <div className="max-w-4xl mx-auto p-6 space-y-6">
-        <WizardProgress currentStepNumber={currentStepNumber} totalSteps={totalSteps} />
+        <WizardProgress />
         <WizardConfirmation
           data={flattenedData}
           onConfirm={handleConfirmation}
@@ -137,7 +130,7 @@ export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: 
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
-      <WizardProgress currentStepNumber={currentStepNumber} totalSteps={totalSteps} />
+      <WizardProgress />
 
       <WizardStepForm
         step={currentStep as WizardStep}
