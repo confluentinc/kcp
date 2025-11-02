@@ -424,11 +424,11 @@ export default function MigrationAssets() {
     const activeContent = fileEntries.find(([key]) => key === activeFileTab)?.[1] || ''
 
     return (
-      <div className="flex flex-col h-full w-full">
-        {/* File Tabs Navigation */}
-        <div className="border-b border-gray-200 dark:border-border flex-shrink-0">
+      <div className="flex flex-col h-full w-full p-4">
+        {/* File Tabs Navigation - Static Header (no sticky needed since only code scrolls) */}
+        <div className="bg-white dark:bg-card border-b border-gray-200 dark:border-border flex-shrink-0 pb-0 mb-0">
           <div className="flex items-center justify-between">
-            <nav className="-mb-px flex space-x-2 overflow-x-auto px-4 flex-1">
+            <nav className="-mb-px flex space-x-2 overflow-x-auto flex-1">
               {fileEntries.map(([key]) => (
                 <button
                   key={key}
@@ -472,8 +472,8 @@ export default function MigrationAssets() {
           </div>
         </div>
 
-        {/* File Content */}
-        <div className="mt-4 w-full flex-1 min-h-0">
+        {/* File Content - TerraformCodeViewer will handle its own scrolling */}
+        <div className="w-full flex-1 min-h-0 mt-0">
           {fileEntries.map(([key, content]) => {
             if (activeFileTab === key && content) {
               return (
@@ -642,8 +642,9 @@ export default function MigrationAssets() {
                 ? 'Migration Infrastructure Files'
                 : 'Migration Scripts Files'
             } - ${fileViewerModal.clusterName}`}
+            className="[&>div>div:last-child]:overflow-hidden [&>div>div:last-child>div]:overflow-hidden [&>div>div:last-child>div]:p-0"
           >
-            <div className="w-full">
+            <div className="w-full h-full">
               {renderTerraformTabs(
                 fileViewerModal.clusterKey,
                 fileViewerModal.wizardType,
