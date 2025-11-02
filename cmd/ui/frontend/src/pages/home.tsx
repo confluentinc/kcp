@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import TCOInputsPage from '@/components/tco/TCOInputsPage'
 import Sidebar from '@/components/explore/Sidebar'
-import MigrationAssetsPage from '@/components/migration/MigrationAssetsPage'
+import MigrationAssetsPage from '@/components/migration/MigrationAssets'
 import Explore from '@/components/explore/Explore'
 import AppHeader from '@/components/common/AppHeader'
 import Tabs from '@/components/common/Tabs'

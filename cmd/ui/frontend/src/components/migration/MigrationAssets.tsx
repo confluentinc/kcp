@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAppStore } from '@/stores/store'
 import { Modal } from '@/components/common/ui/modal'
 import { Button } from '@/components/common/ui/button'
@@ -139,7 +139,7 @@ export default function MigrationAssets() {
       {
         step: 1,
         id: WIZARD_TYPES.TARGET_INFRA,
-        title: 'Create Target Infrastructure',
+        title: 'Target Infrastructure',
         description: 'Set up your target infrastructure',
         icon: Server,
         handler: () => handleCreateTargetInfrastructure(cluster, regionName),
@@ -147,7 +147,7 @@ export default function MigrationAssets() {
       {
         step: 2,
         id: WIZARD_TYPES.MIGRATION_INFRA,
-        title: 'Create Migration Infrastructure',
+        title: 'Migration Infrastructure',
         description: 'Configure migration infrastructure',
         icon: Network,
         handler: () => handleCreateMigrationInfrastructure(cluster, regionName),
@@ -155,7 +155,7 @@ export default function MigrationAssets() {
       {
         step: 3,
         id: WIZARD_TYPES.MIGRATION_SCRIPTS,
-        title: 'Create Migration Scripts',
+        title: 'Migration Scripts',
         description: 'Generate migration automation scripts',
         icon: Code,
         handler: () => handleCreateMigrationScripts(cluster, regionName),
@@ -172,99 +172,99 @@ export default function MigrationAssets() {
             Complete each phase in order from left to right
           </p>
         </div>
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-stretch justify-between gap-4">
           {phases.map((phase, index) => {
             const status = getPhaseStatus(clusterKey, phase.id)
             const isCompleted = status === 'completed'
             const Icon = phase.icon
 
             return (
-              <div
-                key={phase.id}
-                className="flex items-center flex-1"
-              >
-                {/* Phase Card */}
-                <div
-                  className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border-2 transition-all bg-white dark:bg-card hover:border-gray-300 dark:hover:border-gray-600 ${
-                    isCompleted
-                      ? 'border-green-400 dark:border-green-500'
-                      : 'border-gray-200 dark:border-border'
-                  }`}
-                >
-                  {/* Step Number Badge */}
+              <React.Fragment key={phase.id}>
+                <div className="flex items-stretch flex-1">
+                  {/* Phase Card */}
                   <div
-                    className={`absolute -top-3 -left-3 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 ${
-                      isCompleted
-                        ? 'bg-green-500 dark:bg-green-600 text-white border-white dark:border-gray-900'
-                        : 'bg-white dark:bg-card text-gray-600 dark:text-gray-400 border-gray-300 dark:border-border'
+                    className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border-2 transition-all bg-white dark:bg-card hover:border-gray-300 dark:hover:border-gray-600 h-full ${
+                      isCompleted ? 'border-accent' : 'border-gray-200 dark:border-border'
                     }`}
                   >
+                    {/* Step Number Badge */}
+                    <div
+                      className={`absolute -top-3 -left-3 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 ${
+                        isCompleted
+                          ? 'bg-white dark:bg-card text-gray-700 dark:text-gray-300 border-accent'
+                          : 'bg-white dark:bg-card text-gray-700 dark:text-gray-300 border-accent'
+                      }`}
+                    >
+                      {phase.step}
+                    </div>
+
+                    {/* Icon */}
+                    <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                      <Icon className="w-6 h-6" />
+                    </div>
+
+                    {/* Title */}
+                    <h4
+                      className={`text-sm font-semibold mb-1 text-center flex items-center gap-1.5 justify-center ${
+                        isCompleted ? 'text-accent' : 'text-gray-900 dark:text-gray-100'
+                      }`}
+                    >
+                      {phase.title}
+                      {isCompleted && (
+                        <CheckCircle2 className="w-4 h-4 text-green-500 dark:text-green-400 flex-shrink-0" />
+                      )}
+                    </h4>
+
+                    {/* Description */}
+                    <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-4">
+                      {phase.description}
+                    </p>
+
+                    {/* Action Buttons */}
                     {isCompleted ? (
-                      <CheckCircle2 className="w-5 h-5" />
+                      <div className="flex gap-2 w-full">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => phase.handler()}
+                          className="flex-1"
+                        >
+                          Start Over
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setFileViewerModal({
+                              isOpen: true,
+                              clusterKey,
+                              wizardType: phase.id,
+                              clusterName: cluster.name,
+                            })
+                          }}
+                          className="flex-1"
+                        >
+                          View Files
+                        </Button>
+                      </div>
                     ) : (
-                      phase.step
-                    )}
-                  </div>
-
-                  {/* Icon */}
-                  <div
-                    className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
-                  >
-                    <Icon className="w-6 h-6" />
-                  </div>
-
-                  {/* Title */}
-                  <h4 className="text-sm font-semibold mb-1 text-center text-gray-900 dark:text-gray-100">
-                    {phase.title}
-                  </h4>
-
-                  {/* Description */}
-                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-4">
-                    {phase.description}
-                  </p>
-
-                  {/* Action Buttons */}
-                  {isCompleted ? (
-                    <div className="flex gap-2 w-full">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => phase.handler()}
-                        className="flex-1"
+                        className="w-auto"
                       >
-                        Edit
+                        {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
+                          ? 'Generate Scripts'
+                          : 'Generate Terraform'}
                       </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          setFileViewerModal({
-                            isOpen: true,
-                            clusterKey,
-                            wizardType: phase.id,
-                            clusterName: cluster.name,
-                          })
-                        }}
-                        className="flex-1"
-                      >
-                        View Files
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() => phase.handler()}
-                      className="w-full"
-                    >
-                      Start
-                    </Button>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {/* Connector Arrow */}
                 {index < phases.length - 1 && (
-                  <div className="px-2 flex-shrink-0">
+                  <div className="px-2 flex-shrink-0 flex items-center">
                     <ArrowRight
                       className={`w-5 h-5 ${
                         isCompleted
@@ -274,7 +274,7 @@ export default function MigrationAssets() {
                     />
                   </div>
                 )}
-              </div>
+              </React.Fragment>
             )
           })}
         </div>
@@ -546,7 +546,7 @@ export default function MigrationAssets() {
 
                 {/* Migration Flow - Only shown when expanded */}
                 {isExpanded && (
-                  <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                  <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card overflow-visible pt-4">
                     {renderMigrationFlow(clusterKey, cluster, regionName)}
                   </div>
                 )}
