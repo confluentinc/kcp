@@ -241,8 +241,8 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 }
 
 func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
-	if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
-		return fmt.Errorf("Invalid configuration: targetEnvironmentId, targetClusterId, targetRestEndpoint, clusterLinkName, mskVPCId, mskSaslScramBootstrapServers are required")
+	if req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskSaslScramBootstrapServers == "" {
+		return fmt.Errorf("Invalid configuration: targetClusterId, targetRestEndpoint, clusterLinkName, mskSaslScramBootstrapServers are required")
 	}
 	return nil
 }

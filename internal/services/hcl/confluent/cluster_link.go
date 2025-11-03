@@ -70,7 +70,7 @@ func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite
 	templateData := ClusterLinkTemplateData{
 		TargetClusterRestEndpoint: request.TargetRestEndpoint,
 		TargetClusterId:           request.TargetClusterId,
-		LinkName:                  fmt.Sprintf("msk-to-cc-link-%s", generateRandomSuffix()),
+		LinkName:                  request.ClusterLinkName,
 		SourceClusterId:           request.MskClusterId,
 		SourceBootstrapServers:    request.MskSaslScramBootstrapServers,
 	}
