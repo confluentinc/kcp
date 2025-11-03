@@ -1,6 +1,8 @@
 package hcl
 
 import (
+	"log/slog"
+
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -37,9 +39,14 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 }
 
 func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.TerraformModules {
-	panic("not supporting private link yet")
-	// todo generate private link terraform modules
-	return nil
+	slog.Info("private link Terraform modules generation not supported yet")
+	return types.TerraformModules{
+		"root": {
+			MainTf:      "",
+			ProvidersTf: "",
+			VariablesTf: "",
+		},
+	}
 }
 
 func (mi *MigrationInfraHCLService) generateRootMainTf() string {
