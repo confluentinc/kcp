@@ -16,53 +16,58 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 	return &MigrationInfraHCLService{}
 }
 
-func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.TerraformModules {
+func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformFiles {
 	if request.HasPublicCCEndpoints {
 		return mi.handleClusterLink(request)
 	}
 	return mi.handlePrivateLink(request)
 }
 
-func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWizardRequest) types.TerraformModules {
-	return types.TerraformModules{
-		"root": {
-			MainTf:      mi.generateRootMainTf(),
-			ProvidersTf: mi.generateRootProvidersTf(),
-			VariablesTf: mi.generateRootVariablesTf(),
-		},
-		"cluster_link": {
-			MainTf:      mi.generateClusterLinkMainTf(request),
-			VariablesTf: mi.generateClusterLinkVariablesTf(),
+func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformFiles {
+	return types.MigrationInfraTerraformFiles{
+		MainTf:      mi.generateRootMainTf(),
+		ProvidersTf: mi.generateRootProvidersTf(),
+		VariablesTf: mi.generateRootVariablesTf(),
+		Modules: []types.MigrationInfraTerraformModule{
+			{
+				Name:        "cluster_link",
+				MainTf:      mi.generateClusterLinkMainTf(request),
+				VariablesTf: mi.generateClusterLinkVariablesTf(),
+			},
 		},
 	}
 }
 
-func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.TerraformModules {
-	return types.TerraformModules{
-		"root": {
-			MainTf:      "",
-			ProvidersTf: "",
-			VariablesTf: "",
-		},
-		"ansible_control_node_instance": {
-			MainTf:      mi.generateAnsibleControlNodeInstanceMainTf(),
-			VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
-			OutputsTf:   mi.generateAnsibleControlNodeInstanceOutputsTf(),
-		},
-		"confluent_platform_broker_instances": {
-			MainTf:      mi.generateConfluentPlatformBrokerInstancesMainTf(),
-			VariablesTf: mi.generateConfluentPlatformBrokerInstancesVariablesTf(),
-			OutputsTf:   mi.generateConfluentPlatformBrokerInstancesOutputsTf(),
-		},
-		"networking": {
-			MainTf:      mi.generateNetworkingMainTf(),
-			VariablesTf: mi.generateNetworkingVariablesTf(),
-			OutputsTf:   mi.generateNetworkingOutputsTf(),
-		},
-		"private_link_connection": {
-			MainTf:      mi.generatePrivateLinkConnectionMainTf(),
-			VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(),
-			OutputsTf:   mi.generatePrivateLinkConnectionOutputsTf(),
+func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformFiles {
+	return types.MigrationInfraTerraformFiles{
+		MainTf:      "",
+		ProvidersTf: "",
+		VariablesTf: "",
+		Modules: []types.MigrationInfraTerraformModule{
+			{
+				Name:        "ansible_control_node_instance",
+				MainTf:      mi.generateAnsibleControlNodeInstanceMainTf(),
+				VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
+				OutputsTf:   mi.generateAnsibleControlNodeInstanceOutputsTf(),
+			},
+			{
+				Name:        "confluent_platform_broker_instances",
+				MainTf:      mi.generateConfluentPlatformBrokerInstancesMainTf(),
+				VariablesTf: mi.generateConfluentPlatformBrokerInstancesVariablesTf(),
+				OutputsTf:   mi.generateConfluentPlatformBrokerInstancesOutputsTf(),
+			},
+			{
+				Name:        "networking",
+				MainTf:      mi.generateNetworkingMainTf(),
+				VariablesTf: mi.generateNetworkingVariablesTf(),
+				OutputsTf:   mi.generateNetworkingOutputsTf(),
+			},
+			{
+				Name:        "private_link_connection",
+				MainTf:      mi.generatePrivateLinkConnectionMainTf(),
+				VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(),
+				OutputsTf:   mi.generatePrivateLinkConnectionOutputsTf(),
+			},
 		},
 	}
 }
