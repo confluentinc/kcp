@@ -229,13 +229,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		}
 	}
 
-	terraformModules, err := ui.migrationInfraHCLService.GenerateTerraformModules(req)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform modules",
-			"message": err.Error(),
-		})
-	}
+	terraformModules := ui.migrationInfraHCLService.GenerateTerraformModules(req)
 
 	return c.JSON(http.StatusCreated, terraformModules)
 }

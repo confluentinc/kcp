@@ -1,8 +1,6 @@
 package hcl
 
 import (
-	"errors"
-
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -17,11 +15,14 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 	return &MigrationInfraHCLService{}
 }
 
-func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) (types.TerraformModules, error) {
-	if !request.HasPublicCCEndpoints {
-		return types.TerraformModules{}, errors.New("not supporting private link yet")
+func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.TerraformModules {
+	if request.HasPublicCCEndpoints {
+		return mi.handleClusterLink(request)
 	}
+	return mi.handlePrivateLink(request)
+}
 
+func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWizardRequest) types.TerraformModules {
 	return types.TerraformModules{
 		"root": {
 			MainTf:      mi.generateRootMainTf(),
@@ -32,7 +33,13 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 			MainTf:      mi.generateClusterLinkMainTf(request),
 			VariablesTf: mi.generateClusterLinkVariablesTf(),
 		},
-	}, nil
+	}
+}
+
+func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.TerraformModules {
+	panic("not supporting private link yet")
+	// todo generate private link terraform modules
+	return nil
 }
 
 func (mi *MigrationInfraHCLService) generateRootMainTf() string {
