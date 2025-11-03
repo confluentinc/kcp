@@ -17,14 +17,17 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 	return &MigrationInfraHCLService{}
 }
 
-func (mi *MigrationInfraHCLService) GenerateTerraformFiles(request types.MigrationWizardRequest) (types.TerraformFiles, error) {
+func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) (types.TerraformModules, error) {
 	if !request.HasPublicCCEndpoints {
-		return types.TerraformFiles{}, errors.New("not supporting private link yet")
+		return types.TerraformModules{}, errors.New("not supporting private link yet")
 	}
-	return types.TerraformFiles{
-		MainTf:      mi.generateMainTf(request),
-		ProvidersTf: mi.generateProvidersTf(),
-		VariablesTf: mi.generateVariablesTf(),
+	// harxcode another module for private link connection
+	return types.TerraformModules{
+		"root": {
+			MainTf:      mi.generateMainTf(request),
+			ProvidersTf: mi.generateProvidersTf(),
+			VariablesTf: mi.generateVariablesTf(),
+		},
 	}, nil
 }
 

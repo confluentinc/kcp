@@ -229,15 +229,15 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		}
 	}
 
-	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
+	terraformModules, err := ui.migrationInfraHCLService.GenerateTerraformModules(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
+			"error":   "Failed to generate Terraform modules",
 			"message": err.Error(),
 		})
 	}
 
-	return c.JSON(http.StatusCreated, terraformFiles)
+	return c.JSON(http.StatusCreated, terraformModules)
 }
 
 func validateClusterLinkRequest(req types.MigrationWizardRequest) error {

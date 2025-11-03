@@ -141,6 +141,9 @@ type TerraformFiles struct {
 	VariablesTf string `json:"variables_tf"`
 }
 
+// TerraformModules represents a collection of Terraform modules/directories.
+type TerraformModules map[string]TerraformFiles
+
 type TerraformVariable struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -148,16 +151,6 @@ type TerraformVariable struct {
 }
 
 type MigrationWizardRequest struct {
-	// old
-	// MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
-	// AuthenticationMethod         string `json:"authentication_method"`
-	// TargetClusterType            string `json:"target_cluster_type"`
-	// TargetEnvironmentId          string `json:"target_environment_id"`
-	// TargetClusterId              string `json:"target_cluster_id"`
-	// TargetRestEndpoint           string `json:"target_rest_endpoint"`
-	// MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
-
-	// new
 	HasPublicCCEndpoints bool   `json:"has_public_cc_endpoints"`
 	ClusterLinkName      string `json:"cluster_link_name"`
 
@@ -175,12 +168,12 @@ type MigrationWizardRequest struct {
 	AnsibleSubnetCidrRange     string `json:"ansible_subnet_cidr_range"`
 	AuthenticationMethod       string `json:"authentication_method"`
 
-	TargetEnvironmentId    string `json:"target_environment_id"`
-	TargetClusterId        string `json:"target_cluster_id"`
-	TargetRestEndpoint     string `json:"target_rest_endpoint"`
+	TargetEnvironmentId string `json:"target_environment_id"`
+	TargetClusterId     string `json:"target_cluster_id"`
+	TargetRestEndpoint  string `json:"target_rest_endpoint"`
 
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
-	MskClusterId string `json:"msk_cluster_id"`
+	MskClusterId                 string `json:"msk_cluster_id"`
 }
 
 type MigrateTopicsRequest struct {
