@@ -1,10 +1,28 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
+/**
+ * Utility function to merge Tailwind CSS classes with clsx and tailwind-merge.
+ * Combines class names and resolves conflicting Tailwind utilities.
+ *
+ * @param {...ClassValue} inputs - Class names, objects, or arrays to merge
+ * @returns {string} Merged class string with conflicts resolved
+ */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * Converts milliseconds to time units (seconds, minutes, hours, days).
+ * Handles special case of '-1' which represents infinite retention.
+ *
+ * @param {string} ms - Milliseconds as a string (or '-1' for infinite)
+ * @returns {Object} Time units object with seconds, minutes, hours, and days
+ * @returns {number} return.seconds - Total seconds
+ * @returns {number} return.minutes - Total minutes
+ * @returns {number} return.hours - Total hours
+ * @returns {number} return.days - Total days
+ */
 export function formatRetentionTime(ms: string): {
   seconds: number
   minutes: number

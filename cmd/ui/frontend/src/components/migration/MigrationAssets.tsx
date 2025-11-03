@@ -12,34 +12,8 @@ import {
 import type { Cluster, WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
 import { Server, Network, Code, CheckCircle2, ArrowRight } from 'lucide-react'
-
-// Helper to extract cluster ARN
-function getClusterArn(cluster: Cluster): string | undefined {
-  return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
-}
-
-// Type definitions for File System Access API
-declare global {
-  interface Window {
-    showDirectoryPicker(options?: {
-      mode?: 'read' | 'readwrite'
-      startIn?: 'desktop' | 'downloads' | 'documents'
-    }): Promise<FileSystemDirectoryHandle>
-  }
-
-  interface FileSystemDirectoryHandle {
-    getFileHandle(name: string, options?: { create?: boolean }): Promise<FileSystemFileHandle>
-  }
-
-  interface FileSystemFileHandle {
-    createWritable(): Promise<FileSystemWritableFileStream>
-  }
-
-  interface FileSystemWritableFileStream {
-    write(data: string | BufferSource | Blob): Promise<void>
-    close(): Promise<void>
-  }
-}
+import { getClusterArn } from '@/lib/clusterUtils'
+import { downloadZip, saveZipLocally } from '@/lib/fileSystemUtils'
 
 export default function MigrationAssets() {
   const regions = useRegions()
@@ -290,129 +264,6 @@ export default function MigrationAssets() {
     navigator.clipboard.writeText(text)
   }
 
-  const createZipBlob = async (files: Record<string, string | undefined>): Promise<Blob> => {
-    // Use JSZip if available, otherwise create a simple archive structure
-    try {
-      const { default: JSZip } = await import('jszip')
-      const zip = new JSZip()
-
-      for (const [key, content] of Object.entries(files)) {
-        if (content) {
-          const fileName = key.replace('_', '.')
-          zip.file(fileName, content)
-        }
-      }
-
-      return await zip.generateAsync({ type: 'blob' })
-    } catch {
-      // Fallback: create individual files
-      throw new Error('Failed to create zip file')
-    }
-  }
-
-  const handleSaveLocally = async (
-    files: Record<string, string | undefined>,
-    clusterName: string,
-    wizardType: string
-  ) => {
-    try {
-      // Check if File System API is supported
-      if (!('showDirectoryPicker' in window)) {
-        alert(
-          'Your browser does not support saving files to specific locations. Please use "Download ZIP" instead.'
-        )
-        return
-      }
-
-      // Filter files with content
-      const fileEntries = Object.entries(files).filter(([, content]) => content)
-
-      if (fileEntries.length === 0) {
-        alert('No files to download')
-        return
-      }
-
-      // Create zip blob
-      const blob = await createZipBlob(files)
-      const zipFileName = `${clusterName}-${wizardType}.zip`
-
-      // Use File System API to save to user-selected directory
-      const directoryHandle = await window.showDirectoryPicker({
-        mode: 'readwrite',
-        startIn: 'downloads',
-      })
-
-      // Save the zip file to the selected directory
-      const fileHandle = await directoryHandle.getFileHandle(zipFileName, { create: true })
-      const writable = await fileHandle.createWritable()
-      await writable.write(blob)
-      await writable.close()
-
-      alert(`Successfully saved ${zipFileName} to your selected directory!`)
-    } catch (error: unknown) {
-      // User canceled the picker or other error
-      const err = error as { name?: string; message?: string; code?: string }
-      if (err.name === 'AbortError' || err.message === 'The user aborted a request.') {
-        // User canceled directory selection
-      } else if (err.message?.includes('system files') || err.code === 'InvalidModificationError') {
-        // Error saving to selected directory - error handling done in catch block
-        alert(
-          'Cannot save to this directory. Please select a different folder (e.g., Desktop, Documents, or a subfolder).'
-        )
-      } else {
-        // Failed to save files - error handling done in catch block
-        alert('Failed to save files. Please try again or use "Download ZIP" instead.')
-      }
-    }
-  }
-
-  const handleDownloadZip = async (
-    files: Record<string, string | undefined>,
-    clusterName: string,
-    wizardType: string
-  ) => {
-    try {
-      // Filter files with content
-      const fileEntries = Object.entries(files).filter(([, content]) => content)
-
-      if (fileEntries.length === 0) {
-        alert('No files to download')
-        return
-      }
-
-      // Dynamically import JSZip only when needed
-      const { default: JSZip } = await import('jszip')
-
-      // Create zip file
-      const zip = new JSZip()
-
-      // Add files to zip
-      for (const [key, content] of fileEntries) {
-        if (content) {
-          const fileName = key.replace('_', '.')
-          zip.file(fileName, content)
-        }
-      }
-
-      // Generate zip blob
-      const blob = await zip.generateAsync({ type: 'blob' })
-      const zipFileName = `${clusterName}-${wizardType}.zip`
-
-      // Download directly to browser's download folder
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = zipFileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
-    } catch {
-      // Failed to create zip file - error handling done in catch block
-      alert('Failed to create zip file. Please try again.')
-    }
-  }
-
   const renderTerraformTabs = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
     const files = getTerraformFiles(clusterKey, wizardType)
     if (!files) {
@@ -464,7 +315,7 @@ export default function MigrationAssets() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleDownloadZip(files, clusterName, wizardType)}
+                onClick={() => downloadZip(files, `${clusterName}-${wizardType}`)}
                 className="text-xs px-2 py-1"
               >
                 💾 Download ZIP
@@ -472,7 +323,7 @@ export default function MigrationAssets() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleSaveLocally(files, clusterName, wizardType)}
+                onClick={() => saveZipLocally(files, `${clusterName}-${wizardType}`)}
                 className="text-xs px-2 py-1"
               >
                 📁 Save Locally

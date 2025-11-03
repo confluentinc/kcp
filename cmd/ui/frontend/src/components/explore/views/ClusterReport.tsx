@@ -9,6 +9,7 @@ import ClusterConfigurationSection from '../clusters/ClusterConfigurationSection
 import type { Cluster, Region } from '@/types'
 import { CLUSTER_REPORT_TABS } from '@/constants'
 import type { ClusterReportTab } from '@/types'
+import { getClusterArn } from '@/lib/clusterUtils'
 
 interface ClusterReportProps {
   cluster: Cluster
@@ -107,7 +108,7 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                 cluster={{
                   name: cluster.name,
                   region: regionName,
-                  arn: cluster.arn || cluster.aws_client_information?.msk_cluster_config?.ClusterArn,
+                  arn: cluster.arn || getClusterArn(cluster),
                 }}
                 isActive={activeTab === CLUSTER_REPORT_TABS.METRICS}
               />

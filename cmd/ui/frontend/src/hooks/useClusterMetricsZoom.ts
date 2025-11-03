@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useChartZoom } from '@/lib/useChartZoom'
+import { useChartZoom } from '@/hooks/useChartZoom'
 import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
 interface ClusterMetricsZoomConfig {

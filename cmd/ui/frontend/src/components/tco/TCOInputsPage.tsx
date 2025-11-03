@@ -5,12 +5,7 @@ import { useAppStore, useRegions } from '@/stores/store'
 import { ExternalLink } from 'lucide-react'
 import ClusterMetrics from '@/components/explore/clusters/ClusterMetrics'
 import { DEFAULTS } from '@/constants'
-import type { Cluster } from '@/types'
-
-// Helper to extract cluster ARN
-function getClusterArn(cluster: Cluster): string | undefined {
-  return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
-}
+import { getClusterArn } from '@/lib/clusterUtils'
 
 export default function TCOInputs() {
   const regions = useRegions()
@@ -165,7 +160,9 @@ export default function TCOInputs() {
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.peakEgressThroughput || ''),
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.retentionDays || ''),
       allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.partitions || DEFAULTS.PARTITIONS),
-      allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.replicationFactor || DEFAULTS.REPLICATION_FACTOR),
+      allClusters.map(
+        (cluster) => tcoWorkloadData[cluster.key]?.replicationFactor || DEFAULTS.REPLICATION_FACTOR
+      ),
       allClusters.map((cluster) => {
         // Find the cluster object from regions to get metadata
         const region = regions.find((r) => r.name === cluster.regionName)

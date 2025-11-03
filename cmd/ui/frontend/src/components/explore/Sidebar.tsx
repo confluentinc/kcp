@@ -1,10 +1,6 @@
 import type { Cluster, Region } from '@/types'
 import { useAppStore, useRegions } from '@/stores/store'
-
-// Helper to extract cluster ARN
-function getClusterArn(cluster: Cluster): string | undefined {
-  return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
-}
+import { getClusterArn } from '@/lib/clusterUtils'
 
 export default function Sidebar() {
   const regions = useRegions()

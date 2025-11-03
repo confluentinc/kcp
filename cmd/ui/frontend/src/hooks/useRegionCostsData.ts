@@ -4,37 +4,70 @@ import { formatCostTypeLabel } from '@/lib/costTypeUtils'
 import type { CostsApiResponse, CostResult } from '@/types/api'
 import { COST_TYPES } from '@/constants'
 
+/**
+ * Processed cost data structure returned by the hook
+ */
 interface ProcessedData {
+  /** Table data with all services and usage types */
   tableData: Array<{
     service: string
     usageType: string
     values: number[]
     total: number
   }>
+  /** Table data filtered by selected service */
   filteredTableData: Array<{
     service: string
     usageType: string
     values: number[]
     total: number
   }>
+  /** CSV-formatted string ready for download */
   csvData: string
+  /** Chart data with dates and service/usage type values */
   chartData: Array<{
     date: string
     formattedDate: string
     epochTime: number
     [key: string]: string | number
   }>
+  /** Chart options for service selection dropdown */
   chartOptions: Array<{
     value: string
     label: string
     type: 'service'
   }>
+  /** Function to get usage types for a specific service */
   getUsageTypesForService: (serviceName: string) => string[]
+  /** Array of unique dates in the cost data */
   uniqueDates: string[]
+  /** Array of unique service names */
   services: string[]
+  /** Total costs by service name */
   serviceTotals: Record<string, number>
 }
 
+/**
+ * Custom hook to process raw cost data from API into structured formats
+ * for tables, charts, and CSV export.
+ *
+ * This hook handles:
+ * - Parsing cost response data from the API
+ * - Grouping costs by service, usage type, and date
+ * - Calculating totals using backend aggregates
+ * - Formatting data for table display
+ * - Generating CSV export data
+ * - Structuring chart data with epoch timestamps
+ * - Filtering data by selected service
+ *
+ * The hook uses backend-provided aggregates for totals to ensure accuracy
+ * and avoid frontend calculation discrepancies.
+ *
+ * @param {CostsApiResponse | null | undefined} costsResponse - Raw cost data from API
+ * @param {string} selectedTableService - Currently selected service for table filtering (empty string = show all)
+ * @param {string} selectedCostType - Cost type to display (e.g., 'unblended_cost', 'amortized_cost')
+ * @returns {ProcessedData} Processed cost data for UI components
+ */
 export function useRegionCostsData(
   costsResponse: CostsApiResponse | null | undefined,
   selectedTableService: string,
@@ -257,4 +290,3 @@ export function useRegionCostsData(
     }
   }, [costsResponse, selectedTableService, selectedCostType])
 }
-

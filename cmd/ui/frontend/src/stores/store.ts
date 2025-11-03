@@ -6,6 +6,7 @@ import type { TerraformFiles } from '@/components/migration/wizards/types'
 import type { ProcessedState, SchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
+import { getClusterArn } from '@/lib/clusterUtils'
 
 // ============================================================================
 // INTERFACES - Unified date filter pattern
@@ -43,13 +44,6 @@ interface MigrationAssets {
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
-
-/**
- * Safely extracts cluster ARN from a cluster object
- */
-function getClusterArn(cluster: Cluster): string | undefined {
-  return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
-}
 
 function createDefaultDateFilters(): DateFilters {
   return {

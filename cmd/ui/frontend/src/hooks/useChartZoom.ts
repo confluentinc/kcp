@@ -1,6 +1,9 @@
 import { useState, useCallback } from 'react'
 import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
+/**
+ * Internal state for chart zoom functionality
+ */
 interface ZoomState {
   data: ChartDataPoint[]
   left: string | number
@@ -12,15 +15,39 @@ interface ZoomState {
   animation: boolean
 }
 
+/**
+ * Configuration options for the useChartZoom hook
+ */
 interface UseChartZoomProps {
+  /** Chart data points to enable zooming on */
   initialData: ChartDataPoint[]
+  /** Key for the X-axis data (default: 'formattedDate') */
   dataKey?: string
+  /** Key for the Y-axis data to calculate zoom domain */
   yAxisKey?: string
+  /** Offset to add to Y-axis min/max (default: 1) */
   yAxisOffset?: number
+  /** Whether X-axis uses numeric values (e.g., epoch time) instead of strings */
   isNumericAxis?: boolean
+  /** Callback invoked when zoom selection changes (for numeric axis only) */
   onDateRangeChange?: (startDate: Date, endDate: Date) => void
 }
 
+/**
+ * Custom hook to manage interactive chart zooming with mouse selection.
+ * Provides drag-to-zoom functionality for Recharts with support for both
+ * numeric (epoch time) and string-based (formatted dates) X-axis values.
+ *
+ * Features:
+ * - Drag to select zoom area (mouseDown → mouseMove → mouseUp)
+ * - Automatic Y-axis domain calculation for zoomed region
+ * - Support for both numeric and string-based X-axis
+ * - Reset/zoom out functionality
+ * - Optional callback on zoom selection (for date range changes)
+ *
+ * @param {UseChartZoomProps} config - Configuration options
+ * @returns {Object} Zoom state and control functions
+ */
 export const useChartZoom = ({
   initialData,
   dataKey = 'formattedDate',

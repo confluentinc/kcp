@@ -8,7 +8,12 @@ import Tabs from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
-import { PageErrorBoundary } from '@/components/common/ErrorBoundary'
+import {
+  PageErrorBoundary,
+  ExploreErrorBoundary,
+  MigrationErrorBoundary,
+  TCOErrorBoundary,
+} from '@/components/common/ErrorBoundary'
 import { TOP_LEVEL_TABS } from '@/constants'
 import type { TopLevelTab } from '@/types'
 
@@ -107,32 +112,38 @@ export default function Home() {
               />
 
               {activeTopTab === TOP_LEVEL_TABS.EXPLORE && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="flex h-full">
-                    <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
-                      <Sidebar />
+                <ExploreErrorBoundary>
+                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                    <div className="flex h-full">
+                      <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
+                        <Sidebar />
+                      </div>
+                      <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
+                        <Explore />
+                      </main>
                     </div>
-                    <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
-                      <Explore />
-                    </main>
                   </div>
-                </div>
+                </ExploreErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.TCO_INPUTS && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="h-full overflow-auto">
-                    <TCOInputsPage />
+                <TCOErrorBoundary>
+                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                    <div className="h-full overflow-auto">
+                      <TCOInputsPage />
+                    </div>
                   </div>
-                </div>
+                </TCOErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.MIGRATION_ASSETS && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="h-full overflow-auto">
-                    <MigrationAssetsPage />
+                <MigrationErrorBoundary>
+                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                    <div className="h-full overflow-auto">
+                      <MigrationAssetsPage />
+                    </div>
                   </div>
-                </div>
+                </MigrationErrorBoundary>
               )}
             </div>
           ) : (
