@@ -1,6 +1,8 @@
 package hcl
 
 import (
+	"errors"
+
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -16,13 +18,14 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformFiles(request types.MigrationWizardRequest) (types.TerraformFiles, error) {
-	terraformFiles := types.TerraformFiles{
+	if !request.HasPublicCCEndpoints {
+		return types.TerraformFiles{}, errors.New("public CC endpoints are required")
+	}
+	return types.TerraformFiles{
 		MainTf:      mi.generateMainTf(request),
 		ProvidersTf: mi.generateProvidersTf(),
 		VariablesTf: mi.generateVariablesTf(),
-	}
-
-	return terraformFiles, nil
+	}, nil
 }
 
 func (mi *MigrationInfraHCLService) generateMainTf(request types.MigrationWizardRequest) string {

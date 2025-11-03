@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -241,6 +240,32 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
+func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
+	if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
+		return fmt.Errorf("Invalid configuration: targetEnvironmentId, targetClusterId, targetRestEndpoint, clusterLinkName, mskVPCId, mskSaslScramBootstrapServers are required")
+	}
+	return nil
+}
+
+func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
+	var errors []string
+
+	if req.MskVPCId == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
+		errors = append(errors, "mskVPCId, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required")
+	}
+	if req.UseExistingSubnets && len(req.ExistingSubnetIds) == 0 {
+		errors = append(errors, "existingSubnetIds are required when using existing subnets")
+	}
+	if !req.UseExistingSubnets && req.SubnetCidrRanges == "" {
+		errors = append(errors, "subnetCidrRanges are required when creating a new cluster")
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("Invalid configuration: %s", strings.Join(errors, "; "))
+	}
+	return nil
+}
+
 func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	var req types.TargetClusterWizardRequest
 	if err := c.Bind(&req); err != nil {
@@ -340,84 +365,4 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, terraformFiles)
-}
-
-func (ui *UI) handleMigrationScripts(c echo.Context) error {
-	var baseRequest map[string]any
-	if err := c.Bind(&baseRequest); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid request body",
-			"message": err.Error(),
-		})
-	}
-
-	migrationType, ok := baseRequest["migration_type"].(string)
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Missing migration_type",
-			"message": "migration_type is required in the request body",
-		})
-	}
-
-	var terraformFiles types.TerraformFiles
-	var err error
-
-	switch migrationType {
-	case "Mirror Topics":
-		var request types.MigrateTopicsRequest
-		jsonData, marshalErr := json.Marshal(baseRequest)
-		if marshalErr != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid request body",
-				"message": marshalErr.Error(),
-			})
-		}
-		if unmarshalErr := json.Unmarshal(jsonData, &request); unmarshalErr != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid request body",
-				"message": unmarshalErr.Error(),
-			})
-		}
-		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(request)
-	default:
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid migration script type",
-			"message": "Invalid migration script type: " + migrationType,
-		})
-	}
-
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
-			"message": err.Error(),
-		})
-	}
-
-	return c.JSON(http.StatusCreated, terraformFiles)
-}
-
-func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
-	if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
-		return fmt.Errorf("Invalid configuration: targetEnvironmentId, targetClusterId, targetRestEndpoint, clusterLinkName, mskVPCId, mskSaslScramBootstrapServers are required")
-	}
-	return nil
-}
-
-func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
-	var errors []string
-
-	if req.MskVPCId == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
-		errors = append(errors, "mskVPCId, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required")
-	}
-	if req.UseExistingSubnets && len(req.ExistingSubnetIds) == 0 {
-		errors = append(errors, "existingSubnetIds are required when using existing subnets")
-	}
-	if !req.UseExistingSubnets && req.SubnetCidrRanges == "" {
-		errors = append(errors, "subnetCidrRanges are required when creating a new cluster")
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("Invalid configuration: %s", strings.Join(errors, "; "))
-	}
-	return nil
 }
