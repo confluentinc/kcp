@@ -44,24 +44,24 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 			VariablesTf: "",
 		},
 		"ansible_control_node_instance": {
-			MainTf:      "",
-			VariablesTf: "",
-			OutputsTf:   "",
+			MainTf:      mi.generateAnsibleControlNodeInstanceMainTf(),
+			VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
+			OutputsTf:   mi.generateAnsibleControlNodeInstanceOutputsTf(),
 		},
 		"confluent_platform_broker_instances": {
-			MainTf:      "",
-			VariablesTf: "",
-			OutputsTf:   "",
+			MainTf:      mi.generateConfluentPlatformBrokerInstancesMainTf(),
+			VariablesTf: mi.generateConfluentPlatformBrokerInstancesVariablesTf(),
+			OutputsTf:   mi.generateConfluentPlatformBrokerInstancesOutputsTf(),
 		},
 		"networking": {
-			MainTf:      "",
-			VariablesTf: "",
-			OutputsTf:   "",
+			MainTf:      mi.generateNetworkingMainTf(),
+			VariablesTf: mi.generateNetworkingVariablesTf(),
+			OutputsTf:   mi.generateNetworkingOutputsTf(),
 		},
 		"private_link_connection": {
-			MainTf:      "",
-			VariablesTf: "",
-			OutputsTf:   "",
+			MainTf:      mi.generatePrivateLinkConnectionMainTf(),
+			VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(),
+			OutputsTf:   mi.generatePrivateLinkConnectionOutputsTf(),
 		},
 	}
 }
@@ -142,4 +142,61 @@ func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.Terr
 	}
 
 	return string(f.Bytes())
+}
+
+// temp
+
+// ansible
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceOutputsTf() string {
+	return ""
+}
+
+// cp
+
+func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesOutputsTf() string {
+	return ""
+}
+
+// networking
+
+func (mi *MigrationInfraHCLService) generateNetworkingMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
+	return ""
+}
+
+// private link
+
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionOutputsTf() string {
+	return ""
 }
