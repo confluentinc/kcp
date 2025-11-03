@@ -19,7 +19,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 
 func (mi *MigrationInfraHCLService) GenerateTerraformFiles(request types.MigrationWizardRequest) (types.TerraformFiles, error) {
 	if !request.HasPublicCCEndpoints {
-		return types.TerraformFiles{}, errors.New("public CC endpoints are required")
+		return types.TerraformFiles{}, errors.New("not supporting private link yet")
 	}
 	return types.TerraformFiles{
 		MainTf:      mi.generateMainTf(request),
