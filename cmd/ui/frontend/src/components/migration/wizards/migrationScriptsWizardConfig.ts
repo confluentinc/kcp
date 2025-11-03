@@ -88,6 +88,7 @@ export const migrationScriptsWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'script_type',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -146,6 +147,7 @@ export const migrationScriptsWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'source_system',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -205,6 +207,7 @@ export const migrationScriptsWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'target_system',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -219,6 +222,7 @@ export const migrationScriptsWizardConfig: WizardConfig = {
         },
         BACK: {
           target: 'script_options',
+          actions: 'undo_save_step_data',
         },
       },
     },
@@ -235,5 +239,6 @@ export const migrationScriptsWizardConfig: WizardConfig = {
 
   actions: {
     save_step_data: 'save_step_data',
+    undo_save_step_data: 'undo_save_step_data',
   },
 }
