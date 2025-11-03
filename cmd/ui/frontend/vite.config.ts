@@ -3,17 +3,19 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import checker from 'vite-plugin-checker'
+import eslint from 'vite-plugin-eslint2'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    eslint({
+      lintOnStart: true,
+      cache: false,
+    }),
     checker({
       typescript: true,
-      eslint: {
-        lintCommand: 'eslint "./src/**/*.{ts,tsx}"',
-      },
     }),
   ],
   resolve: {
@@ -28,6 +30,22 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/health': {
+        target: 'http://localhost:5556',
+        changeOrigin: true,
+      },
+      '/upload-state': {
+        target: 'http://localhost:5556',
+        changeOrigin: true,
+      },
+      '/metrics': {
+        target: 'http://localhost:5556',
+        changeOrigin: true,
+      },
+      '/costs': {
+        target: 'http://localhost:5556',
+        changeOrigin: true,
+      },
+      '/assets': {
         target: 'http://localhost:5556',
         changeOrigin: true,
       },

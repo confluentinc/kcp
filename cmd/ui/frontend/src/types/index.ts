@@ -1,22 +1,13 @@
 import type { MSKClusterConfig, MSKConnector, KafkaAdminInfo, MSKConfiguration } from './aws/msk'
 import type { CostsApiResponse } from './api/costs'
+import type { ApiMetadata } from './api/common'
 
 // Shared types for the application
 export interface Cluster {
   name: string
+  arn?: string
   metrics?: {
-    metadata: {
-      cluster_type: string
-      follower_fetching: boolean
-      tiered_storage: boolean
-      instance_type: string
-      broker_az_distribution: string
-      kafka_version: string
-      enhanced_monitoring: string
-      start_date: string
-      end_date: string
-      period: number
-    }
+    metadata: ApiMetadata
     results: Array<{
       start: string
       end: string

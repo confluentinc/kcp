@@ -71,14 +71,14 @@ interface MetricsAggregateStatsProps {
   tcoField: string
 }
 
-export default function MetricsAggregateStats({
+export const MetricsAggregateStats = ({
   aggregates,
   selectedMetric,
   inModal,
   onTransfer,
   transferSuccess,
   tcoField,
-}: MetricsAggregateStatsProps) {
+}: MetricsAggregateStatsProps) => {
   if (!aggregates || !selectedMetric) {
     return null
   }
@@ -120,4 +120,5 @@ export default function MetricsAggregateStats({
     </div>
   )
 }
+
 

@@ -1,32 +1,35 @@
 import type { Cluster, Region } from '@/types'
-import { useAppStore } from '@/stores/store'
+import { useAppStore, useRegions } from '@/stores/store'
+import { getClusterArn } from '@/lib/clusterUtils'
 
-export default function Sidebar() {
-  const regions = useAppStore((state) => state.regions)
-  const selectedCluster = useAppStore((state) => state.selectedCluster)
-  const selectedRegion = useAppStore((state) => state.selectedRegion)
-  const selectedSummary = useAppStore((state) => state.selectedSummary)
-  const selectedSchemaRegistries = useAppStore((state) => state.selectedSchemaRegistries)
+export const Sidebar = () => {
+  const regions = useRegions()
+  const selectedView = useAppStore((state) => state.selectedView)
+  const selectedClusterArn = useAppStore((state) => state.selectedClusterArn)
+  const selectedRegionName = useAppStore((state) => state.selectedRegionName)
 
-  const setSelectedCluster = useAppStore((state) => state.setSelectedCluster)
-  const setSelectedRegion = useAppStore((state) => state.setSelectedRegion)
-  const setSelectedSummary = useAppStore((state) => state.setSelectedSummary)
-  const setSelectedSchemaRegistries = useAppStore((state) => state.setSelectedSchemaRegistries)
+  const selectCluster = useAppStore((state) => state.selectCluster)
+  const selectRegion = useAppStore((state) => state.selectRegion)
+  const selectSummary = useAppStore((state) => state.selectSummary)
+  const selectSchemaRegistries = useAppStore((state) => state.selectSchemaRegistries)
 
   const handleClusterSelect = (cluster: Cluster, regionName: string) => {
-    setSelectedCluster(cluster, regionName)
+    const arn = getClusterArn(cluster)
+    if (arn) {
+      selectCluster(regionName, arn)
+    }
   }
 
   const handleRegionSelect = (region: Region) => {
-    setSelectedRegion(region)
+    selectRegion(region.name)
   }
 
   const handleSummarySelect = () => {
-    setSelectedSummary()
+    selectSummary()
   }
 
   const handleSchemaRegistriesSelect = () => {
-    setSelectedSchemaRegistries()
+    selectSchemaRegistries()
   }
   return (
     <div className="h-full flex flex-col">
@@ -44,7 +47,7 @@ export default function Sidebar() {
               <button
                 onClick={handleSummarySelect}
                 className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
-                  selectedSummary
+                  selectedView === 'summary'
                     ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
                     : 'hover:bg-gray-100 dark:hover:bg-gray-600'
                 }`}
@@ -52,12 +55,12 @@ export default function Sidebar() {
                 <div className="flex items-center space-x-2 min-w-0 flex-1">
                   <div
                     className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                      selectedSummary ? 'bg-blue-600' : 'bg-gray-500'
+                      selectedView === 'summary' ? 'bg-blue-600' : 'bg-gray-500'
                     }`}
                   ></div>
                   <h4
                     className={`text-sm whitespace-nowrap ${
-                      selectedSummary
+                      selectedView === 'summary'
                         ? 'text-blue-900 dark:text-accent'
                         : 'text-gray-800 dark:text-gray-200'
                     }`}
@@ -71,7 +74,7 @@ export default function Sidebar() {
             {/* Regions under Summary */}
             <div className="ml-4 space-y-2">
               {regions.map((region) => {
-                const isRegionSelected = selectedRegion?.name === region.name
+                const isRegionSelected = selectedView === 'region' && selectedRegionName === region.name
 
                 return (
                   <div
@@ -112,9 +115,8 @@ export default function Sidebar() {
                             cluster.aws_client_information?.msk_cluster_config?.Provisioned
                         )
                         .map((cluster) => {
-                          const isSelected =
-                            selectedCluster?.cluster.name === cluster.name &&
-                            selectedCluster?.regionName === region.name
+                          const clusterArn = getClusterArn(cluster)
+                          const isSelected = selectedView === 'cluster' && selectedClusterArn === clusterArn
                           return (
                             <button
                               key={cluster.name}
@@ -161,7 +163,7 @@ export default function Sidebar() {
           <button
             onClick={handleSchemaRegistriesSelect}
             className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
-              selectedSchemaRegistries
+              selectedView === 'schema-registries'
                 ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
                 : 'hover:bg-gray-100 dark:hover:bg-gray-600'
             }`}
@@ -169,12 +171,12 @@ export default function Sidebar() {
             <div className="flex items-center space-x-2 min-w-0 flex-1">
               <div
                 className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  selectedSchemaRegistries ? 'bg-blue-600' : 'bg-gray-500'
+                  selectedView === 'schema-registries' ? 'bg-blue-600' : 'bg-gray-500'
                 }`}
               ></div>
               <h4
                 className={`text-sm whitespace-nowrap ${
-                  selectedSchemaRegistries
+                  selectedView === 'schema-registries'
                     ? 'text-blue-900 dark:text-accent'
                     : 'text-gray-800 dark:text-gray-200'
                 }`}

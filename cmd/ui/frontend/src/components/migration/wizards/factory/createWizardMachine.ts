@@ -1,7 +1,7 @@
 import { createMachine, assign } from 'xstate'
 import type { WizardConfig, WizardContext, WizardEvent } from '../types'
 
-export function createWizardMachine(config: WizardConfig) {
+export const createWizardMachine = (config: WizardConfig) => {
   const actions = {
     save_step_data: assign(({ context, event }: { context: WizardContext; event: WizardEvent }) => {
       const currentStateId = event?.stepId || context.currentStep || 'unknown'

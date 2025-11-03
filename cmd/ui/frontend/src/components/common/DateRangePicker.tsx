@@ -19,7 +19,7 @@ interface DateRangePickerProps {
   className?: string
 }
 
-export default function DateRangePicker({
+export const DateRangePicker = ({
   label,
   startDate,
   endDate,
@@ -31,7 +31,7 @@ export default function DateRangePicker({
   showResetButtons = true,
   showResetBothButton = false,
   className = '',
-}: DateRangePickerProps) {
+}: DateRangePickerProps) => {
   return (
     <div className={cn('flex flex-col sm:flex-row gap-4', className)}>
       {/* Start Date Picker */}

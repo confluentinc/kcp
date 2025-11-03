@@ -63,7 +63,7 @@ interface DateRangeChartProps {
  * DateRangeChart - Wrapper for date-based charts with consistent styling
  * Supports both AreaChart and LineChart through chartType prop
  */
-export default function DateRangeChart({
+export const DateRangeChart = ({
   data,
   children,
   chartType = 'area',
@@ -80,7 +80,7 @@ export default function DateRangeChart({
   onMouseDown,
   onMouseMove,
   onMouseUp,
-}: DateRangeChartProps) {
+}: DateRangeChartProps) => {
   const chartData = zoomData && zoomData.length > 0 ? zoomData : data
 
   // Calculate domain from data when left/right are not provided
@@ -188,7 +188,7 @@ export default function DateRangeChart({
 /**
  * Default tooltip for cost charts (shows currency formatting)
  */
-export function CostChartTooltip({ active, payload, label }: TooltipContentProps) {
+export const CostChartTooltip = ({ active, payload, label }: TooltipContentProps) => {
   if (active && payload && payload.length > 0) {
     const nonZeroEntries = payload.filter((entry) => {
       const value = typeof entry.value === 'number' ? entry.value : 0
@@ -255,7 +255,7 @@ interface SimpleChartTooltipProps extends TooltipContentProps {
 /**
  * Simple tooltip for single-value charts (like metrics)
  */
-export function SimpleChartTooltip({ active, payload, label, labelKey }: SimpleChartTooltipProps) {
+export const SimpleChartTooltip = ({ active, payload, label, labelKey }: SimpleChartTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg p-3 shadow-lg">

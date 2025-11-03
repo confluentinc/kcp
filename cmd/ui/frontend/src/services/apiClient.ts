@@ -206,7 +206,11 @@ const costs = {
         params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
     }
 
-    return get<CostsApiResponse>(`${API_ENDPOINTS.COSTS}/${encodeURIComponent(region)}`, queryParams, config)
+    return get<CostsApiResponse>(
+      `${API_ENDPOINTS.COSTS}/${encodeURIComponent(region)}`,
+      queryParams,
+      config
+    )
   },
 }
 

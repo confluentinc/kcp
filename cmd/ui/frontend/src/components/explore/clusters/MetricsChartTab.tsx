@@ -7,11 +7,12 @@ import {
   SelectValue,
 } from '@/components/common/ui/select'
 import { Line } from 'recharts'
-import DateRangeChart, {
+import {
+  DateRangeChart,
   SimpleChartTooltip,
   type ChartDataPoint,
 } from '@/components/common/DateRangeChart'
-import MetricsAggregateStats from './MetricsAggregateStats'
+import { MetricsAggregateStats } from './MetricsAggregateStats'
 import { getWorkloadAssumptionName } from '@/lib/metricsUtils'
 
 interface ProcessedData {
@@ -41,7 +42,7 @@ interface MetricsChartTabProps {
   tcoField: string
 }
 
-export default function MetricsChartTab({
+export const MetricsChartTab = ({
   selectedMetric,
   setSelectedMetric,
   processedData,
@@ -59,7 +60,7 @@ export default function MetricsChartTab({
   transferSuccess,
   handleTransferToTCO,
   tcoField,
-}: MetricsChartTabProps) {
+}: MetricsChartTabProps) => {
   return (
     <div className="space-y-4 min-w-0">
       <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
@@ -162,3 +163,4 @@ export default function MetricsChartTab({
     </div>
   )
 }
+
