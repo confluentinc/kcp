@@ -9,6 +9,7 @@ interface WizardStepFormProps {
   formData: WizardFormData
   onSubmit: (formData: WizardFormData) => void
   onBack: () => void
+  onClose?: () => void
   canGoBack: boolean
   isLoading?: boolean
 }
@@ -18,6 +19,7 @@ export function WizardStepForm({
   formData,
   onSubmit,
   onBack,
+  onClose,
   canGoBack,
   isLoading = false,
 }: WizardStepFormProps) {
@@ -52,13 +54,23 @@ export function WizardStepForm({
         }}
       >
         <div className="flex gap-4 mt-6">
+          {canGoBack && (
+            <Button
+              type="button"
+              onClick={onBack}
+              variant="outline"
+              disabled={isLoading}
+            >
+              Back
+            </Button>
+          )}
           <Button
             type="button"
-            onClick={onBack}
+            onClick={onClose}
             variant="outline"
-            disabled={!canGoBack || isLoading}
+            disabled={isLoading || !onClose}
           >
-            Back
+            Close
           </Button>
           <Button
             type="submit"

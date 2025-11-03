@@ -24,6 +24,7 @@ export interface WizardContext {
   allData: Record<string, WizardFormData>
   currentStep: string
   previousStep?: string
+  visitedSteps: string[]
 }
 
 export interface WizardConfig {

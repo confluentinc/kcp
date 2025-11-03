@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import TCOInputsPage from '@/components/tco/TCOInputsPage'
 import Sidebar from '@/components/explore/Sidebar'
-import MigrationAssetsPage from '@/components/migration/MigrationAssetsPage'
+import MigrationAssetsPage from '@/components/migration/MigrationAssets'
 import Explore from '@/components/explore/Explore'
 import AppHeader from '@/components/common/AppHeader'
 import Tabs from '@/components/common/Tabs'
@@ -111,9 +111,9 @@ export default function Home() {
             <div className="flex flex-1 flex-col">
               <Tabs
                 tabs={[
-                  { id: 'explore', label: 'Explore Costs & Metrics' },
-                  { id: 'tco-inputs', label: 'Generate TCO Inputs' },
-                  { id: 'migration-assets', label: 'Generate Migration Assets' },
+                  { id: 'explore', label: 'Explore' },
+                  { id: 'migration-assets', label: 'Migrate' },
+                  { id: 'tco-inputs', label: 'TCO Inputs' },
                 ]}
                 activeId={activeTopTab}
                 onChange={(id) => setActiveTopTab(id as TopLevelTab)}
