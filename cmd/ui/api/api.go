@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
@@ -213,30 +214,19 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	// cluster link
 	if req.HasPublicCCEndpoints {
-		if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
+		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid configuration",
-				"message": "targetEnvironmentId, targetClusterId, targetRestEndpoint, clusterLinkName, mskVPCId, mskSaslScramBootstrapServers are required",
+				"error":   "Invalid request body",
+				"message": err.Error(),
 			})
 		}
-		// private link
 	} else {
-		if req.UseExistingSubnets {
-			if req.MskVPCId == "" || len(req.ExistingSubnetIds) == 0 || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
-				return c.JSON(http.StatusBadRequest, map[string]any{
-					"error":   "Invalid configuration",
-					"message": "mskVPCId, existingSubnetIds, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when using existing subnets",
-				})
-			}
-		} else {
-			if req.MskVPCId == "" || req.SubnetCidrRanges == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
-				return c.JSON(http.StatusBadRequest, map[string]any{
-					"error":   "Invalid configuration",
-					"message": "mskVPCId, subnetCidrRanges, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when creating a new cluster",
-				})
-			}
+		if err := validatePrivateLinkRequest(req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": err.Error(),
+			})
 		}
 	}
 
@@ -404,4 +394,30 @@ func (ui *UI) handleMigrationScripts(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
+	if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
+		return fmt.Errorf("Invalid configuration: targetEnvironmentId, targetClusterId, targetRestEndpoint, clusterLinkName, mskVPCId, mskSaslScramBootstrapServers are required")
+	}
+	return nil
+}
+
+func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
+	var errors []string
+
+	if req.MskVPCId == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
+		errors = append(errors, "mskVPCId, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required")
+	}
+	if req.UseExistingSubnets && len(req.ExistingSubnetIds) == 0 {
+		errors = append(errors, "existingSubnetIds are required when using existing subnets")
+	}
+	if !req.UseExistingSubnets && req.SubnetCidrRanges == "" {
+		errors = append(errors, "subnetCidrRanges are required when creating a new cluster")
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("Invalid configuration: %s", strings.Join(errors, "; "))
+	}
+	return nil
 }
