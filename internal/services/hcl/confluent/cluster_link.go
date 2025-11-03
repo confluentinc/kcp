@@ -3,7 +3,6 @@ package confluent
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
 	"text/template"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -21,16 +20,6 @@ type ClusterLinkTemplateData struct {
 	SourceBootstrapServers    string
 	SaslUsername              string
 	SaslPassword              string
-}
-
-func generateRandomSuffix() string {
-	const letters = "abcdefghijklmnopqrstuvwxyz"
-	suffix := make([]byte, 4)
-	for i := range suffix {
-		suffix[i] = letters[rand.Intn(len(letters))]
-	}
-
-	return string(suffix)
 }
 
 func GenerateClusterLinkLocals() *hclwrite.Block {
