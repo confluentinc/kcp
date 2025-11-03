@@ -132,13 +132,18 @@ export const migrationInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: [
+          // {
+          //   target: 'private_link_reuse_existing_subnets',
+          //   guard: 'reuse_existing_subnets',
+          //   actions: 'save_step_data',
+          // },
           {
-            target: 'private_link_reuse_existing_subnets',
+            target: 'confirmation',
             guard: 'reuse_existing_subnets',
             actions: 'save_step_data',
           },
           {
-            target: 'private_link_create_new_subnets',
+            target: 'confirmation',
             guard: 'create_new_subnets',
             actions: 'save_step_data',
           },
@@ -149,28 +154,28 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
       },
     },
-    private_link_reuse_existing_subnets: {
-      meta: {
-        title: 'Reuse existing subnets',
-        description: 'PLACEHOLDER',
-        schema: {
-          type: 'object',
-          properties: {
-            vpc_id: {
-              type: 'string',
-              title: 'VPC ID (retrieved from statefile)',
-            },
-            existing_subnets: {
-              type: 'array',
-              title: 'Existing subnet IDs',
-              items: {
-                type: 'string',
-              },
-            },
-          },
-        },
-      },
-    },
+    // private_link_reuse_existing_subnets: {
+    //   meta: {
+    //     title: 'Reuse existing subnets',
+    //     description: 'PLACEHOLDER',
+    //     schema: {
+    //       type: 'object',
+    //       properties: {
+    //         vpc_id: {
+    //           type: 'string',
+    //           title: 'VPC ID (retrieved from statefile)',
+    //         },
+    //         existing_subnets: {
+    //           type: 'array',
+    //           title: 'Existing subnet IDs',
+    //           items: {
+    //             type: 'string',
+    //           },
+    //         },
+    //       },
+    //     },
+    //   },
+    // },
 
 
 
