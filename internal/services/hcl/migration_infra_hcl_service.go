@@ -1,8 +1,6 @@
 package hcl
 
 import (
-	"log/slog"
-
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -39,12 +37,31 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 }
 
 func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.TerraformModules {
-	slog.Info("private link Terraform modules generation not supported yet")
 	return types.TerraformModules{
 		"root": {
 			MainTf:      "",
 			ProvidersTf: "",
 			VariablesTf: "",
+		},
+		"ansible_control_node_instance": {
+			MainTf:      "",
+			VariablesTf: "",
+			OutputsTf:   "",
+		},
+		"confluent_platform_broker_instances": {
+			MainTf:      "",
+			VariablesTf: "",
+			OutputsTf:   "",
+		},
+		"networking": {
+			MainTf:      "",
+			VariablesTf: "",
+			OutputsTf:   "",
+		},
+		"private_link_connection": {
+			MainTf:      "",
+			VariablesTf: "",
+			OutputsTf:   "",
 		},
 	}
 }

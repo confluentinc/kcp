@@ -139,6 +139,7 @@ type TerraformFiles struct {
 	MainTf      string `json:"main_tf"`
 	ProvidersTf string `json:"providers_tf"`
 	VariablesTf string `json:"variables_tf"`
+	OutputsTf   string `json:"outputs_tf"`
 }
 
 // TerraformModules represents a collection of Terraform modules/directories.
