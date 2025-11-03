@@ -24,27 +24,36 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 
 	return types.TerraformModules{
 		"root": {
-			MainTf:      mi.generateMainTf(request),
-			ProvidersTf: mi.generateProvidersTf(),
-			VariablesTf: mi.generateVariablesTf(),
+			MainTf:      mi.generateRootMainTf(),
+			ProvidersTf: mi.generateRootProvidersTf(),
+			VariablesTf: mi.generateRootVariablesTf(),
+		},
+		"cluster_link": {
+			MainTf:      mi.generateClusterLinkMainTf(request),
+			VariablesTf: mi.generateClusterLinkVariablesTf(),
 		},
 	}, nil
 }
 
-func (mi *MigrationInfraHCLService) generateMainTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateRootMainTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals())
-	rootBody.AppendNewline()
+	moduleBlock := rootBody.AppendNewBlock("module", []string{"cluster_link"})
+	moduleBody := moduleBlock.Body()
 
-	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(request))
-	rootBody.AppendNewline()
+	moduleBody.SetAttributeValue("source", cty.StringVal("./cluster_link"))
+	moduleBody.AppendNewline()
+
+	// Pass all variables to the cluster_link module
+	for _, v := range confluent.ClusterLinkVariables {
+		moduleBody.SetAttributeRaw(v.Name, utils.TokensForVarReference(v.Name))
+	}
 
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateProvidersTf() string {
+func (mi *MigrationInfraHCLService) generateRootProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -63,11 +72,32 @@ func (mi *MigrationInfraHCLService) generateProvidersTf() string {
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateVariablesTf() string {
+func (mi *MigrationInfraHCLService) generateRootVariablesTf() string {
+	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
+}
+
+func (mi *MigrationInfraHCLService) generateClusterLinkMainTf(request types.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	for _, v := range confluent.ClusterLinkVariables {
+	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(request))
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf() string {
+	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
+}
+
+func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	for _, v := range tfVariables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
 		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
