@@ -1,6 +1,7 @@
 package hcl
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -148,7 +149,16 @@ func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.Terr
 
 // ansible
 func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceMainTf() string {
-	return ""
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	rootBody.AppendBlock(aws.GenerateAmazonLinuxAMI())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateAnsibleControlNodeInstance())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
 }
 
 func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {

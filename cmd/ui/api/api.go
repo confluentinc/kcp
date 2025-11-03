@@ -235,28 +235,88 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 }
 
 func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
-	if req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskSaslScramBootstrapServers == "" {
-		return fmt.Errorf("Invalid configuration: targetClusterId, targetRestEndpoint, clusterLinkName, mskSaslScramBootstrapServers are required")
+	var missingFields []string
+
+	if req.TargetClusterId == "" {
+		missingFields = append(missingFields, "targetClusterId")
 	}
+	if req.TargetRestEndpoint == "" {
+		missingFields = append(missingFields, "targetRestEndpoint")
+	}
+	if req.ClusterLinkName == "" {
+		missingFields = append(missingFields, "clusterLinkName")
+	}
+	if req.MskSaslScramBootstrapServers == "" {
+		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	}
+
+	if len(missingFields) > 0 {
+		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
+	}
+
 	return nil
 }
 
 func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
-	var errors []string
+	var missingFields []string
 
-	if req.MskVPCId == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.MskSaslScramBootstrapServers == "" {
-		errors = append(errors, "mskVPCId, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, mskSaslScramBootstrapServers are required")
+	// Check required fields
+	if req.MskVPCId == "" {
+		missingFields = append(missingFields, "mskVPCId")
 	}
-	if req.UseExistingSubnets && len(req.ExistingSubnetIds) == 0 {
-		errors = append(errors, "existingSubnetIds are required when using existing subnets")
+	if req.BrokerType == "" {
+		missingFields = append(missingFields, "brokerType")
 	}
-	if !req.UseExistingSubnets && req.SubnetCidrRanges == "" {
-		errors = append(errors, "subnetCidrRanges are required when creating a new cluster")
+	if req.BrokerAmount == "" {
+		missingFields = append(missingFields, "brokerAmount")
+	}
+	if req.BrokerStorageSize == "" {
+		missingFields = append(missingFields, "brokerStorageSize")
+	}
+	if req.JumpClusterSubnetCidrRange == "" {
+		missingFields = append(missingFields, "jumpClusterSubnetCidrRange")
+	}
+	if req.AnsibleSubnetCidrRange == "" {
+		missingFields = append(missingFields, "ansibleSubnetCidrRange")
+	}
+	if req.AuthenticationMethod == "" {
+		missingFields = append(missingFields, "authenticationMethod")
+	}
+	if req.TargetEnvironmentId == "" {
+		missingFields = append(missingFields, "targetEnvironmentId")
+	}
+	if req.TargetClusterId == "" {
+		missingFields = append(missingFields, "targetClusterId")
+	}
+	if req.MskSaslScramBootstrapServers == "" {
+		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("Invalid configuration: %s", strings.Join(errors, "; "))
+	var conditionalErrors []string
+
+	// Conditional validation based on UseExistingSubnets
+	if req.UseExistingSubnets {
+		if len(req.ExistingSubnetIds) == 0 {
+			conditionalErrors = append(conditionalErrors, "existingSubnetIds is required when useExistingSubnets is true")
+		}
+	} else {
+		if req.SubnetCidrRanges == "" {
+			conditionalErrors = append(conditionalErrors, "subnetCidrRanges is required when useExistingSubnets is false")
+		}
 	}
+
+	var allErrors []string
+	if len(missingFields) > 0 {
+		allErrors = append(allErrors, fmt.Sprintf("missing required fields: %s", strings.Join(missingFields, ", ")))
+	}
+	if len(conditionalErrors) > 0 {
+		allErrors = append(allErrors, conditionalErrors...)
+	}
+
+	if len(allErrors) > 0 {
+		return fmt.Errorf("invalid configuration: %s", strings.Join(allErrors, "; "))
+	}
+
 	return nil
 }
 

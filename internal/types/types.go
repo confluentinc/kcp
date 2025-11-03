@@ -142,8 +142,20 @@ type TerraformFiles struct {
 	OutputsTf   string `json:"outputs_tf"`
 }
 
+type MigrationTerraformFiles struct {
+	MainTf          string            `json:"main_tf"`
+	ProvidersTf     string            `json:"providers_tf"`
+	VariablesTf     string            `json:"variables_tf"`
+	OutputsTf       string            `json:"outputs_tf"`
+	AdditionalFiles map[string]string `json:"additional_files"`
+}
+
 // TerraformModules represents a collection of Terraform modules/directories.
 type TerraformModules map[string]TerraformFiles
+
+
+// TerraformModules represents a collection of Terraform modules/directories.
+type MigrationTerraformModules map[string]MigrationTerraformFiles
 
 type TerraformVariable struct {
 	Name        string `json:"name"`
