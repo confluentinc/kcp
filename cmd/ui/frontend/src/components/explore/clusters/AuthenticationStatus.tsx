@@ -1,4 +1,4 @@
-import StatusBadge from '@/components/common/StatusBadge'
+import { StatusBadge } from '@/components/common/StatusBadge'
 import { createStatusBadgeProps } from '@/lib/utils'
 
 interface ClientAuthentication {
@@ -20,10 +20,10 @@ interface AuthenticationMethod {
   enabled: boolean
 }
 
-export default function AuthenticationStatus({
+export const AuthenticationStatus = ({
   clientAuthentication,
   displayMode = 'table',
-}: AuthenticationStatusProps) {
+}: AuthenticationStatusProps) => {
   const methods: AuthenticationMethod[] = [
     {
       name: 'IAM Authentication',
@@ -86,4 +86,5 @@ export default function AuthenticationStatus({
     </div>
   )
 }
+
 

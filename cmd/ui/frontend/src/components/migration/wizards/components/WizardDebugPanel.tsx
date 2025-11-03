@@ -5,7 +5,7 @@ interface WizardDebugPanelProps {
   currentStepId: string
 }
 
-export function WizardDebugPanel({ context, currentStepId }: WizardDebugPanelProps) {
+export const WizardDebugPanel = ({ context, currentStepId }: WizardDebugPanelProps) => {
   const visitedSteps = context.visitedSteps || []
   const currentStepIndex = visitedSteps.indexOf(currentStepId)
   const stepDataKeys = Object.keys(context.stepData || {})

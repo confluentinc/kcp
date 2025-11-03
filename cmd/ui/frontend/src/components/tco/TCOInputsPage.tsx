@@ -3,11 +3,11 @@ import { Button } from '@/components/common/ui/button'
 import { Modal } from '@/components/common/ui/modal'
 import { useAppStore, useRegions } from '@/stores/store'
 import { ExternalLink } from 'lucide-react'
-import ClusterMetrics from '@/components/explore/clusters/ClusterMetrics'
+import { ClusterMetrics } from '@/components/explore/clusters/ClusterMetrics'
 import { DEFAULTS } from '@/constants'
 import { getClusterArn } from '@/lib/clusterUtils'
 
-export default function TCOInputs() {
+export const TCOInputs = () => {
   const regions = useRegions()
   const tcoWorkloadData = useAppStore((state) => state.tcoWorkloadData)
   const setTCOWorkloadValue = useAppStore((state) => state.setTCOWorkloadValue)
@@ -627,3 +627,4 @@ export default function TCOInputs() {
     </div>
   )
 }
+

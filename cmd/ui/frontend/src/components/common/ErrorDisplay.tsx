@@ -7,7 +7,7 @@ interface ErrorDisplayProps {
 /**
  * Reusable error display component for consistent error UI across the application
  */
-export default function ErrorDisplay({ title, error, context = 'data' }: ErrorDisplayProps) {
+export const ErrorDisplay = ({ title, error, context = 'data' }: ErrorDisplayProps) => {
   return (
     <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
       {title && (

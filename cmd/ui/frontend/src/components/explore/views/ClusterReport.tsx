@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import ClusterMetrics from '../clusters/ClusterMetrics'
-import ClusterTopics from '../clusters/ClusterTopics'
-import ClusterConnectors from '../clusters/ClusterConnectors'
-import ClusterACLs from '../clusters/ClusterACLs'
+import { ClusterMetrics } from '../clusters/ClusterMetrics'
+import { ClusterTopics } from '../clusters/ClusterTopics'
+import { ClusterConnectors } from '../clusters/ClusterConnectors'
+import { ClusterACLs } from '../clusters/ClusterACLs'
 import { formatDate } from '@/lib/formatters'
-import Tabs from '@/components/common/Tabs'
-import ClusterConfigurationSection from '../clusters/ClusterConfigurationSection'
+import { Tabs } from '@/components/common/Tabs'
+import { ClusterConfigurationSection } from '../clusters/ClusterConfigurationSection'
 import type { Cluster, Region } from '@/types'
 import { CLUSTER_REPORT_TABS } from '@/constants'
 import type { ClusterReportTab } from '@/types'
@@ -17,7 +17,7 @@ interface ClusterReportProps {
   regionData?: Pick<Region, 'configurations'>
 }
 
-export default function ClusterReport({ cluster, regionName, regionData }: ClusterReportProps) {
+export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReportProps) => {
   const [activeTab, setActiveTab] = useState<ClusterReportTab>(CLUSTER_REPORT_TABS.CLUSTER)
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config

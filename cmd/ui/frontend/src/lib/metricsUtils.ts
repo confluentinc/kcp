@@ -5,7 +5,7 @@
 /**
  * Convert bytes/sec to MB/s
  */
-export function convertBytesToMB(bytesPerSec: number): string {
+export const convertBytesToMB = (bytesPerSec: number): string => {
   const mbPerSec = bytesPerSec / (1024 * 1024)
   return mbPerSec.toFixed(5)
 }
@@ -13,7 +13,7 @@ export function convertBytesToMB(bytesPerSec: number): string {
 /**
  * Map metric names to workload assumption names
  */
-export function getWorkloadAssumptionName(metricName: string): string {
+export const getWorkloadAssumptionName = (metricName: string): string => {
   switch (metricName) {
     case 'BytesInPerSec':
       return 'Ingress Throughput'
@@ -42,7 +42,7 @@ export type TCOWorkloadField =
 /**
  * Map modal workload assumption to TCO field
  */
-export function getTCOFieldFromWorkloadAssumption(workloadAssumption: string): TCOWorkloadField {
+export const getTCOFieldFromWorkloadAssumption = (workloadAssumption: string): TCOWorkloadField => {
   switch (workloadAssumption) {
     case 'Avg Ingress Throughput (MB/s)':
       return 'avgIngressThroughput'

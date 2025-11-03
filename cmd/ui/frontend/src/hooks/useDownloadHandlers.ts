@@ -16,7 +16,7 @@ interface UseDownloadHandlersProps {
  * @param filename - The base filename (without extension) for downloads
  * @returns Object containing handleDownloadCSV and handleDownloadJSON functions
  */
-export function useDownloadHandlers({ csvData, jsonData, filename }: UseDownloadHandlersProps) {
+export const useDownloadHandlers = ({ csvData, jsonData, filename }: UseDownloadHandlersProps) => {
   const handleDownloadCSV = useCallback(() => {
     downloadCSV(csvData, filename)
   }, [csvData, filename])

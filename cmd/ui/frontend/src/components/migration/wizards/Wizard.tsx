@@ -18,7 +18,7 @@ interface WizardProps {
   onClose?: () => void
 }
 
-export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: WizardProps) {
+export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: WizardProps) => {
   // Create the wizard machine
   const wizardMachine = useMemo(() => createWizardMachine(config), [config])
   const [state, send] = useMachine(wizardMachine)

@@ -15,7 +15,7 @@ import { Server, Network, Code, CheckCircle2, ArrowRight } from 'lucide-react'
 import { getClusterArn } from '@/lib/clusterUtils'
 import { downloadZip, saveZipLocally } from '@/lib/fileSystemUtils'
 
-export default function MigrationAssets() {
+export const MigrationAssets = () => {
   const regions = useRegions()
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [wizardType, setWizardType] = useState<WizardType | null>(null)
@@ -523,3 +523,4 @@ export default function MigrationAssets() {
     </div>
   )
 }
+

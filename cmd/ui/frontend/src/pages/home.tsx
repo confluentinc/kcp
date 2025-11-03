@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react'
-import TCOInputsPage from '@/components/tco/TCOInputsPage'
-import Sidebar from '@/components/explore/Sidebar'
-import MigrationAssetsPage from '@/components/migration/MigrationAssets'
-import Explore from '@/components/explore/Explore'
-import AppHeader from '@/components/common/AppHeader'
-import Tabs from '@/components/common/Tabs'
+import { TCOInputs as TCOInputsPage } from '@/components/tco/TCOInputsPage'
+import { Sidebar } from '@/components/explore/Sidebar'
+import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
+import { Explore } from '@/components/explore/Explore'
+import { AppHeader } from '@/components/common/AppHeader'
+import { Tabs } from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
@@ -17,7 +17,7 @@ import {
 import { TOP_LEVEL_TABS } from '@/constants'
 import type { TopLevelTab } from '@/types'
 
-export default function Home() {
+export const Home = () => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
 

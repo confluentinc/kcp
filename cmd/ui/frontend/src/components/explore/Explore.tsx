@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import ClusterReport from './views/ClusterReport'
-import RegionReport from './views/RegionReport'
-import Summary from './views/Summary'
-import SchemaRegistries from './views/SchemaRegistries'
+import { ClusterReport } from './views/ClusterReport'
+import { RegionReport } from './views/RegionReport'
+import { Summary } from './views/Summary'
+import { SchemaRegistries } from './views/SchemaRegistries'
 import {
   useAppStore,
   useSelectedCluster,
@@ -11,7 +11,7 @@ import {
   useSchemaRegistries,
 } from '@/stores/store'
 
-export default function Explore() {
+export const Explore = () => {
   const selectedView = useAppStore((state) => state.selectedView)
   const selectedClusterData = useSelectedCluster()
   const selectedRegionData = useSelectedRegion()

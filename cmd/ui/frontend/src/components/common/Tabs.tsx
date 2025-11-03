@@ -19,7 +19,7 @@ const sizeClasses: Record<TabSize, string> = {
   lg: 'text-lg',
 }
 
-export default function Tabs({ tabs, activeId, onChange, className = '', size = 'sm' }: TabsProps) {
+export const Tabs = ({ tabs, activeId, onChange, className = '', size = 'sm' }: TabsProps) => {
   const textSizeClass = sizeClasses[size]
 
   return (

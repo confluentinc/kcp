@@ -2,7 +2,7 @@ import type { Cluster, Region } from '@/types'
 import { useAppStore, useRegions } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
 
-export default function Sidebar() {
+export const Sidebar = () => {
   const regions = useRegions()
   const selectedView = useAppStore((state) => state.selectedView)
   const selectedClusterArn = useAppStore((state) => state.selectedClusterArn)

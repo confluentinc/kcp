@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/common/ui/select'
 import { Area, Legend } from 'recharts'
-import DateRangeChart, { CostChartTooltip } from '@/components/common/DateRangeChart'
+import { DateRangeChart, CostChartTooltip } from '@/components/common/DateRangeChart'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useChartZoom } from '@/hooks/useChartZoom'
@@ -41,7 +41,7 @@ interface CostSummaryData {
   }>
 }
 
-export default function Summary() {
+export const Summary = () => {
   const regions = useRegions()
   const { startDate, endDate, setStartDate, setEndDate } = useSummaryDateFilters()
   const [regionCostData, setRegionCostData] = useState<Record<string, CostsApiResponse>>({})

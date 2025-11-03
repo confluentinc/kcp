@@ -88,7 +88,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 /**
  * Convenience component for wrapping page-level components
  */
-export function PageErrorBoundary({ children }: { children: ReactNode }) {
+export const PageErrorBoundary = ({ children }: { children: ReactNode }) => {
   return (
     <ErrorBoundary
       onError={(error, errorInfo) => {

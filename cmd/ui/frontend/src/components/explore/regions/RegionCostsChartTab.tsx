@@ -1,6 +1,6 @@
 import type { CategoricalChartFunc } from 'recharts/types/chart/types'
 import { Area } from 'recharts'
-import DateRangeChart, { CostChartTooltip, type ChartDataPoint } from '@/components/common/DateRangeChart'
+import { DateRangeChart, CostChartTooltip, type ChartDataPoint } from '@/components/common/DateRangeChart'
 import { formatCostTypeLabel } from '@/lib/costTypeUtils'
 import { getChartColor } from '@/lib/chartColors'
 
@@ -29,7 +29,7 @@ interface RegionCostsChartTabProps {
   zoom: () => void
 }
 
-export default function RegionCostsChartTab({
+export const RegionCostsChartTab = ({
   selectedService,
   selectedCostType,
   processedData,
@@ -41,7 +41,7 @@ export default function RegionCostsChartTab({
   handleMouseDown,
   handleMouseMove,
   zoom,
-}: RegionCostsChartTabProps) {
+}: RegionCostsChartTabProps) => {
   return (
     <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
       <div className="p-6 rounded-lg">
@@ -111,4 +111,5 @@ export default function RegionCostsChartTab({
     </div>
   )
 }
+
 

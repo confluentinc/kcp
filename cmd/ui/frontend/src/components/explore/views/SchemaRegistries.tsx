@@ -26,7 +26,7 @@ interface SchemaRegistriesProps {
   schemaRegistries: SchemaRegistry[]
 }
 
-export default function SchemaRegistries({ schemaRegistries }: SchemaRegistriesProps) {
+export const SchemaRegistries = ({ schemaRegistries }: SchemaRegistriesProps) => {
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set())
   const [expandedVersions, setExpandedVersions] = useState<Set<string>>(new Set())
 

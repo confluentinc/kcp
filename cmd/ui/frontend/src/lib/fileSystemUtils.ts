@@ -50,7 +50,7 @@ declare global {
  * const zipBlob = await createZipBlob(files)
  * ```
  */
-export async function createZipBlob(files: Record<string, string | undefined>): Promise<Blob> {
+export const createZipBlob = async (files: Record<string, string | undefined>): Promise<Blob> => {
   try {
     const { default: JSZip } = await import('jszip')
     const zip = new JSZip()
@@ -86,10 +86,10 @@ export async function createZipBlob(files: Record<string, string | undefined>): 
  * // Downloads: my-cluster-target-infra.zip
  * ```
  */
-export async function downloadZip(
+export const downloadZip = async (
   files: Record<string, string | undefined>,
   fileName: string
-): Promise<void> {
+): Promise<void> => {
   try {
     // Filter files with content
     const fileEntries = Object.entries(files).filter(([, content]) => content)
@@ -150,10 +150,10 @@ export async function downloadZip(
  * // User picks directory, then saves: my-cluster-target-infra.zip
  * ```
  */
-export async function saveZipLocally(
+export const saveZipLocally = async (
   files: Record<string, string | undefined>,
   fileName: string
-): Promise<void> {
+): Promise<void> => {
   try {
     // Check if File System API is supported
     if (!('showDirectoryPicker' in window)) {

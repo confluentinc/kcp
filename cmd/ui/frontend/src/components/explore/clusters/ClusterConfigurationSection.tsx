@@ -1,8 +1,8 @@
-import KeyValueGrid from '@/components/common/KeyValueGrid'
-import KeyValuePair from '@/components/common/KeyValuePair'
-import BooleanStatus from '@/components/common/BooleanStatus'
-import AuthenticationStatus from './AuthenticationStatus'
-import StatusBadge from '@/components/common/StatusBadge'
+import { KeyValueGrid } from '@/components/common/KeyValueGrid'
+import { KeyValuePair } from '@/components/common/KeyValuePair'
+import { BooleanStatus } from '@/components/common/BooleanStatus'
+import { AuthenticationStatus } from './AuthenticationStatus'
+import { StatusBadge } from '@/components/common/StatusBadge'
 import { createStatusBadgeProps } from '@/lib/utils'
 import { formatDate } from '@/lib/formatters'
 import { decodeBase64 } from '@/lib/clusterUtils'
@@ -19,12 +19,12 @@ interface ClusterConfigurationSectionProps {
   }
 }
 
-export default function ClusterConfigurationSection({
+export const ClusterConfigurationSection = ({
   cluster,
   provisioned,
   brokerInfo,
   regionData,
-}: ClusterConfigurationSectionProps) {
+}: ClusterConfigurationSectionProps) => {
   return (
     <div className="space-y-8">
       {/* Basic Cluster Configuration */}
@@ -413,3 +413,4 @@ export default function ClusterConfigurationSection({
     </div>
   )
 }
+

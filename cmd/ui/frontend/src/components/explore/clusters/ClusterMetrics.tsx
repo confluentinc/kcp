@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
-import Tabs from '@/components/common/Tabs'
+import { Tabs } from '@/components/common/Tabs'
 import { Download } from 'lucide-react'
 import { generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/store'
@@ -11,11 +11,11 @@ import { useClusterMetricsFetch } from '@/hooks/useClusterMetricsFetch'
 import { useClusterMetricsZoom } from '@/hooks/useClusterMetricsZoom'
 import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
 import { convertBytesToMB, getTCOFieldFromWorkloadAssumption } from '@/lib/metricsUtils'
-import DateRangePicker from '@/components/common/DateRangePicker'
-import ErrorDisplay from '@/components/common/ErrorDisplay'
-import MetricsChartTab from './MetricsChartTab'
-import MetricsTableTab from './MetricsTableTab'
-import MetricsCodeViewer from './MetricsCodeViewer'
+import { DateRangePicker } from '@/components/common/DateRangePicker'
+import { ErrorDisplay } from '@/components/common/ErrorDisplay'
+import { MetricsChartTab } from './MetricsChartTab'
+import { MetricsTableTab } from './MetricsTableTab'
+import { MetricsCodeViewer } from './MetricsCodeViewer'
 import { TAB_IDS } from '@/constants'
 import type { TabId } from '@/types'
 import type { ApiMetadata } from '@/types/api/common'
@@ -38,13 +38,13 @@ interface ClusterMetricsProps {
   modalWorkloadAssumption?: string
 }
 
-export default function ClusterMetrics({
+export const ClusterMetrics = ({
   cluster,
   isActive,
   inModal = false,
   modalPreselectedMetric,
   modalWorkloadAssumption,
-}: ClusterMetricsProps) {
+}: ClusterMetricsProps) => {
   // Get TCO store actions and preselected metric
   const setTCOWorkloadValue = useAppStore((state) => state.setTCOWorkloadValue)
   const preselectedMetric = useAppStore((state) => state.preselectedMetric)

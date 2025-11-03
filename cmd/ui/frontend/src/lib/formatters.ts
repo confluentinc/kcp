@@ -8,7 +8,7 @@
  * @param dateString - ISO date string or date string
  * @returns Formatted date string (e.g., "Jan 15, 2024, 10:30 AM")
  */
-export function formatDate(dateString: string): string {
+export const formatDate = (dateString: string): string => {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -24,7 +24,7 @@ export function formatDate(dateString: string): string {
  * @param dateString - ISO date string or date string
  * @returns Short formatted date (e.g., "Jan 15")
  */
-export function formatDateShort(dateString: string): string {
+export const formatDateShort = (dateString: string): string => {
   return new Date(dateString).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',

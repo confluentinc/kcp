@@ -14,12 +14,12 @@ import { useChartZoom } from '@/hooks/useChartZoom'
 import { useRegionCostsData } from '@/hooks/useRegionCostsData'
 import { useDateFilters } from '@/hooks/useDateFilters'
 import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
-import DateRangePicker from '@/components/common/DateRangePicker'
-import ErrorDisplay from '@/components/common/ErrorDisplay'
-import Tabs from '@/components/common/Tabs'
-import RegionCostsChartTab from './RegionCostsChartTab'
-import RegionCostsTableTab from './RegionCostsTableTab'
-import MetricsCodeViewer from '@/components/explore/clusters/MetricsCodeViewer'
+import { DateRangePicker } from '@/components/common/DateRangePicker'
+import { ErrorDisplay } from '@/components/common/ErrorDisplay'
+import { Tabs } from '@/components/common/Tabs'
+import { RegionCostsChartTab } from './RegionCostsChartTab'
+import { RegionCostsTableTab } from './RegionCostsTableTab'
+import { MetricsCodeViewer } from '@/components/explore/clusters/MetricsCodeViewer'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
 import { TAB_IDS, COST_TYPES, AWS_SERVICES } from '@/constants'
@@ -32,7 +32,7 @@ interface RegionCostsProps {
   isActive?: boolean
 }
 
-export default function RegionCosts({ region, isActive }: RegionCostsProps) {
+export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
   const [isLoading, setIsLoading] = useState(false)
   const [costsResponse, setCostsResponse] = useState<CostsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)

@@ -1,5 +1,5 @@
-import KeyValuePair from '@/components/common/KeyValuePair'
-import StatusBadge from '@/components/common/StatusBadge'
+import { KeyValuePair } from '@/components/common/KeyValuePair'
+import { StatusBadge } from '@/components/common/StatusBadge'
 import { createStatusBadgeProps } from '@/lib/utils'
 
 interface StorageInfoProps {
@@ -11,12 +11,12 @@ interface StorageInfoProps {
   displayMode?: 'inline' | 'detailed'
 }
 
-export default function StorageInfo({
+export const StorageInfo = ({
   volumeSize,
   brokerNodes,
   provisionedThroughput,
   displayMode = 'inline',
-}: StorageInfoProps) {
+}: StorageInfoProps) => {
   const totalStorage = volumeSize * brokerNodes
 
   if (displayMode === 'detailed') {
@@ -58,3 +58,4 @@ export default function StorageInfo({
     </>
   )
 }
+

@@ -1,4 +1,4 @@
-import KeyValuePair from './KeyValuePair'
+import { KeyValuePair } from './KeyValuePair'
 
 interface KeyValueGridItem {
   label: string
@@ -15,12 +15,12 @@ interface KeyValueGridProps {
   itemClassName?: string
 }
 
-export default function KeyValueGrid({
+export const KeyValueGrid = ({
   items,
   columns = 2,
   className = '',
   itemClassName = '',
-}: KeyValueGridProps) {
+}: KeyValueGridProps) => {
   const gridColsClass = {
     1: 'grid-cols-1',
     2: 'grid-cols-1 md:grid-cols-2',
@@ -43,4 +43,3 @@ export default function KeyValueGrid({
     </div>
   )
 }
-

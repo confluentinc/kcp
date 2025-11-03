@@ -68,11 +68,11 @@ interface ProcessedData {
  * @param {string} selectedCostType - Cost type to display (e.g., 'unblended_cost', 'amortized_cost')
  * @returns {ProcessedData} Processed cost data for UI components
  */
-export function useRegionCostsData(
+export const useRegionCostsData = (
   costsResponse: CostsApiResponse | null | undefined,
   selectedTableService: string,
   selectedCostType: string
-): ProcessedData {
+): ProcessedData => {
   return useMemo(() => {
     if (!costsResponse?.results || !Array.isArray(costsResponse.results)) {
       return {
