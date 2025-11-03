@@ -3,7 +3,7 @@ interface TerraformCodeViewerProps {
   language?: string
 }
 
-export function TerraformCodeViewer({ code }: TerraformCodeViewerProps) {
+export const TerraformCodeViewer = ({ code }: TerraformCodeViewerProps) => {
   return (
     <div className="relative w-full h-full">
       <div className="bg-card dark:bg-card border border-gray-200 dark:border-border rounded-lg overflow-hidden relative w-full h-full">

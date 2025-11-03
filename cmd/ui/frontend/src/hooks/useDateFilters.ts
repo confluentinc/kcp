@@ -81,7 +81,7 @@ function getMetadataDates(metadata?: ApiMetadata | null): {
  *   })
  * ```
  */
-export function useDateFilters({
+export const useDateFilters = ({
   startDate,
   endDate,
   setStartDate,
@@ -89,7 +89,7 @@ export function useDateFilters({
   metadata,
   onReset,
   autoSetDefaults = true,
-}: DateFiltersConfig): UseDateFiltersReturn {
+}: DateFiltersConfig): UseDateFiltersReturn => {
   const [defaultsSet, setDefaultsSet] = useState(false)
 
   // Extract metadata dates

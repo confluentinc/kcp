@@ -11,9 +11,9 @@ export { useWizardData } from './hooks/useWizardData.ts'
 
 export { createWizardMachine } from './factory/createWizardMachine.ts'
 
-export { targetInfraWizardConfig } from './targetInfraWizardConfig.ts'
-export { migrationInfraWizardConfig } from './migrationInfraWizardConfig.ts'
-export { migrationScriptsWizardConfig } from './migrationScriptsWizardConfig.ts'
+export { createTargetInfraWizardConfig } from './targetInfraWizardConfig.ts'
+export { createMigrationInfraWizardConfig } from './migrationInfraWizardConfig.ts'
+export { createMigrationScriptsWizardConfig } from './migrationScriptsWizardConfig.ts'
 
 export type {
   WizardStep,

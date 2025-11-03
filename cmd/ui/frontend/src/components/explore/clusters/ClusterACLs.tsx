@@ -12,7 +12,7 @@ interface ClusterACLsProps {
   acls: ACL[]
 }
 
-export default function ClusterACLs({ acls }: ClusterACLsProps) {
+export const ClusterACLs = ({ acls }: ClusterACLsProps) => {
   const getPermissionBadge = (permissionType: string) => {
     const isAllow = permissionType === 'Allow'
     return (
@@ -128,3 +128,4 @@ export default function ClusterACLs({ acls }: ClusterACLsProps) {
     </div>
   )
 }
+

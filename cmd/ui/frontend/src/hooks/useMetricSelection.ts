@@ -18,14 +18,14 @@ interface MetricSelectionReturn {
  * Hook to manage metric selection with support for preselected metrics.
  * Handles both modal and non-modal preselection, and resets on cluster change.
  */
-export function useMetricSelection({
+export const useMetricSelection = ({
   availableMetrics,
   inModal,
   modalPreselectedMetric,
   preselectedMetric,
   clusterName,
   clusterRegion,
-}: MetricSelectionConfig): MetricSelectionReturn {
+}: MetricSelectionConfig): MetricSelectionReturn => {
   const [selectedMetric, setSelectedMetric] = useState<string>('')
   const [hasUsedPreselectedMetric, setHasUsedPreselectedMetric] = useState(false)
 

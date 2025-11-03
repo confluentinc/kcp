@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { WizardContext, WizardFormData } from '../types'
 
-export function useWizardData(context: WizardContext) {
+export const useWizardData = (context: WizardContext) => {
   const flattenedData = useMemo(() => {
     const flattened: Record<string, unknown> = {}
 

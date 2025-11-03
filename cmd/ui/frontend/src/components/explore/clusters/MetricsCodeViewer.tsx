@@ -7,12 +7,12 @@ interface MetricsCodeViewerProps {
   isJSON?: boolean
 }
 
-export default function MetricsCodeViewer({
+export const MetricsCodeViewer = ({
   data,
   label,
   onCopy,
   isJSON = false,
-}: MetricsCodeViewerProps) {
+}: MetricsCodeViewerProps) => {
   return (
     <div className="space-y-4 min-w-0">
       <div className="bg-gray-50 dark:bg-card rounded-lg p-4 min-w-0 max-w-full">
@@ -40,4 +40,5 @@ export default function MetricsCodeViewer({
     </div>
   )
 }
+
 
