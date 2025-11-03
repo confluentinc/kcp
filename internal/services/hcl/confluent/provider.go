@@ -17,8 +17,8 @@ func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 func GenerateProviderBlock() *hclwrite.Block {
 	providerBlock := hclwrite.NewBlock("provider", []string{"confluent"})
 	providerBody := providerBlock.Body()
-	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForResourceReference("var.confluent_cloud_api_key"))
-	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForResourceReference("var.confluent_cloud_api_secret"))
+	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForVarReference(VarConfluentCloudAPIKey))
+	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForVarReference(VarConfluentCloudAPISecret))
 
 	return providerBlock
 }

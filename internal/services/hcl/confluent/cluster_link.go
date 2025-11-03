@@ -11,6 +11,24 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
 
+const (
+	VarConfluentCloudAPIKey           = "confluent_cloud_api_key"
+	VarConfluentCloudAPISecret        = "confluent_cloud_api_secret"
+	VarConfluentCloudClusterAPIKey    = "confluent_cloud_cluster_api_key"
+	VarConfluentCloudClusterAPISecret = "confluent_cloud_cluster_api_secret"
+	VarMskSaslScramUsername           = "msk_sasl_scram_username"
+	VarMskSaslScramPassword           = "msk_sasl_scram_password"
+)
+
+var ClusterLinkVariables = []types.TerraformVariable{
+	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false},
+	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true},
+	{Name: VarMskSaslScramUsername, Description: "MSK SASL SCRAM Username", Sensitive: false},
+	{Name: VarMskSaslScramPassword, Description: "MSK SASL SCRAM Password", Sensitive: true},
+	{Name: VarConfluentCloudClusterAPIKey, Description: "Confluent Cloud cluster API key", Sensitive: false},
+	{Name: VarConfluentCloudClusterAPISecret, Description: "Confluent Cloud cluster API secret", Sensitive: true},
+}
+
 type ClusterLinkTemplateData struct {
 	TargetClusterRestEndpoint string
 	TargetClusterId           string
@@ -27,7 +45,7 @@ func GenerateClusterLinkLocals() *hclwrite.Block {
 
 	basicAuthTokens := utils.TokensForFunctionCall(
 		"base64encode",
-		"${var.confluent_cloud_cluster_api_key}:${var.confluent_cloud_cluster_api_secret}",
+		fmt.Sprintf("${var.%s}:${var.%s}", VarConfluentCloudClusterAPIKey, VarConfluentCloudClusterAPISecret),
 	)
 	localsBlock.Body().SetAttributeRaw("basic_auth_credentials", basicAuthTokens)
 
@@ -79,7 +97,7 @@ func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite
 
 // generateClusterLinkCurlCommand generates a curl command from template data
 func generateClusterLinkCurlCommand(data ClusterLinkTemplateData) string {
-	tmplStr := `curl --request POST \
+	tmplStr := fmt.Sprintf(`curl --request POST \
   --url '{{.TargetClusterRestEndpoint}}/kafka/v3/clusters/{{.TargetClusterId}}/links/?link_name={{.LinkName}}' \
   --header 'Authorization: Basic ${local.basic_auth_credentials}' \
   --header "Content-Type: application/json" \
@@ -104,10 +122,10 @@ func generateClusterLinkCurlCommand(data ClusterLinkTemplateData) string {
       },
       {
         "name": "sasl.jaas.config",
-        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${var.msk_sasl_scram_username}\" password=\"${var.msk_sasl_scram_password}\";"
+        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${var.%s}\" password=\"${var.%s}\";"
       }
     ]
-  }'`
+  }'`, VarMskSaslScramUsername, VarMskSaslScramPassword)
 
 	tmpl := template.Must(template.New("cluster_link").Parse(tmplStr))
 

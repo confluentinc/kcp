@@ -21,7 +21,7 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 	if !request.HasPublicCCEndpoints {
 		return types.TerraformModules{}, errors.New("not supporting private link yet")
 	}
-	// harxcode another module for private link connection
+
 	return types.TerraformModules{
 		"root": {
 			MainTf:      mi.generateMainTf(request),
@@ -67,27 +67,14 @@ func (mi *MigrationInfraHCLService) generateVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	variables := []struct {
-		name        string
-		description string
-		sensitive   bool
-	}{
-		{"confluent_cloud_api_key", "Confluent Cloud API Key", false},
-		{"confluent_cloud_api_secret", "Confluent Cloud API Secret", true},
-		{"msk_sasl_scram_username", "MSK SASL SCRAM Username", false},
-		{"msk_sasl_scram_password", "MSK SASL SCRAM Password", true},
-		{"confluent_cloud_cluster_api_key", "Confluent Cloud cluster API key", false},
-		{"confluent_cloud_cluster_api_secret", "Confluent Cloud cluster API secret", true},
-	}
-
-	for _, v := range variables {
-		variableBlock := rootBody.AppendNewBlock("variable", []string{v.name})
+	for _, v := range confluent.ClusterLinkVariables {
+		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
 		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
-		if v.description != "" {
-			variableBody.SetAttributeValue("description", cty.StringVal(v.description))
+		if v.Description != "" {
+			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
 		}
-		if v.sensitive {
+		if v.Sensitive {
 			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
 		}
 		rootBody.AppendNewline()
