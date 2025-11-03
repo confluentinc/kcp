@@ -208,7 +208,8 @@ export const migrationInfraWizardConfig: WizardConfig = {
           properties: {
             vpc_id: {
               type: 'string',
-              title: 'VPC ID (retrieved from statefile)',
+              title: 'VPC ID',
+              default: 'STATEFILE VPC'
             },
             new_subnets: {
               type: 'array',
@@ -220,11 +221,13 @@ export const migrationInfraWizardConfig: WizardConfig = {
               maxItems: 3,
               default: ['', '', ''],
             },
-          }
+          },
+          required: ['vpc_id', 'new_subnets'],
         },
         uiSchema: {
           vpc_id: {
             'ui:placeholder': 'e.g., vpc-xxxx',
+            'ui:readonly': true,
           },
           new_subnets: {
             items: {
@@ -256,7 +259,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
         schema: {
           type: 'object',
           properties: {
-            reuse_existing_internet_gateway: {
+            has_existing_internet_gateway: {
               type: 'boolean',
               title: 'Does your MSK VPC network have an existing internet gateway?',
               oneOf: [
@@ -265,10 +268,10 @@ export const migrationInfraWizardConfig: WizardConfig = {
               ],
             },
           },
-          required: ['reuse_existing_internet_gateway'],
+          required: ['has_existing_internet_gateway'],
         },
         uiSchema: {
-          reuse_existing_internet_gateway: {
+          has_existing_internet_gateway: {
             'ui:widget': 'radio',
           },
         },
@@ -294,6 +297,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
             vpc_id: {
               type: 'string',
               title: 'VPC ID (retrieved from statefile)',
+              default: 'STATEFILE VPC'
             },
             jump_cluster_instance_type: {
               type: 'string',
