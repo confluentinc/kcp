@@ -83,10 +83,7 @@ function createClusterKey(region: string, cluster: string): string {
   return `${region}-${cluster}`
 }
 
-function updateDateFilter(
-  current: DateFilters,
-  update: Partial<DateFilters>
-): DateFilters {
+function updateDateFilter(current: DateFilters, update: Partial<DateFilters>): DateFilters {
   return {
     ...current,
     ...update,
@@ -382,9 +379,12 @@ export const useAppStore = create<AppState>()(
             return {
               clusterDateFilters: {
                 ...state.clusterDateFilters,
-                [key]: updateDateFilter(state.clusterDateFilters[key] || createDefaultDateFilters(), {
-                  startDate: date,
-                }),
+                [key]: updateDateFilter(
+                  state.clusterDateFilters[key] || createDefaultDateFilters(),
+                  {
+                    startDate: date,
+                  }
+                ),
               },
             }
           },
@@ -399,9 +399,12 @@ export const useAppStore = create<AppState>()(
             return {
               clusterDateFilters: {
                 ...state.clusterDateFilters,
-                [key]: updateDateFilter(state.clusterDateFilters[key] || createDefaultDateFilters(), {
-                  endDate: date,
-                }),
+                [key]: updateDateFilter(
+                  state.clusterDateFilters[key] || createDefaultDateFilters(),
+                  {
+                    endDate: date,
+                  }
+                ),
               },
             }
           },
@@ -472,8 +475,7 @@ export const useAppStore = create<AppState>()(
               ...state.regionState,
               [region]: {
                 ...createDefaultRegionState(),
-                activeCostsTab:
-                  state.regionState[region]?.activeCostsTab || DEFAULT_TABS.COSTS,
+                activeCostsTab: state.regionState[region]?.activeCostsTab || DEFAULT_TABS.COSTS,
               },
             },
           }),
@@ -618,4 +620,3 @@ export const useSummaryDateFilters = () => {
     clearDates: () => clearSummaryDates(),
   }
 }
-

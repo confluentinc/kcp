@@ -15,9 +15,10 @@ interface WizardProps {
   clusterKey?: string
   wizardType?: WizardType
   onComplete?: () => void
+  onClose?: () => void
 }
 
-export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardProps) {
+export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: WizardProps) {
   // Create the wizard machine
   const wizardMachine = useMemo(() => createWizardMachine(config), [config])
   const [state, send] = useMachine(wizardMachine)
@@ -34,13 +35,10 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   const currentStateId = state.value as string
   const currentStep = (config.states[currentStateId] as { meta?: unknown })?.meta
 
-  // Calculate progress
-  const allSteps = Object.keys(config.states).filter((key) => {
-    const stateConfig = config.states[key] as { type?: string } | undefined
-    return stateConfig?.type !== 'final'
-  })
-  const currentIndex = allSteps.indexOf(currentStateId)
-  const totalSteps = allSteps.length
+  // Calculate progress based on visited steps
+  const context = state.context as WizardContext
+  const visitedSteps = context.visitedSteps || []
+  const currentStepNumber = visitedSteps.length + 1 // Current step is the next one after visited
 
   const handleFormSubmit = async (formData: Record<string, unknown>) => {
     // Send the event with form data
@@ -52,7 +50,40 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   }
 
   const handleBack = () => {
-    send({ type: 'BACK' })
+    const visitedSteps = context.visitedSteps || []
+
+    // Always use the last visited step as the back target
+    let backTarget: string | undefined
+
+    if (visitedSteps.length > 0) {
+      backTarget = visitedSteps[visitedSteps.length - 1]
+    } else {
+      // Fallback: Try to get configured BACK target
+      const currentStateConfig = config.states[currentStateId] as
+        | { on?: { BACK?: { target?: string } | Array<{ target?: string }> } }
+        | undefined
+
+      const backConfig = currentStateConfig?.on?.BACK
+      if (Array.isArray(backConfig)) {
+        backTarget = backConfig[backConfig.length - 1]?.target
+      } else if (backConfig && typeof backConfig === 'object') {
+        backTarget = backConfig.target
+      }
+    }
+
+    if (!backTarget) {
+      console.error(`⚠️ No back target found for step '${currentStateId}'`)
+      return
+    }
+
+    send({
+      type: 'BACK',
+      stepId: backTarget,
+      data: {
+        targetStepId: backTarget,
+        currentStepId: currentStateId,
+      },
+    })
   }
 
   const handleConfirmation = async () => {
@@ -77,10 +108,7 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
   if (currentStateId === 'confirmation') {
     return (
       <div className="max-w-4xl mx-auto p-6 space-y-6">
-        <WizardProgress
-          currentIndex={currentIndex}
-          totalSteps={totalSteps}
-        />
+        <WizardProgress />
         <WizardConfirmation
           data={flattenedData}
           onConfirm={handleConfirmation}
@@ -102,17 +130,15 @@ export function Wizard({ config, clusterKey, wizardType, onComplete }: WizardPro
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
-      <WizardProgress
-        currentIndex={currentIndex}
-        totalSteps={totalSteps}
-      />
+      <WizardProgress />
 
       <WizardStepForm
         step={currentStep as WizardStep}
         formData={stepData}
         onSubmit={handleFormSubmit}
         onBack={handleBack}
-        canGoBack={currentIndex > 0}
+        onClose={onClose}
+        canGoBack={currentStepNumber > 1}
         isLoading={isLoading}
       />
     </div>
