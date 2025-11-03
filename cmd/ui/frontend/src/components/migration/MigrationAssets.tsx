@@ -221,6 +221,7 @@ export default function MigrationAssets() {
                           size="sm"
                           onClick={() => phase.handler()}
                           className="flex-1"
+                          disabled={phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS}
                         >
                           {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
                             ? 'Generate Migration Assets'
@@ -248,6 +249,7 @@ export default function MigrationAssets() {
                         size="sm"
                         onClick={() => phase.handler()}
                         className="w-auto"
+                        disabled={phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS}
                       >
                         {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
                           ? 'Generate Assets'
