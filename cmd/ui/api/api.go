@@ -213,16 +213,33 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	// todo - don't know about this as some of these values will be presnet in both public and private cases
-	// - should we create nested strcuts thats houses the public and private values?
-	if req.TargetEndpointsPublic {
-		if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
+	// cluster link
+	if req.HasPublicCCEndpoints {
+		if req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.ClusterLinkName == "" || req.MskVPCId == "" || req.MskSaslScramBootstrapServers == "" {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid configuration",
-				"message": "targetEnvironmentId, targetClusterId, targetBootstrapServers, clusterLinkName, mskSaslScramBootstrapServers are required",
+				"message": "targetEnvironmentId, targetClusterId, targetRestEndpoint, clusterLinkName, mskVPCId, mskSaslScramBootstrapServers are required",
 			})
 		}
+		// private link
+	} else {
+		if req.UseExistingSubnets {
+			if req.MskVPCId == "" || len(req.ExistingSubnetIds) == 0 || req.BrokerType == "" || req.BrokerAmount == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
+				return c.JSON(http.StatusBadRequest, map[string]any{
+					"error":   "Invalid configuration",
+					"message": "mskVPCId, existingSubnetIds, brokerType, brokerAmount, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when using existing subnets",
+				})
+			}
+		} else {
+			if req.MskVPCId == "" || req.SubnetCidrRanges == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
+				return c.JSON(http.StatusBadRequest, map[string]any{
+					"error":   "Invalid configuration",
+					"message": "mskVPCId, subnetCidrRanges, brokerType, brokerAmount, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when creating a new cluster",
+				})
+			}
+		}
 	}
+
 	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{

@@ -157,14 +157,30 @@ type MigrationWizardRequest struct {
 	// TargetRestEndpoint           string `json:"target_rest_endpoint"`
 	// MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 
-	// todo -
-	TargetEndpointsPublic        bool   `json:"target_endpoints_public"`
-	TargetEnvironmentId          string `json:"target_environment_id"`
-	TargetClusterId              string `json:"target_cluster_id"`
-	TargetBootstrapServers       string `json:"target_bootstrap_servers"`
+	// new
+	HasPublicCCEndpoints bool   `json:"has_public_cc_endpoints"`
+	ClusterLinkName      string `json:"cluster_link_name"`
+
+	UseExistingSubnets bool     `json:"use_existing_subnets"`
+	ExistingSubnetIds  []string `json:"existing_subnet_ids"`
+	MskVPCId           string   `json:"msk_vpc_id"`
+	SubnetCidrRanges   string   `json:"subnet_cidr_range"`
+
+	UseExistingInternetGateway bool `json:"use_existing_internet_gateway"`
+
+	BrokerType                 string `json:"broker_type"`
+	BrokerAmount               string `json:"broker_amount"`
+	BrokerStorageSize          string `json:"broker_storage_size"`
+	JumpClusterSubnetCidrRange string `json:"jump_cluster_subnet_cidr_range"`
+	AnsibleSubnetCidrRange     string `json:"ansible_subnet_cidr_range"`
+	AuthenticationMethod       string `json:"authentication_method"`
+
+	TargetEnvironmentId    string `json:"target_environment_id"`
+	TargetClusterId        string `json:"target_cluster_id"`
+	TargetBootstrapServers string `json:"target_bootstrap_servers"`
+
+	// todo - not documented in the flow but used
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
-	ClusterLinkName              string `json:"cluster_link_name"`
-	MskVPCId                     string `json:"msk_vpc_id"`
 	MskClusterId                 string `json:"msk_cluster_id"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 }
