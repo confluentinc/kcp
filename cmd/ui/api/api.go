@@ -224,17 +224,17 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		// private link
 	} else {
 		if req.UseExistingSubnets {
-			if req.MskVPCId == "" || len(req.ExistingSubnetIds) == 0 || req.BrokerType == "" || req.BrokerAmount == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
+			if req.MskVPCId == "" || len(req.ExistingSubnetIds) == 0 || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
 				return c.JSON(http.StatusBadRequest, map[string]any{
 					"error":   "Invalid configuration",
-					"message": "mskVPCId, existingSubnetIds, brokerType, brokerAmount, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when using existing subnets",
+					"message": "mskVPCId, existingSubnetIds, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when using existing subnets",
 				})
 			}
 		} else {
-			if req.MskVPCId == "" || req.SubnetCidrRanges == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
+			if req.MskVPCId == "" || req.SubnetCidrRanges == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
 				return c.JSON(http.StatusBadRequest, map[string]any{
 					"error":   "Invalid configuration",
-					"message": "mskVPCId, subnetCidrRanges, brokerType, brokerAmount, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when creating a new cluster",
+					"message": "mskVPCId, subnetCidrRanges, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required when creating a new cluster",
 				})
 			}
 		}
