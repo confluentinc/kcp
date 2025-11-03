@@ -20,13 +20,13 @@ interface ClusterMetricsFetchReturn {
  * Hook to fetch cluster metrics data from the API.
  * Automatically refetches when dates change or cluster changes.
  */
-export function useClusterMetricsFetch({
+export const useClusterMetricsFetch = ({
   isActive,
   clusterName,
   clusterRegion,
   startDate,
   endDate,
-}: ClusterMetricsFetchConfig): ClusterMetricsFetchReturn {
+}: ClusterMetricsFetchConfig): ClusterMetricsFetchReturn => {
   const [isLoading, setIsLoading] = useState(false)
   const [metricsResponse, setMetricsResponse] = useState<MetricsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)

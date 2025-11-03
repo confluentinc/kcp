@@ -33,12 +33,12 @@ interface RegionCostsTableTabProps {
   setSelectedTableService: (service: string) => void
 }
 
-export default function RegionCostsTableTab({
+export const RegionCostsTableTab = ({
   processedData,
   selectedCostType,
   selectedTableService,
   setSelectedTableService,
-}: RegionCostsTableTabProps) {
+}: RegionCostsTableTabProps) => {
   return (
     <>
       {/* Service Filter for Table */}
@@ -163,4 +163,5 @@ export default function RegionCostsTableTab({
     </>
   )
 }
+
 

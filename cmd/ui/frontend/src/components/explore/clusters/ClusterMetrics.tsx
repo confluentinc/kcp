@@ -1,27 +1,30 @@
 import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
-import Tabs from '@/components/common/Tabs'
+import { Tabs } from '@/components/common/Tabs'
 import { Download } from 'lucide-react'
-import { downloadCSV, downloadJSON, generateMetricsFilename } from '@/lib/utils'
+import { generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/store'
 import { useMetricsDataProcessor } from '@/hooks/useMetricsDataProcessor'
 import { useDateFilters } from '@/hooks/useDateFilters'
-import { useModalMetricsDates } from '@/hooks/useModalMetricsDates'
 import { useMetricSelection } from '@/hooks/useMetricSelection'
 import { useClusterMetricsFetch } from '@/hooks/useClusterMetricsFetch'
 import { useClusterMetricsZoom } from '@/hooks/useClusterMetricsZoom'
+import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
 import { convertBytesToMB, getTCOFieldFromWorkloadAssumption } from '@/lib/metricsUtils'
-import DateRangePicker from '@/components/common/DateRangePicker'
-import MetricsChartTab from './MetricsChartTab'
-import MetricsTableTab from './MetricsTableTab'
-import MetricsCodeViewer from './MetricsCodeViewer'
+import { DateRangePicker } from '@/components/common/DateRangePicker'
+import { ErrorDisplay } from '@/components/common/ErrorDisplay'
+import { MetricsChartTab } from './MetricsChartTab'
+import { MetricsTableTab } from './MetricsTableTab'
+import { MetricsCodeViewer } from './MetricsCodeViewer'
 import { TAB_IDS } from '@/constants'
 import type { TabId } from '@/types'
+import type { ApiMetadata } from '@/types/api/common'
 
 interface ClusterMetricsProps {
   cluster: {
     name: string
     region?: string
+    arn?: string
     metrics?: {
       metadata?: {
         start_date?: string
@@ -35,49 +38,46 @@ interface ClusterMetricsProps {
   modalWorkloadAssumption?: string
 }
 
-export default function ClusterMetrics({
+export const ClusterMetrics = ({
   cluster,
   isActive,
   inModal = false,
   modalPreselectedMetric,
   modalWorkloadAssumption,
-}: ClusterMetricsProps) {
+}: ClusterMetricsProps) => {
   // Get TCO store actions and preselected metric
-  const { setTCOWorkloadValue, preselectedMetric } = useAppStore()
+  const setTCOWorkloadValue = useAppStore((state) => state.setTCOWorkloadValue)
+  const preselectedMetric = useAppStore((state) => state.preselectedMetric)
   const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
 
   // Cluster-specific date state from Zustand (only used in non-modal mode)
-  const storeDateFilters = useClusterDateFilters(cluster.region || 'unknown', cluster.name)
-
-  // Fetch metrics data (using store dates for non-modal, will refetch when dates change)
-  const { metricsResponse, isLoading, error } = useClusterMetricsFetch({
-    isActive: isActive ?? false,
-    clusterName: cluster.name,
-    clusterRegion: cluster.region || 'unknown',
-    startDate: storeDateFilters.startDate,
-    endDate: storeDateFilters.endDate,
-  })
-
-  // Process metrics data
-  const processedData = useMetricsDataProcessor(metricsResponse)
-
-  // Modal date management with separate hook
-  const { modalStartDate, modalEndDate, setModalStartDate, setModalEndDate } = useModalMetricsDates(
-    {
-      inModal,
-      isActive: isActive ?? false,
-      clusterName: cluster.name,
-      clusterRegion: cluster.region || 'unknown',
-      clusterMetadata: cluster.metrics?.metadata,
-      metricsResponseMetadata: metricsResponse?.metadata,
-    }
+  // Use ARN if available, otherwise fall back to region-name combo for backward compatibility
+  const storeDateFilters = useClusterDateFilters(
+    cluster.arn || `${cluster.region || 'unknown'}-${cluster.name}`
   )
+
+  // Modal date management - simple local state (not stored in Zustand)
+  // useDateFilters hook handles all initialization and reset logic
+  const [modalStartDate, setModalStartDate] = useState<Date | undefined>(undefined)
+  const [modalEndDate, setModalEndDate] = useState<Date | undefined>(undefined)
 
   // Use local state in modal mode, store state otherwise
   const startDate = inModal ? modalStartDate : storeDateFilters.startDate
   const endDate = inModal ? modalEndDate : storeDateFilters.endDate
   const setStartDate = inModal ? setModalStartDate : storeDateFilters.setStartDate
   const setEndDate = inModal ? setModalEndDate : storeDateFilters.setEndDate
+
+  // Fetch metrics data (using correct dates based on mode)
+  const { metricsResponse, isLoading, error } = useClusterMetricsFetch({
+    isActive: isActive ?? false,
+    clusterName: cluster.name,
+    clusterRegion: cluster.region || 'unknown',
+    startDate: startDate,
+    endDate: endDate,
+  })
+
+  // Process metrics data
+  const processedData = useMetricsDataProcessor(metricsResponse)
 
   // Initialize chart zoom (now all date setters are available)
   const {
@@ -101,15 +101,19 @@ export default function ClusterMetrics({
   })
 
   // Use date filters hook with metadata for auto-initialization and reset functions
+  // In modal mode, use cluster metadata; in non-modal mode, use response metadata
   const { resetToMetadataDates, resetStartDateToMetadata, resetEndDateToMetadata } = useDateFilters(
     {
       startDate,
       endDate,
       setStartDate,
       setEndDate,
-      metadata: metricsResponse?.metadata,
+      metadata: (inModal ? cluster.metrics?.metadata : metricsResponse?.metadata) as
+        | ApiMetadata
+        | null
+        | undefined,
       onReset: resetZoom,
-      autoSetDefaults: !inModal,
+      autoSetDefaults: true, // Always auto-set from metadata
     }
   )
 
@@ -130,7 +134,8 @@ export default function ClusterMetrics({
 
   // Handle transferring values to TCO inputs
   const handleTransferToTCO = (value: number, statType: 'min' | 'avg' | 'max') => {
-    const clusterKey = `${cluster.region || 'unknown'}:${cluster.name}`
+    // Use ARN if available, otherwise fall back to region:name format
+    const clusterKey = cluster.arn || `${cluster.region || 'unknown'}:${cluster.name}`
 
     // Convert bytes to MB for throughput metrics, but use raw value for partitions
     const convertedValue =
@@ -148,28 +153,20 @@ export default function ClusterMetrics({
   const setActiveMetricsTab = useAppStore((state) => state.setActiveMetricsTab)
 
   // Download handlers
-  const handleDownloadCSV = () => {
-    const filename = generateMetricsFilename(cluster.name, cluster.region)
-    downloadCSV(processedData.csvData, filename)
-  }
-
-  const handleDownloadJSON = () => {
-    const filename = generateMetricsFilename(cluster.name, cluster.region)
-    downloadJSON(metricsResponse, filename)
-  }
+  const { handleDownloadCSV, handleDownloadJSON } = useDownloadHandlers({
+    csvData: processedData.csvData,
+    jsonData: metricsResponse,
+    filename: generateMetricsFilename(cluster.name, cluster.region),
+  })
 
   // Show error state
   if (error) {
     return (
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          Cluster Metrics
-        </h3>
-        <div className="text-red-500 dark:text-red-400">
-          <p className="font-medium">Error loading metrics:</p>
-          <p className="text-sm mt-1">{error}</p>
-        </div>
-      </div>
+      <ErrorDisplay
+        title="Cluster Metrics"
+        error={error}
+        context="metrics"
+      />
     )
   }
 

@@ -1,25 +1,30 @@
 import { useMemo } from 'react'
-import ClusterReport from './views/ClusterReport'
-import RegionReport from './views/RegionReport'
-import Summary from './views/Summary'
-import SchemaRegistries from './views/SchemaRegistries'
-import { useAppStore } from '@/stores/store'
+import { ClusterReport } from './views/ClusterReport'
+import { RegionReport } from './views/RegionReport'
+import { Summary } from './views/Summary'
+import { SchemaRegistries } from './views/SchemaRegistries'
+import {
+  useAppStore,
+  useSelectedCluster,
+  useSelectedRegion,
+  useRegions,
+  useSchemaRegistries,
+} from '@/stores/store'
 
-export default function Explore() {
-  const selectedSummary = useAppStore((state) => state.selectedSummary)
-  const selectedCluster = useAppStore((state) => state.selectedCluster)
-  const selectedRegion = useAppStore((state) => state.selectedRegion)
-  const selectedSchemaRegistries = useAppStore((state) => state.selectedSchemaRegistries)
-  const regions = useAppStore((state) => state.regions)
-  const schemaRegistries = useAppStore((state) => state.schemaRegistries)
+export const Explore = () => {
+  const selectedView = useAppStore((state) => state.selectedView)
+  const selectedClusterData = useSelectedCluster()
+  const selectedRegionData = useSelectedRegion()
+  const regions = useRegions()
+  const schemaRegistries = useSchemaRegistries()
 
   const activeView = useMemo(() => {
-    if (selectedSummary) {
+    if (selectedView === 'summary') {
       return <Summary />
     }
 
-    if (selectedCluster) {
-      const regionData = regions.find((r) => r.name === selectedCluster.regionName)
+    if (selectedView === 'cluster' && selectedClusterData) {
+      const regionData = regions.find((r) => r.name === selectedClusterData.regionName)
       if (!regionData) {
         return (
           <div className="max-w-7xl mx-auto">
@@ -28,7 +33,7 @@ export default function Explore() {
                 Error: Region Not Found
               </h2>
               <p className="text-red-700 dark:text-red-300">
-                Region "{selectedCluster.regionName}" was not found in the available regions.
+                Region "{selectedClusterData.regionName}" was not found in the available regions.
               </p>
             </div>
           </div>
@@ -36,30 +41,23 @@ export default function Explore() {
       }
       return (
         <ClusterReport
-          cluster={selectedCluster.cluster}
-          regionName={selectedCluster.regionName}
+          cluster={selectedClusterData.cluster}
+          regionName={selectedClusterData.regionName}
           regionData={regionData}
         />
       )
     }
 
-    if (selectedRegion) {
-      return <RegionReport region={selectedRegion} />
+    if (selectedView === 'region' && selectedRegionData) {
+      return <RegionReport region={selectedRegionData} />
     }
 
-    if (selectedSchemaRegistries) {
+    if (selectedView === 'schema-registries') {
       return <SchemaRegistries schemaRegistries={schemaRegistries} />
     }
 
     return null
-  }, [
-    selectedSummary,
-    selectedCluster,
-    selectedRegion,
-    selectedSchemaRegistries,
-    regions,
-    schemaRegistries,
-  ])
+  }, [selectedView, selectedClusterData, selectedRegionData, regions, schemaRegistries])
 
   return <div className="mx-auto space-y-6 w-full min-w-0 max-w-full">{activeView}</div>
 }

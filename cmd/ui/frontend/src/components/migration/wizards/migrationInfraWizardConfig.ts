@@ -1,4 +1,9 @@
 import type { WizardConfig } from './types'
+import { getClusterDataByArn } from '@/stores/store'
+
+export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConfig => {
+  const cluster = getClusterDataByArn(clusterArn)
+  console.log('Migration Infra Wizard - Cluster:', cluster)
 
 export const migrationInfraWizardConfig: WizardConfig = {
   id: 'migration-infra-wizard',
@@ -452,8 +457,9 @@ export const migrationInfraWizardConfig: WizardConfig = {
     }
   },
 
-  actions: {
-    save_step_data: 'save_step_data',
-    undo_save_step_data: 'undo_save_step_data',
-  },
+    actions: {
+      save_step_data: 'save_step_data',
+      undo_save_step_data: 'undo_save_step_data',
+    },
+  }
 }

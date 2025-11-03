@@ -17,7 +17,7 @@ export const CHART_COLORS = [
 /**
  * Get a chart color by index, cycling through the color palette
  */
-export function getChartColor(index: number): string {
+export const getChartColor = (index: number): string => {
   return CHART_COLORS[index % CHART_COLORS.length]
 }
 

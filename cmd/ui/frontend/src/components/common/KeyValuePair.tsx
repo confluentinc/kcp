@@ -7,14 +7,14 @@ interface KeyValuePairProps {
   alignItems?: 'center' | 'start' | 'end'
 }
 
-export default function KeyValuePair({
+export const KeyValuePair = ({
   label,
   value,
   className = '',
   labelClassName = 'text-gray-600 dark:text-gray-400',
   valueClassName = 'font-medium text-gray-900 dark:text-gray-100',
   alignItems = 'start',
-}: KeyValuePairProps) {
+}: KeyValuePairProps) => {
   const alignItemsClass = `items-${alignItems}`
   return (
     <div className={`flex justify-between ${alignItemsClass} ${className}`}>
@@ -23,4 +23,3 @@ export default function KeyValuePair({
     </div>
   )
 }
-

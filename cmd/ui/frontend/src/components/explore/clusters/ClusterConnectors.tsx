@@ -53,10 +53,10 @@ interface ClusterConnectorsProps {
   selfManagedConnectors?: SelfManagedConnector[]
 }
 
-export default function ClusterConnectors({
+export const ClusterConnectors = ({
   connectors,
   selfManagedConnectors = [],
-}: ClusterConnectorsProps) {
+}: ClusterConnectorsProps) => {
   const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
 
   const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
@@ -352,3 +352,4 @@ export default function ClusterConnectors({
     </div>
   )
 }
+

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useChartZoom } from '@/lib/useChartZoom'
+import { useChartZoom } from '@/hooks/useChartZoom'
 import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
 interface ClusterMetricsZoomConfig {
@@ -13,12 +13,12 @@ interface ClusterMetricsZoomConfig {
  * Hook to manage chart zoom with cluster-specific reset logic.
  * Automatically resets zoom when switching between clusters.
  */
-export function useClusterMetricsZoom({
+export const useClusterMetricsZoom = ({
   chartData,
   clusterName,
   clusterRegion,
   onDateRangeChange,
-}: ClusterMetricsZoomConfig) {
+}: ClusterMetricsZoomConfig) => {
   const zoom = useChartZoom({
     initialData: chartData,
     dataKey: 'epochTime',

@@ -14,7 +14,7 @@ interface WizardStepFormProps {
   isLoading?: boolean
 }
 
-export function WizardStepForm({
+export const WizardStepForm = ({
   step,
   formData,
   onSubmit,
@@ -22,7 +22,7 @@ export function WizardStepForm({
   onClose,
   canGoBack,
   isLoading = false,
-}: WizardStepFormProps) {
+}: WizardStepFormProps) => {
   const schema = step.schema as RJSFSchema
   const uiSchema = step.uiSchema as UiSchema
 
@@ -64,14 +64,16 @@ export function WizardStepForm({
               Back
             </Button>
           )}
-          <Button
-            type="button"
-            onClick={onClose}
-            variant="outline"
-            disabled={isLoading || !onClose}
-          >
-            Close
-          </Button>
+          {onClose && (
+            <Button
+              type="button"
+              onClick={onClose}
+              variant="outline"
+              disabled={isLoading}
+            >
+              Close
+            </Button>
+          )}
           <Button
             type="submit"
             className="flex-1"

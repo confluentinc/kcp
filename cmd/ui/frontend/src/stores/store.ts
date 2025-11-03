@@ -1,9 +1,12 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
+import { useShallow } from 'zustand/react/shallow'
 import type { Cluster, Region } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
+import type { ProcessedState, SchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
+import { getClusterArn } from '@/lib/clusterUtils'
 
 // ============================================================================
 // INTERFACES - Unified date filter pattern
@@ -38,29 +41,6 @@ interface MigrationAssets {
   }
 }
 
-interface SchemaRegistry {
-  type: string
-  url: string
-  subjects: Array<{
-    name: string
-    schema_type: string
-    versions: Array<{
-      schema: string
-      id: number
-      subject: string
-      version: number
-      schemaType?: string
-    }>
-    latest_schema: {
-      schema: string
-      id: number
-      subject: string
-      version: number
-      schemaType?: string
-    }
-  }>
-}
-
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -79,10 +59,6 @@ function createDefaultRegionState(): RegionState {
   }
 }
 
-function createClusterKey(region: string, cluster: string): string {
-  return `${region}-${cluster}`
-}
-
 function updateDateFilter(current: DateFilters, update: Partial<DateFilters>): DateFilters {
   return {
     ...current,
@@ -94,20 +70,21 @@ function updateDateFilter(current: DateFilters, update: Partial<DateFilters>): D
 // STORE INTERFACE
 // ============================================================================
 
-interface AppState {
-  // Data state
-  regions: Region[]
-  schemaRegistries: SchemaRegistry[]
-  selectedCluster: { cluster: Cluster; regionName: string } | null
-  selectedRegion: Region | null
-  selectedSummary: boolean
-  selectedTCOInputs: boolean
-  selectedSchemaRegistries: boolean
+type ViewType = 'summary' | 'region' | 'cluster' | 'tco-inputs' | 'schema-registries'
 
-  // TCO workload data
+interface AppState {
+  // Data state - Single root object from backend
+  kcpState: ProcessedState | null
+
+  // Selection state
+  selectedView: ViewType | null
+  selectedRegionName: string | null
+  selectedClusterArn: string | null
+
+  // TCO workload data (keyed by ARN)
   tcoWorkloadData: WorkloadData
 
-  // Date filters (cluster-specific)
+  // Date filters (cluster-specific, keyed by ARN)
   clusterDateFilters: Record<string, DateFilters>
 
   // Region-specific state
@@ -116,7 +93,7 @@ interface AppState {
   // Summary-specific date filters
   summaryDateFilters: DateFilters
 
-  // Migration assets
+  // Migration assets (keyed by ARN)
   migrationAssets: MigrationAssets
 
   // UI state
@@ -124,17 +101,16 @@ interface AppState {
   error: string | null
   activeMetricsTab: string
   expandedMigrationCluster: string | null
-  migrationAssetTabs: Record<string, string> // Key: clusterKey, Value: tab id (migration-infra | target-infra | migration-scripts)
+  migrationAssetTabs: Record<string, string> // Key: ARN, Value: tab id
   preselectedMetric: string | null
 
   // Actions
-  setRegions: (regions: Region[]) => void
-  setSchemaRegistries: (schemaRegistries: SchemaRegistry[]) => void
-  setSelectedCluster: (cluster: Cluster, regionName: string, preselectedMetric?: string) => void
-  setSelectedRegion: (region: Region) => void
-  setSelectedSummary: () => void
-  setSelectedTCOInputs: () => void
-  setSelectedSchemaRegistries: () => void
+  setKcpState: (state: ProcessedState) => void
+  selectSummary: () => void
+  selectRegion: (regionName: string) => void
+  selectCluster: (regionName: string, clusterArn: string, preselectedMetric?: string) => void
+  selectTCOInputs: () => void
+  selectSchemaRegistries: () => void
   clearSelection: () => void
 
   // TCO Actions
@@ -143,13 +119,13 @@ interface AppState {
     field: keyof WorkloadData[string],
     value: string
   ) => void
-  initializeTCOData: (clusters: Array<{ name: string; regionName: string; key: string }>) => void
+  initializeTCOData: (clusters: Array<{ arn: string; key: string }>) => void
 
-  // Date filter actions (cluster-specific)
-  setClusterStartDate: (region: string, cluster: string, date: Date | undefined) => void
-  setClusterEndDate: (region: string, cluster: string, date: Date | undefined) => void
-  clearClusterDates: (region: string, cluster: string) => void
-  getClusterDateFilters: (region: string, cluster: string) => DateFilters
+  // Date filter actions (cluster-specific, using ARN)
+  setClusterStartDate: (clusterArn: string, date: Date | undefined) => void
+  setClusterEndDate: (clusterArn: string, date: Date | undefined) => void
+  clearClusterDates: (clusterArn: string) => void
+  getClusterDateFilters: (clusterArn: string) => DateFilters
 
   // Region-specific actions for costs
   setRegionStartDate: (region: string, date: Date | undefined) => void
@@ -181,13 +157,10 @@ export const useAppStore = create<AppState>()(
   devtools(
     (set, get) => ({
       // Initial state
-      regions: [],
-      schemaRegistries: [],
-      selectedCluster: null,
-      selectedRegion: null,
-      selectedSummary: false,
-      selectedTCOInputs: false,
-      selectedSchemaRegistries: false,
+      kcpState: null,
+      selectedView: null,
+      selectedRegionName: null,
+      selectedClusterArn: null,
       tcoWorkloadData: {},
       clusterDateFilters: {},
       regionState: {},
@@ -201,85 +174,70 @@ export const useAppStore = create<AppState>()(
       preselectedMetric: null,
 
       // Actions
-      setRegions: (regions) => set({ regions }, false, 'setRegions'),
+      setKcpState: (kcpState) => set({ kcpState }, false, 'setKcpState'),
 
-      setSchemaRegistries: (schemaRegistries) =>
-        set({ schemaRegistries }, false, 'setSchemaRegistries'),
-
-      setSelectedCluster: (cluster, regionName, preselectedMetric) =>
+      selectSummary: () =>
         set(
           {
-            selectedCluster: { cluster, regionName },
-            selectedRegion: null,
-            selectedSummary: false,
-            selectedTCOInputs: false,
-            selectedSchemaRegistries: false,
+            selectedView: 'summary',
+            selectedRegionName: null,
+            selectedClusterArn: null,
+          },
+          false,
+          'selectSummary'
+        ),
+
+      selectRegion: (regionName) =>
+        set(
+          {
+            selectedView: 'region',
+            selectedRegionName: regionName,
+            selectedClusterArn: null,
+          },
+          false,
+          'selectRegion'
+        ),
+
+      selectCluster: (regionName, clusterArn, preselectedMetric) =>
+        set(
+          {
+            selectedView: 'cluster',
+            selectedRegionName: regionName,
+            selectedClusterArn: clusterArn,
             preselectedMetric: preselectedMetric || null,
           },
           false,
-          'setSelectedCluster'
+          'selectCluster'
         ),
 
-      setSelectedRegion: (region) =>
+      selectTCOInputs: () =>
         set(
           {
-            selectedRegion: region,
-            selectedCluster: null,
-            selectedSummary: false,
-            selectedTCOInputs: false,
-            selectedSchemaRegistries: false,
+            selectedView: 'tco-inputs',
+            selectedRegionName: null,
+            selectedClusterArn: null,
           },
           false,
-          'setSelectedRegion'
+          'selectTCOInputs'
         ),
 
-      setSelectedSummary: () =>
+      selectSchemaRegistries: () =>
         set(
           {
-            selectedSummary: true,
-            selectedCluster: null,
-            selectedRegion: null,
-            selectedTCOInputs: false,
-            selectedSchemaRegistries: false,
+            selectedView: 'schema-registries',
+            selectedRegionName: null,
+            selectedClusterArn: null,
           },
           false,
-          'setSelectedSummary'
-        ),
-
-      setSelectedTCOInputs: () =>
-        set(
-          {
-            selectedTCOInputs: true,
-            selectedCluster: null,
-            selectedRegion: null,
-            selectedSummary: false,
-            selectedSchemaRegistries: false,
-          },
-          false,
-          'setSelectedTCOInputs'
-        ),
-
-      setSelectedSchemaRegistries: () =>
-        set(
-          {
-            selectedSchemaRegistries: true,
-            selectedCluster: null,
-            selectedRegion: null,
-            selectedSummary: false,
-            selectedTCOInputs: false,
-          },
-          false,
-          'setSelectedSchemaRegistries'
+          'selectSchemaRegistries'
         ),
 
       clearSelection: () =>
         set(
           {
-            selectedCluster: null,
-            selectedRegion: null,
-            selectedSummary: false,
-            selectedTCOInputs: false,
-            selectedSchemaRegistries: false,
+            selectedView: null,
+            selectedRegionName: null,
+            selectedClusterArn: null,
           },
           false,
           'clearSelection'
@@ -371,16 +329,15 @@ export const useAppStore = create<AppState>()(
         return state.migrationAssets[clusterKey]?.[wizardType] || null
       },
 
-      // Cluster-specific date filter actions - using unified helpers
-      setClusterStartDate: (region, cluster, date) =>
+      // Cluster-specific date filter actions - using ARN as key
+      setClusterStartDate: (clusterArn, date) =>
         set(
           (state) => {
-            const key = createClusterKey(region, cluster)
             return {
               clusterDateFilters: {
                 ...state.clusterDateFilters,
-                [key]: updateDateFilter(
-                  state.clusterDateFilters[key] || createDefaultDateFilters(),
+                [clusterArn]: updateDateFilter(
+                  state.clusterDateFilters[clusterArn] || createDefaultDateFilters(),
                   {
                     startDate: date,
                   }
@@ -392,15 +349,14 @@ export const useAppStore = create<AppState>()(
           'setClusterStartDate'
         ),
 
-      setClusterEndDate: (region, cluster, date) =>
+      setClusterEndDate: (clusterArn, date) =>
         set(
           (state) => {
-            const key = createClusterKey(region, cluster)
             return {
               clusterDateFilters: {
                 ...state.clusterDateFilters,
-                [key]: updateDateFilter(
-                  state.clusterDateFilters[key] || createDefaultDateFilters(),
+                [clusterArn]: updateDateFilter(
+                  state.clusterDateFilters[clusterArn] || createDefaultDateFilters(),
                   {
                     endDate: date,
                   }
@@ -412,11 +368,10 @@ export const useAppStore = create<AppState>()(
           'setClusterEndDate'
         ),
 
-      clearClusterDates: (region, cluster) =>
+      clearClusterDates: (clusterArn) =>
         set(
           (state) => {
-            const key = createClusterKey(region, cluster)
-            const { [key]: removed, ...rest } = state.clusterDateFilters
+            const { [clusterArn]: removed, ...rest } = state.clusterDateFilters
             // removed is intentionally unused - we only need rest
             void removed
             return { clusterDateFilters: rest }
@@ -425,10 +380,9 @@ export const useAppStore = create<AppState>()(
           'clearClusterDates'
         ),
 
-      getClusterDateFilters: (region, cluster) => {
+      getClusterDateFilters: (clusterArn) => {
         const state = get()
-        const key = createClusterKey(region, cluster)
-        return state.clusterDateFilters[key] || createDefaultDateFilters()
+        return state.clusterDateFilters[clusterArn] || createDefaultDateFilters()
       },
 
       // Region-specific actions for costs - using unified helpers
@@ -542,45 +496,118 @@ export const useAppStore = create<AppState>()(
   )
 )
 
-// Selector helpers for common patterns
-export const useSelectedCluster = () => useAppStore((state) => state.selectedCluster)
-export const useSelectedRegion = () => useAppStore((state) => state.selectedRegion)
-export const useRegions = () => useAppStore((state) => state.regions)
-export const useUIState = () =>
-  useAppStore((state) => ({
-    isProcessing: state.isProcessing,
-    error: state.error,
-  }))
+// ============================================================================
+// SELECTOR HOOKS - Computed state from the store
+// ============================================================================
 
-// Hook to get date filters for the currently selected cluster
-export const useCurrentClusterDateFilters = () => {
-  return useAppStore((state) => {
-    if (!state.selectedCluster) {
-      return createDefaultDateFilters()
-    }
-
-    const key = createClusterKey(
-      state.selectedCluster.regionName,
-      state.selectedCluster.cluster.name
-    )
-    return state.clusterDateFilters[key] || createDefaultDateFilters()
-  })
+// Stable empty arrays and objects to prevent infinite re-renders
+const EMPTY_REGIONS: Region[] = []
+const EMPTY_SCHEMA_REGISTRIES: SchemaRegistry[] = []
+const DEFAULT_DATE_FILTERS: DateFilters = {
+  startDate: undefined,
+  endDate: undefined,
+}
+const DEFAULT_REGION_STATE: RegionState = {
+  startDate: undefined,
+  endDate: undefined,
+  activeCostsTab: DEFAULT_TABS.COSTS,
 }
 
-// Hook to get cluster-specific date filters and actions
-export const useClusterDateFilters = (region: string, cluster: string) => {
+/**
+ * Get the full KCP state
+ */
+export const useKcpState = () => useAppStore((state) => state.kcpState)
+
+/**
+ * Get all regions from KCP state
+ */
+export const useRegions = () => useAppStore((state) => state.kcpState?.regions ?? EMPTY_REGIONS)
+
+/**
+ * Get schema registries from KCP state
+ */
+export const useSchemaRegistries = () =>
+  useAppStore((state) => state.kcpState?.schema_registries ?? EMPTY_SCHEMA_REGISTRIES)
+
+/**
+ * Get the currently selected cluster with its region name
+ * Returns null if no cluster is selected or cluster not found
+ */
+export const useSelectedCluster = () => {
+  return useAppStore(
+    useShallow((state) => {
+      if (!state.selectedClusterArn || !state.kcpState || !state.kcpState.regions) return null
+
+      // Search through all regions to find the cluster with matching ARN
+      for (const region of state.kcpState.regions) {
+        if (!region.clusters) continue
+        const cluster = region.clusters.find((c) => {
+          const arn = getClusterArn(c)
+          return arn && arn === state.selectedClusterArn
+        })
+        if (cluster) {
+          return { cluster, regionName: region.name }
+        }
+      }
+
+      return null
+    })
+  )
+}
+
+/**
+ * Get the currently selected region
+ * Returns null if no region is selected or region not found
+ */
+export const useSelectedRegion = () => {
+  return useAppStore(
+    useShallow((state) => {
+      if (!state.selectedRegionName || !state.kcpState || !state.kcpState.regions) return null
+      return state.kcpState.regions.find((r) => r.name === state.selectedRegionName) || null
+    })
+  )
+}
+
+/**
+ * Get UI state (processing and error)
+ */
+export const useUIState = () =>
+  useAppStore(
+    useShallow((state) => ({
+      isProcessing: state.isProcessing,
+      error: state.error,
+    }))
+  )
+
+/**
+ * Hook to get date filters for the currently selected cluster
+ */
+export const useCurrentClusterDateFilters = () => {
+  return useAppStore(
+    useShallow((state) => {
+      if (!state.selectedClusterArn) {
+        return DEFAULT_DATE_FILTERS
+      }
+      return state.clusterDateFilters[state.selectedClusterArn] || DEFAULT_DATE_FILTERS
+    })
+  )
+}
+
+/**
+ * Hook to get cluster-specific date filters and actions by ARN
+ */
+export const useClusterDateFilters = (clusterArn: string) => {
   const { clusterDateFilters, setClusterStartDate, setClusterEndDate, clearClusterDates } =
     useAppStore()
 
-  const key = createClusterKey(region, cluster)
-  const filters = clusterDateFilters[key] || createDefaultDateFilters()
+  const filters = clusterDateFilters[clusterArn] || DEFAULT_DATE_FILTERS
 
   return {
     startDate: filters.startDate,
     endDate: filters.endDate,
-    setStartDate: (date: Date | undefined) => setClusterStartDate(region, cluster, date),
-    setEndDate: (date: Date | undefined) => setClusterEndDate(region, cluster, date),
-    clearDates: () => clearClusterDates(region, cluster),
+    setStartDate: (date: Date | undefined) => setClusterStartDate(clusterArn, date),
+    setEndDate: (date: Date | undefined) => setClusterEndDate(clusterArn, date),
+    clearDates: () => clearClusterDates(clusterArn),
   }
 }
 
@@ -594,7 +621,7 @@ export const useRegionCostFilters = (region: string) => {
     setRegionActiveCostsTab,
   } = useAppStore()
 
-  const state = regionState[region] || createDefaultRegionState()
+  const state = regionState[region] || DEFAULT_REGION_STATE
 
   return {
     startDate: state.startDate,
@@ -619,4 +646,25 @@ export const useSummaryDateFilters = () => {
     setEndDate: (date: Date | undefined) => setSummaryEndDate(date),
     clearDates: () => clearSummaryDates(),
   }
+}
+
+// Utility function to get cluster data by ARN
+export const getClusterDataByArn = (arn: string): Cluster | null => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState?.regions || !arn) {
+    return null
+  }
+
+  for (const region of kcpState.regions) {
+    const cluster = region.clusters?.find(
+      (c) => c.arn === arn || c.aws_client_information?.msk_cluster_config?.ClusterArn === arn
+    )
+    if (cluster) {
+      return cluster
+    }
+  }
+
+  return null
 }

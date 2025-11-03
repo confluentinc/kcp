@@ -8,11 +8,7 @@ interface AppHeaderProps {
   error?: string | null
 }
 
-export default function AppHeader({
-  onFileUpload,
-  isProcessing = false,
-  error = null,
-}: AppHeaderProps) {
+export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: AppHeaderProps) => {
   const [darkMode, setDarkMode] = useState(true)
 
   // Initialize dark mode from localStorage or default to dark

@@ -1,43 +1,22 @@
 import React, { useState, useEffect } from 'react'
-import { useAppStore } from '@/stores/store'
+import { useAppStore, useRegions } from '@/stores/store'
 import { Modal } from '@/components/common/ui/modal'
 import { Button } from '@/components/common/ui/button'
 import { TerraformCodeViewer } from './TerraformCodeViewer'
 import {
   Wizard,
-  targetInfraWizardConfig,
-  migrationInfraWizardConfig,
-  migrationScriptsWizardConfig,
+  createTargetInfraWizardConfig,
+  createMigrationInfraWizardConfig,
+  createMigrationScriptsWizardConfig,
 } from '@/components/migration/wizards'
 import type { Cluster, WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
 import { Server, Network, Code, CheckCircle2, ArrowRight } from 'lucide-react'
+import { getClusterArn } from '@/lib/clusterUtils'
+import { downloadZip, saveZipLocally } from '@/lib/fileSystemUtils'
 
-// Type definitions for File System Access API
-declare global {
-  interface Window {
-    showDirectoryPicker(options?: {
-      mode?: 'read' | 'readwrite'
-      startIn?: 'desktop' | 'downloads' | 'documents'
-    }): Promise<FileSystemDirectoryHandle>
-  }
-
-  interface FileSystemDirectoryHandle {
-    getFileHandle(name: string, options?: { create?: boolean }): Promise<FileSystemFileHandle>
-  }
-
-  interface FileSystemFileHandle {
-    createWritable(): Promise<FileSystemWritableFileStream>
-  }
-
-  interface FileSystemWritableFileStream {
-    write(data: string | BufferSource | Blob): Promise<void>
-    close(): Promise<void>
-  }
-}
-
-export default function MigrationAssets() {
-  const regions = useAppStore((state) => state.regions)
+export const MigrationAssets = () => {
+  const regions = useRegions()
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [wizardType, setWizardType] = useState<WizardType | null>(null)
   const [selectedClusterForWizard, setSelectedClusterForWizard] = useState<{
@@ -75,8 +54,10 @@ export default function MigrationAssets() {
   // Expand first cluster by default when clusters are loaded
   useEffect(() => {
     if (allClusters.length > 0 && !expandedCluster) {
-      const firstClusterKey = `${allClusters[0].regionName}-${allClusters[0].cluster.name}`
-      setExpandedCluster(firstClusterKey)
+      const firstClusterArn = getClusterArn(allClusters[0].cluster)
+      if (firstClusterArn) {
+        setExpandedCluster(firstClusterArn)
+      }
     }
   }, [allClusters, expandedCluster, setExpandedCluster])
 
@@ -283,129 +264,6 @@ export default function MigrationAssets() {
     navigator.clipboard.writeText(text)
   }
 
-  const createZipBlob = async (files: Record<string, string | undefined>): Promise<Blob> => {
-    // Use JSZip if available, otherwise create a simple archive structure
-    try {
-      const { default: JSZip } = await import('jszip')
-      const zip = new JSZip()
-
-      for (const [key, content] of Object.entries(files)) {
-        if (content) {
-          const fileName = key.replace('_', '.')
-          zip.file(fileName, content)
-        }
-      }
-
-      return await zip.generateAsync({ type: 'blob' })
-    } catch {
-      // Fallback: create individual files
-      throw new Error('Failed to create zip file')
-    }
-  }
-
-  const handleSaveLocally = async (
-    files: Record<string, string | undefined>,
-    clusterName: string,
-    wizardType: string
-  ) => {
-    try {
-      // Check if File System API is supported
-      if (!('showDirectoryPicker' in window)) {
-        alert(
-          'Your browser does not support saving files to specific locations. Please use "Download ZIP" instead.'
-        )
-        return
-      }
-
-      // Filter files with content
-      const fileEntries = Object.entries(files).filter(([, content]) => content)
-
-      if (fileEntries.length === 0) {
-        alert('No files to download')
-        return
-      }
-
-      // Create zip blob
-      const blob = await createZipBlob(files)
-      const zipFileName = `${clusterName}-${wizardType}.zip`
-
-      // Use File System API to save to user-selected directory
-      const directoryHandle = await window.showDirectoryPicker({
-        mode: 'readwrite',
-        startIn: 'downloads',
-      })
-
-      // Save the zip file to the selected directory
-      const fileHandle = await directoryHandle.getFileHandle(zipFileName, { create: true })
-      const writable = await fileHandle.createWritable()
-      await writable.write(blob)
-      await writable.close()
-
-      alert(`Successfully saved ${zipFileName} to your selected directory!`)
-    } catch (error: unknown) {
-      // User canceled the picker or other error
-      const err = error as { name?: string; message?: string; code?: string }
-      if (err.name === 'AbortError' || err.message === 'The user aborted a request.') {
-        // User canceled directory selection
-      } else if (err.message?.includes('system files') || err.code === 'InvalidModificationError') {
-        // Error saving to selected directory - error handling done in catch block
-        alert(
-          'Cannot save to this directory. Please select a different folder (e.g., Desktop, Documents, or a subfolder).'
-        )
-      } else {
-        // Failed to save files - error handling done in catch block
-        alert('Failed to save files. Please try again or use "Download ZIP" instead.')
-      }
-    }
-  }
-
-  const handleDownloadZip = async (
-    files: Record<string, string | undefined>,
-    clusterName: string,
-    wizardType: string
-  ) => {
-    try {
-      // Filter files with content
-      const fileEntries = Object.entries(files).filter(([, content]) => content)
-
-      if (fileEntries.length === 0) {
-        alert('No files to download')
-        return
-      }
-
-      // Dynamically import JSZip only when needed
-      const { default: JSZip } = await import('jszip')
-
-      // Create zip file
-      const zip = new JSZip()
-
-      // Add files to zip
-      for (const [key, content] of fileEntries) {
-        if (content) {
-          const fileName = key.replace('_', '.')
-          zip.file(fileName, content)
-        }
-      }
-
-      // Generate zip blob
-      const blob = await zip.generateAsync({ type: 'blob' })
-      const zipFileName = `${clusterName}-${wizardType}.zip`
-
-      // Download directly to browser's download folder
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = zipFileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
-    } catch {
-      // Failed to create zip file - error handling done in catch block
-      alert('Failed to create zip file. Please try again.')
-    }
-  }
-
   const renderTerraformTabs = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
     const files = getTerraformFiles(clusterKey, wizardType)
     if (!files) {
@@ -457,7 +315,7 @@ export default function MigrationAssets() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleDownloadZip(files, clusterName, wizardType)}
+                onClick={() => downloadZip(files, `${clusterName}-${wizardType}`)}
                 className="text-xs px-2 py-1"
               >
                 💾 Download ZIP
@@ -465,7 +323,7 @@ export default function MigrationAssets() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleSaveLocally(files, clusterName, wizardType)}
+                onClick={() => saveZipLocally(files, `${clusterName}-${wizardType}`)}
                 className="text-xs px-2 py-1"
               >
                 📁 Save Locally
@@ -511,13 +369,14 @@ export default function MigrationAssets() {
       {allClusters.length > 0 ? (
         <div className="space-y-4">
           {allClusters.map(({ cluster, regionName }) => {
-            const clusterKey = `${regionName}-${cluster.name}`
+            const clusterArn = getClusterArn(cluster)
+            if (!clusterArn) return null // Skip clusters without ARN
 
-            const isExpanded = expandedCluster === clusterKey
+            const isExpanded = expandedCluster === clusterArn
 
             return (
               <div
-                key={clusterKey}
+                key={clusterArn}
                 className={`bg-white dark:bg-card rounded-lg border overflow-hidden transition-all ${
                   isExpanded
                     ? 'border-accent shadow-md dark:border-accent'
@@ -531,7 +390,7 @@ export default function MigrationAssets() {
                       ? 'bg-accent/5 dark:bg-accent/10'
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
-                  onClick={() => toggleCluster(clusterKey)}
+                  onClick={() => toggleCluster(clusterArn)}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-6">
@@ -550,7 +409,7 @@ export default function MigrationAssets() {
                 {/* Migration Flow - Only shown when expanded */}
                 {isExpanded && (
                   <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card overflow-visible pt-4">
-                    {renderMigrationFlow(clusterKey, cluster, regionName)}
+                    {renderMigrationFlow(clusterArn, cluster, regionName)}
                   </div>
                 )}
               </div>
@@ -588,40 +447,43 @@ export default function MigrationAssets() {
         >
           {wizardType === WIZARD_TYPES.TARGET_INFRA && selectedClusterForWizard && (
             <Wizard
-              config={targetInfraWizardConfig}
-              clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
+              config={createTargetInfraWizardConfig(
+                getClusterArn(selectedClusterForWizard.cluster) || ''
+              )}
+              clusterKey={getClusterArn(selectedClusterForWizard.cluster) || ''}
               wizardType={wizardType}
-              onComplete={() =>
-                handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
-                )
-              }
+              onComplete={() => {
+                const arn = getClusterArn(selectedClusterForWizard.cluster)
+                if (arn) handleWizardComplete(arn)
+              }}
               onClose={handleCloseWizard}
             />
           )}
           {wizardType === WIZARD_TYPES.MIGRATION_INFRA && selectedClusterForWizard && (
             <Wizard
-              config={migrationInfraWizardConfig}
-              clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
+              config={createMigrationInfraWizardConfig(
+                getClusterArn(selectedClusterForWizard.cluster) || ''
+              )}
+              clusterKey={getClusterArn(selectedClusterForWizard.cluster) || ''}
               wizardType={wizardType}
-              onComplete={() =>
-                handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
-                )
-              }
+              onComplete={() => {
+                const arn = getClusterArn(selectedClusterForWizard.cluster)
+                if (arn) handleWizardComplete(arn)
+              }}
               onClose={handleCloseWizard}
             />
           )}
           {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && selectedClusterForWizard && (
             <Wizard
-              config={migrationScriptsWizardConfig}
-              clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
+              config={createMigrationScriptsWizardConfig(
+                getClusterArn(selectedClusterForWizard.cluster) || ''
+              )}
+              clusterKey={getClusterArn(selectedClusterForWizard.cluster) || ''}
               wizardType={wizardType}
-              onComplete={() =>
-                handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
-                )
-              }
+              onComplete={() => {
+                const arn = getClusterArn(selectedClusterForWizard.cluster)
+                if (arn) handleWizardComplete(arn)
+              }}
               onClose={handleCloseWizard}
             />
           )}
@@ -661,3 +523,4 @@ export default function MigrationAssets() {
     </div>
   )
 }
+
