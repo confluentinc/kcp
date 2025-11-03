@@ -5,27 +5,29 @@ export const migrationInfraWizardConfig: WizardConfig = {
   title: 'Migration Infrastructure Wizard',
   description: 'Configure your migration infrastructure for migration',
   apiEndpoint: '/assets/migration',
-  initial: 'authentication_method_question',
+  initial: 'confluent_cloud_endpoints_question',
 
   states: {
-    authentication_method_question: {
+    confluent_cloud_endpoints_question: {
       meta: {
-        title: 'Authentication Method',
-        description: 'Which authentication method will you use for the cluster link?',
+        title: 'Are your Confluent Cloud endpoints publicly accessible or private networked?',
+        description: 'PLACEHOLDER',
         schema: {
           type: 'object',
           properties: {
-            authentication_method: {
-              type: 'string',
-              title: 'Which authentication method will you use for the cluster link?',
-              enum: ['sasl_scram'],
-              enumNames: ['SASL/SCRAM'],
+            has_public_cc_endpoints: {
+              type: 'boolean',
+              title: 'Are your Confluent Cloud endpoints publicly accessible?',
+              oneOf: [
+                { title: 'Yes', const: true },
+                { title: 'No', const: false },
+              ],
             },
           },
-          required: ['authentication_method'],
+          required: ['has_public_cc_endpoints'],
         },
         uiSchema: {
-          authentication_method: {
+          has_public_cc_endpoints: {
             'ui:widget': 'radio',
           },
         },
@@ -33,13 +35,145 @@ export const migrationInfraWizardConfig: WizardConfig = {
       on: {
         NEXT: [
           {
-            target: 'cluster_type_question',
-            guard: 'is_sasl_scram',
+            target: 'public_cluster_link_inputs',
+            guard: 'has_public_cc_endpoints',
+            actions: 'save_step_data',
+          },
+          {
+            target: 'private_link_subnets_question',
+            guard: 'has_private_cc_endpoints',
             actions: 'save_step_data',
           },
         ],
       },
     },
+    public_cluster_link_inputs: {
+      meta: {
+        title: 'Public-Public Cluster Link Configuration',
+        description: 'Enter configuration details for your MSK to Confluent Cloud public-public cluster link',
+        schema: {
+          type: 'object',
+          properties: {
+            target_cluster_id: {
+              type: 'string',
+              title: 'Confluent Cloud Cluster ID'
+            },
+            target_rest_endpoint: {
+              type: 'string',
+              title: 'Confluent Cloud Cluster REST Endpoint'
+            },
+            cluster_link_name: {
+              type: 'string',
+              title: 'Confluent Cloud Cluster Link Name'
+            },
+            msk_cluster_id: {
+              type: 'string',
+              title: 'MSK Cluster ID (retrieved from statefile)'
+            },
+            msk_sasl_scram_bootstrap_servers: {
+              type: 'string',
+              title: 'MSK Bootstrap Servers (retrieved from statefile)'
+            },
+          },
+          required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'msk_cluster_id', 'msk_sasl_scram_bootstrap_servers'],
+        },
+        uiSchema: {
+          target_cluster_id: {
+            'ui:placeholder': 'e.g., lkc-xxxxxx',
+          },
+          target_rest_endpoint: {
+            'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
+          },
+          cluster_link_name: {
+            'ui:placeholder': 'e.g., msk-to-cc-migration-link',
+          },
+          msk_cluster_id: {
+            'ui:placeholder': 'e.g., 3Db5QLSqSZieL3rJBUUegA',
+          },
+          msk_sasl_scram_bootstrap_servers: {
+            'ui:placeholder': 'e.g., b-1.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9198,b-2.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9198',
+          },
+        },
+      },
+      on: {
+        NEXT: {
+          target: 'confirmation',
+          actions: 'save_step_data',
+        },
+        BACK: {
+          target: 'confluent_cloud_endpoints_question',
+          actions: 'undo_save_step_data',
+        },
+      },
+    },
+    private_link_subnets_question: {
+      meta: {
+        title: 'Reuse existing subnets or create new subnets for setting up a private link to Confluent Cloud',
+        description: 'PLACEHOLDER',
+        schema: {
+          type: 'object',
+          properties: {
+            reuse_existing_subnets: {
+              type: 'boolean',
+              title: 'Do you want to reuse existing subnets?',
+              oneOf: [
+                { title: 'Yes', const: true },
+                { title: 'No', const: false },
+              ],
+            },
+          },
+          required: ['reuse_existing_subnets'],
+        },
+        uiSchema: {
+          reuse_existing_subnets: {
+            'ui:widget': 'radio',
+          },
+        },
+      },
+      on: {
+        NEXT: [
+          {
+            target: 'private_link_reuse_existing_subnets',
+            guard: 'reuse_existing_subnets',
+            actions: 'save_step_data',
+          },
+          {
+            target: 'private_link_create_new_subnets',
+            guard: 'create_new_subnets',
+            actions: 'save_step_data',
+          },
+        ],
+        BACK: {
+          target: 'confluent_cloud_endpoints_question',
+          actions: 'undo_save_step_data',
+        },
+      },
+    },
+    private_link_reuse_existing_subnets: {
+      meta: {
+        title: 'Reuse existing subnets',
+        description: 'PLACEHOLDER',
+        schema: {
+          type: 'object',
+          properties: {
+            vpc_id: {
+              type: 'string',
+              title: 'VPC ID (retrieved from statefile)',
+            },
+            existing_subnets: {
+              type: 'array',
+              title: 'Existing subnet IDs',
+              items: {
+                type: 'string',
+              },
+            },
+          },
+        },
+      },
+    },
+
+
+
     cluster_type_question: {
       meta: {
         title: 'Target Cluster Type',
@@ -71,7 +205,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
           },
         ],
         BACK: {
-          target: 'authentication_method_question',
+          target: 'public_cluster_link_inputs',
           actions: 'undo_save_step_data',
         },
       },
@@ -202,6 +336,22 @@ export const migrationInfraWizardConfig: WizardConfig = {
   },
 
   guards: {
+    has_public_cc_endpoints: ({ event}) => {
+      return event.data?.has_public_cc_endpoints === true
+    },
+    has_private_cc_endpoints: ({ event}) => {
+      return event.data?.has_public_cc_endpoints === false
+    },
+    reuse_existing_subnets: ({ event }) => {
+      return event.data?.reuse_existing_subnets === true
+    },
+    create_new_subnets: ({ event }) => {
+      return event.data?.reuse_existing_subnets === false
+    },
+
+
+
+
     is_dedicated: ({ event }) => {
       return event.data?.target_cluster_type === 'dedicated'
     },
