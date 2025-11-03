@@ -250,8 +250,8 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	var errors []string
 
-	if req.MskVPCId == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetBootstrapServers == "" {
-		errors = append(errors, "mskVPCId, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, targetBootstrapServers are required")
+	if req.MskVPCId == "" || req.BrokerType == "" || req.BrokerAmount == "" || req.BrokerStorageSize == "" || req.JumpClusterSubnetCidrRange == "" || req.AnsibleSubnetCidrRange == "" || req.AuthenticationMethod == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.MskSaslScramBootstrapServers == "" {
+		errors = append(errors, "mskVPCId, brokerType, brokerAmount, brokerStorageSize, jumpClusterSubnetCidrRange, ansibleSubnetCidrRange, authenticationMethod, targetEnvironmentId, targetClusterId, mskSaslScramBootstrapServers are required")
 	}
 	if req.UseExistingSubnets && len(req.ExistingSubnetIds) == 0 {
 		errors = append(errors, "existingSubnetIds are required when using existing subnets")

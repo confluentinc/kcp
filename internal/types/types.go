@@ -177,12 +177,10 @@ type MigrationWizardRequest struct {
 
 	TargetEnvironmentId    string `json:"target_environment_id"`
 	TargetClusterId        string `json:"target_cluster_id"`
-	TargetBootstrapServers string `json:"target_bootstrap_servers"`
+	TargetRestEndpoint     string `json:"target_rest_endpoint"`
 
-	// todo - not documented in the flow but used
-	TargetRestEndpoint           string `json:"target_rest_endpoint"`
-	MskClusterId                 string `json:"msk_cluster_id"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+	MskClusterId string `json:"msk_cluster_id"`
 }
 
 type MigrateTopicsRequest struct {
