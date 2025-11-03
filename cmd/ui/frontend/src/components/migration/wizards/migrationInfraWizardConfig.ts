@@ -10,8 +10,8 @@ export const migrationInfraWizardConfig: WizardConfig = {
   states: {
     confluent_cloud_endpoints_question: {
       meta: {
-        title: 'Are your Confluent Cloud endpoints publicly accessible or private networked?',
-        description: 'PLACEHOLDER',
+        title: 'MSK Migration - Public or Private Networking',
+        description: 'When migrating from MSK to Confluent Cloud, you can choose to use public or private networking. Public networking is the default and requires no additional configuration. Private networking is more complex involving private linking and jump clusters.',
         schema: {
           type: 'object',
           properties: {
@@ -49,7 +49,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
     },
     public_cluster_link_inputs: {
       meta: {
-        title: 'Public-Public Cluster Link Configuration',
+        title: 'Public Migration | Cluster Link Configuration',
         description: 'Enter configuration details for your MSK to Confluent Cloud public-public cluster link',
         schema: {
           type: 'object',
@@ -108,14 +108,14 @@ export const migrationInfraWizardConfig: WizardConfig = {
     },
     private_link_subnets_question: {
       meta: {
-        title: 'Reuse existing subnets or create new subnets for setting up a private link to Confluent Cloud',
-        description: 'PLACEHOLDER',
+        title: 'Private Migration |Private Link - Subnets',
+        description: 'When setting up a private link between Confluent Cloud and AWS, subnets need to be specified to establish the connection.',
         schema: {
           type: 'object',
           properties: {
             reuse_existing_subnets: {
               type: 'boolean',
-              title: 'Do you want to reuse existing subnets?',
+              title: 'Do you want to reuse existing subnets for setting up a private link to Confluent Cloud?',
               oneOf: [
                 { title: 'Yes', const: true },
                 { title: 'No', const: false },
@@ -132,18 +132,13 @@ export const migrationInfraWizardConfig: WizardConfig = {
       },
       on: {
         NEXT: [
-          // {
-          //   target: 'private_link_reuse_existing_subnets',
-          //   guard: 'reuse_existing_subnets',
-          //   actions: 'save_step_data',
-          // },
           {
-            target: 'confirmation',
+            target: 'private_link_reuse_existing_subnets',
             guard: 'reuse_existing_subnets',
             actions: 'save_step_data',
           },
           {
-            target: 'confirmation',
+            target: 'private_link_create_new_subnets',
             guard: 'create_new_subnets',
             actions: 'save_step_data',
           },
@@ -154,153 +149,237 @@ export const migrationInfraWizardConfig: WizardConfig = {
         },
       },
     },
-    // private_link_reuse_existing_subnets: {
-    //   meta: {
-    //     title: 'Reuse existing subnets',
-    //     description: 'PLACEHOLDER',
-    //     schema: {
-    //       type: 'object',
-    //       properties: {
-    //         vpc_id: {
-    //           type: 'string',
-    //           title: 'VPC ID (retrieved from statefile)',
-    //         },
-    //         existing_subnets: {
-    //           type: 'array',
-    //           title: 'Existing subnet IDs',
-    //           items: {
-    //             type: 'string',
-    //           },
-    //         },
-    //       },
-    //     },
-    //   },
-    // },
-
-
-
-    cluster_type_question: {
+    private_link_reuse_existing_subnets: {
       meta: {
-        title: 'Target Cluster Type',
-        description: 'Select the type of your target Confluent Cloud cluster',
+        title: 'Private Migration | Private Link - Reuse Existing Subnets',
+        description: 'PLACEHOLDER',
         schema: {
           type: 'object',
           properties: {
-            target_cluster_type: {
+            vpc_id: {
               type: 'string',
-              title: 'What type of target Confluent Cloud cluster are you migrating to?',
-              enum: ['dedicated'],
-              enumNames: ['Dedicated'],
+              title: 'VPC ID (retrieved from statefile)',
+            },
+            existing_subnets: {
+              type: 'array',
+              title: 'Existing subnet IDs',
+              items: {
+                type: 'string',
+              },
+              minItems: 3, // retrieve number of subnets from statefile
+              maxItems: 3,
+              default: ['', '', ''],
             },
           },
-          required: ['target_cluster_type'],
+          required: ['vpc_id', 'existing_subnets'],
         },
         uiSchema: {
-          target_cluster_type: {
-            'ui:widget': 'radio',
+          vpc_id: {
+            'ui:placeholder': 'e.g., vpc-xxxx',
+            'ui:readonly': true,
           },
-        },
-      },
-      on: {
-        NEXT: [
-          {
-            target: 'dedicated_inputs',
-            guard: 'is_dedicated',
-            actions: 'save_step_data',
-          },
-        ],
-        BACK: {
-          target: 'public_cluster_link_inputs',
-          actions: 'undo_save_step_data',
-        },
-      },
-    },
-    dedicated_inputs: {
-      meta: {
-        title: 'Dedicated Cluster Configuration',
-        description: 'Enter configuration details for your Dedicated cluster',
-        schema: {
-          type: 'object',
-          properties: {
-            target_environment_id: {
-              type: 'string',
-              title: 'Confluent Cloud Environment ID',
+          existing_subnets: {
+            'ui:placeholder': 'e.g., subnet-xxxx,subnet-xxxx,subnet-xxxx',
+            'ui:options': {
+              addable: false,
+              orderable: false,
+              removable: false,
             },
-            target_cluster_id: {
-              type: 'string',
-              title: 'Confluent Cloud Cluster ID',
-            },
-            target_rest_endpoint: {
-              type: 'string',
-              title: 'Confluent Cloud Cluster REST Endpoint',
-            },
-          },
-          required: ['target_environment_id', 'target_cluster_id', 'target_rest_endpoint'],
-        },
-        uiSchema: {
-          target_environment_id: {
-            'ui:placeholder': 'e.g., env-xxxxx',
-          },
-          target_cluster_id: {
-            'ui:placeholder': 'e.g., cluster-xxxxx',
-          },
-          target_rest_endpoint: {
-            'ui:placeholder': 'e.g., https://api.confluent.cloud',
           },
         },
       },
       on: {
         NEXT: {
-          target: 'statefile_inputs',
+          target: 'confirmation',
           actions: 'save_step_data',
         },
         BACK: {
-          target: 'cluster_type_question',
+          target: 'private_link_subnets_question',
           actions: 'undo_save_step_data',
         },
       },
     },
-    statefile_inputs: {
+    private_link_create_new_subnets: {
       meta: {
-        title: 'Statefile Configuration',
-        description:
-          'Enter configuration details for your statefile - WIP these will be parsed from the statefile in future and this stage removed',
+        title: 'Private Migration | Private Link - New Subnets',
+        description: 'PLACEHOLDER',
         schema: {
           type: 'object',
           properties: {
-            msk_cluster_id: {
+            vpc_id: {
               type: 'string',
-              title: 'MSK Cluster ID',
+              title: 'VPC ID (retrieved from statefile)',
             },
-            msk_sasl_scram_bootstrap_servers: {
-              type: 'string',
-              title: 'MSK Cluster Bootstrap Brokers',
+            new_subnets: {
+              type: 'array',
+              title: 'New subnet CIDR ranges',
+              items: {
+                type: 'string',
+              },
+              minItems: 3,
+              maxItems: 3,
+              default: ['', '', ''],
             },
-            msk_publicly_accessible: {
+          }
+        },
+        uiSchema: {
+          vpc_id: {
+            'ui:placeholder': 'e.g., vpc-xxxx',
+          },
+          new_subnets: {
+            items: {
+              'ui:placeholder': 'e.g., 10.0.1.0/24',
+            },
+            'ui:options': {
+              addable: false,
+              orderable: false,
+              removable: false,
+            },
+          },
+        },
+      },
+      on: {
+        NEXT: {
+          target: 'private_link_internet_gateway_question',
+          actions: 'save_step_data',
+        },
+        BACK: {
+          target: 'private_link_subnets_question',
+          actions: 'undo_save_step_data',
+        },
+      },
+    },
+    private_link_internet_gateway_question: {
+      meta: {
+        title: 'Private Migration | Private Link - Internet Gateway',
+        description: 'When migrating data from MSK to Confluent Cloud over a private network, a jump cluster is required and some dependencies will need to be installed on these jump clusters from the internet.',
+        schema: {
+          type: 'object',
+          properties: {
+            reuse_existing_internet_gateway: {
               type: 'boolean',
-              title: 'Is your MSK cluster accessible from the internet?',
+              title: 'Does your MSK VPC network have an existing internet gateway?',
               oneOf: [
                 { title: 'Yes', const: true },
                 { title: 'No', const: false },
               ],
-              default: false,
             },
           },
-          required: [
-            'msk_cluster_id',
-            'msk_sasl_scram_bootstrap_servers',
-            'msk_publicly_accessible',
-          ],
+          required: ['reuse_existing_internet_gateway'],
         },
         uiSchema: {
-          msk_cluster_id: {
-            'ui:placeholder': 'e.g., cluster-xxxxx',
+          reuse_existing_internet_gateway: {
+            'ui:widget': 'radio',
           },
-          msk_sasl_scram_bootstrap_servers: {
-            'ui:placeholder':
-              'e.g., b-1.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098,b-2.examplecluster.0abcde.c.us-west-2.msk.amazonaws.com:9098',
+        },
+      },
+      on: {
+        NEXT: {
+          target: 'jump_cluster_networking_inputs',
+          actions: 'save_step_data',
+        },
+        BACK: {
+          target: 'private_link_create_new_subnets',
+          actions: 'undo_save_step_data',
+        },
+      },
+    },
+    jump_cluster_networking_inputs: {
+      meta: {
+        title: 'Private Migration | Jump Cluster - Configuration',
+        description: 'Enter configuration details for your jump cluster networking',
+        schema: {
+          type: 'object',
+          properties: {
+            vpc_id: {
+              type: 'string',
+              title: 'VPC ID (retrieved from statefile)',
+            },
+            jump_cluster_instance_type: {
+              type: 'string',
+              title: 'Instance Type', // retrieved and formatted from statefile - kafka.m5.large == m5.large
+            },
+            jump_cluster_broker_total: {
+              type: 'number',
+              title: 'Broker Total', // retrieved from statefile based on MSK broker node total.
+            },
+            jump_cluster_broker_storage: {
+              type: 'number',
+              title: 'Broker Storage per Broker (GB)', // retrieved from statefile based on MSK broker node storage.
+            },
+            jump_cluster_broker_subnet_cidr: {
+              type: 'array',
+              title: 'Broker Subnet CIDR Range',
+              items: {
+                type: 'string',
+              },
+              minItems: 3, // retrievd from number of broker nodes in MSK from statefile.
+              maxItems: 3, // retrievd from number of broker nodes in MSK from statefile.
+              default: ['', '', ''],
+            },
+            ansible_instance_subnet_cidr: {
+              type: 'string',
+              title: 'Ansible Instance Subnet CIDR', // Better name for user with no context.
+            }
           },
-          msk_publicly_accessible: {
+          required: ['vpc_id', 'jump_cluster_instance_type', 'jump_cluster_broker_total', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'ansible_instance_subnet_cidr'],
+          },
+        uiSchema: {
+          vpc_id: {
+            'ui:placeholder': 'e.g., vpc-xxxx',
+            'ui:readonly': true,
+          },
+          jump_cluster_instance_type: {
+            'ui:placeholder': 'e.g., m5.large',
+          },
+          jump_cluster_broker_total: {
+            'ui:placeholder': 'e.g., 3',
+          },
+          jump_cluster_broker_storage: {
+            'ui:placeholder': 'e.g., 100',
+          },
+          jump_cluster_broker_subnet_cidr: {
+            'ui:placeholder': 'e.g., 10.0.1.0/24,10.0.2.0/24,10.0.3.0/24',
+            'ui:options': {
+              addable: true,
+              orderable: false,
+              removable: true,
+            },
+          },
+          ansible_instance_subnet_cidr: {
+            'ui:placeholder': 'e.g., 10.0.4.0/24',
+          },
+        },
+      },
+      on: {
+        NEXT: {
+          target: 'msk_jump_cluster_authentication_question',
+          actions: 'save_step_data',
+        },
+        BACK: {
+          target: 'private_link_internet_gateway_question',
+          actions: 'undo_save_step_data',
+        },
+      },
+    },
+    msk_jump_cluster_authentication_question: {
+      meta: {
+        title: 'Private Migration | Jump Cluster - Authentication',
+        description: 'How will the jump cluster authenticate to the MSK cluster?',
+        schema: {
+          type: 'object',
+          properties: {
+            msk_jump_cluster_auth_type: {
+              type: 'string',
+              title: 'MSK Jump Cluster Authentication Type',
+              enum: ['sasl_scram', 'iam'],
+              enumNames: ['SASL/SCRAM', 'IAM'],
+            },
+          },
+          required: ['msk_jump_cluster_auth_type'],
+        },
+        uiSchema: {
+          msk_jump_cluster_auth_type: {
             'ui:widget': 'radio',
           },
         },
@@ -311,7 +390,7 @@ export const migrationInfraWizardConfig: WizardConfig = {
           actions: 'save_step_data',
         },
         BACK: {
-          target: 'dedicated_inputs',
+          target: 'msk_jump_cluster_authentication_question',
           actions: 'undo_save_step_data',
         },
       },
@@ -325,10 +404,18 @@ export const migrationInfraWizardConfig: WizardConfig = {
         CONFIRM: {
           target: 'complete',
         },
-        BACK: {
-          target: 'statefile_inputs',
-          actions: 'undo_save_step_data',
-        },
+        BACK: [
+          {
+            target: 'public_cluster_link_inputs',
+            guard: 'came_from_public_cluster_link_inputs',
+            actions: 'undo_save_step_data',
+          },
+          {
+            target: 'msk_jump_cluster_authentication_question',
+            guard: 'came_from_private_cluster_link_inputs',
+            actions: 'undo_save_step_data',
+          }
+        ]
       },
     },
     complete: {
@@ -353,22 +440,12 @@ export const migrationInfraWizardConfig: WizardConfig = {
     create_new_subnets: ({ event }) => {
       return event.data?.reuse_existing_subnets === false
     },
-
-
-
-
-    is_dedicated: ({ event }) => {
-      return event.data?.target_cluster_type === 'dedicated'
+    came_from_public_cluster_link_inputs: ({ context }) => {
+      return context.previousStep === 'public_cluster_link_inputs'
     },
-    is_sasl_scram: ({ event }) => {
-      return event.data?.authentication_method === 'sasl_scram'
-    },
-    came_from_dedicated_inputs: ({ context }) => {
-      return context.previousStep === 'dedicated_inputs'
-    },
-    came_from_statefile_inputs: ({ context }) => {
-      return context.previousStep === 'statefile_inputs'
-    },
+    came_from_msk_jump_cluster_authentication_question: ({ context }) => {
+      return context.previousStep === 'msk_jump_cluster_authentication_question'
+    }
   },
 
   actions: {
