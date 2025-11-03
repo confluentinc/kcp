@@ -1,16 +1,36 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
-export function cn(...inputs: ClassValue[]) {
+/**
+ * Utility function to merge Tailwind CSS classes with clsx and tailwind-merge.
+ * Combines class names and resolves conflicting Tailwind utilities.
+ *
+ * @param {...ClassValue} inputs - Class names, objects, or arrays to merge
+ * @returns {string} Merged class string with conflicts resolved
+ */
+export const cn = (...inputs: ClassValue[]) => {
   return twMerge(clsx(inputs))
 }
 
-export function formatRetentionTime(ms: string): {
+/**
+ * Converts milliseconds to time units (seconds, minutes, hours, days).
+ * Handles special case of '-1' which represents infinite retention.
+ *
+ * @param {string} ms - Milliseconds as a string (or '-1' for infinite)
+ * @returns {Object} Time units object with seconds, minutes, hours, and days
+ * @returns {number} return.seconds - Total seconds
+ * @returns {number} return.minutes - Total minutes
+ * @returns {number} return.hours - Total hours
+ * @returns {number} return.days - Total days
+ */
+export const formatRetentionTime = (
+  ms: string
+): {
   seconds: number
   minutes: number
   hours: number
   days: number
-} {
+} => {
   if (ms === '-1') {
     return { seconds: -1, minutes: -1, hours: -1, days: -1 }
   }
@@ -29,7 +49,7 @@ export function formatRetentionTime(ms: string): {
  * @param csvData - The CSV content as a string
  * @param filename - The filename without extension (e.g., 'metrics-cluster-region')
  */
-export function downloadCSV(csvData: string, filename: string): void {
+export const downloadCSV = (csvData: string, filename: string): void => {
   const blob = new Blob([csvData], { type: 'text/csv' })
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -46,7 +66,7 @@ export function downloadCSV(csvData: string, filename: string): void {
  * @param jsonData - The JSON data object or string
  * @param filename - The filename without extension (e.g., 'metrics-cluster-region')
  */
-export function downloadJSON(jsonData: unknown, filename: string): void {
+export const downloadJSON = (jsonData: unknown, filename: string): void => {
   const jsonString = typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData, null, 2)
   const blob = new Blob([jsonString], { type: 'application/json' })
   const url = window.URL.createObjectURL(blob)
@@ -65,7 +85,7 @@ export function downloadJSON(jsonData: unknown, filename: string): void {
  * @param region - The region name (optional)
  * @returns A formatted filename string
  */
-export function generateMetricsFilename(clusterName: string, region?: string): string {
+export const generateMetricsFilename = (clusterName: string, region?: string): string => {
   const cleanClusterName = clusterName.replace(/[^a-zA-Z0-9-_]/g, '-')
   const cleanRegion = region ? region.replace(/[^a-zA-Z0-9-_]/g, '-') : 'unknown'
   return `metrics-${cleanClusterName}-${cleanRegion}`
@@ -76,7 +96,7 @@ export function generateMetricsFilename(clusterName: string, region?: string): s
  * @param region - The region name
  * @returns A formatted filename string
  */
-export function generateCostsFilename(region: string): string {
+export const generateCostsFilename = (region: string): string => {
   const cleanRegion = region.replace(/[^a-zA-Z0-9-_]/g, '-')
   return `costs-${cleanRegion}`
 }
@@ -88,11 +108,11 @@ export function generateCostsFilename(region: string): string {
  * @param disabledLabel - Label to show when disabled (default: 'Disabled')
  * @returns Props object for StatusBadge component
  */
-export function createStatusBadgeProps(
+export const createStatusBadgeProps = (
   enabled: boolean,
   enabledLabel: string = 'Enabled',
   disabledLabel: string = 'Disabled'
-): { enabled: boolean; label: string } {
+): { enabled: boolean; label: string } => {
   return {
     enabled,
     label: enabled ? enabledLabel : disabledLabel,

@@ -5,7 +5,7 @@ interface ClusterTopicsProps {
   kafkaAdminInfo?: KafkaAdminInfo
 }
 
-export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
+export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
   if (!kafkaAdminInfo?.topics) {
     return (
       <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
@@ -163,3 +163,4 @@ export default function ClusterTopics({ kafkaAdminInfo }: ClusterTopicsProps) {
     </div>
   )
 }
+

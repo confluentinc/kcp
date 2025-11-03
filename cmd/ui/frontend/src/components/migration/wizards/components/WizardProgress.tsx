@@ -1,4 +1,4 @@
-export function WizardProgress() {
+export const WizardProgress = () => {
   // Static purple line - no dynamic calculation
   return (
     <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">

@@ -21,9 +21,9 @@ interface ProcessedMetricsData {
 /**
  * Hook to process raw metrics response into formatted data for charts, tables, and CSV
  */
-export function useMetricsDataProcessor(
+export const useMetricsDataProcessor = (
   metricsResponse: MetricsApiResponse | null | undefined
-): ProcessedMetricsData {
+): ProcessedMetricsData => {
   return useMemo(() => {
     if (!metricsResponse?.results || !Array.isArray(metricsResponse.results)) {
       return { tableData: [], csvData: '', chartData: [], uniqueDates: [], metrics: [] }

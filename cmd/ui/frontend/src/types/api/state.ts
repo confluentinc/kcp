@@ -27,6 +27,16 @@ export interface SchemaRegistry {
 }
 
 /**
+ * Processed state structure from backend
+ */
+export interface ProcessedState {
+  regions: Region[]
+  schema_registries?: SchemaRegistry[]
+  kcp_build_info?: unknown
+  timestamp?: string
+}
+
+/**
  * State upload request payload
  */
 export interface StateUploadRequest {

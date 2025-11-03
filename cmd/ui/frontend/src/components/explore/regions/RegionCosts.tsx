@@ -8,18 +8,21 @@ import {
   SelectValue,
 } from '@/components/common/ui/select'
 import { Download } from 'lucide-react'
-import { downloadCSV, downloadJSON, generateCostsFilename } from '@/lib/utils'
+import { generateCostsFilename } from '@/lib/utils'
 import { useRegionCostFilters } from '@/stores/store'
-import { useChartZoom } from '@/lib/useChartZoom'
+import { useChartZoom } from '@/hooks/useChartZoom'
 import { useRegionCostsData } from '@/hooks/useRegionCostsData'
-import DateRangePicker from '@/components/common/DateRangePicker'
-import Tabs from '@/components/common/Tabs'
-import RegionCostsChartTab from './RegionCostsChartTab'
-import RegionCostsTableTab from './RegionCostsTableTab'
-import MetricsCodeViewer from '@/components/explore/clusters/MetricsCodeViewer'
+import { useDateFilters } from '@/hooks/useDateFilters'
+import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
+import { DateRangePicker } from '@/components/common/DateRangePicker'
+import { ErrorDisplay } from '@/components/common/ErrorDisplay'
+import { Tabs } from '@/components/common/Tabs'
+import { RegionCostsChartTab } from './RegionCostsChartTab'
+import { RegionCostsTableTab } from './RegionCostsTableTab'
+import { MetricsCodeViewer } from '@/components/explore/clusters/MetricsCodeViewer'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
-import { TAB_IDS, COST_TYPES } from '@/constants'
+import { TAB_IDS, COST_TYPES, AWS_SERVICES } from '@/constants'
 import type { TabId, CostType } from '@/types'
 
 interface RegionCostsProps {
@@ -29,68 +32,25 @@ interface RegionCostsProps {
   isActive?: boolean
 }
 
-export default function RegionCosts({ region, isActive }: RegionCostsProps) {
+export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
   const [isLoading, setIsLoading] = useState(false)
   const [costsResponse, setCostsResponse] = useState<CostsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedService, setSelectedService] = useState<string>('')
   const [selectedTableService, setSelectedTableService] = useState<string>('')
   const [selectedCostType, setSelectedCostType] = useState<CostType>(COST_TYPES.UNBLENDED_COST)
-  const [defaultsSet, setDefaultsSet] = useState(false)
+  const [serviceDefaultSet, setServiceDefaultSet] = useState(false)
 
   // Region-specific state from Zustand
   const { startDate, endDate, activeCostsTab, setStartDate, setEndDate, setActiveCostsTab } =
     useRegionCostFilters(region.name)
 
-  // Set default dates from metadata when data is first loaded
+  // Reset selected services and flags when region changes
   useEffect(() => {
-    if (defaultsSet || !costsResponse?.metadata) return
-
-    const metaStartDate = costsResponse.metadata.start_date
-    const metaEndDate = costsResponse.metadata.end_date
-
-    // Only set defaults if both dates are valid and no user selection has been made
-    if (
-      !startDate &&
-      !endDate &&
-      metaStartDate &&
-      metaEndDate &&
-      !isNaN(new Date(metaStartDate).getTime()) &&
-      !isNaN(new Date(metaEndDate).getTime())
-    ) {
-      setStartDate(new Date(metaStartDate))
-      setEndDate(new Date(metaEndDate))
-      setDefaultsSet(true)
-    }
-  }, [costsResponse, defaultsSet, startDate, endDate, setStartDate, setEndDate])
-
-  // Custom reset functions that use metadata dates
-  const resetToMetadataDates = () => {
-    if (costsResponse?.metadata) {
-      const metaStartDate = costsResponse.metadata.start_date
-      const metaEndDate = costsResponse.metadata.end_date
-
-      if (metaStartDate && metaEndDate) {
-        setStartDate(new Date(metaStartDate))
-        setEndDate(new Date(metaEndDate))
-        resetZoom() // Reset chart zoom when dates are reset
-      }
-    }
-  }
-
-  const resetStartDateToMetadata = () => {
-    if (costsResponse?.metadata?.start_date) {
-      setStartDate(new Date(costsResponse.metadata.start_date))
-      resetZoom() // Reset chart zoom when start date is reset
-    }
-  }
-
-  const resetEndDateToMetadata = () => {
-    if (costsResponse?.metadata?.end_date) {
-      setEndDate(new Date(costsResponse.metadata.end_date))
-      resetZoom() // Reset chart zoom when end date is reset
-    }
-  }
+    setSelectedService('')
+    setSelectedTableService('')
+    setServiceDefaultSet(false)
+  }, [region.name])
 
   // Process costs data for table, CSV, and chart formats using backend aggregates
   const processedData = useRegionCostsData(costsResponse, selectedTableService, selectedCostType)
@@ -117,27 +77,54 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     },
   })
 
+  // Use date filters hook with metadata for auto-initialization and reset functions
+  const { resetToMetadataDates, resetStartDateToMetadata, resetEndDateToMetadata } = useDateFilters(
+    {
+      startDate,
+      endDate,
+      setStartDate,
+      setEndDate,
+      metadata: costsResponse?.metadata,
+      onReset: resetZoom,
+      autoSetDefaults: true,
+    }
+  )
+
   // Update zoom data when processedData changes
   useEffect(() => {
     updateData(processedData.chartData)
   }, [processedData.chartData, updateData])
 
-  // Set first service as default when data loads
+  // Set Amazon MSK as default chart service when data loads
+  useEffect(() => {
+    if (serviceDefaultSet || processedData.chartOptions.length === 0) return
+
+    // Try to find Amazon MSK in the chart options
+    const mskOption = processedData.chartOptions.find((option) => option.value === AWS_SERVICES.MSK)
+
+    // Default to MSK if available, otherwise use first option
+    if (mskOption) {
+      setSelectedService(mskOption.value)
+      setServiceDefaultSet(true)
+    } else if (processedData.chartOptions.length > 0) {
+      setSelectedService(processedData.chartOptions[0].value)
+      setServiceDefaultSet(true)
+    }
+  }, [processedData.chartOptions, serviceDefaultSet])
+
+  // Set first service as default for table when data loads
   useEffect(() => {
     if (processedData.services.length > 0 && !selectedTableService) {
       setSelectedTableService(processedData.services[0])
     }
   }, [processedData.services, selectedTableService])
 
-  const handleDownloadCSV = () => {
-    const filename = generateCostsFilename(region.name)
-    downloadCSV(processedData.csvData, filename)
-  }
-
-  const handleDownloadJSON = () => {
-    const filename = generateCostsFilename(region.name)
-    downloadJSON(costsResponse, filename)
-  }
+  // Download handlers
+  const { handleDownloadCSV, handleDownloadJSON } = useDownloadHandlers({
+    csvData: processedData.csvData,
+    jsonData: costsResponse,
+    filename: generateCostsFilename(region.name),
+  })
 
   // Fetch costs when component becomes active or dates change
   useEffect(() => {
@@ -167,25 +154,14 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     fetchCosts()
   }, [isActive, region.name, startDate, endDate, selectedCostType])
 
-  // Set default selected service when data loads
-  useEffect(() => {
-    if (processedData.chartOptions.length > 0 && !selectedService) {
-      setSelectedService(processedData.chartOptions[0].value)
-    }
-  }, [processedData.chartOptions, selectedService])
-
   // Show error state
   if (error) {
     return (
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          Region Costs
-        </h3>
-        <div className="text-red-500 dark:text-red-400">
-          <p className="font-medium">Error loading costs:</p>
-          <p className="text-sm mt-1">{error}</p>
-        </div>
-      </div>
+      <ErrorDisplay
+        title="Region Costs"
+        error={error}
+        context="costs"
+      />
     )
   }
 

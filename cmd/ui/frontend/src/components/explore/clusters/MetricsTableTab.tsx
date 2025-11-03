@@ -22,10 +22,7 @@ interface MetricsTableTabProps {
   }
 }
 
-export default function MetricsTableTab({
-  processedData,
-  metricsResponse,
-}: MetricsTableTabProps) {
+export const MetricsTableTab = ({ processedData, metricsResponse }: MetricsTableTabProps) => {
   return (
     <div className="space-y-4 min-w-0">
       <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">

@@ -6,12 +6,12 @@ interface BooleanStatusProps {
   useBadge?: boolean // Kept for backwards compatibility but now always uses badge styling
 }
 
-export default function BooleanStatus({
+export const BooleanStatus = ({
   value,
   trueLabel = 'Enabled',
   falseLabel = 'Disabled',
   unknownLabel = 'Unknown',
-}: BooleanStatusProps) {
+}: BooleanStatusProps) => {
   if (value === undefined) {
     return <span className="text-gray-500 dark:text-gray-400">{unknownLabel}</span>
   }

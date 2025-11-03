@@ -1,43 +1,43 @@
 import { useRef, useState } from 'react'
-import TCOInputsPage from '@/components/tco/TCOInputsPage'
-import Sidebar from '@/components/explore/Sidebar'
-import MigrationAssetsPage from '@/components/migration/MigrationAssets'
-import Explore from '@/components/explore/Explore'
-import AppHeader from '@/components/common/AppHeader'
-import Tabs from '@/components/common/Tabs'
+import { TCOInputs as TCOInputsPage } from '@/components/tco/TCOInputsPage'
+import { Sidebar } from '@/components/explore/Sidebar'
+import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
+import { Explore } from '@/components/explore/Explore'
+import { AppHeader } from '@/components/common/AppHeader'
+import { Tabs } from '@/components/common/Tabs'
 import { useAppStore } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
-import { PageErrorBoundary } from '@/components/common/ErrorBoundary'
+import {
+  PageErrorBoundary,
+  ExploreErrorBoundary,
+  MigrationErrorBoundary,
+  TCOErrorBoundary,
+} from '@/components/common/ErrorBoundary'
 import { TOP_LEVEL_TABS } from '@/constants'
 import type { TopLevelTab } from '@/types'
 
-export default function Home() {
+export const Home = () => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
 
   // Global state from Zustand
-  const {
-    regions,
-    isProcessing,
-    error,
-    setRegions,
-    setSchemaRegistries,
-    setSelectedSummary,
-    setIsProcessing,
-    setError,
-  } = useAppStore()
+  const kcpState = useAppStore((state) => state.kcpState)
+  const isProcessing = useAppStore((state) => state.isProcessing)
+  const error = useAppStore((state) => state.error)
+  const setKcpState = useAppStore((state) => state.setKcpState)
+  const setIsProcessing = useAppStore((state) => state.setIsProcessing)
+  const setError = useAppStore((state) => state.setError)
+  const clearSelection = useAppStore((state) => state.clearSelection)
+  const selectSummary = useAppStore((state) => state.selectSummary)
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
-    // Reset state
-    setRegions([])
-    setSchemaRegistries([])
-    useAppStore.getState().clearSelection()
-    setError(null)
     setIsProcessing(true)
+    setError(null)
+    clearSelection()
 
     const reader = new FileReader()
     reader.onload = async (e) => {
@@ -50,19 +50,14 @@ export default function Home() {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed)
 
-          // Extract the processed regions from the API response
+          // Set the entire processed state in one action
           if (result && result.regions) {
-            const processedRegions = result.regions
-            setRegions(processedRegions)
+            setKcpState(result)
+            setIsProcessing(false)
 
-            // Process schema registries if available
-            if (result.schema_registries) {
-              setSchemaRegistries(result.schema_registries)
-            }
-
-            // Auto-select Summary if regions are available
-            if (processedRegions.length > 0) {
-              setSelectedSummary()
+            // Auto-select summary view if we have regions
+            if (result.regions.length > 0) {
+              selectSummary()
             }
           } else {
             throw new Error('Invalid response format from server')
@@ -72,10 +67,6 @@ export default function Home() {
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to process file')
-        setRegions([])
-        setSchemaRegistries([])
-        useAppStore.getState().clearSelection()
-      } finally {
         setIsProcessing(false)
       }
     }
@@ -107,7 +98,7 @@ export default function Home() {
             className="hidden"
           />
 
-          {regions.length > 0 ? (
+          {kcpState !== null ? (
             <div className="flex flex-1 flex-col">
               <Tabs
                 tabs={[
@@ -121,32 +112,38 @@ export default function Home() {
               />
 
               {activeTopTab === TOP_LEVEL_TABS.EXPLORE && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="flex h-full">
-                    <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
-                      <Sidebar />
+                <ExploreErrorBoundary>
+                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                    <div className="flex h-full">
+                      <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
+                        <Sidebar />
+                      </div>
+                      <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
+                        <Explore />
+                      </main>
                     </div>
-                    <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
-                      <Explore />
-                    </main>
                   </div>
-                </div>
+                </ExploreErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.TCO_INPUTS && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="h-full overflow-auto">
-                    <TCOInputsPage />
+                <TCOErrorBoundary>
+                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                    <div className="h-full overflow-auto">
+                      <TCOInputsPage />
+                    </div>
                   </div>
-                </div>
+                </TCOErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.MIGRATION_ASSETS && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="h-full overflow-auto">
-                    <MigrationAssetsPage />
+                <MigrationErrorBoundary>
+                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                    <div className="h-full overflow-auto">
+                      <MigrationAssetsPage />
+                    </div>
                   </div>
-                </div>
+                </MigrationErrorBoundary>
               )}
             </div>
           ) : (
