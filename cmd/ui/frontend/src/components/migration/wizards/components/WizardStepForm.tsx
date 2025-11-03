@@ -64,14 +64,16 @@ export function WizardStepForm({
               Back
             </Button>
           )}
-          <Button
-            type="button"
-            onClick={onClose}
-            variant="outline"
-            disabled={isLoading || !onClose}
-          >
-            Close
-          </Button>
+          {onClose && (
+            <Button
+              type="button"
+              onClick={onClose}
+              variant="outline"
+              disabled={isLoading}
+            >
+              Close
+            </Button>
+          )}
           <Button
             type="submit"
             className="flex-1"

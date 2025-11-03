@@ -34,11 +34,12 @@ export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: 
 
   const currentStateId = state.value as string
   const currentStep = (config.states[currentStateId] as { meta?: unknown })?.meta
+  
+  // Check if we're on the initial/first step
+  const isFirstStep = currentStateId === config.initial
 
-  // Calculate progress based on visited steps
+  // Get context for back navigation
   const context = state.context as WizardContext
-  const visitedSteps = context.visitedSteps || []
-  const currentStepNumber = visitedSteps.length + 1 // Current step is the next one after visited
 
   const handleFormSubmit = async (formData: Record<string, unknown>) => {
     // Send the event with form data
@@ -137,8 +138,8 @@ export function Wizard({ config, clusterKey, wizardType, onComplete, onClose }: 
         formData={stepData}
         onSubmit={handleFormSubmit}
         onBack={handleBack}
-        onClose={onClose}
-        canGoBack={currentStepNumber > 1}
+        onClose={isFirstStep ? onClose : undefined}
+        canGoBack={!isFirstStep}
         isLoading={isLoading}
       />
     </div>

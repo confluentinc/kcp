@@ -107,6 +107,7 @@ export default function ClusterReport({ cluster, regionName, regionData }: Clust
                 cluster={{
                   name: cluster.name,
                   region: regionName,
+                  arn: cluster.arn || cluster.aws_client_information?.msk_cluster_config?.ClusterArn,
                 }}
                 isActive={activeTab === CLUSTER_REPORT_TABS.METRICS}
               />

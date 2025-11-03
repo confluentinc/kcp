@@ -17,27 +17,22 @@ export default function Home() {
   const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
 
   // Global state from Zustand
-  const {
-    regions,
-    isProcessing,
-    error,
-    setRegions,
-    setSchemaRegistries,
-    setSelectedSummary,
-    setIsProcessing,
-    setError,
-  } = useAppStore()
+  const kcpState = useAppStore((state) => state.kcpState)
+  const isProcessing = useAppStore((state) => state.isProcessing)
+  const error = useAppStore((state) => state.error)
+  const setKcpState = useAppStore((state) => state.setKcpState)
+  const setIsProcessing = useAppStore((state) => state.setIsProcessing)
+  const setError = useAppStore((state) => state.setError)
+  const clearSelection = useAppStore((state) => state.clearSelection)
+  const selectSummary = useAppStore((state) => state.selectSummary)
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
-    // Reset state
-    setRegions([])
-    setSchemaRegistries([])
-    useAppStore.getState().clearSelection()
-    setError(null)
     setIsProcessing(true)
+    setError(null)
+    clearSelection()
 
     const reader = new FileReader()
     reader.onload = async (e) => {
@@ -50,19 +45,14 @@ export default function Home() {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed)
 
-          // Extract the processed regions from the API response
+          // Set the entire processed state in one action
           if (result && result.regions) {
-            const processedRegions = result.regions
-            setRegions(processedRegions)
+            setKcpState(result)
+            setIsProcessing(false)
 
-            // Process schema registries if available
-            if (result.schema_registries) {
-              setSchemaRegistries(result.schema_registries)
-            }
-
-            // Auto-select Summary if regions are available
-            if (processedRegions.length > 0) {
-              setSelectedSummary()
+            // Auto-select summary view if we have regions
+            if (result.regions.length > 0) {
+              selectSummary()
             }
           } else {
             throw new Error('Invalid response format from server')
@@ -72,10 +62,6 @@ export default function Home() {
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to process file')
-        setRegions([])
-        setSchemaRegistries([])
-        useAppStore.getState().clearSelection()
-      } finally {
         setIsProcessing(false)
       }
     }
@@ -107,7 +93,7 @@ export default function Home() {
             className="hidden"
           />
 
-          {regions.length > 0 ? (
+          {kcpState !== null ? (
             <div className="flex flex-1 flex-col">
               <Tabs
                 tabs={[

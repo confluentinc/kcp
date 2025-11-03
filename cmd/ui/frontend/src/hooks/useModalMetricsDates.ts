@@ -5,10 +5,6 @@ interface ModalMetricsDatesConfig {
   isActive: boolean
   clusterName: string
   clusterRegion: string
-  clusterMetadata?: {
-    start_date?: string
-    end_date?: string
-  }
   metricsResponseMetadata?: {
     start_date?: string
     end_date?: string
@@ -31,7 +27,6 @@ export function useModalMetricsDates({
   isActive,
   clusterName,
   clusterRegion,
-  clusterMetadata,
   metricsResponseMetadata,
 }: ModalMetricsDatesConfig): ModalMetricsDatesReturn {
   const [modalStartDate, setModalStartDate] = useState<Date | undefined>(undefined)
@@ -39,38 +34,15 @@ export function useModalMetricsDates({
   const modalDatesResetRef = useRef(false)
   const previousModalStateRef = useRef(false)
 
-  // Initialize modal dates from cluster metadata if available (from state file)
-  useEffect(() => {
-    if (inModal && clusterMetadata?.start_date && clusterMetadata?.end_date) {
-      const metaStartDate = clusterMetadata.start_date
-      const metaEndDate = clusterMetadata.end_date
+  // Note: Initialization is now handled by useDateFilters hook in ClusterMetrics
+  // This hook just manages the local state for modal mode
 
-      if (
-        !isNaN(new Date(metaStartDate).getTime()) &&
-        !isNaN(new Date(metaEndDate).getTime()) &&
-        !modalStartDate &&
-        !modalEndDate
-      ) {
-        setModalStartDate(new Date(metaStartDate))
-        setModalEndDate(new Date(metaEndDate))
-      }
-    }
-  }, [
-    inModal,
-    clusterMetadata?.start_date,
-    clusterMetadata?.end_date,
-    modalStartDate,
-    modalEndDate,
-  ])
-
-  // Reset modal dates when cluster changes
+  // Reset modal dates when cluster changes (but not when modal state changes)
   useEffect(() => {
     modalDatesResetRef.current = false
-    if (inModal) {
-      setModalStartDate(undefined)
-      setModalEndDate(undefined)
-    }
-  }, [clusterName, clusterRegion, inModal])
+    setModalStartDate(undefined)
+    setModalEndDate(undefined)
+  }, [clusterName, clusterRegion])
 
   // Reset dates to metadata when opened in modal mode (use local state, not store)
   useEffect(() => {

@@ -19,7 +19,7 @@ import RegionCostsTableTab from './RegionCostsTableTab'
 import MetricsCodeViewer from '@/components/explore/clusters/MetricsCodeViewer'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
-import { TAB_IDS, COST_TYPES } from '@/constants'
+import { TAB_IDS, COST_TYPES, AWS_SERVICES } from '@/constants'
 import type { TabId, CostType } from '@/types'
 
 interface RegionCostsProps {
@@ -37,10 +37,18 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
   const [selectedTableService, setSelectedTableService] = useState<string>('')
   const [selectedCostType, setSelectedCostType] = useState<CostType>(COST_TYPES.UNBLENDED_COST)
   const [defaultsSet, setDefaultsSet] = useState(false)
+  const [serviceDefaultSet, setServiceDefaultSet] = useState(false)
 
   // Region-specific state from Zustand
   const { startDate, endDate, activeCostsTab, setStartDate, setEndDate, setActiveCostsTab } =
     useRegionCostFilters(region.name)
+
+  // Reset selected services and flags when region changes
+  useEffect(() => {
+    setSelectedService('')
+    setSelectedTableService('')
+    setServiceDefaultSet(false)
+  }, [region.name])
 
   // Set default dates from metadata when data is first loaded
   useEffect(() => {
@@ -122,7 +130,26 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
     updateData(processedData.chartData)
   }, [processedData.chartData, updateData])
 
-  // Set first service as default when data loads
+  // Set Amazon MSK as default chart service when data loads
+  useEffect(() => {
+    if (serviceDefaultSet || processedData.chartOptions.length === 0) return
+
+    // Try to find Amazon MSK in the chart options
+    const mskOption = processedData.chartOptions.find(
+      (option) => option.value === AWS_SERVICES.MSK
+    )
+    
+    // Default to MSK if available, otherwise use first option
+    if (mskOption) {
+      setSelectedService(mskOption.value)
+      setServiceDefaultSet(true)
+    } else if (processedData.chartOptions.length > 0) {
+      setSelectedService(processedData.chartOptions[0].value)
+      setServiceDefaultSet(true)
+    }
+  }, [processedData.chartOptions, serviceDefaultSet])
+
+  // Set first service as default for table when data loads
   useEffect(() => {
     if (processedData.services.length > 0 && !selectedTableService) {
       setSelectedTableService(processedData.services[0])
@@ -166,13 +193,6 @@ export default function RegionCosts({ region, isActive }: RegionCostsProps) {
 
     fetchCosts()
   }, [isActive, region.name, startDate, endDate, selectedCostType])
-
-  // Set default selected service when data loads
-  useEffect(() => {
-    if (processedData.chartOptions.length > 0 && !selectedService) {
-      setSelectedService(processedData.chartOptions[0].value)
-    }
-  }, [processedData.chartOptions, selectedService])
 
   // Show error state
   if (error) {

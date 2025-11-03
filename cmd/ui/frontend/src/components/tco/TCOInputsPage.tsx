@@ -1,24 +1,37 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Button } from '@/components/common/ui/button'
 import { Modal } from '@/components/common/ui/modal'
-import { useAppStore } from '@/stores/store'
+import { useAppStore, useRegions } from '@/stores/store'
 import { ExternalLink } from 'lucide-react'
 import ClusterMetrics from '@/components/explore/clusters/ClusterMetrics'
 import { DEFAULTS } from '@/constants'
+import type { Cluster } from '@/types'
+
+// Helper to extract cluster ARN
+function getClusterArn(cluster: Cluster): string | undefined {
+  return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
+}
 
 export default function TCOInputs() {
-  const { regions, tcoWorkloadData, setTCOWorkloadValue, initializeTCOData } = useAppStore()
+  const regions = useRegions()
+  const tcoWorkloadData = useAppStore((state) => state.tcoWorkloadData)
+  const setTCOWorkloadValue = useAppStore((state) => state.setTCOWorkloadValue)
+  const initializeTCOData = useAppStore((state) => state.initializeTCOData)
 
   // Get all clusters from all regions
   const allClusters = useMemo(() => {
-    const clusters: Array<{ name: string; regionName: string; key: string }> = []
+    const clusters: Array<{ name: string; regionName: string; arn: string; key: string }> = []
     regions.forEach((region) => {
       region.clusters?.forEach((cluster) => {
-        clusters.push({
-          name: cluster.name,
-          regionName: region.name,
-          key: `${region.name}:${cluster.name}`,
-        })
+        const arn = getClusterArn(cluster)
+        if (arn) {
+          clusters.push({
+            name: cluster.name,
+            regionName: region.name,
+            arn: arn,
+            key: arn, // Use ARN as key
+          })
+        }
       })
     })
     return clusters
@@ -32,6 +45,7 @@ export default function TCOInputs() {
     cluster: {
       name: string
       region: string
+      arn?: string
       metrics?: {
         metadata?: {
           start_date?: string
@@ -116,6 +130,7 @@ export default function TCOInputs() {
         cluster: {
           name: clusterObj.name,
           region: region.name,
+          arn: cluster.arn, // Include the ARN from allClusters
           metrics: clusterObj.metrics,
         },
         preselectedMetric,

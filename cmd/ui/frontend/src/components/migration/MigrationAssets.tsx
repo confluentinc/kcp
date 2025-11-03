@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react'
-import { useAppStore } from '@/stores/store'
+import { useAppStore, useRegions } from '@/stores/store'
 import { Modal } from '@/components/common/ui/modal'
 import { Button } from '@/components/common/ui/button'
 import { TerraformCodeViewer } from './TerraformCodeViewer'
 import {
   Wizard,
-  targetInfraWizardConfig,
-  migrationInfraWizardConfig,
-  migrationScriptsWizardConfig,
+  createTargetInfraWizardConfig,
+  createMigrationInfraWizardConfig,
+  createMigrationScriptsWizardConfig,
 } from '@/components/migration/wizards'
 import type { Cluster, WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
 import { Server, Network, Code, CheckCircle2, ArrowRight } from 'lucide-react'
+
+// Helper to extract cluster ARN
+function getClusterArn(cluster: Cluster): string | undefined {
+  return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
+}
 
 // Type definitions for File System Access API
 declare global {
@@ -37,7 +42,7 @@ declare global {
 }
 
 export default function MigrationAssets() {
-  const regions = useAppStore((state) => state.regions)
+  const regions = useRegions()
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [wizardType, setWizardType] = useState<WizardType | null>(null)
   const [selectedClusterForWizard, setSelectedClusterForWizard] = useState<{
@@ -75,8 +80,10 @@ export default function MigrationAssets() {
   // Expand first cluster by default when clusters are loaded
   useEffect(() => {
     if (allClusters.length > 0 && !expandedCluster) {
-      const firstClusterKey = `${allClusters[0].regionName}-${allClusters[0].cluster.name}`
-      setExpandedCluster(firstClusterKey)
+      const firstClusterArn = getClusterArn(allClusters[0].cluster)
+      if (firstClusterArn) {
+        setExpandedCluster(firstClusterArn)
+      }
     }
   }, [allClusters, expandedCluster, setExpandedCluster])
 
@@ -511,13 +518,14 @@ export default function MigrationAssets() {
       {allClusters.length > 0 ? (
         <div className="space-y-4">
           {allClusters.map(({ cluster, regionName }) => {
-            const clusterKey = `${regionName}-${cluster.name}`
+            const clusterArn = getClusterArn(cluster)
+            if (!clusterArn) return null // Skip clusters without ARN
 
-            const isExpanded = expandedCluster === clusterKey
+            const isExpanded = expandedCluster === clusterArn
 
             return (
               <div
-                key={clusterKey}
+                key={clusterArn}
                 className={`bg-white dark:bg-card rounded-lg border overflow-hidden transition-all ${
                   isExpanded
                     ? 'border-accent shadow-md dark:border-accent'
@@ -531,7 +539,7 @@ export default function MigrationAssets() {
                       ? 'bg-accent/5 dark:bg-accent/10'
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
-                  onClick={() => toggleCluster(clusterKey)}
+                  onClick={() => toggleCluster(clusterArn)}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-6">
@@ -550,7 +558,7 @@ export default function MigrationAssets() {
                 {/* Migration Flow - Only shown when expanded */}
                 {isExpanded && (
                   <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card overflow-visible pt-4">
-                    {renderMigrationFlow(clusterKey, cluster, regionName)}
+                    {renderMigrationFlow(clusterArn, cluster, regionName)}
                   </div>
                 )}
               </div>
@@ -588,40 +596,43 @@ export default function MigrationAssets() {
         >
           {wizardType === WIZARD_TYPES.TARGET_INFRA && selectedClusterForWizard && (
             <Wizard
-              config={targetInfraWizardConfig}
-              clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
+              config={createTargetInfraWizardConfig(
+                getClusterArn(selectedClusterForWizard.cluster) || ''
+              )}
+              clusterKey={getClusterArn(selectedClusterForWizard.cluster) || ''}
               wizardType={wizardType}
-              onComplete={() =>
-                handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
-                )
-              }
+              onComplete={() => {
+                const arn = getClusterArn(selectedClusterForWizard.cluster)
+                if (arn) handleWizardComplete(arn)
+              }}
               onClose={handleCloseWizard}
             />
           )}
           {wizardType === WIZARD_TYPES.MIGRATION_INFRA && selectedClusterForWizard && (
             <Wizard
-              config={migrationInfraWizardConfig}
-              clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
+              config={createMigrationInfraWizardConfig(
+                getClusterArn(selectedClusterForWizard.cluster) || ''
+              )}
+              clusterKey={getClusterArn(selectedClusterForWizard.cluster) || ''}
               wizardType={wizardType}
-              onComplete={() =>
-                handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
-                )
-              }
+              onComplete={() => {
+                const arn = getClusterArn(selectedClusterForWizard.cluster)
+                if (arn) handleWizardComplete(arn)
+              }}
               onClose={handleCloseWizard}
             />
           )}
           {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && selectedClusterForWizard && (
             <Wizard
-              config={migrationScriptsWizardConfig}
-              clusterKey={`${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`}
+              config={createMigrationScriptsWizardConfig(
+                getClusterArn(selectedClusterForWizard.cluster) || ''
+              )}
+              clusterKey={getClusterArn(selectedClusterForWizard.cluster) || ''}
               wizardType={wizardType}
-              onComplete={() =>
-                handleWizardComplete(
-                  `${selectedClusterForWizard.regionName}-${selectedClusterForWizard.cluster.name}`
-                )
-              }
+              onComplete={() => {
+                const arn = getClusterArn(selectedClusterForWizard.cluster)
+                if (arn) handleWizardComplete(arn)
+              }}
               onClose={handleCloseWizard}
             />
           )}

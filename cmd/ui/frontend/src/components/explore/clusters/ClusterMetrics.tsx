@@ -17,11 +17,13 @@ import MetricsTableTab from './MetricsTableTab'
 import MetricsCodeViewer from './MetricsCodeViewer'
 import { TAB_IDS } from '@/constants'
 import type { TabId } from '@/types'
+import type { ApiMetadata } from '@/types/api/common'
 
 interface ClusterMetricsProps {
   cluster: {
     name: string
     region?: string
+    arn?: string
     metrics?: {
       metadata?: {
         start_date?: string
@@ -43,23 +45,13 @@ export default function ClusterMetrics({
   modalWorkloadAssumption,
 }: ClusterMetricsProps) {
   // Get TCO store actions and preselected metric
-  const { setTCOWorkloadValue, preselectedMetric } = useAppStore()
+  const setTCOWorkloadValue = useAppStore((state) => state.setTCOWorkloadValue)
+  const preselectedMetric = useAppStore((state) => state.preselectedMetric)
   const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
 
   // Cluster-specific date state from Zustand (only used in non-modal mode)
-  const storeDateFilters = useClusterDateFilters(cluster.region || 'unknown', cluster.name)
-
-  // Fetch metrics data (using store dates for non-modal, will refetch when dates change)
-  const { metricsResponse, isLoading, error } = useClusterMetricsFetch({
-    isActive: isActive ?? false,
-    clusterName: cluster.name,
-    clusterRegion: cluster.region || 'unknown',
-    startDate: storeDateFilters.startDate,
-    endDate: storeDateFilters.endDate,
-  })
-
-  // Process metrics data
-  const processedData = useMetricsDataProcessor(metricsResponse)
+  // Use ARN if available, otherwise fall back to region-name combo for backward compatibility
+  const storeDateFilters = useClusterDateFilters(cluster.arn || `${cluster.region || 'unknown'}-${cluster.name}`)
 
   // Modal date management with separate hook
   const { modalStartDate, modalEndDate, setModalStartDate, setModalEndDate } = useModalMetricsDates(
@@ -68,8 +60,7 @@ export default function ClusterMetrics({
       isActive: isActive ?? false,
       clusterName: cluster.name,
       clusterRegion: cluster.region || 'unknown',
-      clusterMetadata: cluster.metrics?.metadata,
-      metricsResponseMetadata: metricsResponse?.metadata,
+      metricsResponseMetadata: undefined, // Will be set after first fetch
     }
   )
 
@@ -78,6 +69,18 @@ export default function ClusterMetrics({
   const endDate = inModal ? modalEndDate : storeDateFilters.endDate
   const setStartDate = inModal ? setModalStartDate : storeDateFilters.setStartDate
   const setEndDate = inModal ? setModalEndDate : storeDateFilters.setEndDate
+
+  // Fetch metrics data (using correct dates based on mode)
+  const { metricsResponse, isLoading, error } = useClusterMetricsFetch({
+    isActive: isActive ?? false,
+    clusterName: cluster.name,
+    clusterRegion: cluster.region || 'unknown',
+    startDate: startDate,
+    endDate: endDate,
+  })
+
+  // Process metrics data
+  const processedData = useMetricsDataProcessor(metricsResponse)
 
   // Initialize chart zoom (now all date setters are available)
   const {
@@ -101,15 +104,16 @@ export default function ClusterMetrics({
   })
 
   // Use date filters hook with metadata for auto-initialization and reset functions
+  // In modal mode, use cluster metadata; in non-modal mode, use response metadata
   const { resetToMetadataDates, resetStartDateToMetadata, resetEndDateToMetadata } = useDateFilters(
     {
       startDate,
       endDate,
       setStartDate,
       setEndDate,
-      metadata: metricsResponse?.metadata,
+      metadata: (inModal ? cluster.metrics?.metadata : metricsResponse?.metadata) as ApiMetadata | null | undefined,
       onReset: resetZoom,
-      autoSetDefaults: !inModal,
+      autoSetDefaults: true, // Always auto-set from metadata
     }
   )
 
@@ -130,7 +134,8 @@ export default function ClusterMetrics({
 
   // Handle transferring values to TCO inputs
   const handleTransferToTCO = (value: number, statType: 'min' | 'avg' | 'max') => {
-    const clusterKey = `${cluster.region || 'unknown'}:${cluster.name}`
+    // Use ARN if available, otherwise fall back to region:name format
+    const clusterKey = cluster.arn || `${cluster.region || 'unknown'}:${cluster.name}`
 
     // Convert bytes to MB for throughput metrics, but use raw value for partitions
     const convertedValue =
