@@ -2,7 +2,7 @@ import type { WizardConfig } from './types'
 import { getClusterDataByArn } from '@/stores/store'
 
 export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConfig => {
-  getClusterDataByArn(clusterArn)
+  const cluster = getClusterDataByArn(clusterArn)
 
   const instanceType = cluster?.metrics?.metadata?.instance_type || 'kafka.m5.xlarge'
 
