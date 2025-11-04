@@ -26,9 +26,7 @@ export const ClusterAccordion = ({
       {/* Cluster Header Row - Clickable */}
       <div
         className={`px-6 py-4 border-b border-gray-200 dark:border-border cursor-pointer transition-colors ${
-          isExpanded
-            ? 'bg-accent/5 dark:bg-accent/10'
-            : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+          isExpanded ? 'bg-accent/5 dark:bg-accent/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
         }`}
         onClick={onToggle}
       >
@@ -57,4 +55,3 @@ export const ClusterAccordion = ({
     </div>
   )
 }
-

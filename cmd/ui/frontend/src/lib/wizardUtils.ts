@@ -36,4 +36,3 @@ export const getWizardFilesTitle = (wizardType: WizardType): string => {
       return 'Migration Scripts Files'
   }
 }
-

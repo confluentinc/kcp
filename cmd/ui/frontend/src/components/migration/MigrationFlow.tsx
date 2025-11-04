@@ -64,9 +64,7 @@ export const MigrationFlow = ({
   return (
     <div className="py-6 px-6">
       <div className="mb-6">
-        <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300">
-          Migration Steps
-        </h3>
+        <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300">Migration Steps</h3>
       </div>
       <div className="flex items-stretch justify-between gap-4">
         {phases.map((phase, index) => {
@@ -88,4 +86,3 @@ export const MigrationFlow = ({
     </div>
   )
 }
-
