@@ -81,7 +81,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               msk_sasl_scram_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
-                default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK bootstrap servers from statefile.'
+                default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringPublicSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (public) from statefile.'
               },
             },
             required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'msk_cluster_id', 'msk_sasl_scram_bootstrap_servers'],
@@ -170,7 +170,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'VPC ID',
                 default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
               },
-              existing_subnets: {
+              private_link_existing_subnets_cidr: {
                 type: 'array',
                 title: 'Existing subnet IDs',
                 description: 'Retrieved from the statefile, these can be modified to other existing subnet IDs in the MSK VPC.',
@@ -184,13 +184,13 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 ['failed to retrieve existing subnet IDs from statefile.', '', ''],
               },
             },
-            required: ['vpc_id', 'existing_subnets'],
+            required: ['vpc_id', 'private_link_existing_subnets_cidr'],
           },
           uiSchema: {
             vpc_id: {
               'ui:disabled': true,
             },
-            existing_subnets: {
+            private_link_existing_subnets_cidr: {
               'ui:placeholder': 'e.g., subnet-xxxx,subnet-xxxx,subnet-xxxx',
               'ui:options': {
                 addable: false,
@@ -202,7 +202,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
         },
         on: {
           NEXT: {
-            target: 'confirmation',
+            target: 'private_link_internet_gateway_question',
             actions: 'save_step_data',
           },
           BACK: {
@@ -223,7 +223,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'VPC ID',
                 default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
               },
-              new_subnets: {
+              private_link_new_subnets_cidr: {
                 type: 'array',
                 title: 'New subnet CIDR ranges',
                 items: {
@@ -234,13 +234,13 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 default: ['', '', ''],
               },
             },
-            required: ['vpc_id', 'new_subnets'],
+            required: ['vpc_id', 'private_link_new_subnets_cidr'],
           },
           uiSchema: {
             vpc_id: {
               'ui:disabled': true,
             },
-            new_subnets: {
+            private_link_new_subnets_cidr: {
               items: {
                 'ui:placeholder': 'e.g., 10.0.1.0/24',
               },
@@ -315,11 +315,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'Instance Type',
                 default: instanceType.replace('kafka.', '') // Remove the `kafka.` prefix from MSK instance type to get its EC2 equivalent.
               },
-              jump_cluster_broker_total: {
-                type: 'number',
-                title: 'Broker Total',
-                default: cluster?.aws_client_information?.nodes?.filter(node => node.NodeType === 'BROKER').length || 3
-              },
               jump_cluster_broker_storage: {
                 type: 'number',
                 title: 'Broker Storage per Broker (GB)',
@@ -328,19 +323,20 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               jump_cluster_broker_subnet_cidr: {
                 type: 'array',
                 title: 'Broker Subnet CIDR Range',
+                description: 'The number of subnets to create determines the number of jump cluster brokers that will be created.',
                 items: {
                   type: 'string',
                 },
-                minItems: 3,
-                maxItems: cluster?.aws_client_information?.nodes?.filter(node => node.NodeType === 'BROKER').length || 3,
+                minItems: cluster?.aws_client_information?.nodes?.filter(node => node.NodeType === 'BROKER').length || 3,
                 default: ['', '', ''],
               },
-              ansible_instance_subnet_cidr: {
+              jump_cluster_setup_host_subnet_cidr: {
                 type: 'string',
-                title: 'Ansible Instance Subnet CIDR', // Better name for user with no context.
+                title: 'Jump Cluster Setup Host',
+                description: 'The subnet CIDR range for EC2 instance that will provision the jump cluster instances.',
               }
             },
-            required: ['vpc_id', 'jump_cluster_instance_type', 'jump_cluster_broker_total', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'ansible_instance_subnet_cidr'],
+            required: ['vpc_id', 'jump_cluster_instance_type', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'jump_cluster_setup_host_subnet_cidr'],
             },
           uiSchema: {
             vpc_id: {
@@ -348,9 +344,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
             jump_cluster_instance_type: {
               'ui:placeholder': 'e.g., m5.large',
-            },
-            jump_cluster_broker_total: {
-              'ui:placeholder': 'e.g., 3',
             },
             jump_cluster_broker_storage: {
               'ui:placeholder': 'e.g., 500',
@@ -363,7 +356,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 removable: true,
               },
             },
-            ansible_instance_subnet_cidr: {
+            jump_cluster_setup_host_subnet_cidr: {
               'ui:placeholder': 'e.g., 10.0.4.0/24',
             },
           },
@@ -386,6 +379,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
+              msk_cluster_id: {
+                type: 'string',
+                title: 'MSK Cluster ID',
+                default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
+              },
               msk_jump_cluster_auth_type: {
                 type: 'string',
                 title: 'MSK Jump Cluster Authentication Type',
@@ -393,11 +391,86 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 enumNames: ['SASL/SCRAM', 'IAM'],
               },
             },
-            required: ['msk_jump_cluster_auth_type'],
+            required: ['msk_cluster_id', 'msk_jump_cluster_auth_type'],
           },
           uiSchema: {
+            msk_cluster_id: {
+              'ui:disabled': true,
+            },
             msk_jump_cluster_auth_type: {
               'ui:widget': 'radio',
+            }
+          },
+        },
+        on: {
+          NEXT: [
+            {
+              target: 'msk_jump_cluster_authentication_sasl_scram',
+              guard: 'selected_msk_jump_cluster_authentication_sasl_scram',
+              actions: 'save_step_data',
+            },
+            {
+              target: 'msk_jump_cluster_authentication_iam',
+              guard: 'selected_msk_jump_cluster_authentication_iam',
+              actions: 'save_step_data',
+            },
+          ],
+          BACK: {
+            target: 'jump_cluster_networking_inputs',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
+      msk_jump_cluster_authentication_sasl_scram: {
+        meta: {
+          title: 'Private Migration | Jump Cluster - Authentication (SASL/SCRAM)',
+          description: 'How will the jump cluster authenticate to the MSK cluster?',
+          schema: {
+            type: 'object',
+            properties: {
+              msk_sasl_scram_bootstrap_servers: {
+                type: 'string',
+                title: 'MSK Bootstrap Servers',
+                default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (private) from statefile.'
+              },
+            },
+            required: ['msk_sasl_scram_bootstrap_servers'],
+          },
+          uiSchema: {
+            msk_sasl_scram_bootstrap_servers: {
+              'ui:disabled': true,
+            },
+          },
+        },
+        on: {
+          NEXT: {
+            target: 'confirmation',
+            actions: 'save_step_data',
+          },
+          BACK: {
+            target: 'msk_jump_cluster_authentication_question',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
+      msk_jump_cluster_authentication_iam: {
+        meta: {
+          title: 'Private Migration | Jump Cluster - Authentication (IAM)',
+          description: 'How will the jump cluster authenticate to the MSK cluster?',
+          schema: {
+            type: 'object',
+            properties: {
+              msk_iam_bootstrap_servers: {
+                type: 'string',
+                title: 'MSK Bootstrap Servers',
+                default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslIam || 'failed to retrieve MSK IAM bootstrap servers (private) from statefile.'
+              },
+            },
+            required: ['msk_iam_bootstrap_servers'],
+          },
+          uiSchema: {
+            msk_iam_bootstrap_servers: {
+              'ui:disabled': true,
             },
           },
         },
@@ -428,10 +501,15 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'undo_save_step_data',
             },
             {
-              target: 'msk_jump_cluster_authentication_question',
-              guard: 'came_from_private_cluster_link_inputs',
+              target: 'msk_jump_cluster_authentication_sasl_scram',
+              guard: 'came_from_msk_jump_cluster_authentication_sasl_scram',
               actions: 'undo_save_step_data',
-            }
+            },
+            {
+              target: 'msk_jump_cluster_authentication_iam',
+              guard: 'came_from_msk_jump_cluster_authentication_iam',
+              actions: 'undo_save_step_data',
+            },
           ]
         },
       },
@@ -460,14 +538,22 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       came_from_public_cluster_link_inputs: ({ context }) => {
         return context.previousStep === 'public_cluster_link_inputs'
       },
-      came_from_msk_jump_cluster_authentication_question: ({ context }) => {
-        return context.previousStep === 'msk_jump_cluster_authentication_question'
-      }
-    },
-
-      actions: {
-        save_step_data: 'save_step_data',
-        undo_save_step_data: 'undo_save_step_data',
+      selected_msk_jump_cluster_authentication_sasl_scram: ({ event }) => {
+        return event.data?.msk_jump_cluster_auth_type === 'sasl_scram'
       },
-    }
+      selected_msk_jump_cluster_authentication_iam: ({ event }) => {
+        return event.data?.msk_jump_cluster_auth_type === 'iam'
+      },
+      came_from_msk_jump_cluster_authentication_sasl_scram: ({ context }) => {
+        return context.previousStep === 'msk_jump_cluster_authentication_sasl_scram'
+      },
+      came_from_msk_jump_cluster_authentication_iam: ({ context }) => {
+        return context.previousStep === 'msk_jump_cluster_authentication_iam'
+      },
+    },
+    actions: {
+      save_step_data: 'save_step_data',
+      undo_save_step_data: 'undo_save_step_data',
+    },
   }
+}
