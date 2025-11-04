@@ -452,6 +452,7 @@ type ProcessedCostBreakdown struct {
 type ProcessedCluster struct {
 	Name                        string                      `json:"name"`
 	Arn                         string                      `json:"arn"`
+	Region                      string                      `json:"region"`
 	ClusterMetrics              ProcessedClusterMetrics     `json:"metrics"` // Flattened from raw CloudWatch metrics
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`

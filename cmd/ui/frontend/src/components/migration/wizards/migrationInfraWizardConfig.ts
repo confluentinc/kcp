@@ -5,7 +5,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
   const cluster = getClusterDataByArn(clusterArn)
   console.log('Migration Infra Wizard - Cluster:', cluster)
 
-  const instanceType = cluster?.aws_client_information?.msk_cluster_config?.Provisioned?.BrokerNodeGroupInfo?.InstanceType || 'kafka.m5.xlarge'
+  const instanceType = cluster?.metrics?.metadata?.instance_type || 'kafka.m5.xlarge'
 
   return {
     id: 'migration-infra-wizard',
@@ -433,11 +433,19 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (private) from statefile.'
               },
+              msk_region: {
+                type: 'string',
+                title: 'MSK Region',
+                default: cluster?.region || 'failed to retrieve AWS region from statefile.'
+              }
             },
-            required: ['msk_sasl_scram_bootstrap_servers'],
+            required: ['msk_sasl_scram_bootstrap_servers', 'msk_region'],
           },
           uiSchema: {
             msk_sasl_scram_bootstrap_servers: {
+              'ui:disabled': true,
+            },
+            msk_region: {
               'ui:disabled': true,
             },
           },
@@ -460,16 +468,32 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
+              jump_cluster_iam_auth_role_name: {
+                type: 'string',
+                title: 'Instance Role Name',
+                description: 'The name of the pre-configured IAM role that will be used to authenticate the cluster link between MSK and the jump cluster.'
+              },
               msk_iam_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslIam || 'failed to retrieve MSK IAM bootstrap servers (private) from statefile.'
               },
+              msk_region: {
+                type: 'string',
+                title: 'MSK Region',
+                default: cluster?.region || 'failed to retrieve AWS region from statefile.'
+              }
             },
-            required: ['msk_iam_bootstrap_servers'],
+            required: ['jump_cluster_iam_auth_role_name', 'msk_iam_bootstrap_servers', 'msk_region'],
           },
           uiSchema: {
+            jump_cluster_iam_auth_role_name: {
+              'uiwidget': 'input',
+            },
             msk_iam_bootstrap_servers: {
+              'ui:disabled': true,
+            },
+            msk_region: {
               'ui:disabled': true,
             },
           },

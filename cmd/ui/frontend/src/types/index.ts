@@ -6,6 +6,7 @@ import type { ApiMetadata } from './api/common'
 export interface Cluster {
   name: string
   arn?: string
+  region: string
   metrics?: {
     metadata: ApiMetadata
     results: Array<{
