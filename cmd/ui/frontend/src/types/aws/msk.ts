@@ -48,8 +48,8 @@ export interface BrokerNodeGroupInfo {
  */
 export interface CurrentBrokerSoftwareInfo {
   KafkaVersion?: string
-  ConfigurationArn?: string
-  ConfigurationRevision?: number
+  ConfigurationArn?: string | null
+  ConfigurationRevision?: number | null
 }
 
 /**
@@ -149,6 +149,68 @@ export interface MSKProvisionedCluster {
   EnhancedMonitoring?: string
   LoggingInfo?: LoggingInfo
 }
+
+/**
+ * Cluster Networking Configuration
+ */
+export interface ClusterNetworking {
+  vpc_id?: string
+  subnet_ids?: string[]
+  security_groups?: string[]
+  subnets?: SubnetInfo[]
+}
+
+export interface SubnetInfo {
+  subnet_msk_broker_id: number
+  subnet_id: string
+  availability_zone: string
+  private_ip_address: string
+  cidr_block: string
+}
+
+/**
+ * Broker Node Information
+ */
+export interface BrokerNodeInfo {
+  AttachedENIId?: string
+  BrokerId?: number
+  ClientSubnet?: string
+  ClientVpcIpAddress?: string
+  CurrentBrokerSoftwareInfo?: CurrentBrokerSoftwareInfo
+  Endpoints?: string[]
+}
+
+/**
+ * Controller Node Information
+ */
+export interface ControllerNodeInfo {
+  Endpoints?: string[]
+}
+
+/**
+ * Zookeeper Node Information (for legacy Zookeeper-based clusters)
+ */
+export interface ZookeeperNodeInfo {
+  // Add fields if needed for Zookeeper nodes
+}
+
+/**
+ * Node Information
+ */
+export interface NodeInfo {
+  AddedToClusterTime?: string | null
+  BrokerNodeInfo?: BrokerNodeInfo | null
+  ControllerNodeInfo?: ControllerNodeInfo | null
+  InstanceType?: string | null
+  NodeARN?: string | null
+  NodeType?: 'BROKER' | 'CONTROLLER' | 'ZOOKEEPER'
+  ZookeeperNodeInfo?: ZookeeperNodeInfo | null
+}
+
+/**
+ * Nodes Configuration (array of NodeInfo)
+ */
+export type Nodes = NodeInfo[]
 
 /**
  * MSK Cluster Configuration (from AWS DescribeCluster response)

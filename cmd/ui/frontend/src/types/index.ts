@@ -1,4 +1,4 @@
-import type { MSKClusterConfig, MSKConnector, KafkaAdminInfo, MSKConfiguration } from './aws/msk'
+import type { MSKClusterConfig, MSKConnector, KafkaAdminInfo, MSKConfiguration, ClusterNetworking, Nodes } from './aws/msk'
 import type { CostsApiResponse } from './api/costs'
 import type { ApiMetadata } from './api/common'
 
@@ -16,7 +16,9 @@ export interface Cluster {
     }>
   }
   aws_client_information: {
+    cluster_networking?: ClusterNetworking
     msk_cluster_config?: MSKClusterConfig
+    nodes?: Nodes
     connectors?: MSKConnector[]
     bootstrap_brokers?: {
       [key: string]: string | null
