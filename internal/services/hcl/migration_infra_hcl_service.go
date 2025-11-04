@@ -175,7 +175,7 @@ func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceUserDataTp
 }
 
 func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {
-	return mi.generateVariablesTf(aws.AnsibleControlNodeInstanceVariables)
+	return mi.generateVariablesTf(aws.AnsibleControlNodeVariables)
 }
 
 func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVersionsTf() string {

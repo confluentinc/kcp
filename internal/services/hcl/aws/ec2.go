@@ -16,7 +16,7 @@ const (
 	VarPrivateKey                                 = "private_key"
 )
 
-var AnsibleControlNodeInstanceVariables = []types.TerraformVariable{
+var AnsibleControlNodeVariables = []types.TerraformVariable{
 	{Name: VarAwsPublicSubnetID, Description: "ID of the public subnet for the Ansible control node instance", Sensitive: false, Type: "string"},
 	{Name: VarSecurityGroupIDs, Description: "IDs of the security groups for the Ansible control node instance", Sensitive: false, Type: "list(string)"},
 	{Name: VarAwsKeyPairName, Description: "Name of the AWS key pair for SSH access to the Ansible control node instance", Sensitive: false, Type: "string"},
