@@ -238,7 +238,16 @@ func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesOutp
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateNetworkingMainTf() string {
-	return ""
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	// rootBody.AppendBlock(aws.GenerateAmazonLinuxAMI())
+	rootBody.AppendNewline()
+
+	// rootBody.AppendBlock(aws.GenerateAnsibleControlNodeInstance())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf() string {

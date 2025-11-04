@@ -209,8 +209,9 @@ type MigrationInfraTerraformModule struct {
 // MigrationInfraTerraformProject represents the complete Terraform configuration for migration
 // infrastructure. "project" = root config + modules
 type MigrationInfraTerraformProject struct {
-	MainTf      string                          `json:"main.tf"`
-	ProvidersTf string                          `json:"providers.tf"`
-	VariablesTf string                          `json:"variables.tf"`
-	Modules     []MigrationInfraTerraformModule `json:"modules"`
+	MainTf           string                          `json:"main.tf"`
+	ProvidersTf      string                          `json:"providers.tf"`
+	VariablesTf      string                          `json:"variables.tf"`
+	InputsAutoTfvars string                          `json:"inputs.auto.tfvars"`
+	Modules          []MigrationInfraTerraformModule `json:"modules"`
 }
