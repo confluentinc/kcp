@@ -300,7 +300,7 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 			conditionalErrors = append(conditionalErrors, "existingSubnetIds is required when useExistingSubnets is true")
 		}
 	} else {
-		if req.SubnetCidrRanges == "" {
+		if len(req.SubnetCidrRanges) == 0 {
 			conditionalErrors = append(conditionalErrors, "subnetCidrRanges is required when useExistingSubnets is false")
 		}
 	}

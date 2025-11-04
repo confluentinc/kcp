@@ -187,7 +187,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 		for i, subnetCidrRange := range request.SubnetCidrRanges {
 			subnetTfName := fmt.Sprintf("%s_%d", ti.ResourceNames.SubnetPrefix, i)
 			availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.%s.names[%d]", ti.ResourceNames.AvailabilityZones, i)
-			rootBody.AppendBlock(aws.GenerateSubnets(
+			rootBody.AppendBlock(aws.GenerateSubnetResource(
 				ti.ResourceNames.SubnetPrefix,
 				request.VpcId,
 				subnetCidrRange,

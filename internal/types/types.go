@@ -156,7 +156,7 @@ type MigrationWizardRequest struct {
 	UseExistingSubnets bool     `json:"use_existing_subnets"`
 	ExistingSubnetIds  []string `json:"existing_subnet_ids"`
 	MskVPCId           string   `json:"msk_vpc_id"`
-	SubnetCidrRanges   string   `json:"subnet_cidr_range"`
+	SubnetCidrRanges   []string `json:"subnet_cidr_ranges"`
 
 	UseExistingInternetGateway bool `json:"use_existing_internet_gateway"`
 
