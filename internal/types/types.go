@@ -146,6 +146,7 @@ type TerraformVariable struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Sensitive   bool   `json:"sensitive"`
+	Type        string `json:"type"`
 }
 
 type MigrationWizardRequest struct {

@@ -48,10 +48,9 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 				Name:        "ansible_control_node_instance",
 				MainTf:      mi.generateAnsibleControlNodeInstanceMainTf(),
 				VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
-				OutputsTf:   mi.generateAnsibleControlNodeInstanceOutputsTf(),
+				VersionsTf:  mi.generateAnsibleControlNodeInstanceVersionsTf(),
 				AdditionalFiles: map[string]string{
-					// todo - how do we want to do this?
-					"ansible-control-node-user-data.tpl": "",
+					"ansible-control-node-user-data.tpl": mi.generateAnsibleControlNodeInstanceUserDataTpl(),
 				},
 			},
 			{
@@ -141,7 +140,8 @@ func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.Terr
 	for _, v := range tfVariables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
+		// Use Type field if specified, otherwise default to "string"
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
 		if v.Description != "" {
 			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
 		}
@@ -170,16 +170,30 @@ func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceMainTf() s
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {
-	return ""
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceUserDataTpl() string {
+	return aws.GenerateAnsibleControlNodeInstanceUserDataTpl()
 }
 
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceOutputsTf() string {
-	return ""
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {
+	return mi.generateVariablesTf(aws.AnsibleControlNodeInstanceVariables)
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVersionsTf() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
+	terraformBody := terraformBlock.Body()
+
+	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
+	requiredProvidersBody := requiredProvidersBlock.Body()
+
+	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
+
+	return string(f.Bytes())
 }
 
 // cp
-
 func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesMainTf() string {
 	return ""
 }

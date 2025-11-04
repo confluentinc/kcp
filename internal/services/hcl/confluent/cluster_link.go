@@ -21,12 +21,12 @@ const (
 )
 
 var ClusterLinkVariables = []types.TerraformVariable{
-	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false},
-	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true},
-	{Name: VarMskSaslScramUsername, Description: "MSK SASL SCRAM Username", Sensitive: false},
-	{Name: VarMskSaslScramPassword, Description: "MSK SASL SCRAM Password", Sensitive: true},
-	{Name: VarConfluentCloudClusterAPIKey, Description: "Confluent Cloud cluster API key", Sensitive: false},
-	{Name: VarConfluentCloudClusterAPISecret, Description: "Confluent Cloud cluster API secret", Sensitive: true},
+	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false, Type: "string"},
+	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true, Type: "string"},
+	{Name: VarMskSaslScramUsername, Description: "MSK SASL SCRAM Username", Sensitive: false, Type: "string"},
+	{Name: VarMskSaslScramPassword, Description: "MSK SASL SCRAM Password", Sensitive: true, Type: "string"},
+	{Name: VarConfluentCloudClusterAPIKey, Description: "Confluent Cloud cluster API key", Sensitive: false, Type: "string"},
+	{Name: VarConfluentCloudClusterAPISecret, Description: "Confluent Cloud cluster API secret", Sensitive: true, Type: "string"},
 }
 
 type ClusterLinkTemplateData struct {
