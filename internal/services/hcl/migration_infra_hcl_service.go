@@ -16,15 +16,15 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 	return &MigrationInfraHCLService{}
 }
 
-func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformFiles {
+func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	if request.HasPublicCCEndpoints {
 		return mi.handleClusterLink(request)
 	}
 	return mi.handlePrivateLink(request)
 }
 
-func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformFiles {
-	return types.MigrationInfraTerraformFiles{
+func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+	return types.MigrationInfraTerraformProject{
 		MainTf:      mi.generateRootMainTf(),
 		ProvidersTf: mi.generateRootProvidersTf(),
 		VariablesTf: mi.generateRootVariablesTf(),
@@ -38,8 +38,8 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 	}
 }
 
-func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformFiles {
-	return types.MigrationInfraTerraformFiles{
+func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+	return types.MigrationInfraTerraformProject{
 		MainTf:      "",
 		ProvidersTf: "",
 		VariablesTf: "",

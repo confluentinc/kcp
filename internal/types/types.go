@@ -142,20 +142,6 @@ type TerraformFiles struct {
 	OutputsTf   string `json:"outputs_tf"`
 }
 
-type MigrationTerraformFiles struct {
-	MainTf          string            `json:"main_tf"`
-	ProvidersTf     string            `json:"providers_tf"`
-	VariablesTf     string            `json:"variables_tf"`
-	OutputsTf       string            `json:"outputs_tf"`
-	AdditionalFiles map[string]string `json:"additional_files"`
-}
-
-// TerraformModules represents a collection of Terraform modules/directories.
-type TerraformModules map[string]TerraformFiles
-
-// TerraformModules represents a collection of Terraform modules/directories.
-type MigrationTerraformModules map[string]MigrationTerraformFiles
-
 type TerraformVariable struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -218,9 +204,9 @@ type MigrationInfraTerraformModule struct {
 	AdditionalFiles map[string]string `json:"additional_files"`
 }
 
-// MigrationInfraTerraformFiles represents the complete Terraform configuration for migration
-// infrastructure. It includes root-level Terraform files and a collection of modules.
-type MigrationInfraTerraformFiles struct {
+// MigrationInfraTerraformProject represents the complete Terraform configuration for migration
+// infrastructure. "project" = root config + modules
+type MigrationInfraTerraformProject struct {
 	MainTf      string                          `json:"main.tf"`
 	ProvidersTf string                          `json:"providers.tf"`
 	VariablesTf string                          `json:"variables.tf"`
