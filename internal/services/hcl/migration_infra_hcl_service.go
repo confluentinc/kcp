@@ -27,7 +27,7 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 	return types.MigrationInfraTerraformProject{
 		MainTf:      mi.generateRootMainTfForClusterLink(),
 		ProvidersTf: mi.generateRootProvidersTfForClusterLink(),
-		VariablesTf: mi.generateRootVariablesTfForClusterLink(),
+		VariablesTf: mi.generateVariablesTf(confluent.ClusterLinkVariables),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "cluster_link",
@@ -46,7 +46,7 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 	return types.MigrationInfraTerraformProject{
 		MainTf:      mi.generateRootMainTfForPrivateLink(),
 		ProvidersTf: mi.generateRootProvidersTfForPrivateLink(),
-		VariablesTf: mi.generateRootVariablesTfForPrivateLink(requiredVariables),
+		VariablesTf: mi.generateVariablesTf(requiredVariables),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "ansible_control_node_instance",
@@ -120,10 +120,6 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForClusterLink() stri
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateRootVariablesTfForClusterLink() string {
-	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
-}
-
 // ============================================================================
 // Root-Level Generation - Private Link
 // ============================================================================
@@ -158,10 +154,6 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateLink() stri
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
-}
-
-func (mi *MigrationInfraHCLService) generateRootVariablesTfForPrivateLink(variables []types.TerraformVariable) string {
-	return mi.generateVariablesTf(variables)
 }
 
 // ============================================================================
