@@ -1,9 +1,15 @@
 package confluent
 
 import (
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
+
+var ConfluentProviderVariables = []types.TerraformVariable{
+	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false, Type: "string"},
+	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true, Type: "string"},
+}
 
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	confluentProvider := map[string]hclwrite.Tokens{

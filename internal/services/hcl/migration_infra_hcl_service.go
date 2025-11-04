@@ -25,9 +25,9 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 
 func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	return types.MigrationInfraTerraformProject{
-		MainTf:      mi.generateRootMainTf(),
-		ProvidersTf: mi.generateRootProvidersTf(),
-		VariablesTf: mi.generateRootVariablesTf(),
+		MainTf:      mi.generateRootMainTfForClusterLink(),
+		ProvidersTf: mi.generateRootProvidersTfForClusterLink(),
+		VariablesTf: mi.generateRootVariablesTfForClusterLink(),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "cluster_link",
@@ -39,18 +39,22 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 }
 
 func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+	// gather up all the variables required for everything to work ie modules and providers
+	providerVariables := append(confluent.ConfluentProviderVariables, aws.AwsProviderVariables...)
+	requiredVariables := append(aws.AnsibleControlNodeVariables, providerVariables...)
+
 	return types.MigrationInfraTerraformProject{
-		MainTf:      "",
-		ProvidersTf: "",
-		VariablesTf: "",
+		MainTf:      mi.generateRootMainTfForPrivateLink(),
+		ProvidersTf: mi.generateRootProvidersTfForPrivateLink(),
+		VariablesTf: mi.generateRootVariablesTfForPrivateLink(requiredVariables),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "ansible_control_node_instance",
-				MainTf:      mi.generateAnsibleControlNodeInstanceMainTf(),
-				VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
-				VersionsTf:  mi.generateAnsibleControlNodeInstanceVersionsTf(),
+				MainTf:      mi.generateAnsibleControlNodeMainTf(),
+				VariablesTf: mi.generateAnsibleControlNodeVariablesTf(),
+				VersionsTf:  mi.generateAnsibleControlNodeVersionsTf(),
 				AdditionalFiles: map[string]string{
-					"ansible-control-node-user-data.tpl": mi.generateAnsibleControlNodeInstanceUserDataTpl(),
+					"ansible-control-node-user-data.tpl": mi.generateAnsibleControlNodeUserDataTpl(),
 				},
 			},
 			{
@@ -75,7 +79,11 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 	}
 }
 
-func (mi *MigrationInfraHCLService) generateRootMainTf() string {
+// ============================================================================
+// Root-Level Generation - Cluster Link
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateRootMainTfForClusterLink() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -93,7 +101,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTf() string {
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateRootProvidersTf() string {
+func (mi *MigrationInfraHCLService) generateRootProvidersTfForClusterLink() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -112,9 +120,53 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTf() string {
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateRootVariablesTf() string {
+func (mi *MigrationInfraHCLService) generateRootVariablesTfForClusterLink() string {
 	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
 }
+
+// ============================================================================
+// Root-Level Generation - Private Link
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateLink() string {
+	// TODO: Implement main.tf generation for private link
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateLink() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
+	terraformBody := terraformBlock.Body()
+
+	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
+	requiredProvidersBody := requiredProvidersBlock.Body()
+
+	// Add confluent provider
+	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
+	// Add aws provider
+	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
+	rootBody.AppendNewline()
+
+	// Add confluent provider block
+	rootBody.AppendBlock(confluent.GenerateProviderBlock())
+	rootBody.AppendNewline()
+
+	// Add aws provider block with variable reference
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateRootVariablesTfForPrivateLink(variables []types.TerraformVariable) string {
+	return mi.generateVariablesTf(variables)
+}
+
+// ============================================================================
+// Cluster Link Module Generation
+// ============================================================================
 
 func (mi *MigrationInfraHCLService) generateClusterLinkMainTf(request types.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
@@ -132,6 +184,98 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf(request types.Migr
 func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf() string {
 	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
 }
+
+// ============================================================================
+// Ansible Control Node Module Generation
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeMainTf() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	rootBody.AppendBlock(aws.GenerateAmazonLinuxAMI())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateAnsibleControlNodeInstance())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeUserDataTpl() string {
+	return aws.GenerateAnsibleControlNodeInstanceUserDataTpl()
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeVariablesTf() string {
+	return mi.generateVariablesTf(aws.AnsibleControlNodeVariables)
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeVersionsTf() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
+	terraformBody := terraformBlock.Body()
+
+	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
+	requiredProvidersBody := requiredProvidersBlock.Body()
+
+	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// Confluent Platform Broker Instances Module Generation
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesOutputsTf() string {
+	return ""
+}
+
+// ============================================================================
+// Networking Module Generation
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateNetworkingMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
+	return ""
+}
+
+// ============================================================================
+// Private Link Connection Module Generation
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVariablesTf() string {
+	return ""
+}
+
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionOutputsTf() string {
+	return ""
+}
+
+// ============================================================================
+// Shared/Utility Functions
+// ============================================================================
 
 func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
 	f := hclwrite.NewEmptyFile()
@@ -152,84 +296,4 @@ func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.Terr
 	}
 
 	return string(f.Bytes())
-}
-
-// temp
-
-// ansible
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceMainTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	rootBody.AppendBlock(aws.GenerateAmazonLinuxAMI())
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(aws.GenerateAnsibleControlNodeInstance())
-	rootBody.AppendNewline()
-
-	return string(f.Bytes())
-}
-
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceUserDataTpl() string {
-	return aws.GenerateAnsibleControlNodeInstanceUserDataTpl()
-}
-
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {
-	return mi.generateVariablesTf(aws.AnsibleControlNodeVariables)
-}
-
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVersionsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-	terraformBody := terraformBlock.Body()
-
-	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-	requiredProvidersBody := requiredProvidersBlock.Body()
-
-	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-
-	return string(f.Bytes())
-}
-
-// cp
-func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesMainTf() string {
-	return ""
-}
-
-func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesVariablesTf() string {
-	return ""
-}
-
-func (mi *MigrationInfraHCLService) generateConfluentPlatformBrokerInstancesOutputsTf() string {
-	return ""
-}
-
-// networking
-
-func (mi *MigrationInfraHCLService) generateNetworkingMainTf() string {
-	return ""
-}
-
-func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf() string {
-	return ""
-}
-
-func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
-	return ""
-}
-
-// private link
-
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf() string {
-	return ""
-}
-
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVariablesTf() string {
-	return ""
-}
-
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionOutputsTf() string {
-	return ""
 }
