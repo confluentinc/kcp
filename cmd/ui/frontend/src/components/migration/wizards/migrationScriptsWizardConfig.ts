@@ -2,8 +2,7 @@ import type { WizardConfig } from './types'
 import { getClusterDataByArn } from '@/stores/store'
 
 export const createMigrationScriptsWizardConfig = (clusterArn: string): WizardConfig => {
-  const cluster = getClusterDataByArn(clusterArn)
-  console.log('Migration Scripts Wizard - Cluster:', cluster)
+  getClusterDataByArn(clusterArn)
 
   return {
     id: 'migration-scripts-wizard',

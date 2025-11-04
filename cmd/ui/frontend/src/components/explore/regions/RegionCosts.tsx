@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { Button } from '@/components/common/ui/button'
 import {
   Select,
   SelectContent,
@@ -7,7 +6,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/common/ui/select'
-import { Download } from 'lucide-react'
 import { generateCostsFilename } from '@/lib/utils'
 import { useRegionCostFilters } from '@/stores/store'
 import { useChartZoom } from '@/hooks/useChartZoom'
@@ -16,14 +14,13 @@ import { useDateFilters } from '@/hooks/useDateFilters'
 import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import { ErrorDisplay } from '@/components/common/ErrorDisplay'
-import { Tabs } from '@/components/common/Tabs'
+import { DataViewTabs } from '@/components/common/DataViewTabs'
 import { RegionCostsChartTab } from './RegionCostsChartTab'
 import { RegionCostsTableTab } from './RegionCostsTableTab'
-import { MetricsCodeViewer } from '@/components/explore/clusters/MetricsCodeViewer'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
-import { TAB_IDS, COST_TYPES, AWS_SERVICES } from '@/constants'
-import type { TabId, CostType } from '@/types'
+import { COST_TYPES, AWS_SERVICES } from '@/constants'
+import type { CostType } from '@/types'
 
 interface RegionCostsProps {
   region: {
@@ -233,90 +230,37 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
 
       {/* Results Section */}
       {costsResponse && (
-        <div className="w-full max-w-full">
-          <div className="flex items-center justify-between mb-4">
-            <Tabs
-              tabs={[
-                { id: TAB_IDS.CHART, label: 'Chart' },
-                { id: TAB_IDS.TABLE, label: 'Table' },
-                { id: TAB_IDS.JSON, label: 'JSON' },
-                { id: TAB_IDS.CSV, label: 'CSV' },
-              ]}
-              activeId={activeCostsTab}
-              onChange={(id) => setActiveCostsTab(id as TabId)}
+        <DataViewTabs
+          activeTab={activeCostsTab}
+          onTabChange={(id) => setActiveCostsTab(id)}
+          onDownloadJSON={handleDownloadJSON}
+          onDownloadCSV={handleDownloadCSV}
+          jsonData={costsResponse}
+          csvData={processedData.csvData}
+          renderChart={() => (
+            <RegionCostsChartTab
+              selectedService={selectedService}
+              selectedCostType={selectedCostType}
+              processedData={processedData}
+              zoomData={zoomData}
+              left={typeof left === 'number' ? left : undefined}
+              right={typeof right === 'number' ? right : undefined}
+              refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
+              refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
+              handleMouseDown={handleMouseDown}
+              handleMouseMove={handleMouseMove}
+              zoom={zoom}
             />
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadJSON}
-                className="flex items-center gap-2"
-              >
-                <Download className="h-4 w-4" />
-                JSON
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadCSV}
-                className="flex items-center gap-2"
-              >
-                <Download className="h-4 w-4" />
-                CSV
-              </Button>
-            </div>
-          </div>
-
-          {/* Tab Content */}
-          <div className="space-y-4 min-w-0">
-            {/* Chart Tab */}
-            {activeCostsTab === TAB_IDS.CHART && (
-              <RegionCostsChartTab
-                selectedService={selectedService}
-                selectedCostType={selectedCostType}
-                processedData={processedData}
-                zoomData={zoomData}
-                left={typeof left === 'number' ? left : undefined}
-                right={typeof right === 'number' ? right : undefined}
-                refAreaLeft={typeof refAreaLeft === 'number' ? refAreaLeft : undefined}
-                refAreaRight={typeof refAreaRight === 'number' ? refAreaRight : undefined}
-                handleMouseDown={handleMouseDown}
-                handleMouseMove={handleMouseMove}
-                zoom={zoom}
-              />
-            )}
-
-            {/* Table Tab */}
-            {activeCostsTab === TAB_IDS.TABLE && (
-              <RegionCostsTableTab
-                processedData={processedData}
-                selectedCostType={selectedCostType}
-                selectedTableService={selectedTableService}
-                setSelectedTableService={setSelectedTableService}
-              />
-            )}
-
-            {/* JSON Tab */}
-            {activeCostsTab === TAB_IDS.JSON && (
-              <MetricsCodeViewer
-                data={JSON.stringify(costsResponse, null, 2)}
-                label="JSON"
-                onCopy={() => navigator.clipboard.writeText(JSON.stringify(costsResponse, null, 2))}
-                isJSON={true}
-              />
-            )}
-
-            {/* CSV Tab */}
-            {activeCostsTab === TAB_IDS.CSV && (
-              <MetricsCodeViewer
-                data={processedData.csvData}
-                label="CSV"
-                onCopy={() => navigator.clipboard.writeText(processedData.csvData)}
-                isJSON={false}
-              />
-            )}
-          </div>
-        </div>
+          )}
+          renderTable={() => (
+            <RegionCostsTableTab
+              processedData={processedData}
+              selectedCostType={selectedCostType}
+              selectedTableService={selectedTableService}
+              setSelectedTableService={setSelectedTableService}
+            />
+          )}
+        />
       )}
 
       {!costsResponse && !error && !isLoading && (

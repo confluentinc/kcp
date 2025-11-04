@@ -1,4 +1,4 @@
-import type { Cluster } from '@/types'
+import type { Cluster, Region } from '@/types'
 
 /**
  * Extracts cluster ARN from a cluster object
@@ -7,6 +7,22 @@ import type { Cluster } from '@/types'
  */
 export const getClusterArn = (cluster: Cluster): string | undefined => {
   return cluster.aws_client_information?.msk_cluster_config?.ClusterArn
+}
+
+/**
+ * Finds a cluster object from the regions array by region name and cluster name
+ * @param regions - Array of regions to search
+ * @param regionName - Name of the region
+ * @param clusterName - Name of the cluster
+ * @returns The cluster object or undefined if not found
+ */
+export const findClusterInRegions = (
+  regions: Region[],
+  regionName: string,
+  clusterName: string
+): Cluster | undefined => {
+  const region = regions.find((r) => r.name === regionName)
+  return region?.clusters?.find((c) => c.name === clusterName)
 }
 
 /**
