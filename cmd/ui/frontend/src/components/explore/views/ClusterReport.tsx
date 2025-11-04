@@ -104,14 +104,20 @@ export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReport
           {/* Metrics Tab */}
           {activeTab === CLUSTER_REPORT_TABS.METRICS && (
             <div className="min-w-0 max-w-full">
-              <ClusterMetrics
-                cluster={{
-                  name: cluster.name,
-                  region: regionName,
-                  arn: cluster.arn || getClusterArn(cluster),
-                }}
-                isActive={activeTab === CLUSTER_REPORT_TABS.METRICS}
-              />
+              {(() => {
+                const clusterArn = getClusterArn(cluster) || cluster.arn
+                if (!clusterArn) return null // Skip if no ARN
+                return (
+                  <ClusterMetrics
+                    cluster={{
+                      name: cluster.name,
+                      region: regionName,
+                      arn: clusterArn,
+                    }}
+                    isActive={activeTab === CLUSTER_REPORT_TABS.METRICS}
+                  />
+                )
+              })()}
             </div>
           )}
 

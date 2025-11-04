@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useRegions } from '@/stores/store'
-import { findClusterInRegions } from '@/lib/clusterUtils'
+import { findClusterInRegions, getClusterArn } from '@/lib/clusterUtils'
 import { getMetricConfig } from '@/lib/tcoUtils'
 
 interface TCOCluster {
@@ -13,7 +13,7 @@ interface TCOCluster {
 interface ModalCluster {
   name: string
   region: string
-  arn?: string
+  arn: string
   metrics?: {
     metadata?: {
       start_date?: string
@@ -58,12 +58,18 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
 
       const metricConfig = getMetricConfig(metricType)
 
+      const clusterArn = cluster.arn || getClusterArn(clusterObj)
+      if (!clusterArn) {
+        console.error(`Cluster "${clusterObj.name}" missing ARN`)
+        return
+      }
+
       setModalState({
         isOpen: true,
         cluster: {
           name: clusterObj.name,
           region: cluster.regionName,
-          arn: cluster.arn,
+          arn: clusterArn,
           metrics: clusterObj.metrics,
         },
         preselectedMetric: metricConfig.metric,
