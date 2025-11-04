@@ -1,7 +1,4 @@
 import { useState } from 'react'
-import { Button } from '@/components/common/ui/button'
-import { Tabs } from '@/components/common/Tabs'
-import { Download } from 'lucide-react'
 import { generateMetricsFilename } from '@/lib/utils'
 import { useClusterDateFilters, useAppStore } from '@/stores/store'
 import { useMetricsDataProcessor } from '@/hooks/useMetricsDataProcessor'
@@ -13,18 +10,16 @@ import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
 import { convertBytesToMB, getTCOFieldFromWorkloadAssumption } from '@/lib/metricsUtils'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import { ErrorDisplay } from '@/components/common/ErrorDisplay'
+import { DataViewTabs } from '@/components/common/DataViewTabs'
 import { MetricsChartTab } from './MetricsChartTab'
 import { MetricsTableTab } from './MetricsTableTab'
-import { MetricsCodeViewer } from './MetricsCodeViewer'
-import { TAB_IDS } from '@/constants'
-import type { TabId } from '@/types'
 import type { ApiMetadata } from '@/types/api/common'
 
 interface ClusterMetricsProps {
   cluster: {
     name: string
     region?: string
-    arn?: string
+    arn: string // ARN is required - all clusters have ARNs
     metrics?: {
       metadata?: {
         start_date?: string
@@ -51,10 +46,8 @@ export const ClusterMetrics = ({
   const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
 
   // Cluster-specific date state from Zustand (only used in non-modal mode)
-  // Use ARN if available, otherwise fall back to region-name combo for backward compatibility
-  const storeDateFilters = useClusterDateFilters(
-    cluster.arn || `${cluster.region || 'unknown'}-${cluster.name}`
-  )
+  // Use ARN for cluster key (required for proper state management)
+  const storeDateFilters = useClusterDateFilters(cluster.arn)
 
   // Modal date management - simple local state (not stored in Zustand)
   // useDateFilters hook handles all initialization and reset logic
@@ -134,14 +127,11 @@ export const ClusterMetrics = ({
 
   // Handle transferring values to TCO inputs
   const handleTransferToTCO = (value: number, statType: 'min' | 'avg' | 'max') => {
-    // Use ARN if available, otherwise fall back to region:name format
-    const clusterKey = cluster.arn || `${cluster.region || 'unknown'}:${cluster.name}`
-
     // Convert bytes to MB for throughput metrics, but use raw value for partitions
     const convertedValue =
       tcoField === 'partitions' ? Math.round(value).toString() : convertBytesToMB(value)
 
-    setTCOWorkloadValue(clusterKey, tcoField, convertedValue)
+    setTCOWorkloadValue(cluster.arn, tcoField, convertedValue)
 
     // Show success feedback with stat type
     setTransferSuccess(`${tcoField}-${statType}`)
@@ -197,41 +187,14 @@ export const ClusterMetrics = ({
       )}
 
       {metricsResponse && (
-        <div className="w-full max-w-full">
-          <div className="flex items-center justify-between mb-4">
-            <Tabs
-              tabs={[
-                { id: TAB_IDS.CHART, label: 'Chart' },
-                { id: TAB_IDS.TABLE, label: 'Table' },
-                { id: TAB_IDS.JSON, label: 'JSON' },
-                { id: TAB_IDS.CSV, label: 'CSV' },
-              ]}
-              activeId={activeMetricsTab}
-              onChange={(id) => setActiveMetricsTab(id as TabId)}
-            />
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadJSON}
-                className="flex items-center gap-2"
-              >
-                <Download className="h-4 w-4" />
-                JSON
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadCSV}
-                className="flex items-center gap-2"
-              >
-                <Download className="h-4 w-4" />
-                CSV
-              </Button>
-            </div>
-          </div>
-
-          {activeMetricsTab === TAB_IDS.CHART && (
+        <DataViewTabs
+          activeTab={activeMetricsTab}
+          onTabChange={(id) => setActiveMetricsTab(id)}
+          onDownloadJSON={handleDownloadJSON}
+          onDownloadCSV={handleDownloadCSV}
+          jsonData={metricsResponse}
+          csvData={processedData.csvData}
+          renderChart={() => (
             <MetricsChartTab
               selectedMetric={selectedMetric}
               setSelectedMetric={setSelectedMetric}
@@ -252,32 +215,13 @@ export const ClusterMetrics = ({
               tcoField={tcoField}
             />
           )}
-
-          {activeMetricsTab === TAB_IDS.TABLE && (
+          renderTable={() => (
             <MetricsTableTab
               processedData={processedData}
               metricsResponse={metricsResponse}
             />
           )}
-
-          {activeMetricsTab === TAB_IDS.JSON && (
-            <MetricsCodeViewer
-              data={JSON.stringify(metricsResponse, null, 2)}
-              label="JSON"
-              onCopy={() => navigator.clipboard.writeText(JSON.stringify(metricsResponse, null, 2))}
-              isJSON={true}
-            />
-          )}
-
-          {activeMetricsTab === TAB_IDS.CSV && (
-            <MetricsCodeViewer
-              data={processedData.csvData}
-              label="CSV"
-              onCopy={() => navigator.clipboard.writeText(processedData.csvData)}
-              isJSON={false}
-            />
-          )}
-        </div>
+        />
       )}
 
       {!metricsResponse && !error && !isLoading && (

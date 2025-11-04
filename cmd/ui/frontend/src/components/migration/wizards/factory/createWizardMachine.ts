@@ -29,55 +29,25 @@ export const createWizardMachine = (config: WizardConfig) => {
           delete newAllData[stepId]
         })
 
-        const result = {
+        return {
           stepData: newStepData,
           allData: newAllData,
           currentStep: currentStateId,
           previousStep: currentStateId,
           visitedSteps: updatedVisitedSteps,
         }
-
-        console.log(
-          '➡️ NEXT:\n' +
-            JSON.stringify(
-              {
-                from: currentStateId,
-                visitedSteps: result.visitedSteps,
-                stepData: result.stepData,
-              },
-              null,
-              2
-            )
-        )
-
-        return result
       }
 
       // New step - add it to visitedSteps
       const updatedVisitedSteps = [...visitedSteps, currentStateId]
 
-      const result = {
+      return {
         stepData: newStepData,
         allData: newAllData,
         currentStep: currentStateId,
         previousStep: currentStateId,
         visitedSteps: updatedVisitedSteps,
       }
-
-      console.log(
-        '➡️ NEXT:\n' +
-          JSON.stringify(
-            {
-              from: currentStateId,
-              visitedSteps: result.visitedSteps,
-              stepData: result.stepData,
-            },
-            null,
-            2
-          )
-      )
-
-      return result
     }),
     // When going back, remove the CURRENT step from visitedSteps and delete its data
     undo_save_step_data: assign(
@@ -98,7 +68,7 @@ export const createWizardMachine = (config: WizardConfig) => {
         delete newStepData[currentStepId]
         delete newAllData[currentStepId]
 
-        const result = {
+        return {
           ...context,
           stepData: newStepData,
           allData: newAllData,
@@ -106,22 +76,6 @@ export const createWizardMachine = (config: WizardConfig) => {
           previousStep: currentStepId,
           visitedSteps: updatedVisitedSteps,
         }
-
-        console.log(
-          '🔙 BACK:\n' +
-            JSON.stringify(
-              {
-                from: currentStepId,
-                to: targetStepId,
-                visitedSteps: result.visitedSteps,
-                stepData: result.stepData,
-              },
-              null,
-              2
-            )
-        )
-
-        return result
       }
     ),
   }

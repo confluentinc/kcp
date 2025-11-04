@@ -3,7 +3,6 @@ import { getClusterDataByArn } from '@/stores/store'
 
 export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig => {
   const cluster = getClusterDataByArn(clusterArn)
-  console.log('Target Infra Wizard - Cluster:', cluster)
 
   return {
     id: 'target-infra-wizard',
