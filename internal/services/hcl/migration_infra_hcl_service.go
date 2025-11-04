@@ -49,6 +49,9 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 				MainTf:      mi.generateAnsibleControlNodeInstanceMainTf(),
 				VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
 				OutputsTf:   mi.generateAnsibleControlNodeInstanceOutputsTf(),
+				AdditionalFiles: map[string]string{
+					"ansible-control-node-user-data.tpl": mi.generateAnsibleControlNodeInstanceUserDataTpl(),
+				},
 			},
 			{
 				Name:        "confluent_platform_broker_instances",
@@ -164,6 +167,10 @@ func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceMainTf() s
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceUserDataTpl() string {
+	return ""
 }
 
 func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {
