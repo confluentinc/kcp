@@ -50,7 +50,8 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 				VariablesTf: mi.generateAnsibleControlNodeInstanceVariablesTf(),
 				OutputsTf:   mi.generateAnsibleControlNodeInstanceOutputsTf(),
 				AdditionalFiles: map[string]string{
-					"ansible-control-node-user-data.tpl": mi.generateAnsibleControlNodeInstanceUserDataTpl(),
+					// todo - how do we want to do this?
+					"ansible-control-node-user-data.tpl": "",
 				},
 			},
 			{
@@ -167,10 +168,6 @@ func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceMainTf() s
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
-}
-
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceUserDataTpl() string {
-	return ""
 }
 
 func (mi *MigrationInfraHCLService) generateAnsibleControlNodeInstanceVariablesTf() string {

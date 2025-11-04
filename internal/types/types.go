@@ -201,6 +201,7 @@ type MigrationInfraTerraformModule struct {
 	MainTf          string            `json:"main.tf"`
 	VariablesTf     string            `json:"variables.tf"`
 	OutputsTf       string            `json:"outputs.tf"`
+	VersionsTf      string            `json:"versions.tf"`
 	AdditionalFiles map[string]string `json:"additional_files"`
 }
 
