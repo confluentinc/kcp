@@ -378,11 +378,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
-              msk_cluster_id: {
-                type: 'string',
-                title: 'MSK Cluster ID',
-                default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
-              },
               msk_jump_cluster_auth_type: {
                 type: 'string',
                 title: 'MSK Jump Cluster Authentication Type',
@@ -390,12 +385,9 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 enumNames: ['SASL/SCRAM', 'IAM'],
               },
             },
-            required: ['msk_cluster_id', 'msk_jump_cluster_auth_type'],
+            required: ['msk_jump_cluster_auth_type'],
           },
           uiSchema: {
-            msk_cluster_id: {
-              'ui:disabled': true,
-            },
             msk_jump_cluster_auth_type: {
               'ui:widget': 'radio',
             }
@@ -427,6 +419,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
+              msk_cluster_id: {
+                type: 'string',
+                title: 'MSK Cluster ID',
+                default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
+              },
               msk_sasl_scram_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
@@ -436,16 +433,47 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 type: 'string',
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
-              }
+              },
+              target_cluster_id: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster ID'
+              },
+              target_rest_endpoint: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster REST Endpoint'
+              },
+              target_bootstrap_endpoint: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster Bootstrap Endpoint'
+              },
+              cluster_link_name: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster Link Name'
+              },
             },
-            required: ['msk_sasl_scram_bootstrap_servers', 'msk_region'],
+            required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
           },
           uiSchema: {
+            msk_cluster_id: {
+              'ui:disabled': true,
+            },
             msk_sasl_scram_bootstrap_servers: {
               'ui:disabled': true,
             },
             msk_region: {
               'ui:disabled': true,
+            },
+            target_cluster_id: {
+              'ui:placeholder': 'e.g., lkc-xxxxxx',
+            },
+            target_rest_endpoint: {
+              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
+            },
+            target_bootstrap_endpoint: {
+              'ui:placeholder': 'e.g., xxx.xxx.aws.confluent.cloud:9092',
+            },
+            cluster_link_name: {
+              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
             },
           },
         },
@@ -467,12 +495,12 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
-              jump_cluster_iam_auth_role_name: {
+              msk_cluster_id: {
                 type: 'string',
-                title: 'Instance Role Name',
-                description: 'The name of the pre-configured IAM role that will be used to authenticate the cluster link between MSK and the jump cluster.'
+                title: 'MSK Cluster ID',
+                default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
               },
-              msk_iam_bootstrap_servers: {
+              msk_sasl_iam_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslIam || 'failed to retrieve MSK IAM bootstrap servers (private) from statefile.'
@@ -481,19 +509,55 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 type: 'string',
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
-              }
+              },
+              target_cluster_id: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster ID'
+              },
+              target_rest_endpoint: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster REST Endpoint'
+              },
+              target_bootstrap_endpoint: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster Bootstrap Endpoint'
+              },
+              cluster_link_name: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster Link Name'
+              },
+              jump_cluster_iam_auth_role_name: {
+                type: 'string',
+                title: 'Instance Role Name',
+                description: 'The name of the pre-configured IAM role that will be used to authenticate the cluster link between MSK and the jump cluster.'
+              },
             },
-            required: ['jump_cluster_iam_auth_role_name', 'msk_iam_bootstrap_servers', 'msk_region'],
+            required: ['msk_cluster_id', 'msk_sasl_iam_bootstrap_servers', 'msk_region', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
           },
           uiSchema: {
-            jump_cluster_iam_auth_role_name: {
-              'uiwidget': 'input',
+            msk_cluster_id: {
+              'ui:disabled': true,
             },
-            msk_iam_bootstrap_servers: {
+            msk_sasl_iam_bootstrap_servers: {
               'ui:disabled': true,
             },
             msk_region: {
               'ui:disabled': true,
+            },
+            target_cluster_id: {
+              'ui:placeholder': 'e.g., lkc-xxxxxx',
+            },
+            target_rest_endpoint: {
+              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
+            },
+            target_bootstrap_endpoint: {
+              'ui:placeholder': 'e.g., xxx.xxx.aws.confluent.cloud:9092',
+            },
+            cluster_link_name: {
+              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
+            },
+            jump_cluster_iam_auth_role_name: {
+              'uiwidget': 'input',
             },
           },
         },
