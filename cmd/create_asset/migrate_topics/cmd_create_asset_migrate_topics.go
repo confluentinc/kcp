@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -88,6 +89,8 @@ func runMigrateTopics(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
+	internalTopicsToInclude := []string{"__consumer_offsets"}
+
 	file, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cluster file: %v", err)
@@ -105,7 +108,7 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 
 	var mirrorTopics []string
 	for _, topic := range cluster.KafkaAdminClientInformation.Topics.Details {
-		if !strings.HasPrefix(topic.Name, "__") {
+		if !strings.HasPrefix(topic.Name, "__") || slices.Contains(internalTopicsToInclude, topic.Name) {
 			mirrorTopics = append(mirrorTopics, topic.Name)
 		}
 	}
