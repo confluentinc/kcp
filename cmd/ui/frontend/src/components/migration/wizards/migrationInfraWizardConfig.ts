@@ -169,7 +169,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'VPC ID',
                 default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
               },
-              private_link_existing_subnets_cidr: {
+              private_link_existing_subnet_ids: {
                 type: 'array',
                 title: 'Existing subnet IDs',
                 description: 'Retrieved from the statefile, these can be modified to other existing subnet IDs in the MSK VPC.',
@@ -183,13 +183,13 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 ['failed to retrieve existing subnet IDs from statefile.', '', ''],
               },
             },
-            required: ['vpc_id', 'private_link_existing_subnets_cidr'],
+            required: ['vpc_id', 'private_link_existing_subnet_ids'],
           },
           uiSchema: {
             vpc_id: {
               'ui:disabled': true,
             },
-            private_link_existing_subnets_cidr: {
+            private_link_existing_subnet_ids: {
               'ui:placeholder': 'e.g., subnet-xxxx,subnet-xxxx,subnet-xxxx',
               'ui:options': {
                 addable: false,
