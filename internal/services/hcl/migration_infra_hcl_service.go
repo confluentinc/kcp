@@ -286,6 +286,9 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateEIPResource("nat_eip"))
 	rootBody.AppendNewline()
 
+	// todo: ISSUE
+	// the subnet is being referenced by name -  `ansible_control_node_instance_public_subnet`
+	// but created above - `ansible_control_node_instance_public_subnet_0`
 	rootBody.AppendBlock(aws.GenerateNATGatewayResource("nat_gw", "aws_eip.nat_eip.id", "aws_subnet.ansible_control_node_instance_public_subnet.id"))
 	rootBody.AppendNewline()
 
