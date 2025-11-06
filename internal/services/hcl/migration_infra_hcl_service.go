@@ -8,6 +8,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -41,15 +42,17 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 	}
 }
 
+// TODO: Is `handlePrivateLink` the best name? It had me slightly confused at first.
 func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	// gather up all the variables required for everything to work ie modules and providers
 	providerVariables := append(confluent.ConfluentProviderVariables, aws.AwsProviderVariables...)
 	requiredVariables := append(aws.JumpClusterSetupHostVariables, providerVariables...)
 
 	return types.MigrationInfraTerraformProject{
-		MainTf:      mi.generateRootMainTfForPrivateLink(),
-		ProvidersTf: mi.generateRootProvidersTfForPrivateLink(),
-		VariablesTf: mi.generateVariablesTf(requiredVariables),
+		MainTf:           mi.generateRootMainTfForPrivateLink(),
+		ProvidersTf:      mi.generateRootProvidersTfForPrivateLink(),
+		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "jump_cluster_setup_host",
@@ -69,8 +72,8 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 			{
 				Name:        "networking",
 				MainTf:      mi.generateNetworkingMainTf(request),
-				VariablesTf: mi.generateNetworkingVariablesTf(),
-				OutputsTf:   mi.generateNetworkingOutputsTf(),
+				VariablesTf: mi.generateNetworkingVariablesTf(request),
+				OutputsTf:   mi.generateNetworkingOutputsTf(request),
 			},
 			{
 				Name:        "private_link_connection",
@@ -244,41 +247,37 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
+	// Get variable names from module definitions
+	vpcIdVarName := GetModuleVariableName("vpc_id")
+	jumpClusterBrokerSubnetCidrsVarName := GetModuleVariableName("jump_cluster_broker_subnet_cidrs")
+	jumpClusterSetupHostSubnetCidrVarName := GetModuleVariableName("jump_cluster_setup_host_subnet_cidr")
+
 	if request.HasExistingInternetGateway {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway"))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", vpcIdVarName))
 	} else {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway"))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway", vpcIdVarName))
 	}
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("this"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}, vpcIdVarName))
 	rootBody.AppendNewline()
 
-	subnetRefs := make([]string, len(request.JumpClusterBrokerSubnetCidr))
-	for i, subnetCidrRange := range request.JumpClusterBrokerSubnetCidr {
-		subnetTfName := fmt.Sprintf("jump_cluster_broker_subnet_%d", i)
-		availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.this.names[%d]", i)
-		rootBody.AppendBlock(aws.GenerateSubnetResource(
-			subnetTfName,
-			request.VpcId,
-			subnetCidrRange,
-			availabilityZoneRef,
-		))
-		subnetRefs[i] = fmt.Sprintf("aws_subnet.%s.id", subnetTfName)
-
-		if i < len(request.JumpClusterBrokerSubnetCidr) {
-			rootBody.AppendNewline()
-		}
-	}
+	rootBody.AppendBlock(aws.GenerateSubnetResourceWithForEach(
+		"jump_cluster_broker_subnets",
+		jumpClusterBrokerSubnetCidrsVarName,
+		"data.aws_availability_zones.this",
+		vpcIdVarName,
+	))
+	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateSubnetResource(
 		"jump_cluster_setup_host_subnet",
-		request.VpcId,
-		request.JumpClusterSetupHostSubnetCidr,
+		jumpClusterSetupHostSubnetCidrVarName,
 		"data.aws_availability_zones.available.names[0]",
+		vpcIdVarName,
 	))
 	rootBody.AppendNewline()
 
@@ -289,17 +288,17 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendNewline()
 
 	if request.HasExistingInternetGateway {
-		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", request.VpcId, aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway")))
+		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), vpcIdVarName))
 		rootBody.AppendNewline()
 	} else {
-		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", request.VpcId, aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway")))
+		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), vpcIdVarName))
 		rootBody.AppendNewline()
 	}
 
 	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource("jump_cluster_setup_host_public_rt_association", aws.GenerateSubnetResourceReference("jump_cluster_setup_host_subnet"), "aws_route_table.jump_cluster_setup_host_public_rt.id"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", request.VpcId, "aws_nat_gateway.nat_gw.id"))
+	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", "aws_nat_gateway.nat_gw.id", vpcIdVarName))
 	rootBody.AppendNewline()
 
 	for i := range request.JumpClusterBrokerSubnetCidr {
@@ -309,7 +308,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 		}
 	}
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup("private_link_security_group", []int{80, 443, 9092}, []int{0}))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup("private_link_security_group", []int{80, 443, 9092}, []int{0}, vpcIdVarName))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(other.GenerateTLSPrivateKeyResource("jump_cluster_ssh_key", "RSA", 4096))
@@ -327,26 +326,95 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf() string {
-	requiredVariables := append(aws.InternetGatewayVariables, aws.SecurityGroupVariables...)
+func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf(request types.MigrationWizardRequest) string {
+	requiredVariables := GetModuleVariableDefinitions(request)
+	return mi.generateVariablesTf(requiredVariables)
+}
 
-	seenVariables := make(map[string]types.TerraformVariable)
-	for _, v := range requiredVariables {
-		if _, exists := seenVariables[v.Name]; !exists {
-			seenVariables[v.Name] = v
+func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf(request types.MigrationWizardRequest) string {
+	outputs := GetNetworkingModuleOutputDefinitions()
+	return mi.generateOutputsTf(outputs)
+}
+
+// generateOutputsTf generates outputs.tf content from output definitions
+func (mi *MigrationInfraHCLService) generateOutputsTf(tfOutputs []TerraformOutput) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	for _, output := range tfOutputs {
+		outputBlock := rootBody.AppendNewBlock("output", []string{output.Name})
+		outputBody := outputBlock.Body()
+
+		// Parse the value expression by wrapping it in a temporary output block
+		// This allows us to parse complex expressions correctly
+		tempHcl := fmt.Sprintf("output \"temp\" {\n  value = %s\n}", output.Value)
+		tempFile, diags := hclwrite.ParseConfig([]byte(tempHcl), "", hcl.Pos{Line: 1, Column: 1})
+		if diags.HasErrors() {
+			// If parsing fails, fall back to using the raw expression as a resource reference
+			outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
+		} else {
+			// Extract the value attribute from the temporary file
+			tempBody := tempFile.Body()
+			blocks := tempBody.Blocks()
+			if len(blocks) > 0 {
+				tempOutputBody := blocks[0].Body()
+				attrs := tempOutputBody.Attributes()
+				if valueAttr, ok := attrs["value"]; ok {
+					outputBody.SetAttributeRaw("value", valueAttr.Expr().BuildTokens(nil))
+				} else {
+					// Fallback to resource reference
+					outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
+				}
+			} else {
+				// Fallback to resource reference
+				outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
+			}
+		}
+
+		if output.Description != "" {
+			outputBody.SetAttributeValue("description", cty.StringVal(output.Description))
+		}
+		if output.Sensitive {
+			outputBody.SetAttributeValue("sensitive", cty.BoolVal(true))
+		}
+		rootBody.AppendNewline()
+	}
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// Inputs Auto Tfvars Generation
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.MigrationWizardRequest) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	values := GetModuleVariableValues(request)
+
+	for varName, value := range values {
+		switch v := value.(type) {
+		case string:
+			if v != "" {
+				rootBody.SetAttributeValue(varName, cty.StringVal(v))
+			}
+		case []string:
+			if len(v) > 0 {
+				ctyValues := make([]cty.Value, len(v))
+				for i, s := range v {
+					ctyValues[i] = cty.StringVal(s)
+				}
+				rootBody.SetAttributeValue(varName, cty.ListVal(ctyValues))
+			}
+		case bool:
+			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
+		case int:
+			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
 		}
 	}
 
-	var uniqueVariables []types.TerraformVariable
-	for _, v := range seenVariables {
-		uniqueVariables = append(uniqueVariables, v)
-	}
-
-	return mi.generateVariablesTf(uniqueVariables)
-}
-
-func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
-	return ""
+	return string(f.Bytes())
 }
 
 // ============================================================================

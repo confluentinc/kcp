@@ -9,7 +9,6 @@ func GenerateNATGatewayResource(tfResourceName, allocationId, subnetId string) *
 	natGatewayBlock := hclwrite.NewBlock("resource", []string{"aws_nat_gateway", tfResourceName})
 	natGatewayBlock.Body().SetAttributeRaw("allocation_id", utils.TokensForResourceReference(allocationId))
 	natGatewayBlock.Body().SetAttributeRaw("subnet_id", utils.TokensForResourceReference(subnetId))
-	natGatewayBlock.Body().AppendNewline()
 
 	return natGatewayBlock
 }

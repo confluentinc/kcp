@@ -180,7 +180,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 		rootBody.AppendNewline()
 
 		// TODO: revisit later for var declaration instead of hardcoding the VPC ID from request
-		rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}))
+		rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}, "vpc_id"))
 		rootBody.AppendNewline()
 
 		// Generate subnets so we can reference them in VPC endpoint
@@ -190,9 +190,9 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 			availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.%s.names[%d]", ti.ResourceNames.AvailabilityZones, i)
 			rootBody.AppendBlock(aws.GenerateSubnetResource(
 				subnetTfName,
-				request.VpcId,
 				subnetCidrRange,
 				availabilityZoneRef,
+				"vpc_id",
 			))
 			subnetRefs[i] = fmt.Sprintf("aws_subnet.%s.id", subnetTfName)
 

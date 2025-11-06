@@ -8,13 +8,34 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GenerateSubnetResource(tfResourceName, vpcId, cidrRange, availabilityZoneRef string) *hclwrite.Block {
+// Generates a single subnet resource when the CIDR range is known and a single string variable.
+func GenerateSubnetResource(tfResourceName, cidrRangeVarName, availabilityZoneRef, vpcIdVarName string) *hclwrite.Block {
 	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
-	subnetBlock.Body().SetAttributeValue("vpc_id", cty.StringVal(vpcId))
+	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
 	subnetBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(availabilityZoneRef))
-	subnetBlock.Body().SetAttributeValue("cidr_block", cty.StringVal(cidrRange))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(cidrRangeVarName))
 
 	return subnetBlock
+}
+
+// Generates a single subnet resource with a `for_each` meta-argument to iterate through a list of string variable containing CIDR ranges.
+func GenerateSubnetResourceWithForEach(tfResourceName, subnetCidrsVarName, availabilityZoneRef, vpcIdVarName string) *hclwrite.Block {
+	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
+	subnetBlock.Body().SetAttributeRaw("for_each", utils.TokensForVarReference(subnetCidrsVarName))
+	subnetBlock.Body().AppendNewline()
+	
+	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
+	subnetBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(fmt.Sprintf("%s.names[each.key]", availabilityZoneRef)))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForResourceReference("each.value"))
+
+	return subnetBlock
+}
+
+func GenerateSubnetDataSource(tfResourceName, subnetId string) *hclwrite.Block {
+	subnetDataBlock := hclwrite.NewBlock("data", []string{"aws_subnet", tfResourceName})
+	subnetDataBlock.Body().SetAttributeValue("id", cty.StringVal(subnetId))
+
+	return subnetDataBlock
 }
 
 func GenerateSubnetResourceReference(tfResourceName string) string {
