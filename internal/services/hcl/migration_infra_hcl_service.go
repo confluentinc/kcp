@@ -5,6 +5,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/other"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -43,7 +44,7 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	// gather up all the variables required for everything to work ie modules and providers
 	providerVariables := append(confluent.ConfluentProviderVariables, aws.AwsProviderVariables...)
-	requiredVariables := append(aws.AnsibleControlNodeVariables, providerVariables...)
+	requiredVariables := append(aws.JumpClusterSetupHostVariables, providerVariables...)
 
 	return types.MigrationInfraTerraformProject{
 		MainTf:      mi.generateRootMainTfForPrivateLink(),
@@ -51,12 +52,12 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 		VariablesTf: mi.generateVariablesTf(requiredVariables),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
-				Name:        "ansible_control_node_instance",
-				MainTf:      mi.generateAnsibleControlNodeMainTf(),
-				VariablesTf: mi.generateAnsibleControlNodeVariablesTf(),
-				VersionsTf:  mi.generateAnsibleControlNodeVersionsTf(),
+				Name:        "jump_cluster_setup_host",
+				MainTf:      mi.generateJumpClusterSetupHostMainTf(),
+				VariablesTf: mi.generateJumpClusterSetupHostVariablesTf(),
+				VersionsTf:  mi.generateJumpClusterSetupHostVersionsTf(),
 				AdditionalFiles: map[string]string{
-					"ansible-control-node-user-data.tpl": mi.generateAnsibleControlNodeUserDataTpl(),
+					"jump-cluster-setup-host-user-data.tpl": mi.generateJumpClusterSetupHostUserDataTpl(),
 				},
 			},
 			{
@@ -180,31 +181,31 @@ func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf() string {
 }
 
 // ============================================================================
-// Ansible Control Node Module Generation
+// Jump Cluster Setup Host Module Generation
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeMainTf() string {
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	rootBody.AppendBlock(aws.GenerateAmazonLinuxAMI())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateAnsibleControlNodeInstance())
+	rootBody.AppendBlock(aws.GenerateJumpClusterSetupHost())
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeUserDataTpl() string {
-	return aws.GenerateAnsibleControlNodeInstanceUserDataTpl()
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl() string {
+	return aws.GenerateJumpClusterSetupHostUserDataTpl()
 }
 
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeVariablesTf() string {
-	return mi.generateVariablesTf(aws.AnsibleControlNodeVariables)
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf() string {
+	return mi.generateVariablesTf(aws.JumpClusterSetupHostVariables)
 }
 
-func (mi *MigrationInfraHCLService) generateAnsibleControlNodeVersionsTf() string {
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -244,62 +245,104 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody := f.Body()
 
 	if request.HasExistingInternetGateway {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", request.VpcId))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway"))
 	} else {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway", request.VpcId))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway"))
 	}
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("availability_zones"))
+	rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("this"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", request.VpcId, []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}))
 	rootBody.AppendNewline()
 
-	subnetRefs := make([]string, len(request.PrivateLinkNewSubnetsCidr))
-	for i, subnetCidrRange := range request.PrivateLinkNewSubnetsCidr {
-		subnetTfName := fmt.Sprintf("confluent_platform_broker_subnet_%d", i)
-		availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.available.names[%d]", i)
+	subnetRefs := make([]string, len(request.JumpClusterBrokerSubnetCidr))
+	for i, subnetCidrRange := range request.JumpClusterBrokerSubnetCidr {
+		subnetTfName := fmt.Sprintf("jump_cluster_broker_subnet_%d", i)
+		availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.this.names[%d]", i)
 		rootBody.AppendBlock(aws.GenerateSubnetResource(
-			"confluent_platform_broker_subnet",
+			subnetTfName,
 			request.VpcId,
 			subnetCidrRange,
 			availabilityZoneRef,
-			i,
 		))
 		subnetRefs[i] = fmt.Sprintf("aws_subnet.%s.id", subnetTfName)
 
-		if i < len(request.PrivateLinkNewSubnetsCidr) {
+		if i < len(request.JumpClusterBrokerSubnetCidr) {
 			rootBody.AppendNewline()
 		}
 	}
 
 	rootBody.AppendBlock(aws.GenerateSubnetResource(
-		"ansible_control_node_instance_public_subnet",
+		"jump_cluster_setup_host_subnet",
 		request.VpcId,
 		request.JumpClusterSetupHostSubnetCidr,
 		"data.aws_availability_zones.available.names[0]",
-		0,
 	))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateEIPResource("nat_eip"))
 	rootBody.AppendNewline()
 
-	// todo: ISSUE
-	// the subnet is being referenced by name -  `ansible_control_node_instance_public_subnet`
-	// but created above - `ansible_control_node_instance_public_subnet_0`
-	rootBody.AppendBlock(aws.GenerateNATGatewayResource("nat_gw", "aws_eip.nat_eip.id", "aws_subnet.ansible_control_node_instance_public_subnet.id"))
+	rootBody.AppendBlock(aws.GenerateNATGatewayResource("nat_gw", "aws_eip.nat_eip.id", "aws_subnet.jump_cluster_setup_host_subnet.id"))
+	rootBody.AppendNewline()
+
+	if request.HasExistingInternetGateway {
+		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", request.VpcId, aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway")))
+		rootBody.AppendNewline()
+	} else {
+		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", request.VpcId, aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway")))
+		rootBody.AppendNewline()
+	}
+
+	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource("jump_cluster_setup_host_public_rt_association", aws.GenerateSubnetResourceReference("jump_cluster_setup_host_subnet"), "aws_route_table.jump_cluster_setup_host_public_rt.id"))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", request.VpcId, "aws_nat_gateway.nat_gw.id"))
+	rootBody.AppendNewline()
+
+	for i := range request.JumpClusterBrokerSubnetCidr {
+		rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource(fmt.Sprintf("jump_cluster_broker_route_table_assoc_%d", i), aws.GenerateSubnetResourceReference(fmt.Sprintf("jump_cluster_broker_subnet_%d", i)), "aws_route_table.private_subnet_rt.id"))
+		if i < len(request.JumpClusterBrokerSubnetCidr) {
+			rootBody.AppendNewline()
+		}
+	}
+
+	rootBody.AppendBlock(aws.GenerateSecurityGroup("private_link_security_group", []int{80, 443, 9092}, []int{0}))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(other.GenerateTLSPrivateKeyResource("jump_cluster_ssh_key", "RSA", 4096))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(other.GenerateLocalFileResource("jump_cluster_ssh_key_private_key", "tls_private_key.jump_cluster_ssh_key.private_key_pem", "./.ssh/jump_cluster_ssh_key_private_key_rsa", "400"))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(other.GenerateLocalFileResource("jump_cluster_ssh_key_public_key", "tls_private_key.jump_cluster_ssh_key.public_key_openssh", "./.ssh/jump_cluster_ssh_key_public_key.pub", "400"))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateKeyPairResource("jump_cluster_ssh_key", fmt.Sprintf("jump_cluster_ssh_key_%s", utils.RandomString(5)), "tls_private_key.jump_cluster_ssh_key.public_key_openssh"))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf() string {
-	return ""
+	requiredVariables := append(aws.InternetGatewayVariables, aws.SecurityGroupVariables...)
+
+	seenVariables := make(map[string]types.TerraformVariable)
+	for _, v := range requiredVariables {
+		if _, exists := seenVariables[v.Name]; !exists {
+			seenVariables[v.Name] = v
+		}
+	}
+
+	var uniqueVariables []types.TerraformVariable
+	for _, v := range seenVariables {
+		uniqueVariables = append(uniqueVariables, v)
+	}
+
+	return mi.generateVariablesTf(uniqueVariables)
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {

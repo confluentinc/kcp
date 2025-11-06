@@ -16,7 +16,7 @@ const (
 	VarPrivateKey                                 = "private_key"
 )
 
-var AnsibleControlNodeVariables = []types.TerraformVariable{
+var JumpClusterSetupHostVariables = []types.TerraformVariable{
 	{Name: VarAwsPublicSubnetID, Description: "ID of the public subnet for the Ansible control node instance", Sensitive: false, Type: "string"},
 	{Name: VarSecurityGroupIDs, Description: "IDs of the security groups for the Ansible control node instance", Sensitive: false, Type: "list(string)"},
 	{Name: VarAwsKeyPairName, Description: "Name of the AWS key pair for SSH access to the Ansible control node instance", Sensitive: false, Type: "string"},
@@ -62,8 +62,8 @@ func GenerateAmazonLinuxAMI() *hclwrite.Block {
 	return dataBlock
 }
 
-func GenerateAnsibleControlNodeInstance() *hclwrite.Block {
-	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", "ansible_control_node_instance"})
+func GenerateJumpClusterSetupHost() *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", "jump_cluster_setup_host"})
 	body := resourceBlock.Body()
 
 	body.SetAttributeRaw("ami", utils.TokensForResourceReference("data.aws_ami.amzn_linux_ami.id"))
@@ -97,14 +97,14 @@ func GenerateAnsibleControlNodeInstance() *hclwrite.Block {
 
 	// Tags as attribute
 	tagsMap := map[string]cty.Value{
-		"Name": cty.StringVal("ansible_control_node_instance"),
+		"Name": cty.StringVal("jump_cluster_setup_host"),
 	}
 	body.SetAttributeValue("tags", cty.MapVal(tagsMap))
 
 	return resourceBlock
 }
 
-func GenerateAnsibleControlNodeInstanceUserDataTpl() string {
+func GenerateJumpClusterSetupHostUserDataTpl() string {
 	return `#!/bin/bash
 
 sudo su - ec2-user
