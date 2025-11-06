@@ -149,30 +149,57 @@ type TerraformVariable struct {
 	Type        string `json:"type"`
 }
 
+// type MigrationWizardRequest struct {
+// 	HasPublicCCEndpoints bool   `json:"has_public_cc_endpoints"`
+// 	ClusterLinkName      string `json:"cluster_link_name"`
+
+// 	UseExistingSubnets bool     `json:"use_existing_subnets"`
+// 	ExistingSubnetIds  []string `json:"existing_subnet_ids"`
+// 	MskVPCId           string   `json:"msk_vpc_id"`
+// 	SubnetCidrRanges   []string `json:"subnet_cidr_ranges"`
+
+// 	UseExistingInternetGateway bool `json:"use_existing_internet_gateway"`
+
+// 	BrokerType                 string `json:"broker_type"`
+// 	BrokerAmount               string `json:"broker_amount"`
+// 	BrokerStorageSize          string `json:"broker_storage_size"`
+// 	JumpClusterSubnetCidrRange string `json:"jump_cluster_subnet_cidr_range"`
+// 	AnsibleSubnetCidrRange     string `json:"ansible_subnet_cidr_range"`
+// 	AuthenticationMethod       string `json:"authentication_method"`
+
+// 	TargetEnvironmentId string `json:"target_environment_id"`
+// 	TargetClusterId     string `json:"target_cluster_id"`
+// 	TargetRestEndpoint  string `json:"target_rest_endpoint"`
+
+// 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+// 	MskClusterId                 string `json:"msk_cluster_id"`
+// }
+
 type MigrationWizardRequest struct {
-	HasPublicCCEndpoints bool   `json:"has_public_cc_endpoints"`
-	ClusterLinkName      string `json:"cluster_link_name"`
+	HasPublicCcEndpoints bool `json:"has_public_cc_endpoints"`
 
-	UseExistingSubnets bool     `json:"use_existing_subnets"`
-	ExistingSubnetIds  []string `json:"existing_subnet_ids"`
-	MskVPCId           string   `json:"msk_vpc_id"`
-	SubnetCidrRanges   []string `json:"subnet_cidr_ranges"`
+	VpcId string `json:"vpc_id"`
 
-	UseExistingInternetGateway bool `json:"use_existing_internet_gateway"`
+	ReuseExistingSubnets         bool     `json:"reuse_existing_subnets"`
+	PrivateLinkExistingSubnetIds []string `json:"private_link_existing_subnet_ids"`
+	PrivateLinkNewSubnetsCidr    []string `json:"private_link_new_subnets_cidr"`
 
-	BrokerType                 string `json:"broker_type"`
-	BrokerAmount               string `json:"broker_amount"`
-	BrokerStorageSize          string `json:"broker_storage_size"`
-	JumpClusterSubnetCidrRange string `json:"jump_cluster_subnet_cidr_range"`
-	AnsibleSubnetCidrRange     string `json:"ansible_subnet_cidr_range"`
-	AuthenticationMethod       string `json:"authentication_method"`
+	HasExistingInternetGateway bool `json:"has_existing_internet_gateway"`
 
-	TargetEnvironmentId string `json:"target_environment_id"`
-	TargetClusterId     string `json:"target_cluster_id"`
-	TargetRestEndpoint  string `json:"target_rest_endpoint"`
+	JumpClusterInstanceType        string   `json:"jump_cluster_instance_type"`
+	JumpClusterBrokerStorage       int      `json:"jump_cluster_broker_storage"`
+	JumpClusterBrokerSubnetCidr    []string `json:"jump_cluster_broker_subnet_cidr"`
+	JumpClusterSetupHostSubnetCidr string   `json:"jump_cluster_setup_host_subnet_cidr"`
 
-	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+	MskJumpClusterAuthType       string `json:"msk_jump_cluster_auth_type"`
 	MskClusterId                 string `json:"msk_cluster_id"`
+	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
+	MskRegion                    string `json:"msk_region"`
+	TargetClusterId              string `json:"target_cluster_id"`
+	TargetRestEndpoint           string `json:"target_rest_endpoint"`
+	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
+	ClusterLinkName              string `json:"cluster_link_name"`
 }
 
 type MigrateTopicsRequest struct {

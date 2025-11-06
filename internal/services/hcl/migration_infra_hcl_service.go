@@ -19,7 +19,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	if request.HasPublicCCEndpoints {
+	if request.HasPublicCcEndpoints {
 		return mi.handleClusterLink(request)
 	}
 	return mi.handlePrivateLink(request)
@@ -243,41 +243,41 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	if request.UseExistingInternetGateway {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", request.MskVPCId))
+	if request.HasExistingInternetGateway {
+		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", request.VpcId))
 	} else {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway", request.MskVPCId))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway", request.VpcId))
 	}
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("availability_zones"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", request.MskVPCId, []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", request.VpcId, []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}))
 	rootBody.AppendNewline()
 
-	subnetRefs := make([]string, len(request.SubnetCidrRanges))
-	for i, subnetCidrRange := range request.SubnetCidrRanges {
+	subnetRefs := make([]string, len(request.PrivateLinkNewSubnetsCidr))
+	for i, subnetCidrRange := range request.PrivateLinkNewSubnetsCidr {
 		subnetTfName := fmt.Sprintf("confluent_platform_broker_subnet_%d", i)
 		availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.available.names[%d]", i)
 		rootBody.AppendBlock(aws.GenerateSubnetResource(
 			"confluent_platform_broker_subnet",
-			request.MskVPCId,
+			request.VpcId,
 			subnetCidrRange,
 			availabilityZoneRef,
 			i,
 		))
 		subnetRefs[i] = fmt.Sprintf("aws_subnet.%s.id", subnetTfName)
 
-		if i < len(request.SubnetCidrRanges) {
+		if i < len(request.PrivateLinkNewSubnetsCidr) {
 			rootBody.AppendNewline()
 		}
 	}
 
 	rootBody.AppendBlock(aws.GenerateSubnetResource(
 		"ansible_control_node_instance_public_subnet",
-		request.MskVPCId,
-		request.JumpClusterSubnetCidrRange,
+		request.VpcId,
+		request.JumpClusterSetupHostSubnetCidr,
 		"data.aws_availability_zones.available.names[0]",
 		0,
 	))
@@ -292,7 +292,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateNATGatewayResource("nat_gw", "aws_eip.nat_eip.id", "aws_subnet.ansible_control_node_instance_public_subnet.id"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", request.MskVPCId, "aws_nat_gateway.nat_gw.id"))
+	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", request.VpcId, "aws_nat_gateway.nat_gw.id"))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())

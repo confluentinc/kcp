@@ -213,7 +213,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.HasPublicCCEndpoints {
+	if req.HasPublicCcEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",
@@ -261,47 +261,51 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	var missingFields []string
 
 	// Check required fields
-	if req.MskVPCId == "" {
-		missingFields = append(missingFields, "mskVPCId")
+	if req.VpcId == "" {
+		missingFields = append(missingFields, "vpcId")
 	}
-	if req.BrokerType == "" {
-		missingFields = append(missingFields, "brokerType")
+	if req.JumpClusterInstanceType == "" {
+		missingFields = append(missingFields, "jumpClusterInstanceType")
 	}
-	if req.BrokerAmount == "" {
-		missingFields = append(missingFields, "brokerAmount")
+	if req.JumpClusterBrokerStorage <= 0 {
+		missingFields = append(missingFields, "jumpClusterBrokerStorage")
 	}
-	if req.BrokerStorageSize == "" {
-		missingFields = append(missingFields, "brokerStorageSize")
+	if len(req.JumpClusterBrokerSubnetCidr) == 0 {
+		missingFields = append(missingFields, "jumpClusterBrokerSubnetCidr")
 	}
-	if req.JumpClusterSubnetCidrRange == "" {
-		missingFields = append(missingFields, "jumpClusterSubnetCidrRange")
+	if req.JumpClusterSetupHostSubnetCidr == "" {
+		missingFields = append(missingFields, "jumpClusterSetupHostSubnetCidr")
 	}
-	if req.AnsibleSubnetCidrRange == "" {
-		missingFields = append(missingFields, "ansibleSubnetCidrRange")
-	}
-	if req.AuthenticationMethod == "" {
-		missingFields = append(missingFields, "authenticationMethod")
-	}
-	if req.TargetEnvironmentId == "" {
-		missingFields = append(missingFields, "targetEnvironmentId")
+	if req.MskJumpClusterAuthType == "" {
+		missingFields = append(missingFields, "mskJumpClusterAuthType")
 	}
 	if req.TargetClusterId == "" {
 		missingFields = append(missingFields, "targetClusterId")
 	}
-	if req.MskSaslScramBootstrapServers == "" {
-		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	// This might be missing depending on the MskJumpClusterAuthType.
+	// if req.MskSaslScramBootstrapServers == "" {
+	// 	missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	// }
+	if req.TargetRestEndpoint == "" {
+		missingFields = append(missingFields, "targetRestEndpoint")
+	}
+	if req.TargetBootstrapEndpoint == "" {
+		missingFields = append(missingFields, "targetBootstrapEndpoint")
+	}
+	if req.ClusterLinkName == "" {
+		missingFields = append(missingFields, "clusterLinkName")
 	}
 
 	var conditionalErrors []string
 
 	// Conditional validation based on UseExistingSubnets
-	if req.UseExistingSubnets {
-		if len(req.ExistingSubnetIds) == 0 {
-			conditionalErrors = append(conditionalErrors, "existingSubnetIds is required when useExistingSubnets is true")
+	if req.ReuseExistingSubnets {
+		if len(req.PrivateLinkExistingSubnetIds) == 0 {
+			conditionalErrors = append(conditionalErrors, "privateLinkExistingSubnetIds is required when reuseExistingSubnets is true")
 		}
 	} else {
-		if len(req.SubnetCidrRanges) == 0 {
-			conditionalErrors = append(conditionalErrors, "subnetCidrRanges is required when useExistingSubnets is false")
+		if len(req.PrivateLinkNewSubnetsCidr) == 0 {
+			conditionalErrors = append(conditionalErrors, "privateLinkNewSubnetsCidr is required when reuseExistingSubnets is false")
 		}
 	}
 
