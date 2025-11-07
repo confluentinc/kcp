@@ -6,11 +6,12 @@ import (
 )
 
 type TerraformState struct {
-	Outputs TerraformOutput `json:"outputs"`
+	Outputs TerraformOutputOld `json:"outputs"`
 }
 
 // a type for the output.json file in the target_env folder
-type TerraformOutput struct {
+// NOTE: This will be deprecated once we are completely on the HCL-servrice based approach.
+type TerraformOutputOld struct {
 	ConfluentCloudClusterApiKey                TerraformOutputValue `json:"confluent_cloud_cluster_api_key"`
 	ConfluentCloudClusterApiKeySecret          TerraformOutputValue `json:"confluent_cloud_cluster_api_key_secret"`
 	ConfluentCloudClusterId                    TerraformOutputValue `json:"confluent_cloud_cluster_id"`
@@ -149,31 +150,12 @@ type TerraformVariable struct {
 	Type        string `json:"type"`
 }
 
-// type MigrationWizardRequest struct {
-// 	HasPublicCCEndpoints bool   `json:"has_public_cc_endpoints"`
-// 	ClusterLinkName      string `json:"cluster_link_name"`
-
-// 	UseExistingSubnets bool     `json:"use_existing_subnets"`
-// 	ExistingSubnetIds  []string `json:"existing_subnet_ids"`
-// 	MskVPCId           string   `json:"msk_vpc_id"`
-// 	SubnetCidrRanges   []string `json:"subnet_cidr_ranges"`
-
-// 	UseExistingInternetGateway bool `json:"use_existing_internet_gateway"`
-
-// 	BrokerType                 string `json:"broker_type"`
-// 	BrokerAmount               string `json:"broker_amount"`
-// 	BrokerStorageSize          string `json:"broker_storage_size"`
-// 	JumpClusterSubnetCidrRange string `json:"jump_cluster_subnet_cidr_range"`
-// 	AnsibleSubnetCidrRange     string `json:"ansible_subnet_cidr_range"`
-// 	AuthenticationMethod       string `json:"authentication_method"`
-
-// 	TargetEnvironmentId string `json:"target_environment_id"`
-// 	TargetClusterId     string `json:"target_cluster_id"`
-// 	TargetRestEndpoint  string `json:"target_rest_endpoint"`
-
-// 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
-// 	MskClusterId                 string `json:"msk_cluster_id"`
-// }
+type TerraformOutput struct {
+	Name        string
+	Description string
+	Sensitive   bool
+	Value       string
+}
 
 type MigrationWizardRequest struct {
 	HasPublicCcEndpoints bool `json:"has_public_cc_endpoints"`

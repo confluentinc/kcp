@@ -18,13 +18,13 @@ var assetsFS embed.FS
 
 type MigrateTopicsOpts struct {
 	MirrorTopics    []string
-	TerraformOutput types.TerraformOutput
+	TerraformOutput types.TerraformOutputOld	
 	Manifest        types.Manifest
 }
 
 type MigrateTopicsAssetGenerator struct {
 	mirrorTopics    []string
-	terraformOutput types.TerraformOutput
+	terraformOutput types.TerraformOutputOld
 	manifest        types.Manifest
 }
 
@@ -111,7 +111,7 @@ func (mt *MigrateTopicsAssetGenerator) generateMSKToCCMirrorTopics(outputDir str
 	return nil
 }
 
-func (mt *MigrateTopicsAssetGenerator) generateMSKToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMSKToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutputOld, mirrorTopics []string, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "msk-to-cc-mirror-topics.sh.go.tmpl")
 	templateContent, err := assetsFS.ReadFile(templatePath)
 	if err != nil {
@@ -189,7 +189,7 @@ func (mt *MigrateTopicsAssetGenerator) generateMskToCpMirrorTopics(outputDir str
 	return nil
 }
 
-func (mt *MigrateTopicsAssetGenerator) generateMskToCpMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateMskToCpMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutputOld, mirrorTopics []string, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "msk-to-cp-mirror-topics.sh.go.tmpl")
 	templateContent, err := assetsFS.ReadFile(templatePath)
 	if err != nil {
@@ -238,7 +238,7 @@ func (mt *MigrateTopicsAssetGenerator) generateCpToCCMirrorTopics(outputDir stri
 	return nil
 }
 
-func (mt *MigrateTopicsAssetGenerator) generateCpToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutput, mirrorTopics []string, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateCpToCCMirrorTopicsContent(w io.Writer, terraformOutput types.TerraformOutputOld, mirrorTopics []string, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "cp-to-cc-mirror-topics.sh.go.tmpl")
 	templateContent, err := assetsFS.ReadFile(templatePath)
 	if err != nil {
@@ -289,7 +289,7 @@ func (mt *MigrateTopicsAssetGenerator) generateDestinationClusterProperties(outp
 	return nil
 }
 
-func (mt *MigrateTopicsAssetGenerator) generateDestinationClusterPropertiesContent(w io.Writer, terraformOutput types.TerraformOutput, assetsDir string) error {
+func (mt *MigrateTopicsAssetGenerator) generateDestinationClusterPropertiesContent(w io.Writer, terraformOutput types.TerraformOutputOld, assetsDir string) error {
 	templatePath := filepath.Join(assetsDir, "destination-cluster-properties.go.tmpl")
 
 	templateContent, err := assetsFS.ReadFile(templatePath)

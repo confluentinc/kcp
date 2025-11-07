@@ -45,7 +45,7 @@ func GenerateClusterLinkLocals() *hclwrite.Block {
 
 	basicAuthTokens := utils.TokensForFunctionCall(
 		"base64encode",
-		fmt.Sprintf("${var.%s}:${var.%s}", VarConfluentCloudClusterAPIKey, VarConfluentCloudClusterAPISecret),
+		utils.TokensForStringTemplate(fmt.Sprintf("${var.%s}:${var.%s}", VarConfluentCloudClusterAPIKey, VarConfluentCloudClusterAPISecret)),
 	)
 	localsBlock.Body().SetAttributeRaw("basic_auth_credentials", basicAuthTokens)
 

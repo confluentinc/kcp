@@ -8,7 +8,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -72,7 +71,7 @@ func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWiz
 				Name:        "networking",
 				MainTf:      mi.generateNetworkingMainTf(request),
 				VariablesTf: mi.generateNetworkingVariablesTf(request),
-				OutputsTf:   mi.generateNetworkingOutputsTf(request),
+				OutputsTf:   mi.generateNetworkingOutputsTf(),
 			},
 			{
 				Name:        "private_link_connection",
@@ -190,10 +189,28 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	rootBody.AppendBlock(aws.GenerateAmazonLinuxAMI())
+	rootBody.AppendBlock(aws.GenerateAmiDataResource("amzn_linux_ami", "137112412989", true, map[string]string{
+		"name": "al2023-ami-2023.*-kernel-6.1-x86_64",
+		"state": "available",
+		"architecture": "x86_64",
+		"virtualization-type": "hvm",
+	}))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateJumpClusterSetupHost())
+	rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResource(
+		"jump_cluster_setup_host", 
+		"data.aws_ami.amzn_linux_ami.id", 
+		"t2.medium", 
+		"jump_cluster_setup_host_subnet_id", 
+		"security_group_ids", 
+		"jump_cluster_ssh_key_pair_name", 
+		"jump-cluster-setup-host-user-data.tpl", 
+		true, 
+		map[string]hclwrite.Tokens{
+			"broker_ips":  utils.TokensForVarReference("jump_cluster_broker_subnet_ids"),
+			"private_key": utils.TokensForVarReference("private_key"),
+		},
+	))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -326,94 +343,13 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf(request types.MigrationWizardRequest) string {
-	requiredVariables := GetModuleVariableDefinitions(request)
+	requiredVariables := GetNetworkingModuleVariableDefinitions(request)
 	return mi.generateVariablesTf(requiredVariables)
 }
 
-func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
 	outputs := GetNetworkingModuleOutputDefinitions()
 	return mi.generateOutputsTf(outputs)
-}
-
-// generateOutputsTf generates outputs.tf content from output definitions
-func (mi *MigrationInfraHCLService) generateOutputsTf(tfOutputs []TerraformOutput) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	for _, output := range tfOutputs {
-		outputBlock := rootBody.AppendNewBlock("output", []string{output.Name})
-		outputBody := outputBlock.Body()
-
-		// Parse the value expression by wrapping it in a temporary output block
-		// This allows us to parse complex expressions correctly
-		tempHcl := fmt.Sprintf("output \"temp\" {\n  value = %s\n}", output.Value)
-		tempFile, diags := hclwrite.ParseConfig([]byte(tempHcl), "", hcl.Pos{Line: 1, Column: 1})
-		if diags.HasErrors() {
-			// If parsing fails, fall back to using the raw expression as a resource reference
-			outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
-		} else {
-			// Extract the value attribute from the temporary file
-			tempBody := tempFile.Body()
-			blocks := tempBody.Blocks()
-			if len(blocks) > 0 {
-				tempOutputBody := blocks[0].Body()
-				attrs := tempOutputBody.Attributes()
-				if valueAttr, ok := attrs["value"]; ok {
-					outputBody.SetAttributeRaw("value", valueAttr.Expr().BuildTokens(nil))
-				} else {
-					// Fallback to resource reference
-					outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
-				}
-			} else {
-				// Fallback to resource reference
-				outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
-			}
-		}
-
-		if output.Description != "" {
-			outputBody.SetAttributeValue("description", cty.StringVal(output.Description))
-		}
-		if output.Sensitive {
-			outputBody.SetAttributeValue("sensitive", cty.BoolVal(true))
-		}
-		rootBody.AppendNewline()
-	}
-
-	return string(f.Bytes())
-}
-
-// ============================================================================
-// Inputs Auto Tfvars Generation
-// ============================================================================
-
-func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.MigrationWizardRequest) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	values := GetModuleVariableValues(request)
-
-	for varName, value := range values {
-		switch v := value.(type) {
-		case string:
-			if v != "" {
-				rootBody.SetAttributeValue(varName, cty.StringVal(v))
-			}
-		case []string:
-			if len(v) > 0 {
-				ctyValues := make([]cty.Value, len(v))
-				for i, s := range v {
-					ctyValues[i] = cty.StringVal(s)
-				}
-				rootBody.SetAttributeValue(varName, cty.ListVal(ctyValues))
-			}
-		case bool:
-			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
-		case int:
-			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
-		}
-	}
-
-	return string(f.Bytes())
 }
 
 // ============================================================================
@@ -443,15 +379,69 @@ func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.Terr
 	for _, v := range tfVariables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
-		// Use Type field if specified, otherwise default to "string"
 		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
+
 		if v.Description != "" {
 			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
 		}
+
 		if v.Sensitive {
 			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
 		}
 		rootBody.AppendNewline()
+	}
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateOutputsTf(tfOutputs []types.TerraformOutput) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	for _, output := range tfOutputs {
+		outputBlock := rootBody.AppendNewBlock("output", []string{output.Name})
+		outputBody := outputBlock.Body()
+		outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
+
+		if output.Description != "" {
+			outputBody.SetAttributeValue("description", cty.StringVal(output.Description))
+		}
+		outputBody.SetAttributeValue("sensitive", cty.BoolVal(output.Sensitive))
+		rootBody.AppendNewline()
+	}
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// Root - Inputs Auto Tfvars Generation
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.MigrationWizardRequest) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	values := GetModuleVariableValues(request)
+
+	for varName, value := range values {
+		switch v := value.(type) {
+		case string:
+			if v != "" {
+				rootBody.SetAttributeValue(varName, cty.StringVal(v))
+			}
+		case []string:
+			if len(v) > 0 {
+				ctyValues := make([]cty.Value, len(v))
+				for i, s := range v {
+					ctyValues[i] = cty.StringVal(s)
+				}
+				rootBody.SetAttributeValue(varName, cty.ListVal(ctyValues))
+			}
+		case bool:
+			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
+		case int:
+			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
+		}
 	}
 
 	return string(f.Bytes())

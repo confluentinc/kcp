@@ -68,15 +68,21 @@ func TokensForStringList(items []string) hclwrite.Tokens {
 
 // TokensForFunctionCall creates tokens for a function call with a string template argument
 // e.g., base64encode("${var.key}:${var.secret}")
-func TokensForFunctionCall(functionName string, stringTemplateArg string) hclwrite.Tokens {
-	return hclwrite.Tokens{
+func TokensForFunctionCall(functionName string, args ...hclwrite.Tokens) hclwrite.Tokens {
+	tokens := hclwrite.Tokens{
 		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(functionName)},
 		&hclwrite.Token{Type: hclsyntax.TokenOParen, Bytes: []byte("(")},
-		&hclwrite.Token{Type: hclsyntax.TokenOQuote, Bytes: []byte(`"`)},
-		&hclwrite.Token{Type: hclsyntax.TokenQuotedLit, Bytes: []byte(stringTemplateArg)},
-		&hclwrite.Token{Type: hclsyntax.TokenCQuote, Bytes: []byte(`"`)},
-		&hclwrite.Token{Type: hclsyntax.TokenCParen, Bytes: []byte(")")},
 	}
+
+	for i, arg := range args {
+		if i > 0 {
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")})
+		}
+		tokens = append(tokens, arg...)
+	}
+
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCParen, Bytes: []byte(")")})
+	return tokens
 }
 
 // TokensForMap creates tokens for a map/object with string keys and token values

@@ -20,7 +20,7 @@ type ReverseProxyOpts struct {
 	Region           string
 	PublicSubnetCidr string
 	VPCId            string
-	TerraformOutput  types.TerraformOutput
+	TerraformOutput  types.TerraformOutputOld
 	SecurityGroupIds []string
 }
 
@@ -28,7 +28,7 @@ type ReverseProxyAssetGenerator struct {
 	region           string
 	publicSubnetCidr string
 	vpcId            string
-	terraformOutput  types.TerraformOutput
+	terraformOutput  types.TerraformOutputOld
 	securityGroupIds []string
 }
 

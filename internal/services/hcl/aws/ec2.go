@@ -1,105 +1,68 @@
 package aws
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
+	"fmt"
+
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
 
-const (
-	VarAwsPublicSubnetID                          = "aws_public_subnet_id"
-	VarSecurityGroupIDs                           = "security_group_ids"
-	VarAwsKeyPairName                             = "aws_key_pair_name"
-	VarConfluentPlatformBrokerInstancesPrivateDNS = "confluent_platform_broker_instances_private_dns"
-	VarPrivateKey                                 = "private_key"
-)
-
-var JumpClusterSetupHostVariables = []types.TerraformVariable{
-	{Name: VarAwsPublicSubnetID, Description: "ID of the public subnet for the Ansible control node instance", Sensitive: false, Type: "string"},
-	{Name: VarSecurityGroupIDs, Description: "IDs of the security groups for the Ansible control node instance", Sensitive: false, Type: "list(string)"},
-	{Name: VarAwsKeyPairName, Description: "Name of the AWS key pair for SSH access to the Ansible control node instance", Sensitive: false, Type: "string"},
-	{Name: VarConfluentPlatformBrokerInstancesPrivateDNS, Description: "Private DNS names of the Confluent Platform broker instances", Sensitive: false, Type: "list(string)"},
-	{Name: VarPrivateKey, Description: "Private SSH key for accessing the Confluent Platform broker instances", Sensitive: true, Type: "string"},
-}
-
-func GenerateAmazonLinuxAMI() *hclwrite.Block {
-	dataBlock := hclwrite.NewBlock("data", []string{"aws_ami", "amzn_linux_ami"})
-	body := dataBlock.Body()
-
-	body.SetAttributeValue("most_recent", cty.BoolVal(true))
-	body.SetAttributeValue("owners", cty.ListVal([]cty.Value{cty.StringVal("137112412989")}))
-	body.AppendNewline()
-
-	// Filter for name
-	nameFilterBlock := body.AppendNewBlock("filter", nil)
-	nameFilterBody := nameFilterBlock.Body()
-	nameFilterBody.SetAttributeValue("name", cty.StringVal("name"))
-	nameFilterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("al2023-ami-2023.*-kernel-6.1-x86_64")}))
-	body.AppendNewline()
-
-	// Filter for state
-	stateFilterBlock := body.AppendNewBlock("filter", nil)
-	stateFilterBody := stateFilterBlock.Body()
-	stateFilterBody.SetAttributeValue("name", cty.StringVal("state"))
-	stateFilterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("available")}))
-	body.AppendNewline()
-
-	// Filter for architecture
-	archFilterBlock := body.AppendNewBlock("filter", nil)
-	archFilterBody := archFilterBlock.Body()
-	archFilterBody.SetAttributeValue("name", cty.StringVal("architecture"))
-	archFilterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("x86_64")}))
-	body.AppendNewline()
-
-	// Filter for virtualization-type
-	virtFilterBlock := body.AppendNewBlock("filter", nil)
-	virtFilterBody := virtFilterBlock.Body()
-	virtFilterBody.SetAttributeValue("name", cty.StringVal("virtualization-type"))
-	virtFilterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("hvm")}))
-
-	return dataBlock
-}
-
-func GenerateJumpClusterSetupHost() *hclwrite.Block {
-	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", "jump_cluster_setup_host"})
+func GenerateAmiDataResource(tfResourceName, owners string, mostRecent bool, filters map[string]string) *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("data", []string{"aws_ami", tfResourceName})
 	body := resourceBlock.Body()
 
-	body.SetAttributeRaw("ami", utils.TokensForResourceReference("data.aws_ami.amzn_linux_ami.id"))
-	body.SetAttributeValue("instance_type", cty.StringVal("t2.medium"))
-	body.SetAttributeRaw("subnet_id", utils.TokensForVarReference(VarAwsPublicSubnetID))
-	body.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReference(VarSecurityGroupIDs))
-	body.SetAttributeRaw("key_name", utils.TokensForVarReference(VarAwsKeyPairName))
-	body.SetAttributeValue("associate_public_ip_address", cty.BoolVal(true))
-	body.AppendNewline()
+	body.SetAttributeValue("owners", cty.StringVal(owners))
+	body.SetAttributeValue("most_recent", cty.BoolVal(mostRecent))
 
-	// Create templatefile function call for user_data
-	templatefileMap := map[string]hclwrite.Tokens{
-		"broker_ips":  utils.TokensForVarReference(VarConfluentPlatformBrokerInstancesPrivateDNS),
-		"private_key": utils.TokensForVarReference(VarPrivateKey),
+	for filterName, filterValue := range filters {
+		filterBlock := body.AppendNewBlock("filter", nil)
+		filterBody := filterBlock.Body()
+		filterBody.SetAttributeValue("name", cty.StringVal(filterName))
+		filterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal(filterValue)}))
 	}
 
-	// Build templatefile function call: templatefile("${path.module}/ansible-control-node-user-data.tpl", {...})
-	templatefileTokens := hclwrite.Tokens{
-		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("templatefile")},
-		&hclwrite.Token{Type: hclsyntax.TokenOParen, Bytes: []byte("(")},
-		&hclwrite.Token{Type: hclsyntax.TokenOQuote, Bytes: []byte(`"`)},
-		&hclwrite.Token{Type: hclsyntax.TokenQuotedLit, Bytes: []byte("${path.module}/ansible-control-node-user-data.tpl")},
-		&hclwrite.Token{Type: hclsyntax.TokenCQuote, Bytes: []byte(`"`)},
-		&hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")},
-	}
-	templatefileTokens = append(templatefileTokens, utils.TokensForMap(templatefileMap)...)
-	templatefileTokens = append(templatefileTokens, &hclwrite.Token{Type: hclsyntax.TokenCParen, Bytes: []byte(")")})
+	return resourceBlock
+}
 
-	body.SetAttributeRaw("user_data", templatefileTokens)
-	body.AppendNewline()
+func GenerateEc2InstanceResource(tfResourceName, amiIdRef, instanceType, subnetIdRef, securityGroupIdsRef, keyNameRef string, publicIp bool) *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", tfResourceName})
+	instanceBody := resourceBlock.Body()
 
-	// Tags as attribute
-	tagsMap := map[string]cty.Value{
-		"Name": cty.StringVal("jump_cluster_setup_host"),
-	}
-	body.SetAttributeValue("tags", cty.MapVal(tagsMap))
+	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference(amiIdRef))
+	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType))
+	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForResourceReference(subnetIdRef))
+	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForResourceReference(securityGroupIdsRef))
+	instanceBody.SetAttributeRaw("key_name", utils.TokensForResourceReference(keyNameRef))
+	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
+
+	return resourceBlock
+}
+
+func GenerateEc2UserDataInstanceResource(tfResourceName, amiIdRef, instanceType, subnetIdRef, securityGroupIdsRef, keyNameRef, userDataTemplatePath string, publicIp bool, userDataArgs map[string]hclwrite.Tokens) *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", tfResourceName})
+	instanceBody := resourceBlock.Body()
+
+	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference(amiIdRef))
+	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType))
+	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForVarReference(subnetIdRef))
+	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReference(securityGroupIdsRef))
+	instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
+	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
+  instanceBody.AppendNewline()
+
+  templatefileMap := map[string]hclwrite.Tokens{
+    "broker_ips":  utils.TokensForVarReference("var.confluent_platform_broker_instances_private_dns"),
+    "private_key": utils.TokensForVarReference("var.private_key"),
+  }
+  
+  templatefileTokens := utils.TokensForFunctionCall(
+    "templatefile",
+    utils.TokensForStringTemplate(fmt.Sprintf("${path.module}/%s", userDataTemplatePath)),
+    utils.TokensForMap(templatefileMap),
+  )
+
+  instanceBody.SetAttributeRaw("user_data", templatefileTokens)
 
 	return resourceBlock
 }
