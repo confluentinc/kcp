@@ -85,11 +85,14 @@ func GetJumpClusterSetupHostVariableNames() map[string]string {
 	return names
 }
 
-func GetJumpClusterSetupHostVariableDefinitions() []types.TerraformVariable {
+func GetJumpClusterSetupHostVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	var definitions []types.TerraformVariable
-	jumpClusterVars := GetJumpClusterSetupHostVariables()
+	jumpClusterSetupHostVars := GetJumpClusterSetupHostVariables()
 
-	for _, varDef := range jumpClusterVars {
+	for _, varDef := range jumpClusterSetupHostVars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
 		definitions = append(definitions, varDef.Definition)
 	}
 

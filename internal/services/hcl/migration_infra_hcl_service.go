@@ -28,7 +28,7 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 
 func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	return types.MigrationInfraTerraformProject{
-		MainTf:      mi.generateRootMainTfForClusterLink(),
+		MainTf:      mi.generateRootMainTfForPublicMigrationInfrastructure(),
 		ProvidersTf: mi.generateRootProvidersTfForClusterLink(),
 		VariablesTf: mi.generateVariablesTf(confluent.ClusterLinkVariables),
 		Modules: []types.MigrationInfraTerraformModule{
@@ -45,15 +45,15 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 	requiredVariables := GetModuleVariableDefinitions(request)
 
 	return types.MigrationInfraTerraformProject{
-		MainTf:           mi.generateRootMainTfForPrivateLink(),
-		ProvidersTf:      mi.generateRootProvidersTfForPrivateLink(),
+		MainTf:           mi.generateRootMainTfForPrivateMigrationInfrastructure(),
+		ProvidersTf:      mi.generateRootProvidersTfForPrivateMigrationInfrastructure(),
 		VariablesTf:      mi.generateVariablesTf(requiredVariables),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "jump_cluster_setup_host",
 				MainTf:      mi.generateJumpClusterSetupHostMainTf(),
-				VariablesTf: mi.generateJumpClusterSetupHostVariablesTf(),
+				VariablesTf: mi.generateJumpClusterSetupHostVariablesTf(request),
 				VersionsTf:  mi.generateJumpClusterSetupHostVersionsTf(),
 				AdditionalFiles: map[string]string{
 					"jump-cluster-setup-host-user-data.tpl": mi.generateJumpClusterSetupHostUserDataTpl(),
@@ -81,7 +81,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 			{
 				Name:        "private_link_connection",
 				MainTf:      mi.generatePrivateLinkConnectionMainTf(),
-				VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(),
+				VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(request),
 				OutputsTf:   mi.generatePrivateLinkConnectionOutputsTf(),
 			},
 		},
@@ -89,10 +89,10 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 }
 
 // ============================================================================
-// Root-Level Generation
+// Root-Level Generation - Public Migration
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateRootMainTfForClusterLink() string {
+func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastructure() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -160,15 +160,40 @@ func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.Migra
 }
 
 // ============================================================================
-// Root-Level Generation - Private Link
+// Cluster Link Module Generation (Public)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateLink() string {
-	// TODO: Implement main.tf generation for private link
+func (mi *MigrationInfraHCLService) generateClusterLinkMainTf(request types.MigrationWizardRequest) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(request))
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf() string {
+	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
+}
+
+// ============================================================================
+// Root-Level Generation - Private Migration
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrastructure() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+
+
 	return ""
 }
 
-func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateLink() string {
+func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateMigrationInfrastructure() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -196,28 +221,7 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateLink() stri
 }
 
 // ============================================================================
-// Cluster Link Module Generation
-// ============================================================================
-
-func (mi *MigrationInfraHCLService) generateClusterLinkMainTf(request types.MigrationWizardRequest) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals())
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(request))
-	rootBody.AppendNewline()
-
-	return string(f.Bytes())
-}
-
-func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf() string {
-	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
-}
-
-// ============================================================================
-// Jump Cluster Setup Host Module Generation
+// Jump Cluster Setup Host Module Generation (Private)
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string {
@@ -262,8 +266,8 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl() st
 	return aws.GenerateJumpClusterSetupHostUserDataTpl()
 }
 
-func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf() string {
-	return mi.generateVariablesTf(GetJumpClusterSetupHostVariableDefinitions())
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf(request types.MigrationWizardRequest) string {
+	return mi.generateVariablesTf(GetJumpClusterSetupHostVariableDefinitions(request))
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() string {
@@ -282,7 +286,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() str
 }
 
 // ============================================================================
-// Jump Cluster Module Generation
+// Jump Cluster Module Generation (Private)
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.MigrationWizardRequest) string {
@@ -410,7 +414,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersOutputsTf() string {
 }
 
 // ============================================================================
-// Networking Module Generation
+// Networking Module Generation (Private)
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.MigrationWizardRequest) string {
@@ -507,22 +511,71 @@ func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
 }
 
 // ============================================================================
-// Private Link Connection Module Generation
+// Private Link Connection Module Generation (Private)
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf() string {
-	
+	awsRegionVarName := GetModuleVariableName("aws_region")
+	targetEnvironmentIdVarName := GetModuleVariableName("target_environment_id")
+	vpcIdVarName := GetModuleVariableName("vpc_id")
+	jumpClusterBrokerSubnetIdsVarName := GetModuleVariableName("jump_cluster_broker_subnet_ids")
+	privateLinkSecurityGroupIdVarName := GetModuleVariableName("private_link_security_group_id")
 
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
 
-	return ""
+	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResourceNew(
+		"jump_cluster_private_link_attachment", 
+		"jump_cluster_private_link_attachment", 
+		awsRegionVarName, 
+		targetEnvironmentIdVarName,
+	))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateVpcEndpointResourceNew(
+		"jump_cluster_vpc_endpoint",
+		vpcIdVarName,
+		"confluent_private_link_attachment.jump_cluster_private_link_attachment.aws[0].vpc_endpoint_service_name",
+		privateLinkSecurityGroupIdVarName,
+		jumpClusterBrokerSubnetIdsVarName,
+		[]string{"confluent_private_link_attachment.jump_cluster_private_link_attachment"},
+	))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnectionResourceNew(
+		"jump_cluster_private_link_connection",
+		"jump_cluster_private_link_connection",
+		targetEnvironmentIdVarName,
+		"aws_vpc_endpoint.jump_cluster_vpc_endpoint.id",
+		"confluent_private_link_attachment.jump_cluster_private_link_attachment.id",
+	))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateRoute53ZoneResourceNew(
+		"jump_cluster_private_link_zone",
+		vpcIdVarName,
+		"confluent_private_link_attachment.jump_cluster_private_link_attachment.dns_domain",
+	))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateRoute53RecordResourceNew(
+		"jump_cluster_private_link_record",
+		"aws_route53_zone.jump_cluster_private_link_zone.zone_id",
+		"aws_vpc_endpoint.jump_cluster_vpc_endpoint.dns_entry[0].dns_name",
+	))
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVariablesTf() string {
-	return ""
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVariablesTf(request types.MigrationWizardRequest) string {
+	requiredVariables := GetPrivateLinkModuleVariableDefinitions(request)
+	return mi.generateVariablesTf(requiredVariables)
 }
 
 func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionOutputsTf() string {
-	return ""
+	outputs := GetPrivateLinkModuleOutputDefinitions()
+	return mi.generateOutputsTf(outputs)
 }
 
 // ============================================================================

@@ -179,6 +179,7 @@ type MigrationWizardRequest struct {
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
 	MskRegion                    string `json:"msk_region"`
+	TargetEnvironmentId          string `json:"target_environment_id"`
 	TargetClusterId              string `json:"target_cluster_id"`
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
 	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
