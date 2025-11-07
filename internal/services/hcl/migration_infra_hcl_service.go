@@ -44,9 +44,8 @@ func (mi *MigrationInfraHCLService) handleClusterLink(request types.MigrationWiz
 
 // TODO: Is `handlePrivateLink` the best name? It had me slightly confused at first.
 func (mi *MigrationInfraHCLService) handlePrivateLink(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	// gather up all the variables required for everything to work ie modules and providers
-	providerVariables := append(confluent.ConfluentProviderVariables, aws.AwsProviderVariables...)
-	requiredVariables := append(aws.JumpClusterSetupHostVariables, providerVariables...)
+	// Get all variables using the unified module definition pattern
+	requiredVariables := GetModuleVariableDefinitions(request)
 
 	return types.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForPrivateLink(),
@@ -205,7 +204,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl() st
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf() string {
-	return mi.generateVariablesTf(aws.JumpClusterSetupHostVariables)
+	return mi.generateVariablesTf(GetJumpClusterSetupHostVariableDefinitions())
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() string {

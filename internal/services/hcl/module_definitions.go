@@ -37,7 +37,49 @@ type ModuleOutputDefinition struct {
 }
 
 // MigrationInfraModuleVariables defines all variables used in migration infrastructure modules
+// This includes root-level variables (providers) and module-level variables
 var MigrationInfraModuleVariables = []ModuleVariableDefinition{
+	// Provider Variables
+	{
+		Name: "confluent_cloud_api_key",
+		Definition: types.TerraformVariable{
+			Name:        "confluent_cloud_api_key",
+			Description: "Confluent Cloud API Key",
+			Sensitive:   false,
+			Type:        "string",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return "" // Provider variables are typically set via environment or manually
+		},
+		Condition: nil,
+	},
+	{
+		Name: "confluent_cloud_api_secret",
+		Definition: types.TerraformVariable{
+			Name:        "confluent_cloud_api_secret",
+			Description: "Confluent Cloud API Secret",
+			Sensitive:   true,
+			Type:        "string",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return "" // Provider variables are typically set via environment or manually
+		},
+		Condition: nil,
+	},
+	{
+		Name: "aws_region",
+		Definition: types.TerraformVariable{
+			Name:        "aws_region",
+			Description: "The AWS region",
+			Sensitive:   false,
+			Type:        "string",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return request.MskRegion // Use MSK region as AWS region
+		},
+		Condition: nil,
+	},
+	// Networking Module Variables
 	{
 		Name: "vpc_id",
 		Definition: types.TerraformVariable{
@@ -49,7 +91,7 @@ var MigrationInfraModuleVariables = []ModuleVariableDefinition{
 		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
 			return request.VpcId
 		},
-		Condition: nil, // Always include
+		Condition: nil,
 	},
 	{
 		Name: "jump_cluster_broker_subnet_cidrs",
@@ -63,12 +105,6 @@ var MigrationInfraModuleVariables = []ModuleVariableDefinition{
 			return request.JumpClusterBrokerSubnetCidr
 		},
 		Condition: nil,
-		/*
-		func(request types.MigrationWizardRequest) bool {
-			// Only include if there are subnet CIDRs
-			return len(request.JumpClusterBrokerSubnetCidr) > 0
-		},
-		*/
 	},
 	{
 		Name: "jump_cluster_setup_host_subnet_cidr",
@@ -80,6 +116,72 @@ var MigrationInfraModuleVariables = []ModuleVariableDefinition{
 		},
 		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
 			return request.JumpClusterSetupHostSubnetCidr
+		},
+		Condition: nil,
+	},
+	// Jump Cluster Setup Host Module Variables (these reference module outputs)
+	{
+		Name: "aws_public_subnet_id",
+		Definition: types.TerraformVariable{
+			Name:        "aws_public_subnet_id",
+			Description: "ID of the public subnet for the Ansible control node instance",
+			Sensitive:   false,
+			Type:        "string",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return "" // This comes from networking module output
+		},
+		Condition: nil,
+	},
+	{
+		Name: "security_group_ids",
+		Definition: types.TerraformVariable{
+			Name:        "security_group_ids",
+			Description: "IDs of the security groups for the Ansible control node instance",
+			Sensitive:   false,
+			Type:        "list(string)",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return []string{} // This comes from networking module output
+		},
+		Condition: nil,
+	},
+	{
+		Name: "aws_key_pair_name",
+		Definition: types.TerraformVariable{
+			Name:        "aws_key_pair_name",
+			Description: "Name of the AWS key pair for SSH access to the Ansible control node instance",
+			Sensitive:   false,
+			Type:        "string",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return "" // This comes from networking module output
+		},
+		Condition: nil,
+	},
+	{
+		Name: "confluent_platform_broker_instances_private_dns",
+		Definition: types.TerraformVariable{
+			Name:        "confluent_platform_broker_instances_private_dns",
+			Description: "Private DNS names of the Confluent Platform broker instances",
+			Sensitive:   false,
+			Type:        "list(string)",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return []string{} // This comes from confluent_platform_broker_instances module output
+		},
+		Condition: nil,
+	},
+	{
+		Name: "private_key",
+		Definition: types.TerraformVariable{
+			Name:        "private_key",
+			Description: "Private SSH key for accessing the Confluent Platform broker instances",
+			Sensitive:   true,
+			Type:        "string",
+		},
+		ValueExtractor: func(request types.MigrationWizardRequest) interface{} {
+			return "" // This comes from networking module output
 		},
 		Condition: nil,
 	},
@@ -124,6 +226,30 @@ func GetModuleVariableName(varName string) string {
 		}
 	}
 	return varName
+}
+
+// GetJumpClusterSetupHostVariableDefinitions returns variable definitions for the jump cluster setup host module
+// These variables reference outputs from other modules (networking, confluent_platform_broker_instances)
+func GetJumpClusterSetupHostVariableDefinitions() []types.TerraformVariable {
+	jumpClusterVarNames := []string{
+		"aws_public_subnet_id",
+		"security_group_ids",
+		"aws_key_pair_name",
+		"confluent_platform_broker_instances_private_dns",
+		"private_key",
+	}
+
+	var definitions []types.TerraformVariable
+	for _, varDef := range MigrationInfraModuleVariables {
+		for _, name := range jumpClusterVarNames {
+			if varDef.Name == name {
+				definitions = append(definitions, varDef.Definition)
+				break
+			}
+		}
+	}
+
+	return definitions
 }
 
 // NetworkingModuleOutputs defines all outputs for the networking module
