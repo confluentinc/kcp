@@ -82,9 +82,6 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	// TODO: Retrieve the region from the statefile.
-	request.Region = "eu-west-3"
-
 	// Add environment (create or use data source if user states an environment already exists).
 	if request.NeedsEnvironment {
 		rootBody.AppendBlock(confluent.GenerateEnvironmentResource(ti.ResourceNames.Environment, request.EnvironmentName))
@@ -203,7 +200,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 
 		rootBody.AppendBlock(aws.GenerateVpcEndpoint(
 			ti.ResourceNames.VpcEndpoint,
-			request.VpcId, // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
+			request.VpcId,
 			fmt.Sprintf("confluent_private_link_attachment.%s.aws[0].vpc_endpoint_service_name", ti.ResourceNames.PrivateLinkAttachment),
 			fmt.Sprintf("aws_security_group.%s[*].id", ti.ResourceNames.SecurityGroup),
 			subnetRefs,
@@ -222,7 +219,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 
 		rootBody.AppendBlock(aws.GenerateRoute53Zone(
 			ti.ResourceNames.Route53Zone,
-			request.VpcId, // TODO: should we retrieve vpc id from statefile instead of asking user to pass it in?
+			request.VpcId,
 			fmt.Sprintf("confluent_private_link_attachment.%s.dns_domain", ti.ResourceNames.PrivateLinkAttachment),
 		))
 		rootBody.AppendNewline()
@@ -242,9 +239,6 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 func (ti *TargetInfraHCLService) generateProvidersTf(request types.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
-
-	// TODO: Retrieve the region from the statefile.
-	request.Region = "eu-west-3"
 
 	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
 	terraformBody := terraformBlock.Body()

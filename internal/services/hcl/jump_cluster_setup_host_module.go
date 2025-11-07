@@ -14,8 +14,8 @@ func GetJumpClusterSetupHostVariables() []ModuleVariableDefinition {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return ""
+			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+				return "" // Retrieved from networking module output.
 			},
 			Condition: nil,
 		},
@@ -27,8 +27,8 @@ func GetJumpClusterSetupHostVariables() []ModuleVariableDefinition {
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return []string{}
+			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+				return []string{} // Retrieved from networking module output.
 			},
 			Condition: nil,
 		},
@@ -40,8 +40,8 @@ func GetJumpClusterSetupHostVariables() []ModuleVariableDefinition {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return ""
+			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+				return "" // Retrieved from networking module output.
 			},
 			Condition: nil,
 		},
@@ -53,8 +53,8 @@ func GetJumpClusterSetupHostVariables() []ModuleVariableDefinition {
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return []string{}
+			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+				return []string{} // Retrieved from networking module output.
 			},
 			Condition: nil,
 		},
@@ -66,12 +66,23 @@ func GetJumpClusterSetupHostVariables() []ModuleVariableDefinition {
 				Sensitive:   true,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return "" // This comes from networking module output
+			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+				return "" // Retrieved from networking module output.
 			},
 			Condition: nil,
 		},
 	}
+}
+
+func GetJumpClusterSetupHostVariableNames() map[string]string {
+	vars := GetJumpClusterSetupHostVariables()
+	names := make(map[string]string)
+
+	for _, v := range vars {
+		names[v.Name] = v.Name
+	}
+
+	return names
 }
 
 func GetJumpClusterSetupHostVariableDefinitions() []types.TerraformVariable {

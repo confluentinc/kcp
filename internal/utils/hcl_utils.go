@@ -95,7 +95,7 @@ func TokensForMap(entries map[string]hclwrite.Tokens) hclwrite.Tokens {
 
 	for key, valueTokens := range entries {
 		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(key)})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenEqual, Bytes: []byte(" = ")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenEqual, Bytes: []byte("=")})
 		tokens = append(tokens, valueTokens...)
 		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")})
 	}
@@ -118,4 +118,31 @@ func GenerateLifecycleBlock(lifecycle string, boolean bool) (hclwrite.Tokens, er
 		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(strconv.FormatBool(boolean))},
 		&hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")},
 	}, nil
+}
+
+func ConvertToCtyValue(v any) cty.Value {
+	switch val := v.(type) {
+	case string:
+		return cty.StringVal(val)
+	case int:
+		return cty.NumberIntVal(int64(val))
+	case int64:
+		return cty.NumberIntVal(val)
+	case bool:
+		return cty.BoolVal(val)
+	default:
+		return cty.NilVal
+	}
+}
+
+// TokensForConditional creates tokens for a ternary conditional expression
+// condition ? trueValue : falseValue
+func TokensForConditional(condition, trueValue, falseValue hclwrite.Tokens) hclwrite.Tokens {
+    tokens := hclwrite.Tokens{}
+    tokens = append(tokens, condition...)
+    tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenQuestion, Bytes: []byte("?")})
+    tokens = append(tokens, trueValue...)
+    tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
+    tokens = append(tokens, falseValue...)
+    return tokens
 }

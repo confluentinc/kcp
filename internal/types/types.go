@@ -175,6 +175,7 @@ type MigrationWizardRequest struct {
 
 	MskJumpClusterAuthType       string `json:"msk_jump_cluster_auth_type"`
 	MskClusterId                 string `json:"msk_cluster_id"`
+	JumpClusterIamAuthRoleName   string `json:"jump_cluster_iam_auth_role_name"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
 	MskRegion                    string `json:"msk_region"`

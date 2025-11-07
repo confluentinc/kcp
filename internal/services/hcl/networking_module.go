@@ -48,6 +48,17 @@ func GetNetworkingVariables() []ModuleVariableDefinition {
 	}
 }
 
+func GetNetworkingModuleVariableNames() map[string]string {
+	vars := GetNetworkingVariables()
+	names := make(map[string]string)
+
+	for _, v := range vars {
+		names[v.Name] = v.Name
+	}
+
+	return names
+}
+
 func GetNetworkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	var definitions []types.TerraformVariable
 	networkingVars := GetNetworkingVariables()
