@@ -137,10 +137,11 @@ type TargetClusterWizardRequest struct {
 }
 
 type TerraformFiles struct {
-	MainTf      string `json:"main_tf"`
-	ProvidersTf string `json:"providers_tf"`
-	VariablesTf string `json:"variables_tf"`
-	OutputsTf   string `json:"outputs_tf"`
+	MainTf           string `json:"main.tf"`
+	ProvidersTf      string `json:"providers.tf"`
+	VariablesTf      string `json:"variables.tf"`
+	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
+	OutputsTf        string `json:"outputs.tf"`
 }
 
 type TerraformVariable struct {

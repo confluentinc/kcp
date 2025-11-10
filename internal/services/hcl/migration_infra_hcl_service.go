@@ -165,6 +165,11 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	networkingModuleBody.SetAttributeValue("source", cty.StringVal("./networking"))
 	networkingModuleBody.AppendNewline()
 
+	networkingProvidersBlock := networkingModuleBody.AppendNewBlock("providers", nil)
+	networkingProvidersBody := networkingProvidersBlock.Body()
+	networkingProvidersBody.SetAttributeRaw("aws", utils.TokensForResourceReference("aws"))
+	networkingModuleBody.AppendNewline()
+
 	networkingVars := GetNetworkingVariables()
 	for _, varDef := range networkingVars {
 		if varDef.Condition == nil || varDef.Condition(request) {
@@ -176,6 +181,11 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	setupHostModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_cluster_setup_host"})
 	setupHostModuleBody := setupHostModuleBlock.Body()
 	setupHostModuleBody.SetAttributeValue("source", cty.StringVal("./jump_cluster_setup_host"))
+	setupHostModuleBody.AppendNewline()
+
+	setupHostProvidersBlock := setupHostModuleBody.AppendNewBlock("providers", nil)
+	setupHostProvidersBody := setupHostProvidersBlock.Body()
+	setupHostProvidersBody.SetAttributeRaw("aws", utils.TokensForResourceReference("aws"))
 	setupHostModuleBody.AppendNewline()
 
 	setupHostVars := GetJumpClusterSetupHostVariables()
@@ -204,9 +214,17 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	}
 	rootBody.AppendNewline()
 
+	setupHostModuleBody.AppendNewline()
+	setupHostModuleBody.SetAttributeRaw("depends_on", utils.TokensForList([]string{"module.jump_clusters"}))
+
 	jumpClustersModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_clusters"})
 	jumpClustersModuleBody := jumpClustersModuleBlock.Body()
 	jumpClustersModuleBody.SetAttributeValue("source", cty.StringVal("./jump_clusters"))
+	jumpClustersModuleBody.AppendNewline()
+
+	jumpClustersProvidersBlock := jumpClustersModuleBody.AppendNewBlock("providers", nil)
+	jumpClustersProvidersBody := jumpClustersProvidersBlock.Body()
+	jumpClustersProvidersBody.SetAttributeRaw("aws", utils.TokensForResourceReference("aws"))
 	jumpClustersModuleBody.AppendNewline()
 
 	jumpClusterVars := GetJumpClusterVariables()
@@ -238,6 +256,12 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	privateLinkModuleBlock := rootBody.AppendNewBlock("module", []string{"private_link_connection"})
 	privateLinkModuleBody := privateLinkModuleBlock.Body()
 	privateLinkModuleBody.SetAttributeValue("source", cty.StringVal("./private_link_connection"))
+	privateLinkModuleBody.AppendNewline()
+
+	privateLinkProvidersBlock := privateLinkModuleBody.AppendNewBlock("providers", nil)
+	privateLinkProvidersBody := privateLinkProvidersBlock.Body()
+	privateLinkProvidersBody.SetAttributeRaw("aws", utils.TokensForResourceReference("aws"))
+	privateLinkProvidersBody.SetAttributeRaw("confluent", utils.TokensForResourceReference("confluent"))
 	privateLinkModuleBody.AppendNewline()
 
 	privateLinkVars := GetPrivateLinkVariables()
