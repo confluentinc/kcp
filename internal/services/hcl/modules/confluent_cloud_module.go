@@ -1,6 +1,10 @@
 package modules
 
-import "github.com/confluentinc/kcp/internal/types"
+import (
+	"fmt"
+
+	"github.com/confluentinc/kcp/internal/types"
+)
 
 func GetConfluentCloudVariables() []TargetClusterModulesVariableDefinition {
 	return []TargetClusterModulesVariableDefinition{
@@ -8,14 +12,30 @@ func GetConfluentCloudVariables() []TargetClusterModulesVariableDefinition {
 			Name: "region",
 			Definition: types.TerraformVariable{
 				Name:        "region",
-				Description: "Region of the cluster",
+				Description: "The AWS region in which the Confluent Cloud cluster is provisioned in.",
 				Sensitive:   false,
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
-				return request.Region
+				return request.AwsRegion
 			},
 			Condition: nil,
+		},
+		
+		{
+			Name: "environment_id",
+			Definition: types.TerraformVariable{
+				Name:        "environment_id",
+				Description: "ID of the environment",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+				return request.EnvironmentId
+			},
+			Condition: func(request types.TargetClusterWizardRequest) bool {
+				return !request.NeedsEnvironment
+			},
 		},
 		{
 			Name: "environment_name",
@@ -30,21 +50,6 @@ func GetConfluentCloudVariables() []TargetClusterModulesVariableDefinition {
 			},
 			Condition: func(request types.TargetClusterWizardRequest) bool {
 				return request.NeedsEnvironment
-			},
-		},
-		{
-			Name: "environment_id",
-			Definition: types.TerraformVariable{
-				Name:        "environment_id",
-				Description: "ID of the environment",
-				Sensitive:   false,
-				Type:        "string",
-			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
-				return request.EnvironmentId
-			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
-				return !request.NeedsEnvironment
 			},
 		},
 		{
@@ -102,24 +107,22 @@ func GetConfluentCloudVariableDefinitions(request types.TargetClusterWizardReque
 	return definitions
 }
 
-var ConfluentCloudModuleOutputs = []ModuleOutputDefinition{
-	{
-		Name: "environment_id",
-		Definition: types.TerraformOutput{
-			Name:        "environment_id",
-			Description: "ID of the environment",
-			Sensitive:   false,
-			Value:       "confluent_environment.environment.id",
-		},
-	},
-}
-
-func GetConfluentCloudModuleOutputDefinitions() []types.TerraformOutput {
+func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardRequest, envResourceName string) []types.TerraformOutput {
 	var definitions []types.TerraformOutput
 
-	for _, outputDef := range ConfluentCloudModuleOutputs {
-		definitions = append(definitions, outputDef.Definition)
+	var envIdValue string
+	if request.NeedsEnvironment {
+		envIdValue = fmt.Sprintf("confluent_environment.%s.id", envResourceName)
+	} else {
+		envIdValue = fmt.Sprintf("data.confluent_environment.%s.id", envResourceName)
 	}
+
+	definitions = append(definitions, types.TerraformOutput{
+		Name:        "environment_id",
+		Description: "ID of the environment",
+		Sensitive:   false,
+		Value:       envIdValue,
+	})
 
 	return definitions
 }

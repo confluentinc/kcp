@@ -85,7 +85,7 @@ func GetTargetClusterProviderVariables() []TargetClusterModulesVariableDefinitio
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
-				return request.Region
+				return request.AwsRegion
 			},
 			Condition: nil,
 		},

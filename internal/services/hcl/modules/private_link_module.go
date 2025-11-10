@@ -28,19 +28,6 @@ func GetPrivateLinkModuleOutputDefinitions() []types.TerraformOutput {
 func GetTargetClusterPrivateLinkVariables() []TargetClusterModulesVariableDefinition {
 	return []TargetClusterModulesVariableDefinition{
 		{
-			Name: "region",
-			Definition: types.TerraformVariable{
-				Name:        "region",
-				Description: "The AWS region of the VPC that the private link connection is established in.",
-				Sensitive:   false,
-				Type:        "string",
-			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
-				return request.Region
-			},
-			Condition: nil,
-		},
-		{
 			Name: "vpc_id",
 			Definition: types.TerraformVariable{
 				Name:        "vpc_id",
@@ -74,9 +61,7 @@ func GetTargetClusterPrivateLinkVariables() []TargetClusterModulesVariableDefini
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
-				return request.EnvironmentId
-			},
+			ValueExtractor: nil, // Retrieved from Confluent Cloud module output.
 			Condition: nil,
 		},
 	}

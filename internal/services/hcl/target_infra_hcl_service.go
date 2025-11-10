@@ -74,7 +74,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 			Name:        "confluent_cloud",
 			MainTf:      ti.generateConfluentCloudModuleMainTf(request),
 			VariablesTf: ti.generateConfluentCloudModuleVariablesTf(request),
-			OutputsTf:   ti.generateConfluentCloudModuleOutputsTf(),
+			OutputsTf:   ti.generateConfluentCloudModuleOutputsTf(request),
 			VersionsTf:  ti.generateConfluentCloudModuleVersionsTf(),
 		},
 	}
@@ -108,12 +108,10 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 	confluentCloudBlock := rootBody.AppendNewBlock("module", []string{"confluent_cloud"})
 	confluentCloudBody := confluentCloudBlock.Body()
 
-	confluentCloudBody.SetAttributeValue("source", cty.StringVal("./confluent_cloud"))
+	confluentCloudBody.SetAttributeValue("source", cty.StringVal("./modules/confluent_cloud"))
 	confluentCloudBody.AppendNewline()
 
-	confluentCloudProvidersBlock := confluentCloudBody.AppendNewBlock("providers", nil)
-	confluentCloudProvidersBody := confluentCloudProvidersBlock.Body()
-	confluentCloudProvidersBody.SetAttributeRaw("confluent", utils.TokensForResourceReference("confluent"))
+	confluentCloudBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{"confluent": utils.TokensForResourceReference("confluent")}))
 	confluentCloudBody.AppendNewline()
 
 	confluentCloudVars := modules.GetConfluentCloudVariables()
@@ -128,13 +126,10 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 		rootBody.AppendNewline()
 		privateLinkBlock := rootBody.AppendNewBlock("module", []string{"private_link"})
 		privateLinkBody := privateLinkBlock.Body()
-		privateLinkBody.SetAttributeValue("source", cty.StringVal("./private_link"))
+		privateLinkBody.SetAttributeValue("source", cty.StringVal("./modules/private_link"))
 		privateLinkBody.AppendNewline()
 
-		privateLinkProvidersBlock := privateLinkBody.AppendNewBlock("providers", nil)
-		privateLinkProvidersBody := privateLinkProvidersBlock.Body()
-		privateLinkProvidersBody.SetAttributeRaw("aws", utils.TokensForResourceReference("aws"))
-		privateLinkProvidersBody.SetAttributeRaw("confluent", utils.TokensForResourceReference("confluent"))
+		privateLinkBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{"aws": utils.TokensForResourceReference("aws"), "confluent": utils.TokensForResourceReference("confluent")}))
 		privateLinkBody.AppendNewline()
 
 		privateLinkVars := modules.GetTargetClusterPrivateLinkVariables()
@@ -142,7 +137,12 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 			if varDef.Condition != nil && !varDef.Condition(request) {
 				continue
 			}
-			privateLinkBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+
+			if varDef.ValueExtractor == nil && varDef.Name == "environment_id" {
+				privateLinkBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput("confluent_cloud", "environment_id"))
+			} else {
+				privateLinkBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+			}
 		}
 		rootBody.AppendNewline()
 	}
@@ -248,7 +248,6 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	envVarName := modules.GetModuleVariableName("confluent_cloud", "environment_name")
 	envIdVarName := modules.GetModuleVariableName("confluent_cloud", "environment_id")
 	clusterVarName := modules.GetModuleVariableName("confluent_cloud", "cluster_name")
-	clusterTypeVarName := modules.GetModuleVariableName("confluent_cloud", "cluster_type")
 	regionVarName := modules.GetModuleVariableName("confluent_cloud", "region")
 
 	f := hclwrite.NewEmptyFile()
@@ -267,7 +266,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 
 	// Add Kafka cluster (create or use data source if user states a cluster already exists).
 	if request.NeedsCluster || request.NeedsEnvironment {
-		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, clusterVarName, clusterTypeVarName, regionVarName, envIdRef))
+		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, clusterVarName, request.ClusterType, regionVarName, envIdRef))
 		rootBody.AppendNewline()
 	}
 
@@ -342,8 +341,8 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleVariablesTf(request
 	return ti.generateVariablesTf(modules.GetConfluentCloudVariableDefinitions(request))
 }
 
-func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf() string {
-	outputs := modules.GetConfluentCloudModuleOutputDefinitions()
+func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf(request types.TargetClusterWizardRequest) string {
+	outputs := modules.GetConfluentCloudModuleOutputDefinitions(request, ti.ResourceNames.Environment)
 	return ti.generateOutputsTf(outputs)
 }
 
@@ -367,7 +366,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleVersionsTf() string
 // ============================================================================
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
-	regionVarName := modules.GetModuleVariableName("private_link", "region")
+	regionVarName := modules.GetModuleVariableName("provider_variables", "aws_region")
 	vpcIdVarName := modules.GetModuleVariableName("private_link", "vpc_id")
 	subnetCidrRangesVarName := modules.GetModuleVariableName("private_link", "subnet_cidr_ranges")
 	environmentIdVarName := modules.GetModuleVariableName("private_link", "environment_id")

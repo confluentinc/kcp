@@ -37,6 +37,7 @@ func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardReque
 	allVars := []TargetClusterModulesVariableDefinition{}
 	allVars = append(allVars, GetTargetClusterProviderVariables()...)
 	allVars = append(allVars, GetConfluentCloudVariables()...)
+	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
 
 	return extractRootLevelVariableValues(
 		allVars,
@@ -55,6 +56,7 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 	allVars := []TargetClusterModulesVariableDefinition{}
 	allVars = append(allVars, GetTargetClusterProviderVariables()...)
 	allVars = append(allVars, GetConfluentCloudVariables()...)
+	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
 
 	return extractRootLevelVariableDefinitions(
 		allVars,
@@ -229,6 +231,8 @@ func GetModuleVariableName(moduleName string, varName string) string {
 	var variables []VariableDefinition
 
 	switch moduleName {
+	case "provider_variables":
+		variables = toVariableDefinitions(GetProviderVariables())
 	case "jump_cluster_setup_host":
 		variables = toVariableDefinitions(GetJumpClusterSetupHostVariables())
 	case "jump_clusters":

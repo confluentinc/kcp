@@ -124,7 +124,7 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	Region           string   `json:"region"`
+	AwsRegion           string   `json:"aws_region"`
 	NeedsEnvironment bool     `json:"needs_environment"`
 	EnvironmentName  string   `json:"environment_name"`
 	EnvironmentId    string   `json:"environment_id"`
