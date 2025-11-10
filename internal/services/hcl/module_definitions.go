@@ -4,11 +4,19 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+// TODO: Change name later.
 type ModuleVariableDefinition struct {
 	Name           string
 	Definition     types.TerraformVariable
 	ValueExtractor func(request types.MigrationWizardRequest) any  // Extracts the value from FE request payload.
 	Condition      func(request types.MigrationWizardRequest) bool // Determines if this variable should be included (nil = always include).
+}
+
+type TargetClusterModulesVariableDefinition struct {
+	Name           string
+	Definition     types.TerraformVariable
+	ValueExtractor func(request types.TargetClusterWizardRequest) any  // Extracts the value from FE request payload.
+	Condition      func(request types.TargetClusterWizardRequest) bool // Determines if this variable should be included (nil = always include).
 }
 
 type ModuleOutputDefinition struct {
@@ -24,34 +32,34 @@ func getAllModuleVariables() []ModuleVariableDefinition {
 	return allVars
 }
 
-var MigrationInfraModuleVariables = getAllModuleVariables()
+// var MigrationInfraModuleVariables = getAllModuleVariables()
 
-func GetModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
+// func GetModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+// 	var definitions []types.TerraformVariable
 
-	for _, varDef := range MigrationInfraModuleVariables {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
+// 	for _, varDef := range MigrationInfraModuleVariables {
+// 		if varDef.Condition != nil && !varDef.Condition(request) {
+// 			continue
+// 		}
+// 		definitions = append(definitions, varDef.Definition)
+// 	}
 
-	return definitions
-}
+// 	return definitions
+// }
 
-func GetModuleVariableValues(request types.MigrationWizardRequest) map[string]any {
-	values := make(map[string]any)
+// func GetModuleVariableValues(request types.MigrationWizardRequest) map[string]any {
+// 	values := make(map[string]any)
 
-	for _, varDef := range MigrationInfraModuleVariables {
-		// Check condition if present
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		values[varDef.Name] = varDef.ValueExtractor(request)
-	}
+// 	for _, varDef := range MigrationInfraModuleVariables {
+// 		// Check condition if present
+// 		if varDef.Condition != nil && !varDef.Condition(request) {
+// 			continue
+// 		}
+// 		values[varDef.Name] = varDef.ValueExtractor(request)
+// 	}
 
-	return values
-}
+// 	return values
+// }
 
 // GetRootLevelVariableValues collects all root-level variables (those passed from root to modules,
 // not from module outputs) from all modules. This is used to populate inputs.auto.tfvars.
@@ -152,4 +160,44 @@ func GetModuleVariableName(moduleName string, varName string) string {
 	}
 
 	return "<variable not found>"
+}
+
+func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardRequest) map[string]any {
+	values := make(map[string]any)
+
+	// Collect variables from all modules
+	allVars := []TargetClusterModulesVariableDefinition{}
+	allVars = append(allVars, GetTargetClusterProviderVariables()...)
+	allVars = append(allVars, GetTargetClusterVariables()...)
+
+	for _, varDef := range allVars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+
+		// Variables with non-nil ValueExtractor are root-level variables.
+		if varDef.ValueExtractor == nil {
+			continue
+		}
+
+		value := varDef.ValueExtractor(request)
+
+		// Only include non-empty values
+		switch v := value.(type) {
+		case string:
+			if v != "" {
+				values[varDef.Name] = v
+			}
+		case []string:
+			if len(v) > 0 {
+				values[varDef.Name] = v
+			}
+		case bool:
+			values[varDef.Name] = v
+		case int:
+			values[varDef.Name] = v
+		}
+	}
+
+	return values
 }

@@ -67,11 +67,12 @@ func NewTargetInfraHCLService() *TargetInfraHCLService {
 	}
 }
 
-func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) (types.TerraformFiles, error) {
-	terraformFiles := types.TerraformFiles{
+func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) (types.MigrationInfraTerraformProject, error) {
+	terraformFiles := types.MigrationInfraTerraformProject{
 		MainTf:      ti.generateMainTf(request),
-		ProvidersTf: ti.generateProvidersTf(request),
-		VariablesTf: ti.generateVariablesTf(),
+		ProvidersTf: ti.generateProvidersTf(),
+		VariablesTf: ti.generateVariablesTf(GetTargetClusterModuleVariableDefinitions(request)),
+		InputsAutoTfvars: ti.generateInputsAutoTfvars(request),
 	}
 
 	return terraformFiles, nil
@@ -182,12 +183,13 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 
 		// Generate subnets so we can reference them in VPC endpoint
 		subnetRefs := make([]string, len(request.SubnetCidrRanges))
-		for i, subnetCidrRange := range request.SubnetCidrRanges {
+		for i := range request.SubnetCidrRanges {
 			subnetTfName := fmt.Sprintf("%s_%d", ti.ResourceNames.SubnetPrefix, i)
+			cidrRangeVarNameIndex := fmt.Sprintf("subnet_cidr_ranges[%d]", i)
 			availabilityZoneRef := fmt.Sprintf("data.aws_availability_zones.%s.names[%d]", ti.ResourceNames.AvailabilityZones, i)
 			rootBody.AppendBlock(aws.GenerateSubnetResource(
 				subnetTfName,
-				subnetCidrRange,
+				cidrRangeVarNameIndex,
 				availabilityZoneRef,
 				"vpc_id",
 			))
@@ -236,7 +238,7 @@ func (ti *TargetInfraHCLService) generateMainTf(request types.TargetClusterWizar
 }
 
 // GenerateProvidersTf generates the providers.tf file content
-func (ti *TargetInfraHCLService) generateProvidersTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -247,49 +249,63 @@ func (ti *TargetInfraHCLService) generateProvidersTf(request types.TargetCluster
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
 	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
-
-	if request.NeedsPrivateLink {
-		requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-	}
-
+	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()
 
-	if request.NeedsPrivateLink {
-		rootBody.AppendBlock(aws.GenerateProviderBlock(request.Region))
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+// TODO: Move these `generateVariablesTf` functions to a shared utility file.
+func (ti *TargetInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	for _, v := range tfVariables {
+		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
+		variableBody := variableBlock.Body()
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
+
+		if v.Description != "" {
+			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
+		}
+
+		if v.Sensitive {
+			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
+		}
+		rootBody.AppendNewline()
 	}
 
 	return string(f.Bytes())
 }
 
-// GenerateVariablesTf generates the variables.tf file content
-func (ti *TargetInfraHCLService) generateVariablesTf() string {
+func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request types.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	// Define base variables
-	variables := []struct {
-		name        string
-		description string
-		sensitive   bool
-	}{
-		{"confluent_cloud_api_key", "Confluent Cloud API Key", true},
-		{"confluent_cloud_api_secret", "Confluent Cloud API Secret", true},
-	}
+	// Use GetRootLevelVariableValues to get only root-level variables (not from module outputs)
+	values := GetTargetClusterModuleVariableValues(request)
 
-	for _, v := range variables {
-		variableBlock := rootBody.AppendNewBlock("variable", []string{v.name})
-		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
-		if v.description != "" {
-			variableBody.SetAttributeValue("description", cty.StringVal(v.description))
+	for varName, value := range values {
+		switch v := value.(type) {
+		case string:
+			rootBody.SetAttributeValue(varName, cty.StringVal(v))
+		case []string:
+			ctyValues := make([]cty.Value, len(v))
+			for i, s := range v {
+				ctyValues[i] = cty.StringVal(s)
+			}
+			rootBody.SetAttributeValue(varName, cty.ListVal(ctyValues))
+		case bool:
+			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
+		case int:
+			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
 		}
-		if v.sensitive {
-			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
-		}
-		rootBody.AppendNewline()
 	}
 
 	return string(f.Bytes())
