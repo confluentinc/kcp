@@ -1,11 +1,103 @@
-package hcl
+package modules
 
 import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetPrivateLinkVariables() []ModuleVariableDefinition {
-	return []ModuleVariableDefinition{
+func GetPrivateLinkModuleVariableNames() map[string]string {
+	vars := GetPrivateLinkVariables()
+	names := make(map[string]string)
+
+	for _, v := range vars {
+		names[v.Name] = v.Name
+	}
+
+	return names
+}
+
+func GetPrivateLinkModuleOutputDefinitions() []types.TerraformOutput {
+	var definitions []types.TerraformOutput
+
+	for _, outputDef := range PrivateLinkModuleOutputs {
+		definitions = append(definitions, outputDef.Definition)
+	}
+
+	return definitions
+}
+
+func GetTargetClusterPrivateLinkVariables() []TargetClusterModulesVariableDefinition {
+	return []TargetClusterModulesVariableDefinition{
+		{
+			Name: "region",
+			Definition: types.TerraformVariable{
+				Name:        "region",
+				Description: "The AWS region of the VPC that the private link connection is established in.",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+				return request.Region
+			},
+			Condition: nil,
+		},
+		{
+			Name: "vpc_id",
+			Definition: types.TerraformVariable{
+				Name:        "vpc_id",
+				Description: "The ID of the VPC that the private link connection is established in.",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+				return request.VpcId
+			},
+			Condition: nil,
+		},
+		{
+			Name: "subnet_cidr_ranges",
+			Definition: types.TerraformVariable{
+				Name:        "subnet_cidr_ranges",
+				Description: "The CIDR ranges of the subnets that the private link connection is established in.",
+				Sensitive:   false,
+				Type:        "list(string)",
+			},
+			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+				return request.SubnetCidrRanges
+			},
+			Condition: nil,
+		},
+		{
+			Name: "environment_id",
+			Definition: types.TerraformVariable{
+				Name:        "environment_id",
+				Description: "The ID of the environment that the private link connection is established in.",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+				return request.EnvironmentId
+			},
+			Condition: nil,
+		},
+	}
+}
+
+func GetTargetClusterPrivateLinkModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
+	var definitions []types.TerraformVariable
+	privateLinkVars := GetTargetClusterPrivateLinkVariables()
+
+	for _, varDef := range privateLinkVars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+		definitions = append(definitions, varDef.Definition)
+	}
+
+	return definitions
+}
+
+func GetPrivateLinkVariables() []MigrationInfraVariableDefinition {
+	return []MigrationInfraVariableDefinition{
 		{
 			Name: "aws_region",
 			Definition: types.TerraformVariable{
@@ -70,17 +162,6 @@ func GetPrivateLinkVariables() []ModuleVariableDefinition {
 	}
 }
 
-func GetPrivateLinkModuleVariableNames() map[string]string {
-	vars := GetPrivateLinkVariables()
-	names := make(map[string]string)
-
-	for _, v := range vars {
-		names[v.Name] = v.Name
-	}
-
-	return names
-}
-
 func GetPrivateLinkModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	var definitions []types.TerraformVariable
 	privateLinkVars := GetPrivateLinkVariables()
@@ -132,14 +213,4 @@ var PrivateLinkModuleOutputs = []ModuleOutputDefinition{
 			Value:       "tls_private_key.jump_cluster_ssh_key.private_key_pem",
 		},
 	},
-}
-
-func GetPrivateLinkModuleOutputDefinitions() []types.TerraformOutput {
-	var definitions []types.TerraformOutput
-
-	for _, outputDef := range PrivateLinkModuleOutputs {
-		definitions = append(definitions, outputDef.Definition)
-	}
-
-	return definitions
 }

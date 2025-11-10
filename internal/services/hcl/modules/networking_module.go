@@ -1,11 +1,11 @@
-package hcl
+package modules
 
 import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetNetworkingVariables() []ModuleVariableDefinition {
-	return []ModuleVariableDefinition{
+func GetNetworkingVariables() []MigrationInfraVariableDefinition {
+	return []MigrationInfraVariableDefinition{
 		{
 			Name: "vpc_id",
 			Definition: types.TerraformVariable{

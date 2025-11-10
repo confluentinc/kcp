@@ -366,13 +366,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 		}
 	}
 
-	terraformFiles, err := ui.targetInfraHCLService.GenerateTerraformFiles(req)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
-			"message": err.Error(),
-		})
-	}
+	terraformFiles := ui.targetInfraHCLService.GenerateTerraformFiles(req)
 
 	return c.JSON(http.StatusCreated, terraformFiles)
 }

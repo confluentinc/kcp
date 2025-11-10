@@ -1,11 +1,11 @@
-package hcl
+package modules
 
 import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetProviderVariables() []ModuleVariableDefinition {
-	return []ModuleVariableDefinition{
+func GetProviderVariables() []MigrationInfraVariableDefinition {
+	return []MigrationInfraVariableDefinition{
 		{
 			Name: "confluent_cloud_api_key",
 			Definition: types.TerraformVariable{

@@ -1,11 +1,11 @@
-package hcl
+package modules
 
 import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetJumpClusterSetupHostVariables() []ModuleVariableDefinition {
-	return []ModuleVariableDefinition{
+func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
+	return []MigrationInfraVariableDefinition{
 		{
 			Name: "jump_cluster_setup_host_subnet_id",
 			Definition: types.TerraformVariable{
