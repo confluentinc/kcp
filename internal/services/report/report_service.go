@@ -33,6 +33,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 			processedClusters = append(processedClusters, types.ProcessedCluster{
 				Name:                        cluster.Name,
 				Arn:                         cluster.Arn,
+				Region:                      cluster.Region,
 				ClusterMetrics:              processedMetrics,
 				AWSClientInformation:        cluster.AWSClientInformation,
 				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,

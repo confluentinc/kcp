@@ -119,3 +119,32 @@ export const BOOTSTRAP_BROKER_LABELS: Record<string, string> = {
   // Plaintext
   BootstrapBrokerString: 'Plaintext',
 }
+
+/**
+ * Metric type to metric name mapping for TCO inputs
+ */
+export const METRIC_TYPE_MAP: Record<
+  'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions',
+  { metric: string; workloadAssumption: string }
+> = {
+  'avg-ingress': {
+    metric: 'BytesInPerSec',
+    workloadAssumption: 'Avg Ingress Throughput (MB/s)',
+  },
+  'peak-ingress': {
+    metric: 'BytesInPerSec',
+    workloadAssumption: 'Peak Ingress Throughput (MB/s)',
+  },
+  'avg-egress': {
+    metric: 'BytesOutPerSec',
+    workloadAssumption: 'Avg Egress Throughput (MB/s)',
+  },
+  'peak-egress': {
+    metric: 'BytesOutPerSec',
+    workloadAssumption: 'Peak Egress Throughput (MB/s)',
+  },
+  partitions: {
+    metric: 'GlobalPartitionCount',
+    workloadAssumption: 'Partitions',
+  },
+}
