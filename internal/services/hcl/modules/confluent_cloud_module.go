@@ -9,9 +9,9 @@ import (
 func GetConfluentCloudVariables() []TargetClusterModulesVariableDefinition {
 	return []TargetClusterModulesVariableDefinition{
 		{
-			Name: "region",
+			Name: "aws_region",
 			Definition: types.TerraformVariable{
-				Name:        "region",
+				Name:        "aws_region",
 				Description: "The AWS region in which the Confluent Cloud cluster is provisioned in.",
 				Sensitive:   false,
 				Type:        "string",
@@ -21,7 +21,6 @@ func GetConfluentCloudVariables() []TargetClusterModulesVariableDefinition {
 			},
 			Condition: nil,
 		},
-		
 		{
 			Name: "environment_id",
 			Definition: types.TerraformVariable{

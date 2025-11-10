@@ -560,7 +560,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}, vpcIdVarName))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSubnetResourceWithForEach(
+	rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
 		"jump_cluster_broker_subnets",
 		jumpClusterBrokerSubnetCidrsVarName,
 		"data.aws_availability_zones.this",

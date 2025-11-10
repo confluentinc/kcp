@@ -177,7 +177,14 @@ func (ti *TargetInfraHCLService) generateVariablesTf(tfVariables []types.Terrafo
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
+	varSeenVariables := make(map[string]bool)
+
 	for _, v := range tfVariables {
+		if varSeenVariables[v.Name] {
+			continue
+		}
+		varSeenVariables[v.Name] = true
+
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
 		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
@@ -202,6 +209,12 @@ func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request types.TargetCl
 	values := modules.GetTargetClusterModuleVariableValues(request)
 
 	for varName, value := range values {
+		varSeenVariables := make(map[string]bool)
+		if varSeenVariables[varName] {
+			continue
+		}
+		varSeenVariables[varName] = true
+
 		switch v := value.(type) {
 		case string:
 			rootBody.SetAttributeValue(varName, cty.StringVal(v))
@@ -248,7 +261,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	envVarName := modules.GetModuleVariableName("confluent_cloud", "environment_name")
 	envIdVarName := modules.GetModuleVariableName("confluent_cloud", "environment_id")
 	clusterVarName := modules.GetModuleVariableName("confluent_cloud", "cluster_name")
-	regionVarName := modules.GetModuleVariableName("confluent_cloud", "region")
+	regionVarName := modules.GetModuleVariableName("confluent_cloud", "aws_region")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -367,9 +380,9 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleVersionsTf() string
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
 	regionVarName := modules.GetModuleVariableName("provider_variables", "aws_region")
-	vpcIdVarName := modules.GetModuleVariableName("private_link", "vpc_id")
-	subnetCidrRangesVarName := modules.GetModuleVariableName("private_link", "subnet_cidr_ranges")
-	environmentIdVarName := modules.GetModuleVariableName("private_link", "environment_id")
+	vpcIdVarName := modules.GetModuleVariableName("private_link_target_cluster", "vpc_id")
+	subnetCidrRangesVarName := modules.GetModuleVariableName("private_link_target_cluster", "subnet_cidr_ranges")
+	environmentIdVarName := modules.GetModuleVariableName("private_link_target_cluster", "environment_id")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -388,18 +401,18 @@ func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.T
 	rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}, vpcIdVarName))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSubnetResourceWithForEach(
+	rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
 		ti.ResourceNames.SubnetName,
 		subnetCidrRangesVarName,
-		fmt.Sprintf("data.aws_availability_zones.%s.names[each.key]", ti.ResourceNames.AvailabilityZones),
+		fmt.Sprintf("data.aws_availability_zones.%s", ti.ResourceNames.AvailabilityZones),
 		vpcIdVarName,
 	))
 
-	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
+	rootBody.AppendBlock(aws.GenerateVpcEndpointResourceNew(
 		ti.ResourceNames.VpcEndpoint,
 		vpcIdVarName,
 		fmt.Sprintf("confluent_private_link_attachment.%s.aws[0].vpc_endpoint_service_name", ti.ResourceNames.PrivateLinkAttachment),
-		fmt.Sprintf("aws_security_group.%s[*].id", ti.ResourceNames.SecurityGroup),
+		fmt.Sprintf("aws_security_group.%s.id", ti.ResourceNames.SecurityGroup),
 		fmt.Sprintf("aws_subnet.%s[*].id", ti.ResourceNames.SubnetName),
 		[]string{fmt.Sprintf("confluent_private_link_attachment.%s", ti.ResourceNames.PrivateLinkAttachment)},
 	))
@@ -428,7 +441,7 @@ func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.T
 	))
 	rootBody.AppendNewline()
 
-	return ""
+	return string(f.Bytes())
 }
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleVariablesTf(request types.TargetClusterWizardRequest) string {

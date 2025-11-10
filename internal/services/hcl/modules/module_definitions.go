@@ -35,8 +35,8 @@ func (t TargetClusterModulesVariableDefinition) GetDefinition() types.TerraformV
 
 func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardRequest) map[string]any {
 	allVars := []TargetClusterModulesVariableDefinition{}
-	allVars = append(allVars, GetTargetClusterProviderVariables()...)
-	allVars = append(allVars, GetConfluentCloudVariables()...)
+	allVars = append(allVars, GetTargetClusterProviderVariables()...) // aws_region
+	allVars = append(allVars, GetConfluentCloudVariables()...)        // region
 	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
 
 	return extractRootLevelVariableValues(
@@ -62,7 +62,9 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 		allVars,
 		request,
 		func(v TargetClusterModulesVariableDefinition) types.TerraformVariable { return v.Definition },
-		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) bool { return v.Condition },
+		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) bool {
+			return v.Condition
+		},
 		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) any {
 			return v.ValueExtractor
 		},
@@ -243,7 +245,7 @@ func GetModuleVariableName(moduleName string, varName string) string {
 		variables = toVariableDefinitions(GetPrivateLinkVariables())
 	case "confluent_cloud":
 		variables = toTargetVariableDefinitions(GetConfluentCloudVariables())
-	case "target_clusterprivate_link_connection":
+	case "private_link_target_cluster":
 		variables = toTargetVariableDefinitions(GetTargetClusterPrivateLinkVariables())
 	default:
 		return "<variable not found>"

@@ -28,6 +28,19 @@ func GetPrivateLinkModuleOutputDefinitions() []types.TerraformOutput {
 func GetTargetClusterPrivateLinkVariables() []TargetClusterModulesVariableDefinition {
 	return []TargetClusterModulesVariableDefinition{
 		{
+			Name: "aws_region",
+			Definition: types.TerraformVariable{
+				Name:        "aws_region",
+				Description: "The AWS region of the VPC that the private link connection is established in.",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+				return request.AwsRegion
+			},
+			Condition: nil,
+		},
+		{
 			Name: "vpc_id",
 			Definition: types.TerraformVariable{
 				Name:        "vpc_id",
