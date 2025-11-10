@@ -139,17 +139,22 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 // Private Helper Functions - Query Building
 
 func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
-	var metrics = []string{
-		"BytesInPerSec",
-		"BytesOutPerSec",
-		"MessagesInPerSec",
-		"PartitionCount",
-		"ClientConnectionCount",
+
+
+	metricStatMap := map[string]string{
+		"BytesInPerSec":         "Average",
+		"BytesOutPerSec":        "Average",
+		"MessagesInPerSec":      "Average",
+		"RemoteLogSizeBytes":    "Maximum",
+		"PartitionCount":        "Maximum",
+		"ClientConnectionCount": "Maximum",
 	}
 
 	var queries []cloudwatchtypes.MetricDataQuery
 
-	for metricIndex, metricName := range metrics {
+	metricIndex := 0
+
+	for metricName, metricStat := range metricStatMap {
 		var metricIDs []string
 
 		// brokerIDs are 1-indexed
@@ -175,7 +180,7 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 						},
 					},
 					Period: aws.Int32(period),
-					Stat:   aws.String("Average"),
+					Stat:   aws.String(metricStat),
 				},
 				ReturnData: aws.Bool(false),
 			})
@@ -189,6 +194,7 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
 			ReturnData: aws.Bool(true),
 		})
+		metricIndex++
 	}
 
 	return queries
@@ -223,7 +229,7 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 					},
 				},
 				Period: aws.Int32(period),
-				Stat:   aws.String("Average"),
+				Stat:   aws.String("Maximum"),
 			},
 			ReturnData: aws.Bool(false),
 		})
@@ -276,7 +282,7 @@ func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName s
 					},
 				},
 				Period: aws.Int32(period),
-				Stat:   aws.String("Average"),
+				Stat:   aws.String("Maximum"),
 			},
 			ReturnData: aws.Bool(false),
 		})
@@ -324,7 +330,7 @@ func (ms *MetricService) buildClusterMetricQueries(clusterName string, period in
 					},
 				},
 				Period: aws.Int32(period),
-				Stat:   aws.String("Average"),
+				Stat:   aws.String("Maximum"),
 			},
 			ReturnData: aws.Bool(true),
 		})
