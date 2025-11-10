@@ -39,6 +39,13 @@ func TokensForVarReference(varName string) hclwrite.Tokens {
 	}
 }
 
+// TokensForModuleOutput creates tokens for a Terraform module output reference (e.g., "module.networking.jump_cluster_broker_subnet_ids")
+func TokensForModuleOutput(moduleName, outputName string) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("module." + moduleName + "." + outputName)},
+	}
+}
+
 // TokensForList creates tokens for an array literal
 func TokensForList(items []string) hclwrite.Tokens {
 	tokens := hclwrite.Tokens{
@@ -138,11 +145,11 @@ func ConvertToCtyValue(v any) cty.Value {
 // TokensForConditional creates tokens for a ternary conditional expression
 // condition ? trueValue : falseValue
 func TokensForConditional(condition, trueValue, falseValue hclwrite.Tokens) hclwrite.Tokens {
-    tokens := hclwrite.Tokens{}
-    tokens = append(tokens, condition...)
-    tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenQuestion, Bytes: []byte("?")})
-    tokens = append(tokens, trueValue...)
-    tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
-    tokens = append(tokens, falseValue...)
-    return tokens
+	tokens := hclwrite.Tokens{}
+	tokens = append(tokens, condition...)
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenQuestion, Bytes: []byte("?")})
+	tokens = append(tokens, trueValue...)
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
+	tokens = append(tokens, falseValue...)
+	return tokens
 }
