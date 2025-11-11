@@ -19,13 +19,13 @@ const (
 
 // SchemaExporterVariables defines all the variables needed for schema exporter resources
 var SchemaExporterVariables = []types.TerraformVariable{
-	{Name: VarSourceSchemaRegistryID, Description: "ID of the source schema registry", Sensitive: false},
-	{Name: VarSourceSchemaRegistryURL, Description: "URL of the source schema registry", Sensitive: false},
-	{Name: VarSourceSchemaRegistryUsername, Description: "Username for source schema registry authentication", Sensitive: false},
-	{Name: VarSourceSchemaRegistryPassword, Description: "Password for source schema registry authentication", Sensitive: true},
-	{Name: VarConfluentCloudSchemaRegistryURL, Description: "URL of the target schema registry (Confluent Cloud)", Sensitive: false},
-	{Name: VarConfluentCloudSchemaRegistryAPIKey, Description: "API key for the target schema registry (Confluent Cloud)", Sensitive: false},
-	{Name: VarConfluentCloudSchemaRegistrySecret, Description: "API secret for the target schema registry (Confluent Cloud)", Sensitive: true},
+	{Name: VarSourceSchemaRegistryID, Description: "ID of the source schema registry", Sensitive: false, Type: "string"},
+	{Name: VarSourceSchemaRegistryURL, Description: "URL of the source schema registry", Sensitive: false, Type: "string"},
+	{Name: VarSourceSchemaRegistryUsername, Description: "Username for source schema registry authentication", Sensitive: false, Type: "string"},
+	{Name: VarSourceSchemaRegistryPassword, Description: "Password for source schema registry authentication", Sensitive: true, Type: "string"},
+	{Name: VarConfluentCloudSchemaRegistryURL, Description: "URL of the target schema registry (Confluent Cloud)", Sensitive: false, Type: "string"},
+	{Name: VarConfluentCloudSchemaRegistryAPIKey, Description: "API key for the target schema registry (Confluent Cloud)", Sensitive: false, Type: "string"},
+	{Name: VarConfluentCloudSchemaRegistrySecret, Description: "API secret for the target schema registry (Confluent Cloud)", Sensitive: true, Type: "string"},
 }
 
 // GenerateSchemaExporter creates a Terraform resource for a single confluent_schema_exporter

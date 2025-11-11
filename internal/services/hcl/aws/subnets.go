@@ -8,10 +8,36 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GenerateSubnets(tfResourceNamePrefix, vpcId, cidrRange, availabilityZoneRef string, index int) *hclwrite.Block {
-	subnetsBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", fmt.Sprintf("%s_%d", tfResourceNamePrefix, index)})
-	subnetsBlock.Body().SetAttributeValue("vpc_id", cty.StringVal(vpcId))
-	subnetsBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(availabilityZoneRef))
-	subnetsBlock.Body().SetAttributeValue("cidr_block", cty.StringVal(cidrRange))
-	return subnetsBlock
+// Generates a single subnet resource when the CIDR range is known and a single string variable.
+func GenerateSubnetResource(tfResourceName, cidrRangeVarName, availabilityZoneRef, vpcIdVarName string) *hclwrite.Block {
+	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
+	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
+	subnetBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(availabilityZoneRef))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(cidrRangeVarName))
+
+	return subnetBlock
+}
+
+// Generates a single subnet resource with a `for_each` meta-argument to iterate through a list of string variable containing CIDR ranges.
+func GenerateSubnetResourceWithCount(tfResourceName, subnetCidrsVarName, availabilityZoneRef, vpcIdVarName string) *hclwrite.Block {
+	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
+	subnetBlock.Body().SetAttributeRaw("count", utils.TokensForFunctionCall("length", utils.TokensForVarReference(subnetCidrsVarName)))
+	subnetBlock.Body().AppendNewline()
+	
+	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
+	subnetBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(fmt.Sprintf("%s.names[count.index]", availabilityZoneRef)))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(subnetCidrsVarName + "[count.index]"))
+
+	return subnetBlock
+}
+
+func GenerateSubnetDataSource(tfResourceName, subnetId string) *hclwrite.Block {
+	subnetDataBlock := hclwrite.NewBlock("data", []string{"aws_subnet", tfResourceName})
+	subnetDataBlock.Body().SetAttributeValue("id", cty.StringVal(subnetId))
+
+	return subnetDataBlock
+}
+
+func GenerateSubnetResourceReference(tfResourceName string) string {
+	return fmt.Sprintf("aws_subnet.%s", tfResourceName)
 }

@@ -2,17 +2,16 @@ package migrate_schemas
 
 import (
 	"embed"
-	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 //go:embed assets
@@ -114,12 +113,6 @@ func (ms *MigrateSchemasAssetGenerator) generateTfvarsFiles(terraformDir string)
 	return nil
 }
 
-func randomString(length int) string {
-	b := make([]byte, length)
-	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)[:length]
-}
-
 func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string) error {
 	// Read the Go template file from embedded assets
 	templatePath := "assets/inputs.auto.tfvars.go.tmpl"
@@ -142,7 +135,7 @@ func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string
 	}{
 		Exporters: ms.exporters,
 		// confluent exporter expects an id for the source schema registry
-		SourceSchemaRegistryID:  randomString(5),
+		SourceSchemaRegistryID:  utils.RandomString(5),
 		SourceSchemaRegistryURL: ms.schemaRegistry.URL,
 	}
 	// Execute template

@@ -61,7 +61,7 @@ func ParseTerraformState(targetEnvFolder string, requiredFields []string) (*type
 	}
 
 	output := terraformState.Outputs
-	if output == (types.TerraformOutput{}) {
+	if output == (types.TerraformOutputOld{}) {
 		return nil, fmt.Errorf("terraform outputs are missing")
 	}
 
@@ -89,26 +89,26 @@ func ParseTerraformState(targetEnvFolder string, requiredFields []string) (*type
 	return &terraformState, nil
 }
 
-type TerraformOutputGetter func(types.TerraformOutput) any
+type TerraformOutputGetter func(types.TerraformOutputOld) any
 
 // terraformOutputGetters maps field names to functions that extract values from TerraformOutput
 var terraformOutputGetters = map[string]TerraformOutputGetter{
-	"confluent_cloud_cluster_api_key": func(output types.TerraformOutput) any {
+	"confluent_cloud_cluster_api_key": func(output types.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterApiKey.Value
 	},
-	"confluent_cloud_cluster_api_key_secret": func(output types.TerraformOutput) any {
+	"confluent_cloud_cluster_api_key_secret": func(output types.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterApiKeySecret.Value
 	},
-	"confluent_cloud_cluster_id": func(output types.TerraformOutput) any {
+	"confluent_cloud_cluster_id": func(output types.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterId.Value
 	},
-	"confluent_cloud_cluster_rest_endpoint": func(output types.TerraformOutput) any {
+	"confluent_cloud_cluster_rest_endpoint": func(output types.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterRestEndpoint.Value
 	},
-	"confluent_cloud_cluster_bootstrap_endpoint": func(output types.TerraformOutput) any {
+	"confluent_cloud_cluster_bootstrap_endpoint": func(output types.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterBootstrapEndpoint.Value
 	},
-	"confluent_platform_controller_bootstrap_server": func(output types.TerraformOutput) any {
+	"confluent_platform_controller_bootstrap_server": func(output types.TerraformOutputOld) any {
 		return output.ConfluentPlatformControllerBootstrapServer.Value
 	},
 }

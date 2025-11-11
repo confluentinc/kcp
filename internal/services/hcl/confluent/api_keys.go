@@ -7,10 +7,10 @@ import (
 )
 
 // GenerateSchemaRegistryAPIKey creates a Schema Registry API key resource
-func GenerateSchemaRegistryAPIKey(tfResourceName, envName, serviceAccountIdRef, serviceAccountApiVersionRef, serviceAccountKindRef, schemaRegistryIdRef, schemaRegistryApiVersionRef, schemaRegistryKindRef, environmentIdRef string) *hclwrite.Block {
+func GenerateSchemaRegistryAPIKey(tfResourceName, envVarName, serviceAccountIdRef, serviceAccountApiVersionRef, serviceAccountKindRef, schemaRegistryIdRef, schemaRegistryApiVersionRef, schemaRegistryKindRef, environmentIdRef string) *hclwrite.Block {
 	apiKeyBlock := hclwrite.NewBlock("resource", []string{"confluent_api_key", tfResourceName})
 	apiKeyBlock.Body().SetAttributeValue("display_name", cty.StringVal("env-manager-schema-registry-api-key"))
-	apiKeyBlock.Body().SetAttributeValue("description", cty.StringVal("Schema Registry API Key that is owned by the "+envName+" environment."))
+	apiKeyBlock.Body().SetAttributeValue("description", cty.StringVal("Schema Registry API Key that is owned by the "+envVarName+" environment."))
 	apiKeyBlock.Body().AppendNewline()
 
 	ownerBlock := hclwrite.NewBlock("owner", nil)
@@ -34,10 +34,10 @@ func GenerateSchemaRegistryAPIKey(tfResourceName, envName, serviceAccountIdRef, 
 }
 
 // GenerateKafkaAPIKey creates a Kafka API key resource
-func GenerateKafkaAPIKey(tfResourceName, envName, serviceAccountIdRef, serviceAccountApiVersionRef, serviceAccountKindRef, clusterIdRef, clusterApiVersionRef, clusterKindRef, environmentIdRef, dependsOnRoleBindingRef string) *hclwrite.Block {
+func GenerateKafkaAPIKey(tfResourceName, envVarName, serviceAccountIdRef, serviceAccountApiVersionRef, serviceAccountKindRef, clusterIdRef, clusterApiVersionRef, clusterKindRef, environmentIdRef, dependsOnRoleBindingRef string) *hclwrite.Block {
 	apiKeyBlock := hclwrite.NewBlock("resource", []string{"confluent_api_key", tfResourceName})
 	apiKeyBlock.Body().SetAttributeValue("display_name", cty.StringVal("app-manager-kafka-api-key"))
-	apiKeyBlock.Body().SetAttributeValue("description", cty.StringVal("Kafka API Key that has been created by the "+envName+" environment."))
+	apiKeyBlock.Body().SetAttributeValue("description", cty.StringVal("Kafka API Key that has been created by the "+envVarName+" environment."))
 	apiKeyBlock.Body().AppendNewline()
 
 	ownerBlock := hclwrite.NewBlock("owner", nil)

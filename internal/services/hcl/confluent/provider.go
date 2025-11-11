@@ -1,9 +1,15 @@
 package confluent
 
 import (
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
+
+var ConfluentProviderVariables = []types.TerraformVariable{
+	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false, Type: "string"},
+	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true, Type: "string"},
+}
 
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	confluentProvider := map[string]hclwrite.Tokens{
@@ -17,8 +23,8 @@ func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 func GenerateProviderBlock() *hclwrite.Block {
 	providerBlock := hclwrite.NewBlock("provider", []string{"confluent"})
 	providerBody := providerBlock.Body()
-	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForResourceReference("var.confluent_cloud_api_key"))
-	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForResourceReference("var.confluent_cloud_api_secret"))
+	providerBody.SetAttributeRaw("cloud_api_key", utils.TokensForVarReference(VarConfluentCloudAPIKey))
+	providerBody.SetAttributeRaw("cloud_api_secret", utils.TokensForVarReference(VarConfluentCloudAPISecret))
 
 	return providerBlock
 }
