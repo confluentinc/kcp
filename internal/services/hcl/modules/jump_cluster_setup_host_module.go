@@ -15,22 +15,24 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // Retrieved from networking module output.
+				return ""
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
-			Name: "security_group_ids",
+			Name: "jump_cluster_security_group_ids",
 			Definition: types.TerraformVariable{
-				Name:        "security_group_ids",
+				Name:        "jump_cluster_security_group_ids",
 				Description: "IDs of the security groups for the jump cluster (including setup host) instances.",
 				Sensitive:   false,
-				Type:        "list(string)",
+				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return []string{} // Retrieved from networking module output.
+				return []string{}
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
 			Name: "jump_cluster_ssh_key_pair_name",
@@ -41,9 +43,10 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // Retrieved from networking module output.
+				return ""
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
 			Name: "jump_cluster_broker_subnet_ids",
@@ -54,9 +57,10 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				Type:        "list(string)",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return []string{} // Retrieved from networking module output.
+				return []string{}
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
 			Name: "private_key",
@@ -67,9 +71,10 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // Retrieved from networking module output.
+				return ""
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 	}
 }

@@ -1,6 +1,8 @@
 package aws
 
 import (
+	"fmt"
+
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
@@ -17,9 +19,20 @@ func GenerateRouteTableResource(tfResourceName, gatewayIdReference, vpcIdVarName
 	return routeTableBlock
 }
 
-func GenerateRouteTableAssociationResource(tfResourceName, subnetId, routeTableIdReference string) *hclwrite.Block {
+func GenerateRouteTableAssociationResource(tfResourceName, subnetIdReference, routeTableIdReference string) *hclwrite.Block {
 	routeTableAssociationBlock := hclwrite.NewBlock("resource", []string{"aws_route_table_association", tfResourceName})
-	routeTableAssociationBlock.Body().SetAttributeRaw("subnet_id", utils.TokensForResourceReference(subnetId))
+	routeTableAssociationBlock.Body().SetAttributeRaw("subnet_id", utils.TokensForResourceReference(fmt.Sprintf("%s.id", subnetIdReference)))
+	routeTableAssociationBlock.Body().SetAttributeRaw("route_table_id", utils.TokensForResourceReference(routeTableIdReference))
+
+	return routeTableAssociationBlock
+}
+
+func GenerateRouteTableAssociationResourceWithCount(tfResourceName, subnetIdReference, routeTableIdReference string) *hclwrite.Block {
+	routeTableAssociationBlock := hclwrite.NewBlock("resource", []string{"aws_route_table_association", tfResourceName})
+	routeTableAssociationBlock.Body().SetAttributeRaw("count", utils.TokensForFunctionCall("length", utils.TokensForResourceReference(subnetIdReference)))
+	routeTableAssociationBlock.Body().AppendNewline()
+
+	routeTableAssociationBlock.Body().SetAttributeRaw("subnet_id", utils.TokensForResourceReference(fmt.Sprintf("%s[count.index].id", subnetIdReference)))
 	routeTableAssociationBlock.Body().SetAttributeRaw("route_table_id", utils.TokensForResourceReference(routeTableIdReference))
 
 	return routeTableAssociationBlock

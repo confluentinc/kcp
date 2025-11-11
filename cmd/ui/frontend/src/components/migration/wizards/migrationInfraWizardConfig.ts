@@ -510,6 +510,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
+              target_environment_id: {
+                type: 'string',
+                title: 'Confluent Cloud Environment ID'
+              },
               target_cluster_id: {
                 type: 'string',
                 title: 'Confluent Cloud Cluster ID'
@@ -532,7 +536,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 description: 'The name of the pre-configured IAM role that will be used to authenticate the cluster link between MSK and the jump cluster.'
               },
             },
-            required: ['msk_cluster_id', 'msk_sasl_iam_bootstrap_servers', 'msk_region', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
+            required: ['msk_cluster_id', 'msk_sasl_iam_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
           },
           uiSchema: {
             msk_cluster_id: {
@@ -543,6 +547,9 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
             msk_region: {
               'ui:disabled': true,
+            },
+            targete_environment_id: {
+              'ui:placeholder': 'e.g., env-xxxxxx',
             },
             target_cluster_id: {
               'ui:placeholder': 'e.g., lkc-xxxxxx',

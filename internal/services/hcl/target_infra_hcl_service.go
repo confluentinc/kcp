@@ -408,7 +408,7 @@ func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.T
 		vpcIdVarName,
 	))
 
-	rootBody.AppendBlock(aws.GenerateVpcEndpointResourceNew(
+	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
 		ti.ResourceNames.VpcEndpoint,
 		vpcIdVarName,
 		fmt.Sprintf("confluent_private_link_attachment.%s.aws[0].vpc_endpoint_service_name", ti.ResourceNames.PrivateLinkAttachment),

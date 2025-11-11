@@ -26,7 +26,7 @@ func GenerateSubnetResourceWithCount(tfResourceName, subnetCidrsVarName, availab
 	
 	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
 	subnetBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(fmt.Sprintf("%s.names[count.index]", availabilityZoneRef)))
-	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForResourceReference("count.index"))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(subnetCidrsVarName + "[count.index]"))
 
 	return subnetBlock
 }
@@ -39,5 +39,5 @@ func GenerateSubnetDataSource(tfResourceName, subnetId string) *hclwrite.Block {
 }
 
 func GenerateSubnetResourceReference(tfResourceName string) string {
-	return fmt.Sprintf("aws_subnet.%s.id", tfResourceName)
+	return fmt.Sprintf("aws_subnet.%s", tfResourceName)
 }

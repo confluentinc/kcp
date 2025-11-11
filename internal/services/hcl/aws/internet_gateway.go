@@ -17,10 +17,11 @@ func GenerateInternetGatewayResource(tfResourceName, vpcIdVarName string) *hclwr
 
 func GenerateInternetGatewayDataSource(tfResourceName, vpcIdVarName string) *hclwrite.Block {
 	internetGatewayDataBlock := hclwrite.NewBlock("data", []string{"aws_internet_gateway", tfResourceName})
-	internetGatewayDataBlock.Body().SetAttributeRaw("filter", utils.TokensForMap(map[string]hclwrite.Tokens{
-		"name":   utils.TokensForStringTemplate("attachment.vpc-id"),
-		"values": utils.TokensForList([]string{"var." + vpcIdVarName}),
-	}))
+
+	filterBlock := hclwrite.NewBlock("filter", nil)
+	filterBlock.Body().SetAttributeRaw("name", utils.TokensForStringTemplate("attachment.vpc-id"))
+	filterBlock.Body().SetAttributeRaw("values", utils.TokensForVarReferenceList([]string{vpcIdVarName}))
+	internetGatewayDataBlock.Body().AppendBlock(filterBlock)
 
 	return internetGatewayDataBlock
 }

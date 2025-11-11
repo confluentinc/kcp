@@ -68,6 +68,7 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) any {
 			return v.ValueExtractor
 		},
+		func(v TargetClusterModulesVariableDefinition) string { return "" }, // TargetClusterModulesVariableDefinition doesn't have FromModuleOutput field
 	)
 }
 
@@ -76,10 +77,11 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 // ============================================================================
 
 type MigrationInfraVariableDefinition struct {
-	Name           string
-	Definition     types.TerraformVariable
-	ValueExtractor func(request types.MigrationWizardRequest) any  // Extracts the value from FE request payload.
-	Condition      func(request types.MigrationWizardRequest) bool // Determines if this variable should be included (nil = always include).
+	Name             string
+	Definition       types.TerraformVariable
+	ValueExtractor   func(request types.MigrationWizardRequest) any  // Extracts the value from FE request payload.
+	Condition        func(request types.MigrationWizardRequest) bool // Determines if this variable should be included (nil = always include).
+	FromModuleOutput string // If non-empty, this variable comes from the named module's output.
 }
 
 func (m MigrationInfraVariableDefinition) GetName() string {
@@ -97,7 +99,7 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 	allVars = append(allVars, GetNetworkingVariables()...)
 	allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 	allVars = append(allVars, GetJumpClusterVariables()...)
-	allVars = append(allVars, GetPrivateLinkVariables()...)
+	allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
 
 	return extractRootLevelVariableValues(
 		allVars,
@@ -118,7 +120,7 @@ func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardReque
 	allVars = append(allVars, GetNetworkingVariables()...)
 	allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 	allVars = append(allVars, GetJumpClusterVariables()...)
-	allVars = append(allVars, GetPrivateLinkVariables()...)
+	allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
 
 	return extractRootLevelVariableDefinitions(
 		allVars,
@@ -128,6 +130,7 @@ func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardReque
 		func(v MigrationInfraVariableDefinition) func(types.MigrationWizardRequest) any {
 			return v.ValueExtractor
 		},
+		func(v MigrationInfraVariableDefinition) string { return v.FromModuleOutput },
 	)
 }
 
@@ -193,6 +196,7 @@ func extractRootLevelVariableValues[V any, R any](
 // extractRootLevelVariableDefinitions is a generic helper function that extracts root-level variable definitions
 // from a collection of variable definitions. It filters by condition and skips variables without value extractors.
 // Note: This includes variables even if they have empty values (like API keys that are user-provided at Terraform apply time).
+// Variables with non-empty FromModuleOutput are excluded as they come from module outputs, not user input.
 // V is the variable definition type, R is the request type.
 func extractRootLevelVariableDefinitions[V any, R any](
 	allVars []V,
@@ -200,6 +204,7 @@ func extractRootLevelVariableDefinitions[V any, R any](
 	getDefinition func(V) types.TerraformVariable,
 	getCondition func(V) func(R) bool,
 	getValueExtractor func(V) func(R) any,
+	getFromModuleOutput func(V) string, // Function to get the module name if variable comes from module output (empty string = not from module output)
 ) []types.TerraformVariable {
 	var definitions []types.TerraformVariable
 
@@ -212,6 +217,11 @@ func extractRootLevelVariableDefinitions[V any, R any](
 		valueExtractor := getValueExtractor(varDef)
 		// Variables with non-nil ValueExtractor are root-level variables.
 		if valueExtractor == nil {
+			continue
+		}
+
+		// Skip variables that come from module outputs (non-empty module name)
+		if getFromModuleOutput != nil && getFromModuleOutput(varDef) != "" {
 			continue
 		}
 
@@ -242,7 +252,7 @@ func GetModuleVariableName(moduleName string, varName string) string {
 	case "networking":
 		variables = toVariableDefinitions(GetNetworkingVariables())
 	case "private_link_connection":
-		variables = toVariableDefinitions(GetPrivateLinkVariables())
+		variables = toVariableDefinitions(GetMigrationInfraPrivateLinkVariables())
 	case "confluent_cloud":
 		variables = toTargetVariableDefinitions(GetConfluentCloudVariables())
 	case "private_link_target_cluster":

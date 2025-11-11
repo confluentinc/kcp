@@ -14,13 +14,13 @@ import (
 // The map key is the block name (e.g., "root_block_device", "metadata_options"),
 // and the value is a map of attribute names to their values.
 // Values can be either cty.Value (for literals) or hclwrite.Tokens (for references).
-type OptionalBlocksConfig map[string]map[string]interface{}
+type OptionalBlocksConfig map[string]map[string]any
 
 func GenerateAmiDataResource(tfResourceName, owners string, mostRecent bool, filters map[string]string) *hclwrite.Block {
 	resourceBlock := hclwrite.NewBlock("data", []string{"aws_ami", tfResourceName})
 	body := resourceBlock.Body()
 
-	body.SetAttributeValue("owners", cty.StringVal(owners))
+	body.SetAttributeRaw("owners", utils.TokensForStringList([]string{owners}))
 	body.SetAttributeValue("most_recent", cty.BoolVal(mostRecent))
 
 	for filterName, filterValue := range filters {
@@ -38,9 +38,9 @@ func GenerateEc2InstanceResource(tfResourceName, amiIdRef, instanceType, subnetI
 	instanceBody := resourceBlock.Body()
 
 	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference(amiIdRef))
-	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType))
+	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType)) // Assumes the value is passed as a string rather than a variable reference.
 	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForResourceReference(subnetIdRef))
-	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForResourceReference(securityGroupIdsRef))
+	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForStringList([]string{securityGroupIdsRef}))
 	instanceBody.SetAttributeRaw("key_name", utils.TokensForResourceReference(keyNameRef))
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
 
@@ -54,9 +54,9 @@ func GenerateEc2UserDataInstanceResource(tfResourceName, amiIdRef, instanceType,
 	instanceBody := resourceBlock.Body()
 
 	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference(amiIdRef))
-	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType))
+	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType)) // Assumes the value is passed as a string rather than a variable reference.
 	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForVarReference(subnetIdRef))
-	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReference(securityGroupIdsRef))
+	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReferenceList([]string{securityGroupIdsRef}))
 	instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
 	instanceBody.AppendNewline()
@@ -84,9 +84,9 @@ func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, in
 	})
 
 	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference(amiIdRef))
-	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType))
+	instanceBody.SetAttributeRaw("instance_type", utils.TokensForVarReference(instanceType))
 	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForResourceReference("each.value"))
-	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReference(securityGroupIdsRef))
+	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReferenceList([]string{securityGroupIdsRef}))
 	instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
 
@@ -99,12 +99,12 @@ func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, in
 		"templatefile",
 		utils.TokensForStringTemplate(fmt.Sprintf("${path.module}/%s", controllerBrokerUserDataTemplatePath)),
 		utils.TokensForMap(userDataArgs),
-		utils.TokensForResourceReference("{}"),
 	)
 
 	brokerTemplatefileTokens := utils.TokensForFunctionCall(
 		"templatefile",
 		utils.TokensForStringTemplate(fmt.Sprintf("${path.module}/%s", brokerUserDataTemplatePath)),
+		utils.TokensForResourceReference("{}"),
 	)
 
 	conditionTokens := hclwrite.Tokens{

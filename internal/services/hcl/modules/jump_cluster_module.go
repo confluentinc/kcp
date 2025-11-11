@@ -15,7 +15,8 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return []string{} // Retrieved from networking module output.
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
 			Name: "jump_cluster_instance_type",
@@ -31,17 +32,18 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			Condition: nil,
 		},
 		{
-			Name: "security_group_ids",
+			Name: "jump_cluster_security_group_ids",
 			Definition: types.TerraformVariable{
-				Name:        "security_group_ids",
+				Name:        "jump_cluster_security_group_ids",
 				Description: "IDs of the security groups for the jump cluster (including setup host) instances.",
 				Sensitive:   false,
-				Type:        "list(string)",
+				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return []string{} // Retrieved from networking module output.
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
 			Name: "jump_cluster_ssh_key_pair_name",
@@ -54,7 +56,8 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return "" // Retrieved from networking module output.
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "networking",
 		},
 		{
 			Name: "jump_cluster_iam_auth_role_name",
@@ -123,6 +126,7 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			},
 			Condition: nil,
 		},
+		// Needs to be passed to the module as it is used for creating the cluster link between the jump cluster and Confluent Cloud.
 		{
 			Name: "confluent_cloud_cluster_api_key",
 			Definition: types.TerraformVariable{
@@ -134,7 +138,8 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return "" // User prompted for value at Terraform apply.
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "",
 		},
 		{
 			Name: "confluent_cloud_cluster_api_secret",
@@ -147,7 +152,8 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return "" // User prompted for value at Terraform apply.
 			},
-			Condition: nil,
+			Condition:        nil,
+			FromModuleOutput: "",
 		},
 		{
 			Name: "msk_cluster_id",

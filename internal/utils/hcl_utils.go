@@ -16,6 +16,13 @@ func FormatHclResourceName(resourceName string) string {
 	return strings.ToLower(strings.ReplaceAll(resourceName, "-", "_"))
 }
 
+// TokensForModuleOutput creates tokens for a Terraform module output reference (e.g., "module.networking.jump_cluster_broker_subnet_ids")
+func TokensForModuleOutput(moduleName, outputName string) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("module." + moduleName + "." + outputName)},
+	}
+}
+
 // TokensForTemplate creates properly formatted tokens for a template string (string with ${} interpolations)
 func TokensForStringTemplate(template string) hclwrite.Tokens {
 	return hclwrite.Tokens{
@@ -39,11 +46,21 @@ func TokensForVarReference(varName string) hclwrite.Tokens {
 	}
 }
 
-// TokensForModuleOutput creates tokens for a Terraform module output reference (e.g., "module.networking.jump_cluster_broker_subnet_ids")
-func TokensForModuleOutput(moduleName, outputName string) hclwrite.Tokens {
-	return hclwrite.Tokens{
-		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("module." + moduleName + "." + outputName)},
+// TokensForVarReferenceList creates tokens for a list of variable references (e.g., [var.name1, var.name2])
+func TokensForVarReferenceList(varNames []string) hclwrite.Tokens {
+	tokens := hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
 	}
+
+	for i, varName := range varNames {
+		if i > 0 {
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")})
+		}
+		tokens = append(tokens, TokensForVarReference(varName)...)
+	}
+
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
+	return tokens
 }
 
 // TokensForList creates tokens for an array literal
