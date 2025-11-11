@@ -3,7 +3,6 @@ package metrics
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -84,7 +83,12 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 		r.startDate.Format("2006-01-02"),
 		r.endDate.Format("2006-01-02")))
 
-	md.AddParagraph(fmt.Sprintf("**Clusters:** %v", r.clusterArns))
+	if len(r.clusterArns) > 0 {
+		md.AddParagraph("**Clusters included in report:**")
+		for _, arn := range r.clusterArns {
+			md.AddParagraph(fmt.Sprintf("- %s", arn))
+		}
+	}
 
 	md.AddHorizontalRule()
 
@@ -100,14 +104,6 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 	md.AddHorizontalRule()
 
 	return md
-}
-
-func (r *MetricReporter) extractRegionFromArn(arn string) string {
-	parts := strings.Split(arn, ":")
-	if len(parts) >= 4 {
-		return parts[3]
-	}
-	return "unknown-region"
 }
 
 
@@ -153,16 +149,6 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 
 	// Add individual metric values
 	r.addIndividualMetricsSection(md, clusterMetrics.Metrics)
-}
-
-func (r *MetricReporter) extractClusterNameFromRegion(region string) string {
-	// Find the first ARN that matches this region
-	for _, arn := range r.clusterArns {
-		if r.extractRegionFromArn(arn) == region {
-			return utils.ExtractClusterNameFromArn(arn)
-		}
-	}
-	return "Unknown"
 }
 
 func (r *MetricReporter) addIndividualMetricsSection(md *markdown.Markdown, metrics []types.ProcessedMetric) {
