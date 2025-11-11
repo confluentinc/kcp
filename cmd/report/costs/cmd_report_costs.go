@@ -41,7 +41,7 @@ func NewReportCostsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to include in the report (comma separated list or repeated flag).  If not provided, all regions in the state file will be included.")
-	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD).  (Defaults to last 31 days)")
+	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD).  (Defaults to 31 days prior to today)")
 	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD).  (Defaults to today).")
 	reportCostsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
