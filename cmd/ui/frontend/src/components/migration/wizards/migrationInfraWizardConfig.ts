@@ -583,7 +583,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             msk_region: {
               'ui:disabled': true,
             },
-            targete_environment_id: {
+            target_environment_id: {
               'ui:placeholder': 'e.g., env-xxxxxx',
             },
             target_cluster_id: {

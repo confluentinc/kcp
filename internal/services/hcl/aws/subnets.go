@@ -21,7 +21,7 @@ func GenerateSubnetResource(tfResourceName, cidrRangeVarName, availabilityZoneRe
 // Generates a single subnet resource with a `for_each` meta-argument to iterate through a list of string variable containing CIDR ranges.
 func GenerateSubnetResourceWithCount(tfResourceName, subnetCidrsVarName, availabilityZoneRef, vpcIdVarName string) *hclwrite.Block {
 	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
-	subnetBlock.Body().SetAttributeRaw("count", utils.TokensForFunctionCall("length",utils.TokensForVarReference(subnetCidrsVarName)))
+	subnetBlock.Body().SetAttributeRaw("count", utils.TokensForFunctionCall("length", utils.TokensForVarReference(subnetCidrsVarName)))
 	subnetBlock.Body().AppendNewline()
 	
 	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))

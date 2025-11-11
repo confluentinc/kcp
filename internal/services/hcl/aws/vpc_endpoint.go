@@ -15,8 +15,7 @@ func GenerateVpcEndpointResource(tfResourceName, vpcIdVarName, privateLinkAttach
 	vpcEndpointBlock.Body().SetAttributeRaw("security_group_ids", utils.TokensForVarReferenceList([]string{securityGroupRef}))
 	vpcEndpointBlock.Body().SetAttributeRaw("subnet_ids", utils.TokensForVarReference(subnetRef))
 	vpcEndpointBlock.Body().AppendNewline()
-	
-	vpcEndpointBlock.Body().SetAttributeRaw("depends_on", utils.TokensForList(dependsOnRefs))
 
+	vpcEndpointBlock.Body().SetAttributeRaw("depends_on", utils.TokensForList(dependsOnRefs))
 	return vpcEndpointBlock
 }

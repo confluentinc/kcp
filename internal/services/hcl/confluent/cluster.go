@@ -28,8 +28,6 @@ func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, r
 		clusterBlock.Body().AppendNewline()
 		enterpriseBlock := clusterBlock.Body().AppendNewBlock("enterprise", nil)
 		enterpriseBlock.Body().Clear()
-	default:
-		clusterBlock.Body().SetAttributeValue("test", cty.StringVal("test"))
 	}
 
 	clusterBlock.Body().AppendNewline()
