@@ -11,8 +11,8 @@ func GenerateAvailabilityZonesDataSource(tfResourceName string) *hclwrite.Block 
 	availabilityZoneBlock.Body().AppendNewline()
 
 	filterBlock := hclwrite.NewBlock("filter", nil)
-	filterBlock.Body().SetAttributeValue("name", cty.StringVal("opt-in-status"))
-	filterBlock.Body().SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("opt-in-not-required")}))
+	filterBlock.Body().SetAttributeValue("name", cty.StringVal("zone-type"))
+	filterBlock.Body().SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("availability-zone")}))
 	availabilityZoneBlock.Body().AppendBlock(filterBlock)
 
 	return availabilityZoneBlock

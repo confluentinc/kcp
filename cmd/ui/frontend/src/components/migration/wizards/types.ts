@@ -38,11 +38,33 @@ export interface WizardConfig {
   states: Record<string, unknown>
 }
 
+// Terraform module structure
+export interface TerraformModule {
+  name: string
+  'main.tf'?: string
+  'variables.tf'?: string
+  'outputs.tf'?: string
+  'versions.tf'?: string
+  additional_files?: Record<string, string> | null
+}
+
+// Terraform files response structure from API
 export interface TerraformFiles {
-  main_tf?: string
-  providers_tf?: string
-  variables_tf?: string
-  [key: string]: string | undefined
+  'main.tf'?: string
+  'providers.tf'?: string
+  'variables.tf'?: string
+  'outputs.tf'?: string
+  'inputs.auto.tfvars'?: string
+  modules?: TerraformModule[]
+}
+
+// Tree node structure for react-arborist
+export interface TreeNode {
+  id: string
+  name: string
+  children?: TreeNode[]
+  content?: string // File content
+  isFolder?: boolean
 }
 
 export interface WizardState {

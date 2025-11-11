@@ -16,6 +16,13 @@ func FormatHclResourceName(resourceName string) string {
 	return strings.ToLower(strings.ReplaceAll(resourceName, "-", "_"))
 }
 
+// TokensForModuleOutput creates tokens for a Terraform module output reference (e.g., "module.networking.jump_cluster_broker_subnet_ids")
+func TokensForModuleOutput(moduleName, outputName string) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("module." + moduleName + "." + outputName)},
+	}
+}
+
 // TokensForTemplate creates properly formatted tokens for a template string (string with ${} interpolations)
 func TokensForStringTemplate(template string) hclwrite.Tokens {
 	return hclwrite.Tokens{
@@ -37,6 +44,23 @@ func TokensForVarReference(varName string) hclwrite.Tokens {
 	return hclwrite.Tokens{
 		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("var." + varName)},
 	}
+}
+
+// TokensForVarReferenceList creates tokens for a list of variable references (e.g., [var.name1, var.name2])
+func TokensForVarReferenceList(varNames []string) hclwrite.Tokens {
+	tokens := hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
+	}
+
+	for i, varName := range varNames {
+		if i > 0 {
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")})
+		}
+		tokens = append(tokens, TokensForVarReference(varName)...)
+	}
+
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
+	return tokens
 }
 
 // TokensForList creates tokens for an array literal
@@ -68,15 +92,21 @@ func TokensForStringList(items []string) hclwrite.Tokens {
 
 // TokensForFunctionCall creates tokens for a function call with a string template argument
 // e.g., base64encode("${var.key}:${var.secret}")
-func TokensForFunctionCall(functionName string, stringTemplateArg string) hclwrite.Tokens {
-	return hclwrite.Tokens{
+func TokensForFunctionCall(functionName string, args ...hclwrite.Tokens) hclwrite.Tokens {
+	tokens := hclwrite.Tokens{
 		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(functionName)},
 		&hclwrite.Token{Type: hclsyntax.TokenOParen, Bytes: []byte("(")},
-		&hclwrite.Token{Type: hclsyntax.TokenOQuote, Bytes: []byte(`"`)},
-		&hclwrite.Token{Type: hclsyntax.TokenQuotedLit, Bytes: []byte(stringTemplateArg)},
-		&hclwrite.Token{Type: hclsyntax.TokenCQuote, Bytes: []byte(`"`)},
-		&hclwrite.Token{Type: hclsyntax.TokenCParen, Bytes: []byte(")")},
 	}
+
+	for i, arg := range args {
+		if i > 0 {
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")})
+		}
+		tokens = append(tokens, arg...)
+	}
+
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCParen, Bytes: []byte(")")})
+	return tokens
 }
 
 // TokensForMap creates tokens for a map/object with string keys and token values
@@ -89,7 +119,7 @@ func TokensForMap(entries map[string]hclwrite.Tokens) hclwrite.Tokens {
 
 	for key, valueTokens := range entries {
 		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(key)})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenEqual, Bytes: []byte(" = ")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenEqual, Bytes: []byte("=")})
 		tokens = append(tokens, valueTokens...)
 		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")})
 	}
@@ -112,4 +142,31 @@ func GenerateLifecycleBlock(lifecycle string, boolean bool) (hclwrite.Tokens, er
 		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(strconv.FormatBool(boolean))},
 		&hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")},
 	}, nil
+}
+
+func ConvertToCtyValue(v any) cty.Value {
+	switch val := v.(type) {
+	case string:
+		return cty.StringVal(val)
+	case int:
+		return cty.NumberIntVal(int64(val))
+	case int64:
+		return cty.NumberIntVal(val)
+	case bool:
+		return cty.BoolVal(val)
+	default:
+		return cty.NilVal
+	}
+}
+
+// TokensForConditional creates tokens for a ternary conditional expression
+// condition ? trueValue : falseValue
+func TokensForConditional(condition, trueValue, falseValue hclwrite.Tokens) hclwrite.Tokens {
+	tokens := hclwrite.Tokens{}
+	tokens = append(tokens, condition...)
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenQuestion, Bytes: []byte("?")})
+	tokens = append(tokens, trueValue...)
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
+	tokens = append(tokens, falseValue...)
+	return tokens
 }

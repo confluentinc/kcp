@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -84,6 +86,12 @@ func ExtractClusterNameFromArn(arn string) string {
 	if len(parts) >= 2 {
 		return parts[1]
 	}
-	
+
 	return "unknown-cluster"
+}
+
+func RandomString(length int) string {
+	b := make([]byte, length)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)[:length]
 }

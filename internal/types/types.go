@@ -6,11 +6,12 @@ import (
 )
 
 type TerraformState struct {
-	Outputs TerraformOutput `json:"outputs"`
+	Outputs TerraformOutputOld `json:"outputs"`
 }
 
 // a type for the output.json file in the target_env folder
-type TerraformOutput struct {
+// NOTE: This will be deprecated once we are completely on the HCL-servrice based approach.
+type TerraformOutputOld struct {
 	ConfluentCloudClusterApiKey                TerraformOutputValue `json:"confluent_cloud_cluster_api_key"`
 	ConfluentCloudClusterApiKeySecret          TerraformOutputValue `json:"confluent_cloud_cluster_api_key_secret"`
 	ConfluentCloudClusterId                    TerraformOutputValue `json:"confluent_cloud_cluster_id"`
@@ -123,7 +124,7 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	Region           string   `json:"region"`
+	AwsRegion        string   `json:"aws_region"`
 	NeedsEnvironment bool     `json:"needs_environment"`
 	EnvironmentName  string   `json:"environment_name"`
 	EnvironmentId    string   `json:"environment_id"`
@@ -136,26 +137,55 @@ type TargetClusterWizardRequest struct {
 }
 
 type TerraformFiles struct {
-	MainTf      string `json:"main_tf"`
-	ProvidersTf string `json:"providers_tf"`
-	VariablesTf string `json:"variables_tf"`
+	MainTf           string `json:"main.tf"`
+	ProvidersTf      string `json:"providers.tf"`
+	VariablesTf      string `json:"variables.tf"`
+	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
+	OutputsTf        string `json:"outputs.tf"`
 }
 
 type TerraformVariable struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Sensitive   bool   `json:"sensitive"`
+	Type        string `json:"type"`
+}
+
+type TerraformOutput struct {
+	Name        string
+	Description string
+	Sensitive   bool
+	Value       string
 }
 
 type MigrationWizardRequest struct {
-	MskPubliclyAccessible        bool   `json:"msk_publicly_accessible"`
-	AuthenticationMethod         string `json:"authentication_method"`
-	TargetClusterType            string `json:"target_cluster_type"`
+	HasPublicCcEndpoints bool `json:"has_public_cc_endpoints"`
+
+	VpcId string `json:"vpc_id"`
+
+	HasExistingPrivateLink       bool     `json:"has_existing_private_link"`
+	ReuseExistingSubnets         bool     `json:"reuse_existing_subnets"`
+	PrivateLinkExistingSubnetIds []string `json:"private_link_existing_subnet_ids"`
+	PrivateLinkNewSubnetsCidr    []string `json:"private_link_new_subnets_cidr"`
+
+	HasExistingInternetGateway bool `json:"has_existing_internet_gateway"`
+
+	JumpClusterInstanceType        string   `json:"jump_cluster_instance_type"`
+	JumpClusterBrokerStorage       int      `json:"jump_cluster_broker_storage"`
+	JumpClusterBrokerSubnetCidr    []string `json:"jump_cluster_broker_subnet_cidr"`
+	JumpClusterSetupHostSubnetCidr string   `json:"jump_cluster_setup_host_subnet_cidr"`
+
+	MskJumpClusterAuthType       string `json:"msk_jump_cluster_auth_type"`
+	MskClusterId                 string `json:"msk_cluster_id"`
+	JumpClusterIamAuthRoleName   string `json:"jump_cluster_iam_auth_role_name"`
+	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
+	MskRegion                    string `json:"msk_region"`
 	TargetEnvironmentId          string `json:"target_environment_id"`
 	TargetClusterId              string `json:"target_cluster_id"`
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
-	MskClusterId                 string `json:"msk_cluster_id"`
-	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
+	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
+	ClusterLinkName              string `json:"cluster_link_name"`
 }
 
 type MigrateTopicsRequest struct {
@@ -176,4 +206,25 @@ type Exporter struct {
 	ContextType string   `json:"context_type"`
 	ContextName string   `json:"context_name"`
 	Subjects    []string `json:"subjects"`
+}
+
+// MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure
+// configuration. Each module contains its own Terraform files and additional assets.
+type MigrationInfraTerraformModule struct {
+	Name            string            `json:"name"`
+	MainTf          string            `json:"main.tf"`
+	VariablesTf     string            `json:"variables.tf"`
+	OutputsTf       string            `json:"outputs.tf"`
+	VersionsTf      string            `json:"versions.tf"`
+	AdditionalFiles map[string]string `json:"additional_files"`
+}
+
+// MigrationInfraTerraformProject represents the complete Terraform configuration for migration
+// infrastructure. "project" = root config + modules
+type MigrationInfraTerraformProject struct {
+	MainTf           string                          `json:"main.tf"`
+	ProvidersTf      string                          `json:"providers.tf"`
+	VariablesTf      string                          `json:"variables.tf"`
+	InputsAutoTfvars string                          `json:"inputs.auto.tfvars"`
+	Modules          []MigrationInfraTerraformModule `json:"modules"`
 }
