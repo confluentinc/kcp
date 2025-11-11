@@ -124,7 +124,7 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	AwsRegion           string   `json:"aws_region"`
+	AwsRegion        string   `json:"aws_region"`
 	NeedsEnvironment bool     `json:"needs_environment"`
 	EnvironmentName  string   `json:"environment_name"`
 	EnvironmentId    string   `json:"environment_id"`
@@ -163,6 +163,7 @@ type MigrationWizardRequest struct {
 
 	VpcId string `json:"vpc_id"`
 
+	HasExistingPrivateLink       bool     `json:"has_existing_private_link"`
 	ReuseExistingSubnets         bool     `json:"reuse_existing_subnets"`
 	PrivateLinkExistingSubnetIds []string `json:"private_link_existing_subnet_ids"`
 	PrivateLinkNewSubnetsCidr    []string `json:"private_link_new_subnets_cidr"`

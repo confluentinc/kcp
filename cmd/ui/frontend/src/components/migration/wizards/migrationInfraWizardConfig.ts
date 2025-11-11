@@ -114,9 +114,44 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
+      private_link_existing_question: {
+        meta: {
+          title: 'Private Migration | Private Link',
+          description: 'AWS VPCs allow only one private hosted zone per domain per VPC. Therefore, KCP needs to know if a Private Link connection already exists to the Confluent Cloud cluster.',
+          schema: {
+            type: 'object',
+            properties: {
+              has_existing_private_link: {
+                type: 'boolean',
+                title: 'Does your AWS VPC have an existing private link to the Confluent Cloud cluster?',
+                oneOf: [
+                  { title: 'Yes', const: true },
+                  { title: 'No', const: false },
+                ],
+              },
+            },
+            required: ['has_existing_private_link'],
+          },
+          uiSchema: {
+            has_existing_private_link: {
+              'ui:widget': 'radio',
+            },
+          },
+        },
+        on: {
+          NEXT: {
+            target: 'private_link_subnets_question',
+            actions: 'save_step_data',
+          },
+          BACK: {
+            target: 'confluent_cloud_endpoints_question',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
       private_link_subnets_question: {
         meta: {
-          title: 'Private Migration |Private Link - Subnets',
+          title: 'Private Migration | Private Link - Subnets',
           description: 'When setting up a private link between Confluent Cloud and AWS, subnets need to be specified to establish the connection.',
           schema: {
             type: 'object',
@@ -152,7 +187,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
           ],
           BACK: {
-            target: 'confluent_cloud_endpoints_question',
+            target: 'private_link_existing_question',
             actions: 'undo_save_step_data',
           },
         },
