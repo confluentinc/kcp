@@ -46,7 +46,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'save_step_data',
             },
             {
-              target: 'private_link_subnets_question',
+              target: 'private_link_existing_question',
               guard: 'has_private_cc_endpoints',
               actions: 'save_step_data',
             },
@@ -123,7 +123,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             properties: {
               has_existing_private_link: {
                 type: 'boolean',
-                title: 'Does your AWS VPC have an existing private link to the Confluent Cloud cluster?',
+                title: 'Do you have a currently established Private Link connection to the Confluent Cloud cluster?',
                 oneOf: [
                   { title: 'Yes', const: true },
                   { title: 'No', const: false },
