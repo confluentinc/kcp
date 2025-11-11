@@ -41,6 +41,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	metricsMetadata := types.MetricMetadata{
 		ClusterType:          string(cluster.ClusterType),
 		BrokerAzDistribution: *brokerAZDistribution,
+		NumberOfBrokerNodes:  numberOfBrokerNodes,
 		KafkaVersion:         kafkaVersion,
 		EnhancedMonitoring:   enhancedMonitoring,
 		StartDate:            timeWindow.StartTime,

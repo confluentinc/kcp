@@ -318,6 +318,7 @@ type ClusterMetrics struct {
 
 type MetricMetadata struct {
 	ClusterType          string    `json:"cluster_type"`
+	NumberOfBrokerNodes  int       `json:"number_of_broker_nodes"`
 	KafkaVersion         string    `json:"kafka_version"`
 	BrokerAzDistribution string    `json:"broker_az_distribution"`
 	EnhancedMonitoring   string    `json:"enhanced_monitoring"`

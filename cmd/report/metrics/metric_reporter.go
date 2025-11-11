@@ -119,6 +119,7 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 	md.AddParagraph(fmt.Sprintf("**Cluster ARN**: %s", clusterMetrics.ClusterArn))
 	md.AddParagraph(fmt.Sprintf("**Region**: %s", clusterMetrics.Region))
 	md.AddParagraph(fmt.Sprintf("**Cluster Type**: %s", clusterMetrics.Metadata.ClusterType))
+	md.AddParagraph(fmt.Sprintf("**Number of Broker Nodes**: %d", clusterMetrics.Metadata.NumberOfBrokerNodes))
 	md.AddParagraph(fmt.Sprintf("**Kafka Version**: %s", clusterMetrics.Metadata.KafkaVersion))
 	md.AddParagraph(fmt.Sprintf("**Enhanced Monitoring**: %s", clusterMetrics.Metadata.EnhancedMonitoring))
 	md.AddParagraph(fmt.Sprintf("**Period**: %d seconds", clusterMetrics.Metadata.Period))
