@@ -29,6 +29,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.542.0",
     "react": "^19.1.1",
+    "react-arborist": "^3.4.3",
     "react-day-picker": "^9.11.0",
     "react-dom": "^19.1.1",
     "recharts": "^3.2.1",
