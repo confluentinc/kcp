@@ -38,6 +38,9 @@ interface MigrationAssets {
     [WIZARD_TYPES.TARGET_INFRA]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATION_INFRA]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATION_SCRIPTS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_SCHEMAS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_TOPICS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_ACLS]: TerraformFiles | null
   }
 }
 

@@ -15,6 +15,7 @@ import { getWizardTitle, getWizardFilesTitle } from '@/lib/wizardUtils'
 import { MigrationFlow } from './MigrationFlow'
 import { ClusterAccordion } from './ClusterAccordion'
 import { TerraformFileViewer } from './TerraformFileViewer'
+import { MigrationScriptsSelection } from './MigrationScriptsSelection'
 
 export const MigrationAssets = () => {
   const regions = useRegions()
@@ -77,6 +78,11 @@ export const MigrationAssets = () => {
     setSelectedClusterForWizard({ cluster, regionName })
     setWizardType(WIZARD_TYPES.MIGRATION_SCRIPTS)
     setIsWizardOpen(true)
+  }
+
+  const handleSelectScriptType = (selectedWizardType: WizardType) => {
+    setWizardType(selectedWizardType)
+    // Keep modal open, just change the wizard type
   }
 
   const handleCloseWizard = () => {
@@ -223,13 +229,42 @@ export const MigrationAssets = () => {
                 />
               )}
               {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && (
+                  <MigrationScriptsSelection onSelect={handleSelectScriptType} />
+              )}
+              {wizardType === WIZARD_TYPES.MIGRATE_SCHEMAS && (
                 <Wizard
                   config={createMigrationScriptsWizardConfig(clusterArn)}
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {
                     if (clusterArn) {
-                      handleWizardComplete(clusterArn,  WIZARD_TYPES.MIGRATION_SCRIPTS, selectedClusterForWizard.cluster.name)
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.MIGRATE_SCHEMAS, selectedClusterForWizard.cluster.name)
+                    }
+                  }}
+                  onClose={handleCloseWizard}
+                />
+              )}
+              {wizardType === WIZARD_TYPES.MIGRATE_TOPICS && (
+                <Wizard
+                  config={createMigrationScriptsWizardConfig(clusterArn)}
+                  clusterKey={clusterArn}
+                  wizardType={wizardType}
+                  onComplete={() => {
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.MIGRATE_TOPICS, selectedClusterForWizard.cluster.name)
+                    }
+                  }}
+                  onClose={handleCloseWizard}
+                />
+              )}
+              {wizardType === WIZARD_TYPES.MIGRATE_ACLS && (
+                <Wizard
+                  config={createMigrationScriptsWizardConfig(clusterArn)}
+                  clusterKey={clusterArn}
+                  wizardType={wizardType}
+                  onComplete={() => {
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.MIGRATE_ACLS, selectedClusterForWizard.cluster.name)
                     }
                   }}
                   onClose={handleCloseWizard}
