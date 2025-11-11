@@ -46,7 +46,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'save_step_data',
             },
             {
-              target: 'private_link_subnets_question',
+              target: 'private_link_existing_question',
               guard: 'has_private_cc_endpoints',
               actions: 'save_step_data',
             },
@@ -114,9 +114,44 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
+      private_link_existing_question: {
+        meta: {
+          title: 'Private Migration | Private Link',
+          description: 'AWS VPCs allow only one private hosted zone per domain per VPC. Therefore, KCP needs to know if a Private Link connection already exists to the Confluent Cloud cluster.',
+          schema: {
+            type: 'object',
+            properties: {
+              has_existing_private_link: {
+                type: 'boolean',
+                title: 'Do you have a currently established Private Link connection to the Confluent Cloud cluster?',
+                oneOf: [
+                  { title: 'Yes', const: true },
+                  { title: 'No', const: false },
+                ],
+              },
+            },
+            required: ['has_existing_private_link'],
+          },
+          uiSchema: {
+            has_existing_private_link: {
+              'ui:widget': 'radio',
+            },
+          },
+        },
+        on: {
+          NEXT: {
+            target: 'private_link_subnets_question',
+            actions: 'save_step_data',
+          },
+          BACK: {
+            target: 'confluent_cloud_endpoints_question',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
       private_link_subnets_question: {
         meta: {
-          title: 'Private Migration |Private Link - Subnets',
+          title: 'Private Migration | Private Link - Subnets',
           description: 'When setting up a private link between Confluent Cloud and AWS, subnets need to be specified to establish the connection.',
           schema: {
             type: 'object',
@@ -152,7 +187,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
           ],
           BACK: {
-            target: 'confluent_cloud_endpoints_question',
+            target: 'private_link_existing_question',
             actions: 'undo_save_step_data',
           },
         },
@@ -510,6 +545,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
+              target_environment_id: {
+                type: 'string',
+                title: 'Confluent Cloud Environment ID'
+              },
               target_cluster_id: {
                 type: 'string',
                 title: 'Confluent Cloud Cluster ID'
@@ -532,7 +571,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 description: 'The name of the pre-configured IAM role that will be used to authenticate the cluster link between MSK and the jump cluster.'
               },
             },
-            required: ['msk_cluster_id', 'msk_sasl_iam_bootstrap_servers', 'msk_region', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
+            required: ['msk_cluster_id', 'msk_sasl_iam_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
           },
           uiSchema: {
             msk_cluster_id: {
@@ -543,6 +582,9 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
             msk_region: {
               'ui:disabled': true,
+            },
+            targete_environment_id: {
+              'ui:placeholder': 'e.g., env-xxxxxx',
             },
             target_cluster_id: {
               'ui:placeholder': 'e.g., lkc-xxxxxx',

@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import type { TerraformFiles, TreeNode } from '@/components/migration/wizards/types'
 
 /**
  * Utility function to merge Tailwind CSS classes with clsx and tailwind-merge.
@@ -117,4 +118,163 @@ export const createStatusBadgeProps = (
     enabled,
     label: enabled ? enabledLabel : disabledLabel,
   }
+}
+
+/**
+ * Converts hierarchical TerraformFiles structure into a flat array of tree nodes for react-arborist
+ * @param files - The TerraformFiles object from the API
+ * @returns Array of TreeNode objects representing the file structure
+ */
+export const convertTerraformFilesToTree = (files: TerraformFiles | null): TreeNode[] => {
+  if (!files) return []
+
+  const treeNodes: TreeNode[] = []
+
+  // Root level files
+  const rootFiles: Array<keyof TerraformFiles> = [
+    'main.tf',
+    'providers.tf',
+    'variables.tf',
+    'outputs.tf',
+    'inputs.auto.tfvars',
+  ]
+
+  rootFiles.forEach((fileName) => {
+    const content = files[fileName]
+    if (content && typeof content === 'string') {
+      treeNodes.push({
+        id: fileName,
+        name: fileName,
+        content,
+        isFolder: false,
+      })
+    }
+  })
+
+  // Module folders and their files
+  if (files.modules && Array.isArray(files.modules)) {
+    files.modules.forEach((module) => {
+      const moduleChildren: TreeNode[] = []
+
+      // Module's standard files
+      const moduleFiles: Array<'main.tf' | 'variables.tf' | 'outputs.tf' | 'versions.tf'> = [
+        'main.tf',
+        'variables.tf',
+        'outputs.tf',
+        'versions.tf',
+      ]
+
+      moduleFiles.forEach((fileName) => {
+        const content = module[fileName]
+        if (content) {
+          moduleChildren.push({
+            id: `${module.name}/${fileName}`,
+            name: fileName,
+            content,
+            isFolder: false,
+          })
+        }
+      })
+
+      // Additional files in the module
+      if (module.additional_files) {
+        Object.entries(module.additional_files).forEach(([fileName, content]) => {
+          moduleChildren.push({
+            id: `${module.name}/${fileName}`,
+            name: fileName,
+            content,
+            isFolder: false,
+          })
+        })
+      }
+
+      // Add module folder with its children
+      if (moduleChildren.length > 0) {
+        treeNodes.push({
+          id: module.name,
+          name: module.name,
+          children: moduleChildren,
+          isFolder: true,
+        })
+      }
+    })
+  }
+
+  return treeNodes
+}
+
+/**
+ * Flattens tree structure to get all file nodes with their content
+ * @param nodes - Array of TreeNode objects
+ * @returns Map of file ID to content
+ */
+export const flattenTreeNodes = (nodes: TreeNode[]): Map<string, string> => {
+  const fileMap = new Map<string, string>()
+
+  const traverse = (node: TreeNode) => {
+    if (!node.isFolder && node.content) {
+      fileMap.set(node.id, node.content)
+    }
+    if (node.children) {
+      node.children.forEach(traverse)
+    }
+  }
+
+  nodes.forEach(traverse)
+  return fileMap
+}
+
+/**
+ * Converts TerraformFiles to flat structure for download/save utilities
+ * @param files - The TerraformFiles object from the API
+ * @returns Record of file paths to content
+ */
+export const flattenTerraformFiles = (files: TerraformFiles | null): Record<string, string> => {
+  if (!files) return {}
+
+  const flatFiles: Record<string, string> = {}
+
+  // Root level files
+  const rootFiles: Array<keyof TerraformFiles> = [
+    'main.tf',
+    'providers.tf',
+    'variables.tf',
+    'outputs.tf',
+    'inputs.auto.tfvars',
+  ]
+
+  rootFiles.forEach((fileName) => {
+    const content = files[fileName]
+    if (content && typeof content === 'string') {
+      flatFiles[fileName] = content
+    }
+  })
+
+  // Module files
+  if (files.modules && Array.isArray(files.modules)) {
+    files.modules.forEach((module) => {
+      const moduleFiles: Array<'main.tf' | 'variables.tf' | 'outputs.tf' | 'versions.tf'> = [
+        'main.tf',
+        'variables.tf',
+        'outputs.tf',
+        'versions.tf',
+      ]
+
+      moduleFiles.forEach((fileName) => {
+        const content = module[fileName]
+        if (content) {
+          flatFiles[`${module.name}/${fileName}`] = content
+        }
+      })
+
+      // Additional files
+      if (module.additional_files) {
+        Object.entries(module.additional_files).forEach(([fileName, content]) => {
+          flatFiles[`${module.name}/${fileName}`] = content
+        })
+      }
+    })
+  }
+
+  return flatFiles
 }

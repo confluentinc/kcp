@@ -6,28 +6,28 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GeneratePrivateLinkAttachment(tfResourceName, displayName, region, environmentIdRef string) *hclwrite.Block {
+func GeneratePrivateLinkAttachmentResource(tfResourceName, displayName, awsRegionVarName, targetEnvironmentIdVarName string) *hclwrite.Block {
 	privateLinkAttachmentBlock := hclwrite.NewBlock("resource", []string{"confluent_private_link_attachment", tfResourceName})
 	privateLinkAttachmentBlock.Body().SetAttributeValue("display_name", cty.StringVal(displayName))
 	privateLinkAttachmentBlock.Body().SetAttributeValue("cloud", cty.StringVal("AWS"))
-	privateLinkAttachmentBlock.Body().SetAttributeValue("region", cty.StringVal(region))
+	privateLinkAttachmentBlock.Body().SetAttributeRaw("region", utils.TokensForVarReference(awsRegionVarName))
 	privateLinkAttachmentBlock.Body().AppendNewline()
 
 	environmentBlock := hclwrite.NewBlock("environment", nil)
-	environmentBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
+	environmentBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(targetEnvironmentIdVarName))
 	privateLinkAttachmentBlock.Body().AppendBlock(environmentBlock)
 	privateLinkAttachmentBlock.Body().AppendNewline()
 
 	return privateLinkAttachmentBlock
 }
 
-func GeneratePrivateLinkAttachmentConnection(tfResourceName, displayName, environmentIdRef, vpcEndpointIdRef, privateLinkAttachmentIdRef string) *hclwrite.Block {
+func GeneratePrivateLinkAttachmentConnectionResource(tfResourceName, displayName, targetEnvironmentIdVarName, vpcEndpointIdRef, privateLinkAttachmentIdRef string) *hclwrite.Block {
 	privateLinkAttachmentConnectionBlock := hclwrite.NewBlock("resource", []string{"confluent_private_link_attachment_connection", tfResourceName})
 	privateLinkAttachmentConnectionBlock.Body().SetAttributeValue("display_name", cty.StringVal(displayName))
 	privateLinkAttachmentConnectionBlock.Body().AppendNewline()
 
 	environmentBlock := hclwrite.NewBlock("environment", nil)
-	environmentBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
+	environmentBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(targetEnvironmentIdVarName))
 	privateLinkAttachmentConnectionBlock.Body().AppendBlock(environmentBlock)
 	privateLinkAttachmentConnectionBlock.Body().AppendNewline()
 

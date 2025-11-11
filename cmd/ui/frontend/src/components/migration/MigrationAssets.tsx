@@ -25,7 +25,6 @@ export const MigrationAssets = () => {
     regionName: string
   } | null>(null)
 
-  const [activeFileTabs, setActiveFileTabs] = useState<Record<string, string>>({})
   // Track which cluster section is expanded (persisted in store)
   const expandedCluster = useAppStore((state) => state.expandedMigrationCluster)
   const setExpandedCluster = useAppStore((state) => state.setExpandedMigrationCluster)
@@ -256,9 +255,6 @@ export const MigrationAssets = () => {
                   files={getTerraformFiles(fileViewerModal.clusterKey, fileViewerModal.wizardType)}
                   clusterName={fileViewerModal.clusterName}
                   wizardType={fileViewerModal.wizardType}
-                  clusterKey={fileViewerModal.clusterKey}
-                  activeFileTabs={activeFileTabs}
-                  setActiveFileTabs={setActiveFileTabs}
                 />
               )}
           </div>

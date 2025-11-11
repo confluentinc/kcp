@@ -1,13 +1,14 @@
 package aws
 
 import (
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
 
-func GenerateSecurityGroup(tfResourceName, vpcId string, ingressPorts []int, egressPorts []int) *hclwrite.Block {
+func GenerateSecurityGroup(tfResourceName string, ingressPorts []int, egressPorts []int, vpcIdVarName string) *hclwrite.Block {
 	securityGroupBlock := hclwrite.NewBlock("resource", []string{"aws_security_group", tfResourceName})
-	securityGroupBlock.Body().SetAttributeValue("vpc_id", cty.StringVal(vpcId))
+	securityGroupBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
 	securityGroupBlock.Body().AppendNewline()
 
 	for i, ingressPort := range ingressPorts {

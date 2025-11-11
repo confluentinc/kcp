@@ -1,9 +1,9 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
@@ -213,22 +213,115 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.AuthenticationMethod == "" || req.TargetClusterType == "" || req.TargetEnvironmentId == "" || req.TargetClusterId == "" || req.TargetRestEndpoint == "" || req.MskClusterId == "" || req.MskSaslScramBootstrapServers == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid configuration",
-			"message": "authenticationMethod, targetClusterType, targetEnvironmentId, targetClusterId, targetRestEndpoint, mskClusterId, and mskSaslScramBootstrapServers are required",
-		})
+	if req.HasPublicCcEndpoints {
+		if err := validateClusterLinkRequest(req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": err.Error(),
+			})
+		}
+	} else {
+		if err := validatePrivateLinkRequest(req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid request body",
+				"message": err.Error(),
+			})
+		}
 	}
 
-	terraformFiles, err := ui.migrationInfraHCLService.GenerateTerraformFiles(req)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
-			"message": err.Error(),
-		})
+	terraformModules := ui.migrationInfraHCLService.GenerateTerraformModules(req)
+
+	return c.JSON(http.StatusCreated, terraformModules)
+}
+
+func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
+	var missingFields []string
+
+	if req.TargetClusterId == "" {
+		missingFields = append(missingFields, "targetClusterId")
+	}
+	if req.TargetRestEndpoint == "" {
+		missingFields = append(missingFields, "targetRestEndpoint")
+	}
+	if req.ClusterLinkName == "" {
+		missingFields = append(missingFields, "clusterLinkName")
+	}
+	if req.MskSaslScramBootstrapServers == "" {
+		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
 	}
 
-	return c.JSON(http.StatusCreated, terraformFiles)
+	if len(missingFields) > 0 {
+		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
+	}
+
+	return nil
+}
+
+func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
+	var missingFields []string
+
+	// Check required fields
+	if req.VpcId == "" {
+		missingFields = append(missingFields, "vpcId")
+	}
+	if req.JumpClusterInstanceType == "" {
+		missingFields = append(missingFields, "jumpClusterInstanceType")
+	}
+	if req.JumpClusterBrokerStorage <= 0 {
+		missingFields = append(missingFields, "jumpClusterBrokerStorage")
+	}
+	if len(req.JumpClusterBrokerSubnetCidr) == 0 {
+		missingFields = append(missingFields, "jumpClusterBrokerSubnetCidr")
+	}
+	if req.JumpClusterSetupHostSubnetCidr == "" {
+		missingFields = append(missingFields, "jumpClusterSetupHostSubnetCidr")
+	}
+	if req.MskJumpClusterAuthType == "" {
+		missingFields = append(missingFields, "mskJumpClusterAuthType")
+	}
+	if req.TargetClusterId == "" {
+		missingFields = append(missingFields, "targetClusterId")
+	}
+	// This might be missing depending on the MskJumpClusterAuthType.
+	// if req.MskSaslScramBootstrapServers == "" {
+	// 	missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	// }
+	if req.TargetRestEndpoint == "" {
+		missingFields = append(missingFields, "targetRestEndpoint")
+	}
+	if req.TargetBootstrapEndpoint == "" {
+		missingFields = append(missingFields, "targetBootstrapEndpoint")
+	}
+	if req.ClusterLinkName == "" {
+		missingFields = append(missingFields, "clusterLinkName")
+	}
+
+	var conditionalErrors []string
+
+	// Conditional validation based on UseExistingSubnets
+	if req.ReuseExistingSubnets {
+		if len(req.PrivateLinkExistingSubnetIds) == 0 {
+			conditionalErrors = append(conditionalErrors, "privateLinkExistingSubnetIds is required when reuseExistingSubnets is true")
+		}
+	} else {
+		if len(req.PrivateLinkNewSubnetsCidr) == 0 {
+			conditionalErrors = append(conditionalErrors, "privateLinkNewSubnetsCidr is required when reuseExistingSubnets is false")
+		}
+	}
+
+	var allErrors []string
+	if len(missingFields) > 0 {
+		allErrors = append(allErrors, fmt.Sprintf("missing required fields: %s", strings.Join(missingFields, ", ")))
+	}
+	if len(conditionalErrors) > 0 {
+		allErrors = append(allErrors, conditionalErrors...)
+	}
+
+	if len(allErrors) > 0 {
+		return fmt.Errorf("invalid configuration: %s", strings.Join(allErrors, "; "))
+	}
+
+	return nil
 }
 
 func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
@@ -273,13 +366,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 		}
 	}
 
-	terraformFiles, err := ui.targetInfraHCLService.GenerateTerraformFiles(req)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
-			"message": err.Error(),
-		})
-	}
+	terraformFiles := ui.targetInfraHCLService.GenerateTerraformFiles(req)
 
 	return c.JSON(http.StatusCreated, terraformFiles)
 }
@@ -322,60 +409,6 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	}
 
 	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
-			"message": err.Error(),
-		})
-	}
-
-	return c.JSON(http.StatusCreated, terraformFiles)
-}
-
-func (ui *UI) handleMigrationScripts(c echo.Context) error {
-	var baseRequest map[string]any
-	if err := c.Bind(&baseRequest); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid request body",
-			"message": err.Error(),
-		})
-	}
-
-	migrationType, ok := baseRequest["migration_type"].(string)
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Missing migration_type",
-			"message": "migration_type is required in the request body",
-		})
-	}
-
-	var terraformFiles types.TerraformFiles
-	var err error
-
-	switch migrationType {
-	case "Mirror Topics":
-		var request types.MigrateTopicsRequest
-		jsonData, marshalErr := json.Marshal(baseRequest)
-		if marshalErr != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid request body",
-				"message": marshalErr.Error(),
-			})
-		}
-		if unmarshalErr := json.Unmarshal(jsonData, &request); unmarshalErr != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid request body",
-				"message": unmarshalErr.Error(),
-			})
-		}
-		terraformFiles, err = ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(request)
-	default:
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid migration script type",
-			"message": "Invalid migration script type: " + migrationType,
-		})
-	}
-
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",
