@@ -85,7 +85,7 @@ export const MigrationAssets = () => {
     setSelectedClusterForWizard(null)
   }
 
-  const handleWizardComplete = (clusterKey: string) => {
+  const handleWizardComplete = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
     // Close the wizard
     setIsWizardOpen(false)
     setWizardType(null)
@@ -93,6 +93,9 @@ export const MigrationAssets = () => {
 
     // Expand the cluster
     setExpandedCluster(clusterKey)
+
+    // Open the file viewer modal to show the generated Terraform files
+    handleViewTerraform(clusterKey, wizardType, clusterName)
   }
 
   const toggleCluster = (clusterKey: string) => {
@@ -199,7 +202,9 @@ export const MigrationAssets = () => {
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {
-                    if (clusterArn) handleWizardComplete(clusterArn)
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.TARGET_INFRA, selectedClusterForWizard.cluster.name)
+                    }
                   }}
                   onClose={handleCloseWizard}
                 />
@@ -210,7 +215,9 @@ export const MigrationAssets = () => {
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {
-                    if (clusterArn) handleWizardComplete(clusterArn)
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.MIGRATION_INFRA, selectedClusterForWizard.cluster.name)
+                    }
                   }}
                   onClose={handleCloseWizard}
                 />
@@ -221,7 +228,9 @@ export const MigrationAssets = () => {
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {
-                    if (clusterArn) handleWizardComplete(clusterArn)
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn,  WIZARD_TYPES.MIGRATION_SCRIPTS, selectedClusterForWizard.cluster.name)
+                    }
                   }}
                   onClose={handleCloseWizard}
                 />
