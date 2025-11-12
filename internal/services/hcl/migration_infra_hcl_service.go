@@ -58,7 +58,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				VariablesTf: mi.generateJumpClusterSetupHostVariablesTf(request),
 				VersionsTf:  mi.generateJumpClusterSetupHostVersionsTf(),
 				AdditionalFiles: map[string]string{
-					"jump-cluster-setup-host-user-data.tpl": mi.generateJumpClusterSetupHostUserDataTpl(),
+					"jump-cluster-setup-host-user-data.tpl": mi.generateJumpClusterSetupHostUserDataTpl(request),
 				},
 			},
 			{
@@ -84,7 +84,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 			},
 			{
 				Name:        "private_link_connection",
-				MainTf:      mi.generatePrivateLinkConnectionMainTf(),
+				MainTf:      mi.generatePrivateLinkConnectionMainTf(request),
 				VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(request),
 				VersionsTf:  mi.generatePrivateLinkConnectionVersionsTf(),
 			},
@@ -296,7 +296,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 	jumpClusterSetupHostSubnetIdVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_setup_host_subnet_id")
 	securityGroupIdsVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_security_group_ids")
 	jumpClusterSshKeyPairNameVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_ssh_key_pair_name")
-	jumpClusterBrokerSubnetIdsVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_broker_subnet_ids")
+	jumpClusterInstancesPrivateDnsVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_instances_private_dns")
 	privateKeyVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "private_key")
 
 	f := hclwrite.NewEmptyFile()
@@ -320,7 +320,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 		"jump-cluster-setup-host-user-data.tpl",
 		true,
 		map[string]hclwrite.Tokens{
-			"broker_ips":  utils.TokensForVarReference(jumpClusterBrokerSubnetIdsVarName),
+			"broker_ips":  utils.TokensForVarReference(jumpClusterInstancesPrivateDnsVarName),
 			"private_key": utils.TokensForVarReference(privateKeyVarName),
 		},
 		nil,
@@ -330,8 +330,12 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl() string {
-	return aws.GenerateJumpClusterSetupHostUserDataTpl()
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
+	if request.MskJumpClusterAuthType == "sasl_scram" {
+		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
+	} else {
+		return aws.GenerateJumpClusterSaslIamSetupHostUserDataTpl()
+	}
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf(request types.MigrationWizardRequest) string {
@@ -608,7 +612,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingVersionsTf() string {
 // Private Link Connection Module Generation (Private)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf() string {
+func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request types.MigrationWizardRequest) string {
 	awsRegionVarName := modules.GetModuleVariableName("private_link_connection", "aws_region")
 	targetEnvironmentIdVarName := modules.GetModuleVariableName("private_link_connection", "target_environment_id")
 	vpcIdVarName := modules.GetModuleVariableName("private_link_connection", "vpc_id")
@@ -645,16 +649,31 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf() string
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRoute53ZoneResourceNew(
-		"jump_cluster_private_link_zone",
-		vpcIdVarName,
-		"confluent_private_link_attachment.jump_cluster_private_link_attachment.dns_domain",
-	))
+	// AWS allows only one private hosted zone (private link to Confluent Cloud) per domain per VPC.
+	var route53ZoneRef string
+	if request.HasExistingPrivateLink {
+		rootBody.AppendBlock(aws.GenerateRoute53ZoneDataSource(
+			"jump_cluster_private_link_zone",
+			vpcIdVarName,
+			"confluent_private_link_attachment.jump_cluster_private_link_attachment.dns_domain",
+		))
+
+		route53ZoneRef = "data.aws_route53_zone.jump_cluster_private_link_zone.zone_id"
+	} else {
+		rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
+			"jump_cluster_private_link_zone",
+			vpcIdVarName,
+			"confluent_private_link_attachment.jump_cluster_private_link_attachment.dns_domain",
+		))
+
+		route53ZoneRef = "aws_route53_zone.jump_cluster_private_link_zone.zone_id"
+	}
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRoute53RecordResourceNew(
+	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
 		"jump_cluster_private_link_record",
-		"aws_route53_zone.jump_cluster_private_link_zone.zone_id",
+		route53ZoneRef,
+		"kcp_jump_cluster_" + utils.RandomString(5),
 		"aws_vpc_endpoint.jump_cluster_vpc_endpoint.dns_entry[0].dns_name",
 	))
 	rootBody.AppendNewline()
