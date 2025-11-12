@@ -671,3 +671,15 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
 
   return null
 }
+
+// Utility function to get all schema registries from state
+export const getAllSchemaRegistries = (): SchemaRegistry[] => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState?.schema_registries) {
+    return []
+  }
+
+  return kcpState.schema_registries
+}

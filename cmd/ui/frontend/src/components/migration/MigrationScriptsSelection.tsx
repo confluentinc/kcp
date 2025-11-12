@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { FileText, MessageSquare, Shield, ArrowLeft, Image } from 'lucide-react'
 import { WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
-import { Wizard, createMigrationScriptsWizardConfig } from '@/components/migration/wizards'
+import { Wizard, createSchemaMigrationScriptsWizardConfig } from '@/components/migration/wizards'
 
 interface MigrationScriptsSelectionProps {
     clusterArn: string
@@ -69,7 +69,7 @@ export const MigrationScriptsSelection = ({
                     Back to Selection
                 </button>
                 <Wizard
-                    config={createMigrationScriptsWizardConfig(clusterArn)}
+                    config={createSchemaMigrationScriptsWizardConfig()}
                     clusterKey={clusterArn}
                     wizardType={selectedWizardType}
                     onComplete={handleWizardComplete}
