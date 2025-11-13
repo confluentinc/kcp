@@ -71,6 +71,37 @@ func (s *State) WriteToFile(filePath string) error {
 	return os.WriteFile(filePath, data, 0644)
 }
 
+func (s *State) WriteReportCommands(filePath string, stateFilePath string) error {
+	regionCommands := []string{"# Report region costs commands"}
+	clusterCommands := []string{"# Report cluster metrics commands"}	
+
+	// Loop through regions
+	for _, region := range s.Regions {
+		// Output command for report costs for this region
+		regionCommand := []string{fmt.Sprintf("# region: %s", region.Name)}
+		regionCommand = append(regionCommand, fmt.Sprintf("kcp report costs --state-file %s --region %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, region.Name))
+		regionCommands = append(regionCommands, strings.Join(regionCommand, "\n"))
+
+		// Loop through clusters in this region
+		for _, cluster := range region.Clusters {
+			clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
+			clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-arn %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
+			clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
+		}
+	}
+
+	// Combine all commands and write to file
+    regionLines := strings.Join(regionCommands, "\n") + "\n"
+    clusterLines := strings.Join(clusterCommands, "\n")
+	allLines := regionLines + "\n" + clusterLines + "\n"
+
+	err := os.WriteFile(filePath, []byte(allLines), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write commands to file: %v", err)
+	}
+	return nil
+}
+
 func (s *State) PersistStateFile(stateFile string) error {
 	if s == nil {
 		return fmt.Errorf("discovery state is nil")
@@ -318,6 +349,7 @@ type ClusterMetrics struct {
 
 type MetricMetadata struct {
 	ClusterType          string    `json:"cluster_type"`
+	NumberOfBrokerNodes  int       `json:"number_of_broker_nodes"`
 	KafkaVersion         string    `json:"kafka_version"`
 	BrokerAzDistribution string    `json:"broker_az_distribution"`
 	EnhancedMonitoring   string    `json:"enhanced_monitoring"`
