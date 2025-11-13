@@ -84,6 +84,6 @@ func ExtractClusterNameFromArn(arn string) string {
 	if len(parts) >= 2 {
 		return parts[1]
 	}
-	
+
 	return "unknown-cluster"
 }

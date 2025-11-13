@@ -32,7 +32,7 @@ type SelfManagedConnectorsScannerOpts struct {
 	StateFile      string
 	State          *types.State
 	ConnectRestURL string
-	ClusterArn  string
+	ClusterArn     string
 	AuthMethod     types.ConnectAuthMethod
 	SaslScramAuth  types.ConnectSaslScramAuth
 	TlsAuth        types.ConnectTlsAuth

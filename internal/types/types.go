@@ -89,7 +89,6 @@ type ConnectTlsAuth struct {
 	ClientKey  string
 }
 
-
 type MigrationInfraType int
 
 const (

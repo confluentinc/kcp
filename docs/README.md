@@ -367,11 +367,11 @@ Generate a cost report for given region(s) based on the data collected by `kcp d
 
 **Optional Arguments**:
 
-- `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag). (Defaults to 31 days prior to today) (If not provided, all regions in the state file will be included.)
+- `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag). (If not provided, all regions in the state file will be included.)
 - `--start`: Inclusive start date for cost report (YYYY-MM-DD) (Defaults to 31 days prior to today)
 - `--end`: Exclusive end date for cost report (YYYY-MM-DD)  (Defaults to today)
 
-The above optional argument are all required if one is supplied.  If none are supplied, a report generating costs for all regions present in the `state-file.json` for the last thirty full days will be generated.
+The above optional arguments are all required if one is supplied.  If none are supplied, a report generating costs for all regions present in the `state-file.json` for the last thirty full days will be generated.
 
 **Example Usage**
 
@@ -418,7 +418,7 @@ Generate a metrics report for given cluster(s) based on the data collected by `k
 - `--start`: Inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)
 - `--end`: Exclusive end date for cost report (YYYY-MM-DD).  (Defaults to today)
 
-The above optional argument are all required if one is supplied.  If none are supplied, a report generating metrics for all clusters present in the `state-file.json` for the last thirty full days will be generated.
+The above optional arguments are all required if one is supplied.  If none are supplied, a report generating metrics for all clusters present in the `state-file.json` for the last thirty full days will be generated.
 
 **Example Usage**
 
