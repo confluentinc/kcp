@@ -28,15 +28,19 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 }
 
 func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+	// Use GetRootLevelVariableDefinitions to get only root-level variable definitions
+	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
+
 	return types.MigrationInfraTerraformProject{
-		MainTf:      mi.generateRootMainTfForPublicMigrationInfrastructure(),
-		ProvidersTf: mi.generateRootProvidersTfForClusterLink(),
-		VariablesTf: mi.generateVariablesTf(confluent.ClusterLinkVariables),
+		MainTf:           mi.generateRootMainTfForPublicMigrationInfrastructure(request),
+		ProvidersTf:      mi.generateRootProvidersTfForClusterLink(),
+		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "cluster_link",
-				MainTf:      mi.generateClusterLinkMainTf(request),
-				VariablesTf: mi.generateClusterLinkVariablesTf(),
+				MainTf:      mi.generateClusterLinkMainTf(),
+				VariablesTf: mi.generateClusterLinkVariablesTf(request),
 			},
 		},
 	}
@@ -96,19 +100,28 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 // Root-Level Generation - Public Migration
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastructure() string {
+func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastructure(request types.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	moduleBlock := rootBody.AppendNewBlock("module", []string{"cluster_link"})
 	moduleBody := moduleBlock.Body()
 
-	moduleBody.SetAttributeValue("source", cty.StringVal("./cluster_link"))
+	moduleBody.SetAttributeValue("source", cty.StringVal("./modules/cluster_link"))
 	moduleBody.AppendNewline()
 
-	// Pass all variables to the cluster_link module
-	for _, v := range confluent.ClusterLinkVariables {
-		moduleBody.SetAttributeRaw(v.Name, utils.TokensForVarReference(v.Name))
+	clusterLinkVars := modules.GetClusterLinkVariables()
+	for _, varDef := range clusterLinkVars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+
+		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
+			// Use FromModuleOutput to determine which module this comes from
+			moduleBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput(varDef.FromModuleOutput, varDef.Name))
+		} else {
+			moduleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+		}
 	}
 
 	return string(f.Bytes())
@@ -137,21 +150,44 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForClusterLink() stri
 // Cluster Link Module Generation (Public)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateClusterLinkMainTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
+	ccClusterKeyVarName := modules.GetModuleVariableName("cluster_link", "confluent_cloud_cluster_api_key")
+	ccClusterSecretVarName := modules.GetModuleVariableName("cluster_link", "confluent_cloud_cluster_api_secret")
+	mskClusterIdVarName := modules.GetModuleVariableName("cluster_link", "msk_cluster_id")
+	targetClusterIdVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_id")
+	targetClusterRestEndpointVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_rest_endpoint")
+	clusterLinkVarName := modules.GetModuleVariableName("cluster_link", "cluster_link_name")
+	mskSaslScramBootstrapServersVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_bootstrap_servers")
+	mskSaslScramUsernameVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_username")
+	mskSaslScramPasswordVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_password")
+	
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals())
+	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals(
+		ccClusterKeyVarName,
+		ccClusterSecretVarName,
+	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(request))
+	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(
+		"confluent_cluster_link",
+		mskClusterIdVarName,
+		targetClusterIdVarName,
+		targetClusterRestEndpointVarName,
+		clusterLinkVarName,
+		mskSaslScramBootstrapServersVarName,
+		mskSaslScramUsernameVarName,
+		mskSaslScramPasswordVarName,
+	))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf() string {
-	return mi.generateVariablesTf(confluent.ClusterLinkVariables)
+func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf(request types.MigrationWizardRequest) string {
+	requiredVariables := modules.GetClusterLinkModuleVariableDefinitions(request)
+	return mi.generateVariablesTf(requiredVariables)
 }
 
 // ============================================================================
@@ -676,7 +712,7 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
 		"jump_cluster_private_link_record",
 		route53ZoneRef,
-		"kcp_jump_cluster_" + utils.RandomString(5),
+		"kcp_jump_cluster_"+utils.RandomString(5),
 		"aws_vpc_endpoint.jump_cluster_vpc_endpoint.dns_entry[0].dns_name",
 	))
 	rootBody.AppendNewline()
@@ -762,9 +798,9 @@ func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.Migra
 
 	// Use GetRootLevelVariableValues to get only root-level variables (not from module outputs)
 	values := modules.GetMigrationInfraRootVariableValues(request)
-
+	
+	varSeenVariables := make(map[string]bool)
 	for varName, value := range values {
-		varSeenVariables := make(map[string]bool)
 		if varSeenVariables[varName] {
 			continue
 		}
