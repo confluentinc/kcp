@@ -42,7 +42,7 @@ export const WizardStepForm = ({
       <Form
         schema={schema}
         uiSchema={uiSchema}
-        formData={formData}
+        formData={Object.keys(formData).length > 0 ? formData : undefined}
         onSubmit={({ formData }) => onSubmit(formData)}
         validator={validator}
         showErrorList="top"
@@ -50,7 +50,8 @@ export const WizardStepForm = ({
         omitExtraData={false}
         liveOmit={false}
         experimental_defaultFormStateBehavior={{
-          emptyObjectFields: 'populateRequiredDefaults',
+          // emptyObjectFields: 'populateRequiredDefaults',
+          emptyObjectFields: 'populateAllDefaults',
         }}
       >
         <div className="flex gap-4 mt-6">
