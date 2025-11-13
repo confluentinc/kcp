@@ -215,6 +215,19 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 				return request.MskJumpClusterAuthType == "sasl_scram"
 			},
 		},
+		{
+			Name: "cluster_link_name",
+			Definition: types.TerraformVariable{
+				Name:        "cluster_link_name",
+				Description: "Name of the cluster links between between MSK and Confluent Cloud through the jump cluster.",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.ClusterLinkName
+			},
+			Condition: nil,
+		},
 	}
 }
 

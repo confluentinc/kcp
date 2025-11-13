@@ -49,9 +49,9 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 			FromModuleOutput: "networking",
 		},
 		{
-			Name: "jump_cluster_broker_subnet_ids",
+			Name: "jump_cluster_instances_private_dns",
 			Definition: types.TerraformVariable{
-				Name:        "jump_cluster_broker_subnet_ids",
+				Name:        "jump_cluster_instances_private_dns",
 				Description: "IDs of the subnets that the jump cluster broker instances are deployed to.",
 				Sensitive:   false,
 				Type:        "list(string)",
@@ -60,7 +60,7 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				return []string{}
 			},
 			Condition:        nil,
-			FromModuleOutput: "networking",
+			FromModuleOutput: "jump_clusters",
 		},
 		{
 			Name: "private_key",

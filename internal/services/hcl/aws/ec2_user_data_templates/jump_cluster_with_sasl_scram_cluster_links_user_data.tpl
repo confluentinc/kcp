@@ -25,7 +25,7 @@ sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule require
 echo "bootstrap.servers=`hostname`:9092
 security.protocol=PLAINTEXT" > /home/ec2-user/destination-cluster.properties
 
-kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link cp-initiated-msk-link --config-file client.properties
+kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --config-file client.properties
 
 #
 # Create CP -> CC destination cluster link
@@ -36,7 +36,7 @@ CONFLUENTPLATFORM_CLUSTER_ID=`kafka-cluster cluster-id --bootstrap-server \`host
 BASIC_AUTH_CREDENTIALS=$(echo -n "${confluent_cloud_cluster_key}:${confluent_cloud_cluster_secret}" | base64 -w 0)
 
 curl --request POST \
-    --url "${confluent_cloud_cluster_rest_endpoint}/kafka/v3/clusters/${confluent_cloud_cluster_id}/links/?link_name=cp-to-cc-link" \
+    --url "${confluent_cloud_cluster_rest_endpoint}/kafka/v3/clusters/${confluent_cloud_cluster_id}/links/?link_name=${cluster_link_name}" \
   --header "Authorization: Basic $BASIC_AUTH_CREDENTIALS" \
   --header "Content-Type: application/json" \
   --data "{\"source_cluster_id\": \"$CONFLUENTPLATFORM_CLUSTER_ID\", \"configs\": [{\"name\": \"link.mode\", \"value\": \"DESTINATION\"}, {\"name\": \"connection.mode\", \"value\": \"INBOUND\"}]}"
@@ -54,7 +54,7 @@ sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule require
 local.listener.name=BROKER
 local.security.protocol=PLAINTEXT" > /home/ec2-user/cp-cc-link.properties
 
-kafka-cluster-links --bootstrap-server `hostname`:9092 --create --link cp-to-cc-link --config-file cp-cc-link.properties --cluster-id ${confluent_cloud_cluster_id} --command-config destination-cluster.properties
+kafka-cluster-links --bootstrap-server `hostname`:9092 --create --link ${cluster_link_name} --config-file cp-cc-link.properties --cluster-id ${confluent_cloud_cluster_id} --command-config destination-cluster.properties
 
 EOF
 

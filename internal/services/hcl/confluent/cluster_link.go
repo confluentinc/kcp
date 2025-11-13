@@ -1,51 +1,19 @@
 package confluent
 
 import (
-	"bytes"
 	"fmt"
-	"text/template"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
 
-const (
-	VarConfluentCloudAPIKey           = "confluent_cloud_api_key"
-	VarConfluentCloudAPISecret        = "confluent_cloud_api_secret"
-	VarConfluentCloudClusterAPIKey    = "confluent_cloud_cluster_api_key"
-	VarConfluentCloudClusterAPISecret = "confluent_cloud_cluster_api_secret"
-	VarMskSaslScramUsername           = "msk_sasl_scram_username"
-	VarMskSaslScramPassword           = "msk_sasl_scram_password"
-)
-
-var ClusterLinkVariables = []types.TerraformVariable{
-	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false, Type: "string"},
-	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true, Type: "string"},
-	{Name: VarMskSaslScramUsername, Description: "MSK SASL SCRAM Username", Sensitive: false, Type: "string"},
-	{Name: VarMskSaslScramPassword, Description: "MSK SASL SCRAM Password", Sensitive: true, Type: "string"},
-	{Name: VarConfluentCloudClusterAPIKey, Description: "Confluent Cloud cluster API key", Sensitive: false, Type: "string"},
-	{Name: VarConfluentCloudClusterAPISecret, Description: "Confluent Cloud cluster API secret", Sensitive: true, Type: "string"},
-}
-
-type ClusterLinkTemplateData struct {
-	TargetClusterRestEndpoint string
-	TargetClusterId           string
-	LinkName                  string
-	BasicAuthCredentials      string
-	SourceClusterId           string
-	SourceBootstrapServers    string
-	SaslUsername              string
-	SaslPassword              string
-}
-
-func GenerateClusterLinkLocals() *hclwrite.Block {
+func GenerateClusterLinkLocals(ccClusterKeyVarName, ccClusterSecretVarName string) *hclwrite.Block {
 	localsBlock := hclwrite.NewBlock("locals", nil)
 
 	basicAuthTokens := utils.TokensForFunctionCall(
 		"base64encode",
-		utils.TokensForStringTemplate(fmt.Sprintf("${var.%s}:${var.%s}", VarConfluentCloudClusterAPIKey, VarConfluentCloudClusterAPISecret)),
+		utils.TokensForStringTemplate(fmt.Sprintf("${var.%s}:${var.%s}", ccClusterKeyVarName, ccClusterSecretVarName)),
 	)
 	localsBlock.Body().SetAttributeRaw("basic_auth_credentials", basicAuthTokens)
 
@@ -59,13 +27,18 @@ SASL/SCRAM only supports the 'SCRAM-SHA-512' mechanism.
 Error: error creating Cluster Link: 401 Unauthorized: Unable to validate cluster link due to error: Client SASL mechanism
 'PLAIN' not enabled in the server, enabled mechanisms are [SCRAM-SHA-512]
 */
-func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite.Block {
-	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", "confluent_cluster_link"})
+func GenerateClusterLinkResource(tfResourceName, mskClusterIdVarName, targetClusterIdVarName, targetClusterRestEndpointVarName, clusterLinkNameVarName, mskSaslScramBootstrapServersVarName, mskSaslScramUsernameVarName, mskSaslScramPasswordVarName string) *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", tfResourceName})
 
 	triggersMap := map[string]hclwrite.Tokens{
-		"source_cluster_id":      utils.TokensForStringTemplate(request.MskClusterId),
-		"destination_cluster_id": utils.TokensForStringTemplate(request.TargetClusterId),
-		"bootstrap_servers":      utils.TokensForStringTemplate(request.MskSaslScramBootstrapServers),
+		"source_cluster_id":            utils.TokensForVarReference(mskClusterIdVarName),
+		"destination_cluster_id":       utils.TokensForVarReference(targetClusterIdVarName),
+		"bootstrap_servers":            utils.TokensForVarReference(mskSaslScramBootstrapServersVarName),
+		"basic_auth_credentials":       utils.TokensForResourceReference("local.basic_auth_credentials"),
+		"target_cluster_rest_endpoint": utils.TokensForVarReference(targetClusterRestEndpointVarName),
+		"link_name":                    utils.TokensForVarReference(clusterLinkNameVarName),
+		"msk_sasl_scram_username":      utils.TokensForVarReference(mskSaslScramUsernameVarName),
+		"msk_sasl_scram_password":      utils.TokensForVarReference(mskSaslScramPasswordVarName),
 	}
 	resourceBlock.Body().SetAttributeRaw("triggers", utils.TokensForMap(triggersMap))
 
@@ -73,16 +46,8 @@ func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite
 
 	provisionerBlock := resourceBlock.Body().AppendNewBlock("provisioner", []string{"local-exec"})
 
-	// Template data with Terraform variable references
-	templateData := ClusterLinkTemplateData{
-		TargetClusterRestEndpoint: request.TargetRestEndpoint,
-		TargetClusterId:           request.TargetClusterId,
-		LinkName:                  request.ClusterLinkName,
-		SourceClusterId:           request.MskClusterId,
-		SourceBootstrapServers:    request.MskSaslScramBootstrapServers,
-	}
-
-	curlCommand := generateClusterLinkCurlCommand(templateData)
+	// Generate curl command using triggers map
+	curlCommand := generateCreateClusterLinkCurlCommand(triggersMap)
 
 	provisionerBlock.Body().SetAttributeRaw("command", hclwrite.Tokens{
 		&hclwrite.Token{Type: hclsyntax.TokenOHeredoc, Bytes: []byte("<<-EOT")},
@@ -92,21 +57,39 @@ func GenerateClusterLinkResource(request types.MigrationWizardRequest) *hclwrite
 		&hclwrite.Token{Type: hclsyntax.TokenCHeredoc, Bytes: []byte("EOT")},
 	})
 
+	resourceBlock.Body().AppendNewline()
+
+	// Destroy provisioner
+	destroyProvisionerBlock := resourceBlock.Body().AppendNewBlock("provisioner", []string{"local-exec"})
+	destroyProvisionerBlock.Body().SetAttributeRaw("when", hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("destroy")},
+	})
+
+	destroyCurlCommand := generateDeleteClusterLinkCurlCommandForDestroy()
+
+	destroyProvisionerBlock.Body().SetAttributeRaw("command", hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOHeredoc, Bytes: []byte("<<-EOT")},
+		&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+		&hclwrite.Token{Type: hclsyntax.TokenStringLit, Bytes: []byte(destroyCurlCommand)},
+		&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+		&hclwrite.Token{Type: hclsyntax.TokenCHeredoc, Bytes: []byte("EOT")},
+	})
+
 	return resourceBlock
 }
 
-// generateClusterLinkCurlCommand generates a curl command from template data
-func generateClusterLinkCurlCommand(data ClusterLinkTemplateData) string {
-	tmplStr := fmt.Sprintf(`curl --request POST \
-  --url '{{.TargetClusterRestEndpoint}}/kafka/v3/clusters/{{.TargetClusterId}}/links/?link_name={{.LinkName}}' \
-  --header 'Authorization: Basic ${local.basic_auth_credentials}' \
+// generateCreateClusterLinkCurlCommand generates a curl command using trigger references
+func generateCreateClusterLinkCurlCommand(triggersMap map[string]hclwrite.Tokens) string {
+	return `curl --request POST \
+  --url '${self.triggers.target_cluster_rest_endpoint}/kafka/v3/clusters/${self.triggers.destination_cluster_id}/links/?link_name=${self.triggers.link_name}' \
+  --header 'Authorization: Basic ${self.triggers.basic_auth_credentials}' \
   --header "Content-Type: application/json" \
   --data '{
-    "source_cluster_id": "{{.SourceClusterId}}",
+    "source_cluster_id": "${self.triggers.source_cluster_id}",
     "configs": [
       {
         "name": "bootstrap.servers",
-        "value": "{{.SourceBootstrapServers}}"
+        "value": "${self.triggers.bootstrap_servers}"
       },
       {
         "name": "link.mode",
@@ -122,17 +105,14 @@ func generateClusterLinkCurlCommand(data ClusterLinkTemplateData) string {
       },
       {
         "name": "sasl.jaas.config",
-        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${var.%s}\" password=\"${var.%s}\";"
+        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${self.triggers.msk_sasl_scram_username}\" password=\"${self.triggers.msk_sasl_scram_password}\";"
       }
     ]
-  }'`, VarMskSaslScramUsername, VarMskSaslScramPassword)
+  }'`
+}
 
-	tmpl := template.Must(template.New("cluster_link").Parse(tmplStr))
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Sprintf("error generating cluster link command: %v", err)
-	}
-
-	return buf.String()
+func generateDeleteClusterLinkCurlCommandForDestroy() string {
+	return `curl --request DELETE \
+  --url '${self.triggers.target_cluster_rest_endpoint}/kafka/v3/clusters/${self.triggers.destination_cluster_id}/links/${self.triggers.link_name}' \
+  --header 'Authorization: Basic ${self.triggers.basic_auth_credentials}'`
 }
