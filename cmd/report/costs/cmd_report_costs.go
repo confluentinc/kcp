@@ -35,14 +35,14 @@ func NewReportCostsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to include in the report (comma separated list or repeated flag)")
 	reportCostsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
-	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	optionalFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to include in the report (comma separated list or repeated flag).  If not provided, all regions in the state file will be included.")
+	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD).  (Defaults to 31 days prior to today)")
+	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD).  (Defaults to today).")
 	reportCostsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -65,9 +65,8 @@ func NewReportCostsCmd() *cobra.Command {
 	})
 
 	reportCostsCmd.MarkFlagRequired("state-file")
-	reportCostsCmd.MarkFlagRequired("region")
-	// optional but if one is provided, the other must be provided
-	reportCostsCmd.MarkFlagsRequiredTogether("start", "end")
+	// optional but if one is provided, the others must be provided
+	reportCostsCmd.MarkFlagsRequiredTogether("start", "end", "region")
 
 	return reportCostsCmd
 }
@@ -129,13 +128,25 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 		}
 	}
 
-	// default to the start and end date from cost metadata in state file
 	if startDate == nil && endDate == nil {
 		if len(state.Regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")
 		}
-		startDate = &state.Regions[0].Costs.CostMetadata.StartDate
-		endDate = &state.Regions[0].Costs.CostMetadata.EndDate
+		// default to the last 31 days.  Ensures a period of 30 full days ending on the previous day, since end date is exclusive in cloudwatch API.
+		now := time.Now()
+		start := now.AddDate(0, 0, -31)
+		startDate = &start
+		endDate = &now
+	}
+
+	if len(regions) == 0 {
+		// retrieve all regions from state file
+		for _, region := range state.Regions {
+			regions = append(regions, region.Name)
+		}
+		if len(regions) == 0 {
+			return nil, fmt.Errorf("no regions found in state file")
+		}
 	}
 
 	opts := CostReporterOpts{

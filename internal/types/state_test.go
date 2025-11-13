@@ -1,6 +1,8 @@
 package types
 
 import (
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -239,5 +241,201 @@ func TestRefreshClusters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWriteReportCommands(t *testing.T) {
+	tests := []struct {
+		name           string
+		state          *State
+		stateFilePath  string
+		wantContains   []string
+		wantNotContain []string
+		wantError      bool
+	}{
+		{
+			name: "empty state writes headers only",
+			state: &State{
+				Regions: []DiscoveredRegion{},
+			},
+			stateFilePath: "/path/to/state.json",
+			wantContains: []string{
+				"# Report region costs commands",
+				"# Report cluster metrics commands",
+			},
+			wantNotContain: []string{
+				"kcp report costs",
+				"kcp report metrics",
+			},
+			wantError: false,
+		},
+		{
+			name: "state with regions but no clusters",
+			state: &State{
+				Regions: []DiscoveredRegion{
+					{Name: "us-east-1", Clusters: []DiscoveredCluster{}},
+					{Name: "eu-west-1", Clusters: []DiscoveredCluster{}},
+				},
+			},
+			stateFilePath: "/path/to/state.json",
+			wantContains: []string{
+				"# Report region costs commands",
+				"# Report cluster metrics commands",
+				"# region: us-east-1",
+				"# region: eu-west-1",
+				"kcp report costs --state-file /path/to/state.json --region us-east-1 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+				"kcp report costs --state-file /path/to/state.json --region eu-west-1 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+			},
+			wantNotContain: []string{
+				"kcp report metrics",
+			},
+			wantError: false,
+		},
+		{
+			name: "state with regions and clusters",
+			state: &State{
+				Regions: []DiscoveredRegion{
+					{
+						Name: "us-east-1",
+						Clusters: []DiscoveredCluster{
+							{Name: "cluster-1", Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/cluster-1/abc123"},
+							{Name: "cluster-2", Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/cluster-2/def456"},
+						},
+					},
+					{
+						Name: "eu-west-1",
+						Clusters: []DiscoveredCluster{
+							{Name: "cluster-3", Arn: "arn:aws:kafka:eu-west-1:123456789012:cluster/cluster-3/ghi789"},
+						},
+					},
+				},
+			},
+			stateFilePath: "/path/to/state.json",
+			wantContains: []string{
+				"# Report region costs commands",
+				"# Report cluster metrics commands",
+				"# region: us-east-1",
+				"# region: eu-west-1",
+				"kcp report costs --state-file /path/to/state.json --region us-east-1 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+				"kcp report costs --state-file /path/to/state.json --region eu-west-1 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+				"# cluster: cluster-1",
+				"# cluster: cluster-2",
+				"# cluster: cluster-3",
+				"kcp report metrics --state-file /path/to/state.json --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/cluster-1/abc123 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+				"kcp report metrics --state-file /path/to/state.json --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/cluster-2/def456 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+				"kcp report metrics --state-file /path/to/state.json --cluster-arn arn:aws:kafka:eu-west-1:123456789012:cluster/cluster-3/ghi789 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+			},
+			wantError: false,
+		},
+		{
+			name: "state with single region and single cluster",
+			state: &State{
+				Regions: []DiscoveredRegion{
+					{
+						Name: "ap-south-1",
+						Clusters: []DiscoveredCluster{
+							{Name: "my-cluster", Arn: "arn:aws:kafka:ap-south-1:123456789012:cluster/my-cluster/xyz789"},
+						},
+					},
+				},
+			},
+			stateFilePath: "./kcp-state.json",
+			wantContains: []string{
+				"# Report region costs commands",
+				"# Report cluster metrics commands",
+				"# region: ap-south-1",
+				"# cluster: my-cluster",
+				"kcp report costs --state-file ./kcp-state.json --region ap-south-1 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+				"kcp report metrics --state-file ./kcp-state.json --cluster-arn arn:aws:kafka:ap-south-1:123456789012:cluster/my-cluster/xyz789 --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a temporary file for testing
+			tmpFile, err := os.CreateTemp("", "test-report-commands-*.txt")
+			if err != nil {
+				t.Fatalf("failed to create temp file: %v", err)
+			}
+			tmpFilePath := tmpFile.Name()
+			tmpFile.Close()
+			defer os.Remove(tmpFilePath)
+
+			// Call the method
+			err = tt.state.WriteReportCommands(tmpFilePath, tt.stateFilePath)
+
+			// Check for expected error
+			if (err != nil) != tt.wantError {
+				t.Errorf("WriteReportCommands() error = %v, wantError %v", err, tt.wantError)
+				return
+			}
+
+			if !tt.wantError {
+				// Read the file content
+				content, err := os.ReadFile(tmpFilePath)
+				if err != nil {
+					t.Fatalf("failed to read output file: %v", err)
+				}
+				contentStr := string(content)
+
+				// Check that all expected strings are present
+				for _, wantStr := range tt.wantContains {
+					if !strings.Contains(contentStr, wantStr) {
+						t.Errorf("WriteReportCommands() output does not contain expected string: %q\nGot content:\n%s", wantStr, contentStr)
+					}
+				}
+
+				// Check that unwanted strings are not present
+				for _, notWantStr := range tt.wantNotContain {
+					if strings.Contains(contentStr, notWantStr) {
+						t.Errorf("WriteReportCommands() output contains unexpected string: %q\nGot content:\n%s", notWantStr, contentStr)
+					}
+				}
+
+				// Verify file structure: should have region commands section, blank line, then cluster commands section
+				lines := strings.Split(contentStr, "\n")
+				hasRegionHeader := false
+				hasClusterHeader := false
+
+				for _, line := range lines {
+					if strings.Contains(line, "# Report region costs commands") {
+						hasRegionHeader = true
+					}
+					if strings.Contains(line, "# Report cluster metrics commands") {
+						hasClusterHeader = true
+					}
+				}
+
+				if !hasRegionHeader {
+					t.Error("WriteReportCommands() output missing region costs commands header")
+				}
+				if !hasClusterHeader {
+					t.Error("WriteReportCommands() output missing cluster metrics commands header")
+				}
+			}
+		})
+	}
+}
+
+func TestWriteReportCommands_FileError(t *testing.T) {
+	// Test error handling for invalid file path
+	state := &State{
+		Regions: []DiscoveredRegion{
+			{Name: "us-east-1", Clusters: []DiscoveredCluster{}},
+		},
+	}
+
+	// Try to write to an invalid path (directory that doesn't exist)
+	invalidPath := "/nonexistent/directory/file.txt"
+	err := state.WriteReportCommands(invalidPath, "/path/to/state.json")
+
+	if err == nil {
+		t.Error("WriteReportCommands() expected error for invalid file path, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to write commands to file") {
+		t.Errorf("WriteReportCommands() error message should mention file write failure, got: %v", err)
 	}
 }

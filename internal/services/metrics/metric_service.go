@@ -41,6 +41,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	metricsMetadata := types.MetricMetadata{
 		ClusterType:          string(cluster.ClusterType),
 		BrokerAzDistribution: *brokerAZDistribution,
+		NumberOfBrokerNodes:  numberOfBrokerNodes,
 		KafkaVersion:         kafkaVersion,
 		EnhancedMonitoring:   enhancedMonitoring,
 		StartDate:            timeWindow.StartTime,
@@ -65,8 +66,14 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	}
 
 	clusterVolumeSizeGB := int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
-	storageQuery := ms.buildStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
-	storageQueryResult, err := ms.executeMetricQuery(ctx, storageQuery, timeWindow.StartTime, timeWindow.EndTime)
+	localStorageQuery := ms.buildLocalStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
+	storageQueryResult, err := ms.executeMetricQuery(ctx, localStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
+	if err != nil {
+		return nil, err
+	}
+
+	remoteStorageQuery := ms.buildRemoteStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
+	remoteStorageQueryResult, err := ms.executeMetricQuery(ctx, remoteStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +81,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	// Combine broker and cluster metric results
 	combinedResults := append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, storageQueryResult.MetricDataResults...)
+	combinedResults = append(combinedResults, remoteStorageQueryResult.MetricDataResults...)
 
 	clusterMetrics := types.ClusterMetrics{
 		MetricMetadata: metricsMetadata,
@@ -132,18 +140,22 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 // Private Helper Functions - Query Building
 
 func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
-	var metrics = []string{
-		"BytesInPerSec",
-		"BytesOutPerSec",
-		"MessagesInPerSec",
-		"RemoteLogSizeBytes",
-		"PartitionCount",
-		"ClientConnectionCount",
+
+
+	metricStatMap := map[string]string{
+		"BytesInPerSec":         "Average",
+		"BytesOutPerSec":        "Average",
+		"MessagesInPerSec":      "Average",
+		"RemoteLogSizeBytes":    "Maximum",
+		"PartitionCount":        "Maximum",
+		"ClientConnectionCount": "Maximum",
 	}
 
 	var queries []cloudwatchtypes.MetricDataQuery
 
-	for metricIndex, metricName := range metrics {
+	metricIndex := 0
+
+	for metricName, metricStat := range metricStatMap {
 		var metricIDs []string
 
 		// brokerIDs are 1-indexed
@@ -169,7 +181,7 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 						},
 					},
 					Period: aws.Int32(period),
-					Stat:   aws.String("Average"),
+					Stat:   aws.String(metricStat),
 				},
 				ReturnData: aws.Bool(false),
 			})
@@ -183,18 +195,21 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
 			ReturnData: aws.Bool(true),
 		})
+		metricIndex++
 	}
 
 	return queries
 }
 
-func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
+func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 	var metricIDs []string
 
 	// Create individual queries for KafkaDataLogsDiskUsed for each broker
 	for brokerID := 1; brokerID <= brokers; brokerID++ {
-		metricID := fmt.Sprintf("m_%d", brokerID)
+		// metricID := fmt.Sprintf("m_%d", brokerID)
+		metricName := "KafkaDataLogsDiskUsed"
+		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)		
 		metricIDs = append(metricIDs, metricID)
 
 		queries = append(queries, cloudwatchtypes.MetricDataQuery{
@@ -202,7 +217,7 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 			MetricStat: &cloudwatchtypes.MetricStat{
 				Metric: &cloudwatchtypes.Metric{
 					Namespace:  aws.String("AWS/Kafka"),
-					MetricName: aws.String("KafkaDataLogsDiskUsed"),
+					MetricName: aws.String(metricName),
 					Dimensions: []cloudwatchtypes.Dimension{
 						{
 							Name:  aws.String("Cluster Name"),
@@ -215,14 +230,14 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 					},
 				},
 				Period: aws.Int32(period),
-				Stat:   aws.String("Average"),
+				Stat:   aws.String("Maximum"),
 			},
 			ReturnData: aws.Bool(false),
 		})
 	}
 
 	// Create expression to calculate total local storage usage in GB
-	// Formula: ((m_1 / 100) * volumeSizeGB) + ((m_2 / 100) * volumeSizeGB) + ((m_3 / 100) * volumeSizeGB)
+	// Formula: (m_kafka_data_logs_disk_used_1 / 100) * volumeSizeGB) + (m_kafka_data_logs_disk_used_2 / 100) * volumeSizeGB) + (m_kafka_data_logs_disk_used_3 / 100) * volumeSizeGB)
 	var expressionParts []string
 	for _, metricID := range metricIDs {
 		expressionParts = append(expressionParts, fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
@@ -234,6 +249,59 @@ func (ms *MetricService) buildStorageUsageQuery(brokers int, clusterName string,
 		Id:         aws.String("e_total_local_storage_usage_gb"),
 		Expression: aws.String(expression),
 		Label:      aws.String("Cluster Aggregate - TotalLocalStorageUsage(GB)"),
+		ReturnData: aws.Bool(true),
+	})
+
+	return queries
+}
+
+func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+	var queries []cloudwatchtypes.MetricDataQuery
+	var metricIDs []string
+
+	// Create individual queries for KafkaDataLogsDiskUsed for each broker
+	for brokerID := 1; brokerID <= brokers; brokerID++ {
+		metricName := "RemoteLogSizeBytes"
+		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
+		metricIDs = append(metricIDs, metricID)
+
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id: aws.String(metricID),
+			MetricStat: &cloudwatchtypes.MetricStat{
+				Metric: &cloudwatchtypes.Metric{
+					Namespace:  aws.String("AWS/Kafka"),
+					MetricName: aws.String("RemoteLogSizeBytes"),
+					Dimensions: []cloudwatchtypes.Dimension{
+						{
+							Name:  aws.String("Cluster Name"),
+							Value: aws.String(clusterName),
+						},
+						{
+							Name:  aws.String("Broker ID"),
+							Value: aws.String(strconv.Itoa(brokerID)),
+						},
+					},
+				},
+				Period: aws.Int32(period),
+				Stat:   aws.String("Maximum"),
+			},
+			ReturnData: aws.Bool(false),
+		})
+	}
+
+	// Create expression to calculate total remote storage usage in GB
+	// Formula: (m_remote_log_size_bytes_1 / 1024 / 1024 / 1024) + (m_remote_log_size_bytes_2 / 1024 / 1024 / 1024) + (m_remote_log_size_bytes_3 / 1024 / 1024 / 1024)
+	var expressionParts []string
+	for _, metricID := range metricIDs {
+		expressionParts = append(expressionParts, fmt.Sprintf("(%s / 1024 / 1024 / 1024)", metricID))
+	}
+
+	expression := strings.Join(expressionParts, " + ")
+
+	queries = append(queries, cloudwatchtypes.MetricDataQuery{
+		Id:         aws.String("e_total_remote_storage_usage_gb"),
+		Expression: aws.String(expression),
+		Label:      aws.String("Cluster Aggregate - TotalRemoteStorageUsage(GB)"),
 		ReturnData: aws.Bool(true),
 	})
 
@@ -263,7 +331,7 @@ func (ms *MetricService) buildClusterMetricQueries(clusterName string, period in
 					},
 				},
 				Period: aws.Int32(period),
-				Stat:   aws.String("Average"),
+				Stat:   aws.String("Maximum"),
 			},
 			ReturnData: aws.Bool(true),
 		})
