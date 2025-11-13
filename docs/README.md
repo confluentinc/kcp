@@ -364,12 +364,14 @@ Generate a cost report for given region(s) based on the data collected by `kcp d
 **Required Arguments**:
 
 - `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
-- `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag)
 
 **Optional Arguments**:
 
-- `--start`: Inclusive start date for cost report (YYYY-MM-DD)
-- `--end`: Exclusive end date for cost report (YYYY-MM-DD)
+- `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag). (Defaults to 31 days prior to today) (If not provided, all regions in the state file will be included.)
+- `--start`: Inclusive start date for cost report (YYYY-MM-DD) (Defaults to 31 days prior to today)
+- `--end`: Exclusive end date for cost report (YYYY-MM-DD)  (Defaults to today)
+
+The above optional argument are all required if one is supplied.  If none are supplied, a report generating costs for all regions present in the `state-file.json` for the last thirty full days will be generated.
 
 **Example Usage**
 
@@ -390,6 +392,13 @@ kcp report costs \
   --end 2024-01-31
 ```
 
+or
+
+```shell
+kcp report costs \
+  --state-file kcp-state.json \
+```
+
 **Output:**
 The command generates a `cost_report_YYYY-MM-DD_HH-MM-SS.md` file containing cost analysis for the specified regions and time period.
 
@@ -402,12 +411,14 @@ Generate a metrics report for given cluster(s) based on the data collected by `k
 **Required Arguments**:
 
 - `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
-- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)
 
 **Optional Arguments**:
 
-- `--start`: Inclusive start date for metrics report (YYYY-MM-DD)
-- `--end`: Exclusive end date for metrics report (YYYY-MM-DD)
+- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag).  If not provided, all clusters in the state file will be included.
+- `--start`: Inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)
+- `--end`: Exclusive end date for cost report (YYYY-MM-DD).  (Defaults to today)
+
+The above optional argument are all required if one is supplied.  If none are supplied, a report generating metrics for all clusters present in the `state-file.json` for the last thirty full days will be generated.
 
 **Example Usage**
 
@@ -431,6 +442,13 @@ kcp report metrics \
 
 **Output:**
 The command generates a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file containing metrics analysis for the specified clusters and time period.
+
+or
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+```
 
 ---
 

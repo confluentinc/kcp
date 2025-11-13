@@ -83,6 +83,14 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 		r.startDate.Format("2006-01-02"),
 		r.endDate.Format("2006-01-02")))
 
+	// Add list of regions included in report
+	if len(r.regions) > 0 {
+		md.AddParagraph("**Regions included in report:**")
+		for _, region := range r.regions {
+			md.AddParagraph(fmt.Sprintf("- %s", region))
+		}
+	}
+
 	if len(regionCostData) > 0 {
 		metadata := regionCostData[0].Metadata
 		md.AddParagraph(fmt.Sprintf("**Granularity:** %s", metadata.Granularity))
