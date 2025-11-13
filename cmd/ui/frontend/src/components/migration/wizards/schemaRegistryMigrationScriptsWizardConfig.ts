@@ -20,7 +20,6 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
   // Build schema properties dynamically from schema registries
   const properties: Record<string, unknown> = {}
   const uiSchema: Record<string, unknown> = {}
-  const required: string[] = []
 
   schemaRegistries.forEach((registry) => {
     const key = sanitizeUrlToKey(registry.url)
@@ -28,7 +27,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
 
     properties[key] = {
       type: 'object',
-      title: registry.url,
+      title: `Schema Registry: ${registry.url}`,
       properties: {
         subjects: {
           type: 'array',
@@ -39,7 +38,6 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           uniqueItems: true,
           title: 'Subjects',
           default: subjectNames,
-          description: `Select subjects to migrate from ${registry.url}`,
         },
       },
     }
@@ -53,8 +51,6 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
       },
     }
 
-    // Make each registry required so it appears in the form
-    required.push(key)
   })
 
   return {
@@ -72,7 +68,6 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           schema: {
             type: 'object',
             properties,
-            required,
           },
           uiSchema,
         },
