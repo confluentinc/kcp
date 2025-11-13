@@ -136,6 +136,11 @@ func (d *Discoverer) discoverRegions() error {
 		return fmt.Errorf("failed to write creds.yaml file: %w", err)
 	}
 
+	// TODO: in future uncomment if users want to generate report commands or else delete this and the WriteReportCommands code
+	// if err := state.WriteReportCommands(reportCommandsFileName, stateFileName); err != nil {
+	// 	return fmt.Errorf("failed to write report commands to file: %w", err)
+	// }
+
 	// report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {

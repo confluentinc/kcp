@@ -14,6 +14,7 @@ import (
 const (
 	stateFileName       = "kcp-state.json"
 	credentialsFileName = "cluster-credentials.yaml"
+	reportCommandsFileName = "report-commands.txt"
 )
 
 var (
