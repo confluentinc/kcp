@@ -374,6 +374,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	targetApiSecretVarName := modules.GetModuleVariableName("jump_clusters", "confluent_cloud_cluster_api_secret")
 	mskClusterIdVarName := modules.GetModuleVariableName("jump_clusters", "msk_cluster_id")
 	mskBootstrapBrokersVarName := modules.GetModuleVariableName("jump_clusters", "msk_cluster_bootstrap_brokers")
+	clusterLinkNameVarName := modules.GetModuleVariableName("jump_clusters", "cluster_link_name")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -411,6 +412,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(mskBootstrapBrokersVarName),
 				"msk_sasl_scram_username":                    utils.TokensForVarReference(mskSaslScramUsernameVarName),
 				"msk_sasl_scram_password":                    utils.TokensForVarReference(mskSaslScramPasswordVarName),
+				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
 			},
 			aws.OptionalBlocksConfig{
 				"root_block_device": {
@@ -445,6 +447,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(targetApiSecretVarName),
 				"msk_cluster_id":                             utils.TokensForVarReference(mskClusterIdVarName),
 				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(mskBootstrapBrokersVarName),
+				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
 			},
 			aws.OptionalBlocksConfig{
 				"root_block_device": {
