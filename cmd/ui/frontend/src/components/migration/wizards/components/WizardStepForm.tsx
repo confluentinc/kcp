@@ -50,7 +50,6 @@ export const WizardStepForm = ({
         omitExtraData={false}
         liveOmit={false}
         experimental_defaultFormStateBehavior={{
-          // emptyObjectFields: 'populateRequiredDefaults',
           emptyObjectFields: 'populateAllDefaults',
         }}
       >
