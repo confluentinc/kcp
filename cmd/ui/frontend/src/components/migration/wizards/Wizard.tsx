@@ -42,7 +42,7 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
   const context = state.context as WizardContext
 
   const handleFormSubmit = async (formData: Record<string, unknown>) => {
-    console.log('formData', formData)
+    console.log('formDataTESTING112', formData)
     // Send the event with form data
     send({
       type: 'NEXT',

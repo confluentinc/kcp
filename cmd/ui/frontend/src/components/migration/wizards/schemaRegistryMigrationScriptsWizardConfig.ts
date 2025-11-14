@@ -29,6 +29,11 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
       type: 'object',
       title: `Schema Registry: ${registry.url}`,
       properties: {
+        enabled: {
+          type: 'boolean',
+          title: 'Include this schema registry',
+          default: true,
+        },
         subjects: {
           type: 'array',
           items: {
@@ -40,9 +45,53 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           default: subjectNames,
         },
       },
+      dependencies: {
+        enabled: {
+          oneOf: [
+            {
+              properties: {
+                enabled: {
+                  const: true,
+                },
+                subjects: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                    enum: subjectNames,
+                  },
+                  uniqueItems: true,
+                  title: 'Subjects',
+                  default: subjectNames,
+                },
+              },
+            },
+            {
+              properties: {
+                enabled: {
+                  const: false,
+                },
+                subjects: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                    enum: subjectNames,
+                  },
+                  uniqueItems: true,
+                  title: 'Subjects',
+                  default: [],
+                  readOnly: true,
+                },
+              },
+            },
+          ],
+        },
+      },
     }
 
     uiSchema[key] = {
+      enabled: {
+        'ui:widget': 'radio',
+      },
       subjects: {
         'ui:widget': 'checkboxes',
         'ui:options': {
