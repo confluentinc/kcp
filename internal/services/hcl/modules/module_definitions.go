@@ -81,7 +81,7 @@ type MigrationInfraVariableDefinition struct {
 	Definition       types.TerraformVariable
 	ValueExtractor   func(request types.MigrationWizardRequest) any  // Extracts the value from FE request payload.
 	Condition        func(request types.MigrationWizardRequest) bool // Determines if this variable should be included (nil = always include).
-	FromModuleOutput string // If non-empty, this variable comes from the named module's output.
+	FromModuleOutput string                                          // If non-empty, this variable comes from the named module's output.
 }
 
 func (m MigrationInfraVariableDefinition) GetName() string {
@@ -95,11 +95,16 @@ func (m MigrationInfraVariableDefinition) GetDefinition() types.TerraformVariabl
 func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) map[string]any {
 	// Collect variables from all modules
 	allVars := []MigrationInfraVariableDefinition{}
-	allVars = append(allVars, GetProviderVariables()...)
-	allVars = append(allVars, GetNetworkingVariables()...)
-	allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
-	allVars = append(allVars, GetJumpClusterVariables()...)
-	allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
+	if request.HasPublicCcEndpoints {
+		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
+		allVars = append(allVars, GetClusterLinkVariables()...)
+	} else {
+		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
+		allVars = append(allVars, GetNetworkingVariables()...)
+		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
+		allVars = append(allVars, GetJumpClusterVariables()...)
+		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
+	}
 
 	return extractRootLevelVariableValues(
 		allVars,
@@ -116,11 +121,16 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	// Collect variables from all modules
 	allVars := []MigrationInfraVariableDefinition{}
-	allVars = append(allVars, GetProviderVariables()...)
-	allVars = append(allVars, GetNetworkingVariables()...)
-	allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
-	allVars = append(allVars, GetJumpClusterVariables()...)
-	allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
+	if request.HasPublicCcEndpoints {
+		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
+		allVars = append(allVars, GetClusterLinkVariables()...)
+	} else {
+		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
+		allVars = append(allVars, GetNetworkingVariables()...)
+		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
+		allVars = append(allVars, GetJumpClusterVariables()...)
+		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
+	}
 
 	return extractRootLevelVariableDefinitions(
 		allVars,
@@ -244,15 +254,17 @@ func GetModuleVariableName(moduleName string, varName string) string {
 
 	switch moduleName {
 	case "provider_variables":
-		variables = toVariableDefinitions(GetProviderVariables())
+		variables = toVariableDefinitions(GetPrivateMigrationProviderVariables())
 	case "jump_cluster_setup_host":
 		variables = toVariableDefinitions(GetJumpClusterSetupHostVariables())
-	case "jump_clusters":
+	case "jump_cluster":
 		variables = toVariableDefinitions(GetJumpClusterVariables())
 	case "networking":
 		variables = toVariableDefinitions(GetNetworkingVariables())
 	case "private_link_connection":
 		variables = toVariableDefinitions(GetMigrationInfraPrivateLinkVariables())
+	case "cluster_link":
+		variables = toVariableDefinitions(GetClusterLinkVariables())
 	case "confluent_cloud":
 		variables = toTargetVariableDefinitions(GetConfluentCloudVariables())
 	case "private_link_target_cluster":
