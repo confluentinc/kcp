@@ -66,7 +66,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				},
 			},
 			{
-				Name:        "jump_clusters",
+				Name:        "jump_cluster",
 				MainTf:      mi.generateJumpClustersMainTf(request),
 				VariablesTf: mi.generateJumpClustersVariablesTf(request),
 				OutputsTf:   mi.generateJumpClustersOutputsTf(),
@@ -242,11 +242,11 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	rootBody.AppendNewline()
 
 	setupHostModuleBody.AppendNewline()
-	setupHostModuleBody.SetAttributeRaw("depends_on", utils.TokensForList([]string{"module.jump_clusters"}))
+	setupHostModuleBody.SetAttributeRaw("depends_on", utils.TokensForList([]string{"module.jump_cluster"}))
 
-	jumpClustersModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_clusters"})
+	jumpClustersModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_cluster"})
 	jumpClustersModuleBody := jumpClustersModuleBlock.Body()
-	jumpClustersModuleBody.SetAttributeValue("source", cty.StringVal("./modules/jump_clusters"))
+	jumpClustersModuleBody.SetAttributeValue("source", cty.StringVal("./modules/jump_cluster"))
 	jumpClustersModuleBody.AppendNewline()
 
 	jumpClustersModuleBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{
@@ -398,19 +398,19 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() str
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.MigrationWizardRequest) string {
-	jumpClusterBrokerSubnetIdsVarName := modules.GetModuleVariableName("jump_clusters", "jump_cluster_broker_subnet_ids")
-	securityGroupIdsVarName := modules.GetModuleVariableName("jump_clusters", "jump_cluster_security_group_ids")
-	jumpClusterSshKeyPairNameVarName := modules.GetModuleVariableName("jump_clusters", "jump_cluster_ssh_key_pair_name")
-	jumpClusterInstanceTypeVarName := modules.GetModuleVariableName("jump_clusters", "jump_cluster_instance_type")
-	jumpClusterBrokerStorageVarName := modules.GetModuleVariableName("jump_clusters", "jump_cluster_broker_storage")
-	targetClusterIdVarName := modules.GetModuleVariableName("jump_clusters", "confluent_cloud_cluster_id")
-	targetBootstrapEndpointVarName := modules.GetModuleVariableName("jump_clusters", "confluent_cloud_cluster_bootstrap_endpoint")
-	targetRestEndpointVarName := modules.GetModuleVariableName("jump_clusters", "confluent_cloud_cluster_rest_endpoint")
-	targetApiKeyVarName := modules.GetModuleVariableName("jump_clusters", "confluent_cloud_cluster_api_key")
-	targetApiSecretVarName := modules.GetModuleVariableName("jump_clusters", "confluent_cloud_cluster_api_secret")
-	mskClusterIdVarName := modules.GetModuleVariableName("jump_clusters", "msk_cluster_id")
-	mskBootstrapBrokersVarName := modules.GetModuleVariableName("jump_clusters", "msk_cluster_bootstrap_brokers")
-	clusterLinkNameVarName := modules.GetModuleVariableName("jump_clusters", "cluster_link_name")
+	jumpClusterBrokerSubnetIdsVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_broker_subnet_ids")
+	securityGroupIdsVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_security_group_ids")
+	jumpClusterSshKeyPairNameVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_ssh_key_pair_name")
+	jumpClusterInstanceTypeVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_instance_type")
+	jumpClusterBrokerStorageVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_broker_storage")
+	targetClusterIdVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_id")
+	targetBootstrapEndpointVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_bootstrap_endpoint")
+	targetRestEndpointVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_rest_endpoint")
+	targetApiKeyVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_api_key")
+	targetApiSecretVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_api_secret")
+	mskClusterIdVarName := modules.GetModuleVariableName("jump_cluster", "msk_cluster_id")
+	mskBootstrapBrokersVarName := modules.GetModuleVariableName("jump_cluster", "msk_cluster_bootstrap_brokers")
+	clusterLinkNameVarName := modules.GetModuleVariableName("jump_cluster", "cluster_link_name")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -424,8 +424,8 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	rootBody.AppendNewline()
 
 	if request.MskJumpClusterAuthType == "sasl_scram" {
-		mskSaslScramUsernameVarName := modules.GetModuleVariableName("jump_clusters", "msk_sasl_scram_username")
-		mskSaslScramPasswordVarName := modules.GetModuleVariableName("jump_clusters", "msk_sasl_scram_password")
+		mskSaslScramUsernameVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_username")
+		mskSaslScramPasswordVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_password")
 
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
@@ -462,7 +462,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			},
 		))
 	} else {
-		jumpClusterIamAuthRoleNameVarName := modules.GetModuleVariableName("jump_clusters", "jump_cluster_iam_auth_role_name")
+		jumpClusterIamAuthRoleNameVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_iam_auth_role_name")
 
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",

@@ -257,7 +257,7 @@ func GetModuleVariableName(moduleName string, varName string) string {
 		variables = toVariableDefinitions(GetPrivateMigrationProviderVariables())
 	case "jump_cluster_setup_host":
 		variables = toVariableDefinitions(GetJumpClusterSetupHostVariables())
-	case "jump_clusters":
+	case "jump_cluster":
 		variables = toVariableDefinitions(GetJumpClusterVariables())
 	case "networking":
 		variables = toVariableDefinitions(GetNetworkingVariables())

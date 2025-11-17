@@ -300,7 +300,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       private_link_internet_gateway_question: {
         meta: {
           title: 'Private Migration | Private Link - Internet Gateway',
-          description: 'When migrating data from MSK to Confluent Cloud over a private network, a jump cluster is required and some dependencies will need to be installed on these jump clusters from the internet.',
+          description: 'When migrating data from MSK to Confluent Cloud over a private network, a jump cluster is required and some dependencies will need to be installed on these on the jump cluster brokers from the internet.',
           schema: {
             type: 'object',
             properties: {
