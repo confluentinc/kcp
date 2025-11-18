@@ -48,11 +48,11 @@ Set a variable for your platform (comment and uncomment as appropriate):
 ```
 PLATFORM=$(echo darwin_amd64)
 # PLATFORM=$(echo darwin_arm64)
-# PLATFORM=$(echo lunux_amd64)
-# PLATFORM=$(echo lunux_arm64)
+# PLATFORM=$(echo linux_amd64)
+# PLATFORM=$(echo linux_arm64)
 ```
 
-Dowload the binary:
+Download the binary:
 ```
 curl -L -o kcp_${LATEST_TAG}.tar.gz "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}.tar.gz"
 ```
