@@ -36,13 +36,67 @@
 
 You can download kcp from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). We provide support for Linux and Darwin arm64/amd64 systems respectively.
 
-Once downloaded, make sure to set the binary permissions to executable by running `chmod +x <binary name>`.
+The following reference workflow should work on most linux and darwin systems:
 
-If you wish to run the downloaded kcp binary from anywhere on your system, you may run the following (requires sudo permissions):
+
+Set a variable for the latest release:
+```
+LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+```
+
+Set a variable for your platform (comment and uncomment as appropriate):
+```
+PLATFORM=$(echo darwin_amd64)
+# PLATFORM=$(echo darwin_arm64)
+# PLATFORM=$(echo lunux_amd64)
+# PLATFORM=$(echo lunux_arm64)
+```
+
+Dowload the binary:
+```
+curl -L -o kcp_${LATEST_TAG}.tar.gz "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}.tar.gz"
+```
+
+Untar the binary:
+```
+tar -xzf kcp_${LATEST_TAG}.tar.gz
+```
+
+Ensure binary is executable:
+```
+chmod +x ./kcp/kcp
+```
+
+Test the binary:
+```
+./kcp/kcp version
+```
+
+You should see output similar to :
+```
+Executing kcp with build version=0.4.5 commit=a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08 date=2025-11-13T12:56:00Z
+Version: 0.4.5
+Commit:  a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08
+Date:    2025-11-13T12:56:00Z
+```
+
+If you wish to run kcp from anywhere on your system, move the binary to somewhere on your PATH, e.g.:
 
 ```shell
-# Update the binary suffix to your respective architecture.
-sudo mv ./kcp_<ARCH> /usr/local/bin/kcp
+sudo mv ./kcp/kcp /usr/local/bin/kcp
+```
+
+Test the installation to your PATH:
+```
+kcp version
+```
+
+You should see output similar to :
+```
+Executing kcp with build version=0.4.5 commit=a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08 date=2025-11-13T12:56:00Z
+Version: 0.4.5
+Commit:  a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08
+Date:    2025-11-13T12:56:00Z
 ```
 
 ## Authentication
