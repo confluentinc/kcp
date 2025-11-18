@@ -73,7 +73,7 @@ func (s *State) WriteToFile(filePath string) error {
 
 func (s *State) WriteReportCommands(filePath string, stateFilePath string) error {
 	regionCommands := []string{"# Report region costs commands"}
-	clusterCommands := []string{"# Report cluster metrics commands"}	
+	clusterCommands := []string{"# Report cluster metrics commands"}
 
 	// Loop through regions
 	for _, region := range s.Regions {
@@ -91,8 +91,8 @@ func (s *State) WriteReportCommands(filePath string, stateFilePath string) error
 	}
 
 	// Combine all commands and write to file
-    regionLines := strings.Join(regionCommands, "\n") + "\n"
-    clusterLines := strings.Join(clusterCommands, "\n")
+	regionLines := strings.Join(regionCommands, "\n") + "\n"
+	clusterLines := strings.Join(clusterCommands, "\n")
 	allLines := regionLines + "\n" + clusterLines + "\n"
 
 	err := os.WriteFile(filePath, []byte(allLines), 0644)

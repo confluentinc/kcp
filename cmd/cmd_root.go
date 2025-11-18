@@ -44,8 +44,6 @@ var RootCmd = &cobra.Command{
 	},
 }
 
-
-
 func init() {
 	cobra.EnableTraverseRunHooks = true
 
