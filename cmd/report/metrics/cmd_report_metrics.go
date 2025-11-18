@@ -42,7 +42,7 @@ func NewReportMetricsCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag).  If not provided, all clusters in the state file will be included.")
 	optionalFlags.StringVar(&start, "start", "", "inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)")
-	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD).  (Defaults to today).")
+	optionalFlags.StringVar(&end, "end", "", "exclusive end date for metrics report (YYYY-MM-DD).  (Defaults to today).")
 	reportMetricsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 

@@ -141,7 +141,6 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 
 func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 
-
 	metricStatMap := map[string]string{
 		"BytesInPerSec":         "Average",
 		"BytesOutPerSec":        "Average",
@@ -209,7 +208,7 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 	for brokerID := 1; brokerID <= brokers; brokerID++ {
 		// metricID := fmt.Sprintf("m_%d", brokerID)
 		metricName := "KafkaDataLogsDiskUsed"
-		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)		
+		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
 		metricIDs = append(metricIDs, metricID)
 
 		queries = append(queries, cloudwatchtypes.MetricDataQuery{
@@ -259,7 +258,7 @@ func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName s
 	var queries []cloudwatchtypes.MetricDataQuery
 	var metricIDs []string
 
-	// Create individual queries for KafkaDataLogsDiskUsed for each broker
+	// Create individual queries for RemoteLogSizeBytes for each broker
 	for brokerID := 1; brokerID <= brokers; brokerID++ {
 		metricName := "RemoteLogSizeBytes"
 		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
