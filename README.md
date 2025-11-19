@@ -46,6 +46,10 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 
 The docs for the latest release are available [here](https://github.com/confluentinc/kcp/releases/latest)
 
+### Installation
+
+The recommended way to install kcp is by downloading the latest release binary. Instructions for installing the latest release are available in the [latest documentation](https://github.com/confluentinc/kcp/releases/latest).
+
 ## Development
 
 ### Prerequisites
