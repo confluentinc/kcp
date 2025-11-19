@@ -47,7 +47,7 @@ func (r *MetricReporter) Run() error {
 	slog.Info("🔍 processing clusters", "clusters", r.clusterArns, "startDate", r.startDate, "endDate", r.endDate)
 
 	processedState := r.reportService.ProcessState(*r.state)
-	processedClusterMetrics :=  []types.ProcessedClusterMetrics{}
+	processedClusterMetrics := []types.ProcessedClusterMetrics{}
 
 	// find the clusters in the state
 
@@ -106,10 +106,8 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 	return md
 }
 
-
 func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics types.ProcessedClusterMetrics) {
 	// Extract cluster name from ARN - we need to find the matching ARN for this region
-
 
 	md.AddHeading(fmt.Sprintf("Cluster Name: %s", utils.ExtractClusterNameFromArn(clusterMetrics.ClusterArn)), 3)
 	md.AddParagraph(fmt.Sprintf("**Cluster ARN**: %s", clusterMetrics.ClusterArn))
