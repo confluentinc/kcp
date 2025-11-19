@@ -4,8 +4,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetTargetClusterPrivateLinkVariables() []TargetClusterModulesVariableDefinition {
-	return []TargetClusterModulesVariableDefinition{
+func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
+	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
 			Name: "aws_region",
 			Definition: types.TerraformVariable{
@@ -84,8 +84,8 @@ func GetMigrationInfraPrivateLinkModuleVariableNames() map[string]string {
 	return names
 }
 
-func GetMigrationInfraPrivateLinkVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetMigrationInfraPrivateLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "aws_region",
 			Definition: types.TerraformVariable{
