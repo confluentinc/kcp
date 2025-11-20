@@ -254,44 +254,20 @@ func (u *Updater) installBinary(newBinary, targetPath string) error {
 	slog.Info("Installing new binary...")
 
 	if u.needsSudo(targetPath) {
-		// For sudo case, use atomic rename via a temp file in the same directory
-		dir := filepath.Dir(targetPath)
-		tempPath := filepath.Join(dir, filepath.Base(targetPath)+".tmp")
-
-		if err := exec.Command("sudo", "cp", newBinary, tempPath).Run(); err != nil {
-			return fmt.Errorf("failed to copy to temp file: %w", err)
-		}
-
-		if err := exec.Command("sudo", "chmod", "755", tempPath).Run(); err != nil {
-			exec.Command("sudo", "rm", tempPath).Run() // Clean up on error
-			return fmt.Errorf("failed to make executable: %w", err)
-		}
-
-		// Atomic rename (works even on executing files)
-		if err := exec.Command("sudo", "mv", tempPath, targetPath).Run(); err != nil {
-			exec.Command("sudo", "rm", tempPath).Run() // Clean up on error
-			return fmt.Errorf("failed to install binary: %w", err)
-		}
-
-		return nil
+		return exec.Command("sudo", "cp", newBinary, targetPath).Run()
 	}
 
-	// For non-sudo case, use atomic rename via a temp file
-	return u.installBinaryAtomic(newBinary, targetPath)
+	return u.copyFile(newBinary, targetPath)
 }
 
 func (u *Updater) rollback(backupPath, targetPath string) {
 	slog.Warn("Rolling back to previous version...")
 
 	if u.needsSudo(targetPath) {
-		// mv works atomically even on executing files
 		exec.Command("sudo", "mv", backupPath, targetPath).Run()
 	} else {
-		// Use atomic rename for rollback too (works even if target is executing)
-		if err := os.Rename(backupPath, targetPath); err != nil {
-			u.copyFile(backupPath, targetPath)
-			os.Remove(backupPath)
-		}
+		u.copyFile(backupPath, targetPath)
+		os.Remove(backupPath)
 	}
 }
 
@@ -304,56 +280,6 @@ func (u *Updater) needsSudo(path string) bool {
 	testFile.Close()
 	os.Remove(testFile.Name())
 	return false
-}
-
-func (u *Updater) installBinaryAtomic(newBinary, targetPath string) error {
-	// Create temp file in the same directory as target (required for atomic rename)
-	dir := filepath.Dir(targetPath)
-	tempPath := filepath.Join(dir, filepath.Base(targetPath)+".tmp")
-
-	sourceFile, err := os.Open(newBinary)
-	if err != nil {
-		return fmt.Errorf("failed to open source: %w", err)
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(tempPath)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	renameSucceeded := false
-	defer func() {
-		destFile.Close()
-		if !renameSucceeded {
-			os.Remove(tempPath)
-		}
-	}()
-
-	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return fmt.Errorf("failed to copy to temp file: %w", err)
-	}
-
-	sourceInfo, err := os.Stat(newBinary)
-	if err != nil {
-		return fmt.Errorf("failed to stat source: %w", err)
-	}
-
-	if err := os.Chmod(tempPath, sourceInfo.Mode()); err != nil {
-		return fmt.Errorf("failed to set permissions: %w", err)
-	}
-
-	if err := destFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Atomic rename - this works even if target is currently executing
-	if err := os.Rename(tempPath, targetPath); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	renameSucceeded = true
-	return nil
 }
 
 func (u *Updater) copyFile(src, dst string) error {
