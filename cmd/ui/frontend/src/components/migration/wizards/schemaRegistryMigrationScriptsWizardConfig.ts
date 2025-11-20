@@ -17,23 +17,26 @@ function sanitizeUrlToKey(url: string): string {
 export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig => {
   const schemaRegistries: SchemaRegistry[] = getAllSchemaRegistries()
 
-  // Build schema properties dynamically from schema registries
-  const properties: Record<string, unknown> = {}
-  const uiSchema: Record<string, unknown> = {}
+  // Build default items for the array
+  const defaultItems = schemaRegistries.map((registry) => {
+    const key = sanitizeUrlToKey(registry.url)
+    const subjectNames = registry.subjects.map((subject) => subject.name)
+    return {
+      id: key,
+      url: registry.url,
+      enabled: true,
+      subjects: subjectNames,
+    }
+  })
 
+  // Build dependencies for subjects based on registry id
+  const idDependencies: Record<string, unknown> = {}
   schemaRegistries.forEach((registry) => {
     const key = sanitizeUrlToKey(registry.url)
     const subjectNames = registry.subjects.map((subject) => subject.name)
-
-    properties[key] = {
-      type: 'object',
-      title: `Schema Registry: ${registry.url}`,
+    
+    idDependencies[key] = {
       properties: {
-        enabled: {
-          type: 'boolean',
-          title: 'Include this schema registry',
-          default: true,
-        },
         subjects: {
           type: 'array',
           items: {
@@ -42,64 +45,119 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           },
           uniqueItems: true,
           title: 'Subjects',
-          default: subjectNames,
-        },
-      },
-      dependencies: {
-        enabled: {
-          oneOf: [
-            {
-              properties: {
-                enabled: {
-                  const: true,
-                },
-                subjects: {
-                  type: 'array',
-                  items: {
-                    type: 'string',
-                    enum: subjectNames,
-                  },
-                  uniqueItems: true,
-                  title: 'Subjects',
-                  default: subjectNames,
-                },
-              },
-            },
-            {
-              properties: {
-                enabled: {
-                  const: false,
-                },
-                subjects: {
-                  type: 'array',
-                  items: {
-                    type: 'string',
-                    enum: subjectNames,
-                  },
-                  uniqueItems: true,
-                  title: 'Subjects',
-                  default: [],
-                  readOnly: true,
-                },
-              },
-            },
-          ],
-        },
-      },
-    }
-
-    uiSchema[key] = {
-      enabled: {
-        'ui:widget': 'radio',
-      },
-      subjects: {
-        'ui:widget': 'checkboxes',
-        'ui:options': {
-          inline: false,
         },
       },
     }
   })
+
+  // Build schema with array structure
+  const schema = {
+    type: 'object',
+    properties: {
+      schema_registries: {
+        type: 'array',
+        title: 'Schema Registries',
+        items: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              title: 'Schema Registry ID',
+              readOnly: true,
+              enum: schemaRegistries.map((r) => sanitizeUrlToKey(r.url)),
+            },
+            url: {
+              type: 'string',
+              title: 'Schema Registry URL',
+              readOnly: true,
+            },
+            enabled: {
+              type: 'boolean',
+              title: 'Include this schema registry',
+            },
+            subjects: {
+              type: 'array',
+              items: {
+                type: 'string',
+              },
+              uniqueItems: true,
+              title: 'Subjects',
+            },
+          },
+          required: ['id', 'enabled'],
+          dependencies: {
+            id: {
+              oneOf: Object.entries(idDependencies).map(([registryId, dependency]) => ({
+                properties: {
+                  id: {
+                    const: registryId,
+                  },
+                  ...(dependency as { properties: Record<string, unknown> }).properties,
+                },
+              })),
+            },
+            enabled: {
+              oneOf: [
+                {
+                  properties: {
+                    enabled: {
+                      const: true,
+                    },
+                  },
+                },
+                {
+                  properties: {
+                    enabled: {
+                      const: false,
+                    },
+                    subjects: {
+                      type: 'array',
+                      default: [],
+                      readOnly: true,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        default: defaultItems,
+      },
+    },
+    required: ['schema_registries'],
+  }
+
+  // Build UI schema for array items
+  const uiSchema = {
+    schema_registries: {
+      'ui:options': {
+        addable: false,
+        orderable: false,
+        removable: false,
+      },
+      'ui:title': 'Schema Registries',
+      items: {
+        'ui:title': '',
+        'ui:order': ['url', 'id', 'enabled', 'subjects'],
+        id: {
+          'ui:widget': 'hidden',
+        },
+        url: {
+          'ui:widget': 'text',
+          'ui:readonly': true,
+        },
+        enabled: {
+          'ui:widget': 'radio',
+        },
+        subjects: {
+          'ui:widget': 'checkboxes',
+          'ui:options': {
+            inline: false,
+          },
+        },
+      },
+    },
+  }
 
   return {
     id: 'schema-migration-scripts-wizard',
@@ -113,16 +171,28 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
         meta: {
           title: 'Select Subjects',
           description: 'Select subjects from each schema registry that you want to migrate',
-          schema: {
-            type: 'object',
-            properties,
-          },
+          schema,
           uiSchema,
         },
         on: {
           NEXT: {
-            target: 'complete',
+            target: 'confirmation',
             actions: 'save_step_data',
+          },
+        },
+      },
+      confirmation: {
+        meta: {
+          title: 'Review Configuration',
+          description: 'Review your configuration before generating migration scripts',
+        },
+        on: {
+          CONFIRM: {
+            target: 'complete',
+          },
+          BACK: {
+            target: 'subject_selection',
+            actions: 'undo_save_step_data',
           },
         },
       },
