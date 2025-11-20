@@ -41,6 +41,10 @@ var RootCmd = &cobra.Command{
 			color.YellowString("commit=%s", build_info.Commit),
 			color.BlueString("date=%s", build_info.Date))
 
+		if err := checkWritePermissions(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
+			os.Exit(1)
+		}
 	},
 }
 
@@ -116,4 +120,22 @@ func NewPrettyHandler(
 	}
 
 	return h
+}
+
+func checkWritePermissions() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	testFile, err := os.CreateTemp(cwd, ".kcp-write-test-*")
+	if err != nil {
+		return fmt.Errorf("current working directory '%s' does not have write permissions for the current user", cwd)
+	}
+
+	// Defer works on a LIFO execution order.
+	defer os.Remove(testFile.Name())
+	defer testFile.Close()
+
+	return nil
 }
