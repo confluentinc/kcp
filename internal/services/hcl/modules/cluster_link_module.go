@@ -2,8 +2,8 @@ package modules
 
 import "github.com/confluentinc/kcp/internal/types"
 
-func GetClusterLinkVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "msk_sasl_scram_username",
 			Definition: types.TerraformVariable{

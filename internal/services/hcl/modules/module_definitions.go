@@ -14,87 +14,53 @@ type ModuleOutputDefinition struct {
 	Definition types.TerraformOutput
 }
 
+// ModuleVariable is a generic definition for module variables.
+// R is the request type (e.g. TargetClusterWizardRequest or MigrationWizardRequest).
+type ModuleVariable[R any] struct {
+	Name             string
+	Definition       types.TerraformVariable
+	ValueExtractor   func(request R) any  // Extracts the value from FE request payload. If nil, it's not a root-level variable.
+	Condition        func(request R) bool // Determines if this variable should be included (nil = always include).
+	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
+}
+
+func (m ModuleVariable[R]) GetName() string {
+	return m.Name
+}
+
+func (m ModuleVariable[R]) GetDefinition() types.TerraformVariable {
+	return m.Definition
+}
+
 // ============================================================================
 // Target Cluster
 // ============================================================================
 
-type TargetClusterModulesVariableDefinition struct {
-	Name           string
-	Definition     types.TerraformVariable
-	ValueExtractor func(request types.TargetClusterWizardRequest) any  // Extracts the value from FE request payload.
-	Condition      func(request types.TargetClusterWizardRequest) bool // Determines if this variable should be included (nil = always include).
-}
-
-func (t TargetClusterModulesVariableDefinition) GetName() string {
-	return t.Name
-}
-
-func (t TargetClusterModulesVariableDefinition) GetDefinition() types.TerraformVariable {
-	return t.Definition
-}
-
 func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardRequest) map[string]any {
-	allVars := []TargetClusterModulesVariableDefinition{}
+	allVars := []ModuleVariable[types.TargetClusterWizardRequest]{}
 	allVars = append(allVars, GetTargetClusterProviderVariables()...) // aws_region
 	allVars = append(allVars, GetConfluentCloudVariables()...)        // region
 	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
 
-	return extractRootLevelVariableValues(
-		allVars,
-		request,
-		func(v TargetClusterModulesVariableDefinition) string { return v.Name },
-		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) bool {
-			return v.Condition
-		},
-		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) any {
-			return v.ValueExtractor
-		},
-	)
+	return extractVariableValues(allVars, request)
 }
 
 func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
-	allVars := []TargetClusterModulesVariableDefinition{}
+	allVars := []ModuleVariable[types.TargetClusterWizardRequest]{}
 	allVars = append(allVars, GetTargetClusterProviderVariables()...)
 	allVars = append(allVars, GetConfluentCloudVariables()...)
 	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
 
-	return extractRootLevelVariableDefinitions(
-		allVars,
-		request,
-		func(v TargetClusterModulesVariableDefinition) types.TerraformVariable { return v.Definition },
-		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) bool {
-			return v.Condition
-		},
-		func(v TargetClusterModulesVariableDefinition) func(types.TargetClusterWizardRequest) any {
-			return v.ValueExtractor
-		},
-		func(v TargetClusterModulesVariableDefinition) string { return "" }, // TargetClusterModulesVariableDefinition doesn't have FromModuleOutput field
-	)
+	return extractVariableDefinitions(allVars, request)
 }
 
 // ============================================================================
 // Migration Infrastructure
 // ============================================================================
 
-type MigrationInfraVariableDefinition struct {
-	Name             string
-	Definition       types.TerraformVariable
-	ValueExtractor   func(request types.MigrationWizardRequest) any  // Extracts the value from FE request payload.
-	Condition        func(request types.MigrationWizardRequest) bool // Determines if this variable should be included (nil = always include).
-	FromModuleOutput string                                          // If non-empty, this variable comes from the named module's output.
-}
-
-func (m MigrationInfraVariableDefinition) GetName() string {
-	return m.Name
-}
-
-func (m MigrationInfraVariableDefinition) GetDefinition() types.TerraformVariable {
-	return m.Definition
-}
-
 func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) map[string]any {
 	// Collect variables from all modules
-	allVars := []MigrationInfraVariableDefinition{}
+	allVars := []ModuleVariable[types.MigrationWizardRequest]{}
 	if request.HasPublicCcEndpoints {
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
@@ -106,21 +72,13 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
 	}
 
-	return extractRootLevelVariableValues(
-		allVars,
-		request,
-		func(v MigrationInfraVariableDefinition) string { return v.Name },
-		func(v MigrationInfraVariableDefinition) func(types.MigrationWizardRequest) bool { return v.Condition },
-		func(v MigrationInfraVariableDefinition) func(types.MigrationWizardRequest) any {
-			return v.ValueExtractor
-		},
-	)
+	return extractVariableValues(allVars, request)
 }
 
 // Collects all root-level variable definitions from all modules.
 func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	// Collect variables from all modules
-	allVars := []MigrationInfraVariableDefinition{}
+	allVars := []ModuleVariable[types.MigrationWizardRequest]{}
 	if request.HasPublicCcEndpoints {
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
@@ -132,116 +90,77 @@ func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardReque
 		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
 	}
 
-	return extractRootLevelVariableDefinitions(
-		allVars,
-		request,
-		func(v MigrationInfraVariableDefinition) types.TerraformVariable { return v.Definition },
-		func(v MigrationInfraVariableDefinition) func(types.MigrationWizardRequest) bool { return v.Condition },
-		func(v MigrationInfraVariableDefinition) func(types.MigrationWizardRequest) any {
-			return v.ValueExtractor
-		},
-		func(v MigrationInfraVariableDefinition) string { return v.FromModuleOutput },
-	)
-}
-
-func toVariableDefinitions(vars []MigrationInfraVariableDefinition) []VariableDefinition {
-	result := make([]VariableDefinition, len(vars))
-	for i, v := range vars {
-		result[i] = v
-	}
-	return result
+	return extractVariableDefinitions(allVars, request)
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-// extractRootLevelVariableValues is a generic helper function that extracts root-level variable values
-// from a collection of variable definitions. It filters by condition, skips variables without value extractors,
-// and only includes non-empty values.
-// V is the variable definition type, R is the request type.
-func extractRootLevelVariableValues[V any, R any](
-	allVars []V,
-	request R,
-	getName func(V) string,
-	getCondition func(V) func(R) bool,
-	getValueExtractor func(V) func(R) any,
-) map[string]any {
+// extractVariableValues extracts root-level variable values from a collection of variable definitions.
+// It filters by condition, skips variables without value extractors, and only includes non-empty values.
+func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[string]any {
 	values := make(map[string]any)
 
 	for _, varDef := range allVars {
-		condition := getCondition(varDef)
-		if condition != nil && !condition(request) {
+		if varDef.Condition != nil && !varDef.Condition(request) {
 			continue
 		}
 
-		valueExtractor := getValueExtractor(varDef)
-		// Variables with non-nil ValueExtractor are root-level variables.
-		if valueExtractor == nil {
+		// Variables with nil ValueExtractor are not root-level variables.
+		if varDef.ValueExtractor == nil {
 			continue
 		}
 
-		value := valueExtractor(request)
+		value := varDef.ValueExtractor(request)
 
 		// Only include non-empty values
 		switch v := value.(type) {
 		case string:
 			if v != "" {
-				values[getName(varDef)] = v
+				values[varDef.Name] = v
 			}
 		case []string:
 			if len(v) > 0 {
-				values[getName(varDef)] = v
+				values[varDef.Name] = v
 			}
 		case bool:
-			values[getName(varDef)] = v
+			values[varDef.Name] = v
 		case int:
-			values[getName(varDef)] = v
+			values[varDef.Name] = v
 		}
 	}
 
 	return values
 }
 
-// extractRootLevelVariableDefinitions is a generic helper function that extracts root-level variable definitions
-// from a collection of variable definitions. It filters by condition and skips variables without value extractors.
-// Note: This includes variables even if they have empty values (like API keys that are user-provided at Terraform apply time).
-// Variables with non-empty FromModuleOutput are excluded as they come from module outputs, not user input.
-// V is the variable definition type, R is the request type.
-func extractRootLevelVariableDefinitions[V any, R any](
-	allVars []V,
-	request R,
-	getDefinition func(V) types.TerraformVariable,
-	getCondition func(V) func(R) bool,
-	getValueExtractor func(V) func(R) any,
-	getFromModuleOutput func(V) string, // Function to get the module name if variable comes from module output (empty string = not from module output)
-) []types.TerraformVariable {
+// extractVariableDefinitions extracts root-level variable definitions.
+// It filters by condition and skips variables without value extractors or those coming from module outputs.
+func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) []types.TerraformVariable {
 	var definitions []types.TerraformVariable
 
 	for _, varDef := range allVars {
-		condition := getCondition(varDef)
-		if condition != nil && !condition(request) {
+		if varDef.Condition != nil && !varDef.Condition(request) {
 			continue
 		}
 
-		valueExtractor := getValueExtractor(varDef)
-		// Variables with non-nil ValueExtractor are root-level variables.
-		if valueExtractor == nil {
+		// Variables with nil ValueExtractor are not root-level variables.
+		if varDef.ValueExtractor == nil {
 			continue
 		}
 
-		// Skip variables that come from module outputs (non-empty module name)
-		if getFromModuleOutput != nil && getFromModuleOutput(varDef) != "" {
+		// Skip variables that come from module outputs
+		if varDef.FromModuleOutput != "" {
 			continue
 		}
 
-		definitions = append(definitions, getDefinition(varDef))
+		definitions = append(definitions, varDef.Definition)
 	}
 
 	return definitions
 }
 
-func toTargetVariableDefinitions(vars []TargetClusterModulesVariableDefinition) []VariableDefinition {
+func toVariableDefinitions[R any](vars []ModuleVariable[R]) []VariableDefinition {
 	result := make([]VariableDefinition, len(vars))
 	for i, v := range vars {
 		result[i] = v
@@ -266,9 +185,9 @@ func GetModuleVariableName(moduleName string, varName string) string {
 	case "cluster_link":
 		variables = toVariableDefinitions(GetClusterLinkVariables())
 	case "confluent_cloud":
-		variables = toTargetVariableDefinitions(GetConfluentCloudVariables())
+		variables = toVariableDefinitions(GetConfluentCloudVariables())
 	case "private_link_target_cluster":
-		variables = toTargetVariableDefinitions(GetTargetClusterPrivateLinkVariables())
+		variables = toVariableDefinitions(GetTargetClusterPrivateLinkVariables())
 	default:
 		return "<variable not found>"
 	}

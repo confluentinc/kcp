@@ -4,8 +4,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetPublicMigrationProviderVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetPublicMigrationProviderVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "confluent_cloud_api_key",
 			Definition: types.TerraformVariable{
@@ -35,8 +35,8 @@ func GetPublicMigrationProviderVariables() []MigrationInfraVariableDefinition {
 	}
 }
 
-func GetPrivateMigrationProviderVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "confluent_cloud_api_key",
 			Definition: types.TerraformVariable{
@@ -81,8 +81,8 @@ func GetPrivateMigrationProviderVariables() []MigrationInfraVariableDefinition {
 	}
 }
 
-func GetTargetClusterProviderVariables() []TargetClusterModulesVariableDefinition {
-	return []TargetClusterModulesVariableDefinition{
+func GetTargetClusterProviderVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
+	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
 			Name: "confluent_cloud_api_key",
 			Definition: types.TerraformVariable{

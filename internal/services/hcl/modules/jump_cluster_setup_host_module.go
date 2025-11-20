@@ -4,8 +4,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_setup_host_subnet_id",
 			Definition: types.TerraformVariable{

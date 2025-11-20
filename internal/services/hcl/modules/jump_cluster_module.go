@@ -2,8 +2,8 @@ package modules
 
 import "github.com/confluentinc/kcp/internal/types"
 
-func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_broker_subnet_ids",
 			Definition: types.TerraformVariable{
