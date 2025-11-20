@@ -60,7 +60,7 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				return []string{}
 			},
 			Condition:        nil,
-			FromModuleOutput: "jump_clusters",
+			FromModuleOutput: "jump_cluster",
 		},
 		{
 			Name: "private_key",
