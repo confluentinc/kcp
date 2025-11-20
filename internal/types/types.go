@@ -208,6 +208,18 @@ type Exporter struct {
 	Subjects    []string `json:"subjects"`
 }
 
+type MigrateSchemasRequest1 struct {
+	SchemaRegistries []SchemaRegistryExporter `json:"schema_registries"`
+}
+
+type SchemaRegistryExporter struct {
+	Id          string   `json:"id"`
+	ContextType string   `json:"context_type" default:"NONE"`
+	Enabled     bool     `json:"enabled"`
+	Subjects    []string `json:"subjects"`
+	Url         string   `json:"url"`
+}
+
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure
 // configuration. Each module contains its own Terraform files and additional assets.
 type MigrationInfraTerraformModule struct {

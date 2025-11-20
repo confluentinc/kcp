@@ -99,6 +99,7 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
 
       // Call onComplete callback to exit wizard and switch tab
       if (onComplete) {
+        console.log('onComplete - ')
         onComplete()
       }
     } catch {
@@ -121,9 +122,6 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
     )
   }
 
-
-  console.log('flattenedData - ', flattenedData)
-  console.log('currentStep - ', currentStep)
   // Handle regular form steps
   if (!currentStep) {
     // Invalid step configuration - this should not happen in normal operation

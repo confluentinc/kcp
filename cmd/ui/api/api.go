@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -400,6 +401,57 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
+	/*		{
+			"schema_registries":[
+				{
+					"id":"http_localhost_8081",
+					"url":"http://localhost:8081",
+					"enabled":true,
+					"subjects":[":.production:customers",":.production:orders",":.production:products",":.staging:cats",":.staging:dogs","users"]
+				},
+				{
+					"id":"http_myotherhost_8081",
+					"url":"http://myotherhost:8081",
+					"enabled":false,
+					"subjects":[":.test:customers",":.test:orders",":.test:products",":.uat:cats",":.uat:dogs","users"]
+				}
+			]
+			}
+	*/
+
+	/*
+		{
+			source_schema_registry_url: "http://localhost:8081",
+			"exporters":[
+				{
+					"name":"kcp-schemas-to-cc-exporter",
+					"context_type":"NONE",
+					"context_name":"",
+					"subjects":[":*:"]
+				},
+				{
+					"name":"kcp-schemas-to-cc-exporter",
+					"context_type":"NONE",
+					"context_name":"",
+					"subjects":[":*:"]
+				}
+			]
+		}
+	*/
+
+	fmt.Println("before")
+	var req1 types.MigrateSchemasRequest1
+	if err := c.Bind(&req1); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	j, _ := json.Marshal(req1)
+	fmt.Println("req - ", string(j))
+	fmt.Println("after")
+
 	var req types.MigrateSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
