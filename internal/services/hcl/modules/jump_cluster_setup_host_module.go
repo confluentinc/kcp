@@ -4,8 +4,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_setup_host_subnet_id",
 			Definition: types.TerraformVariable{
@@ -49,9 +49,9 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 			FromModuleOutput: "networking",
 		},
 		{
-			Name: "jump_cluster_broker_subnet_ids",
+			Name: "jump_cluster_instances_private_dns",
 			Definition: types.TerraformVariable{
-				Name:        "jump_cluster_broker_subnet_ids",
+				Name:        "jump_cluster_instances_private_dns",
 				Description: "IDs of the subnets that the jump cluster broker instances are deployed to.",
 				Sensitive:   false,
 				Type:        "list(string)",
@@ -60,7 +60,7 @@ func GetJumpClusterSetupHostVariables() []MigrationInfraVariableDefinition {
 				return []string{}
 			},
 			Condition:        nil,
-			FromModuleOutput: "networking",
+			FromModuleOutput: "jump_cluster",
 		},
 		{
 			Name: "private_key",

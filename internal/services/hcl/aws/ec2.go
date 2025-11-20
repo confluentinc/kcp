@@ -22,6 +22,7 @@ func GenerateAmiDataResource(tfResourceName, owners string, mostRecent bool, fil
 
 	body.SetAttributeRaw("owners", utils.TokensForStringList([]string{owners}))
 	body.SetAttributeValue("most_recent", cty.BoolVal(mostRecent))
+	body.AppendNewline()
 
 	for filterName, filterValue := range filters {
 		filterBlock := body.AppendNewBlock("filter", nil)
@@ -159,8 +160,11 @@ func appendOptionalBlocks(instanceBody *hclwrite.Body, optionalBlocks OptionalBl
 	}
 }
 
-//go:embed ec2_user_data_templates/jump_cluster_setup_host_user_data.tpl
-var jumpClusterSetupHostUserDataTpl string
+//go:embed ec2_user_data_templates/jump_cluster_sasl_scram_setup_host_user_data.tpl
+var jumpClusterSaslScramSetupHostUserDataTpl string
+
+//go:embed ec2_user_data_templates/jump_cluster_sasl_iam_setup_host_user_data.tpl
+var jumpClusterSaslIamSetupHostUserDataTpl string
 
 //go:embed ec2_user_data_templates/jump_cluster_user_data.tpl
 var jumpClusterUserDataTpl string
@@ -171,8 +175,12 @@ var jumpClusterWithSaslScramClusterLinksUserDataTpl string
 //go:embed ec2_user_data_templates/jump_cluster_with_iam_cluster_links_user_data.tpl
 var jumpClusterWithIamClusterLinksUserDataTpl string
 
-func GenerateJumpClusterSetupHostUserDataTpl() string {
-	return jumpClusterSetupHostUserDataTpl
+func GenerateJumpClusterSaslScramSetupHostUserDataTpl() string {
+	return jumpClusterSaslScramSetupHostUserDataTpl
+}
+
+func GenerateJumpClusterSaslIamSetupHostUserDataTpl() string {
+	return jumpClusterSaslIamSetupHostUserDataTpl
 }
 
 func GenerateJumpClusterUserDataTpl() string {

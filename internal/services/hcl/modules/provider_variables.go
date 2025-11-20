@@ -4,8 +4,39 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetProviderVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetPublicMigrationProviderVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
+		{
+			Name: "confluent_cloud_api_key",
+			Definition: types.TerraformVariable{
+				Name:        "confluent_cloud_api_key",
+				Description: "Confluent Cloud API Key",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return ""
+			},
+			Condition: nil,
+		},
+		{
+			Name: "confluent_cloud_api_secret",
+			Definition: types.TerraformVariable{
+				Name:        "confluent_cloud_api_secret",
+				Description: "Confluent Cloud API Secret",
+				Sensitive:   true,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return ""
+			},
+			Condition: nil,
+		},
+	}
+}
+
+func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "confluent_cloud_api_key",
 			Definition: types.TerraformVariable{
@@ -43,13 +74,15 @@ func GetProviderVariables() []MigrationInfraVariableDefinition {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.MskRegion
 			},
-			Condition: nil,
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return !request.HasPublicCcEndpoints
+			},
 		},
 	}
 }
 
-func GetTargetClusterProviderVariables() []TargetClusterModulesVariableDefinition {
-	return []TargetClusterModulesVariableDefinition{
+func GetTargetClusterProviderVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
+	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
 			Name: "confluent_cloud_api_key",
 			Definition: types.TerraformVariable{
