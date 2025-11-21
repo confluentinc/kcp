@@ -16,7 +16,7 @@ import (
 var (
 	stateFile      string
 	connectRestURL string
-	clusterArn  string
+	clusterArn     string
 
 	useSaslScram       bool
 	useTls             bool
@@ -38,7 +38,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
-		Hidden:        true, 
+		Hidden:        true,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -165,7 +165,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		StateFile:      stateFile,
 		State:          state,
 		ConnectRestURL: normalizedURL,
-		ClusterArn:  clusterArn,
+		ClusterArn:     clusterArn,
 		AuthMethod:     authMethod,
 		SaslScramAuth: types.ConnectSaslScramAuth{
 			Username: saslScramUsername,
