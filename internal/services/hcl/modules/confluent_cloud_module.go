@@ -6,8 +6,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetConfluentCloudVariables() []TargetClusterModulesVariableDefinition {
-	return []TargetClusterModulesVariableDefinition{
+func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
+	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
 			Name: "aws_region",
 			Definition: types.TerraformVariable{

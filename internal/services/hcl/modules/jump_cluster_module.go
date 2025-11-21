@@ -2,8 +2,8 @@ package modules
 
 import "github.com/confluentinc/kcp/internal/types"
 
-func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_broker_subnet_ids",
 			Definition: types.TerraformVariable{
@@ -214,6 +214,19 @@ func GetJumpClusterVariables() []MigrationInfraVariableDefinition {
 			Condition: func(request types.MigrationWizardRequest) bool {
 				return request.MskJumpClusterAuthType == "sasl_scram"
 			},
+		},
+		{
+			Name: "cluster_link_name",
+			Definition: types.TerraformVariable{
+				Name:        "cluster_link_name",
+				Description: "Name of the cluster links between between MSK and Confluent Cloud through the jump cluster.",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.ClusterLinkName
+			},
+			Condition: nil,
 		},
 	}
 }
