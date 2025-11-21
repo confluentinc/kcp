@@ -196,7 +196,7 @@ type MigrateTopicsRequest struct {
 	ConfluentCloudClusterRestEndpoint string   `json:"confluent_cloud_cluster_rest_endpoint"`
 }
 
-type MigrateSchemasRequest struct {
+type MigrateSchemasRequestOLD struct {
 	SourceSchemaRegistryURL string     `json:"source_schema_registry_url"`
 	Exporters               []Exporter `json:"exporters"`
 }
@@ -208,7 +208,7 @@ type Exporter struct {
 	Subjects    []string `json:"subjects"`
 }
 
-type MigrateSchemasRequest1 struct {
+type MigrateSchemasRequest struct {
 	SchemaRegistries []SchemaRegistryExporter `json:"schema_registries"`
 }
 

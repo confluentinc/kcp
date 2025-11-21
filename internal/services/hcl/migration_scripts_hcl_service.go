@@ -31,12 +31,17 @@ func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.Terraform
 	}, nil
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.TerraformFiles, error) {
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFilesOLD(request types.MigrateSchemasRequestOLD) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:      s.generateMigrateSchemasMainTf(request),
-		ProvidersTf: s.generateMigrateSchemasProvidersTf(),
-		VariablesTf: s.generateMigrateSchemasVariablesTf(),
+		MainTf:      s.generateMigrateSchemasMainTfOLD(request),
+		ProvidersTf: s.generateMigrateSchemasProvidersTfOLD(),
+		VariablesTf: s.generateMigrateSchemasVariablesTfOLD(),
 	}, nil
+}
+
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.TerraformFiles, error) {
+	// do some stuff here
+	return types.TerraformFiles{}, nil
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateConnectorsFiles() (types.TerraformFiles, error) {
@@ -154,7 +159,7 @@ func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() stri
 // Migrate Schemas Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(request types.MigrateSchemasRequest) string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTfOLD(request types.MigrateSchemasRequestOLD) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -166,7 +171,7 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(request types.
 	return string(f.Bytes())
 }
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTfOLD() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -185,7 +190,7 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string 
 	return string(f.Bytes())
 }
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTfOLD() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
