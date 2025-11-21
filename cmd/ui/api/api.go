@@ -460,6 +460,7 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 		})
 	}
 
+	// todo use new request type
 	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
