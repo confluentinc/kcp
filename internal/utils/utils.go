@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"regexp"
 	"strings"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -94,4 +96,20 @@ func RandomString(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)[:length]
+}
+
+// todo - may use this for scheama registry exporter generations
+func URLToFolderName(urlStr string) string {
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return ""
+	}
+
+	folderName := parsed.Host // Host includes hostname and port
+
+	// Replace non-alphanumeric chars with underscores
+	reg := regexp.MustCompile(`[^\w\-]`)
+	folderName = reg.ReplaceAllString(folderName, "_")
+
+	return folderName
 }
