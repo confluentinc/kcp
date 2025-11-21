@@ -31,17 +31,22 @@ func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.Terraform
 	}, nil
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFilesOLD(request types.MigrateSchemasRequestOLD) (types.TerraformFiles, error) {
-	return types.TerraformFiles{
-		MainTf:      s.generateMigrateSchemasMainTfOLD(request),
-		ProvidersTf: s.generateMigrateSchemasProvidersTfOLD(),
-		VariablesTf: s.generateMigrateSchemasVariablesTfOLD(),
-	}, nil
-}
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (map[string]types.TerraformFiles, error) {
+	// for each schema registry, generate the terraform files in a folder
+	folders := make(map[string]types.TerraformFiles)
+	for _, schemaRegistry := range request.SchemaRegistries {
+		folderName := utils.URLToFolderName(schemaRegistry.SourceURL)
+		tfFiles := types.TerraformFiles{
+			MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
+			ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
+			VariablesTf:      s.generateMigrateSchemasVariablesTf(),
+			InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(schemaRegistry.ConfluentCloudSchemaRegistryURL, schemaRegistry),
+		}
 
-func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.TerraformFiles, error) {
-	// do some stuff here
-	return types.TerraformFiles{}, nil
+		folders[folderName] = tfFiles
+	}
+
+	return folders, nil
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateConnectorsFiles() (types.TerraformFiles, error) {
@@ -159,19 +164,17 @@ func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() stri
 // Migrate Schemas Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTfOLD(request types.MigrateSchemasRequestOLD) string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(schemaRegistry types.SchemaRegistryExporterConfig) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	for _, exporter := range request.Exporters {
-		rootBody.AppendBlock(confluent.GenerateSchemaExporter(exporter))
-		rootBody.AppendNewline()
-	}
+	rootBody.AppendBlock(confluent.GenerateSchemaExporter(schemaRegistry))
+	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTfOLD() string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -190,14 +193,15 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTfOLD() stri
 	return string(f.Bytes())
 }
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTfOLD() string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	for _, v := range confluent.SchemaExporterVariables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
+
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
 		if v.Description != "" {
 			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
 		}
@@ -206,6 +210,19 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTfOLD() stri
 		}
 		rootBody.AppendNewline()
 	}
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasInputsAutoTfvars(confluentCloudSchemaRegistryURL string, schemaRegistry types.SchemaRegistryExporterConfig) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	// hard code :(
+	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryURL, cty.StringVal(schemaRegistry.SourceURL))
+	rootBody.SetAttributeRaw(confluent.VarSubjects, utils.TokensForStringList(schemaRegistry.Subjects))
+	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryID, cty.StringVal(schemaRegistry.Id))
+	rootBody.SetAttributeValue(confluent.VarConfluentCloudSchemaRegistryURL, cty.StringVal(confluentCloudSchemaRegistryURL))
 
 	return string(f.Bytes())
 }

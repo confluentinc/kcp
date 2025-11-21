@@ -409,34 +409,22 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
+	terraformFolders, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
+			"error":   "Failed to generate Terraform folders",
 			"message": err.Error(),
 		})
 	}
 
-	return c.JSON(http.StatusCreated, terraformFiles)
-}
-
-func (ui *UI) handleMigrateSchemasAssetsOLD(c echo.Context) error {
-	var req types.MigrateSchemasRequestOLD
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid request body",
-			"message": err.Error(),
-		})
-	}
-
-	// todo use new request type
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFilesOLD(req)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
-			"message": err.Error(),
-		})
-	}
-
-	return c.JSON(http.StatusCreated, terraformFiles)
+	// // print json of terraformFolders
+	// json, err := json.Marshal(terraformFolders)
+	// if err != nil {
+	// 	return c.JSON(http.StatusInternalServerError, map[string]any{
+	// 		"error":   "Failed to marshal Terraform folders",
+	// 		"message": err.Error(),
+	// 	})
+	// }
+	// fmt.Println(string(json))
+	return c.JSON(http.StatusCreated, terraformFolders)
 }
