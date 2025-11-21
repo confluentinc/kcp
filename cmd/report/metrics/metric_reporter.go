@@ -3,7 +3,6 @@ package metrics
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -48,7 +47,7 @@ func (r *MetricReporter) Run() error {
 	slog.Info("🔍 processing clusters", "clusters", r.clusterArns, "startDate", r.startDate, "endDate", r.endDate)
 
 	processedState := r.reportService.ProcessState(*r.state)
-	processedClusterMetrics :=  []types.ProcessedClusterMetrics{}
+	processedClusterMetrics := []types.ProcessedClusterMetrics{}
 
 	// find the clusters in the state
 
@@ -84,7 +83,12 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 		r.startDate.Format("2006-01-02"),
 		r.endDate.Format("2006-01-02")))
 
-	md.AddParagraph(fmt.Sprintf("**Clusters:** %v", r.clusterArns))
+	if len(r.clusterArns) > 0 {
+		md.AddParagraph("**Clusters included in report:**")
+		for _, arn := range r.clusterArns {
+			md.AddParagraph(fmt.Sprintf("- %s", arn))
+		}
+	}
 
 	md.AddHorizontalRule()
 
@@ -102,23 +106,14 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 	return md
 }
 
-func (r *MetricReporter) extractRegionFromArn(arn string) string {
-	parts := strings.Split(arn, ":")
-	if len(parts) >= 4 {
-		return parts[3]
-	}
-	return "unknown-region"
-}
-
-
 func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics types.ProcessedClusterMetrics) {
 	// Extract cluster name from ARN - we need to find the matching ARN for this region
-
 
 	md.AddHeading(fmt.Sprintf("Cluster Name: %s", utils.ExtractClusterNameFromArn(clusterMetrics.ClusterArn)), 3)
 	md.AddParagraph(fmt.Sprintf("**Cluster ARN**: %s", clusterMetrics.ClusterArn))
 	md.AddParagraph(fmt.Sprintf("**Region**: %s", clusterMetrics.Region))
 	md.AddParagraph(fmt.Sprintf("**Cluster Type**: %s", clusterMetrics.Metadata.ClusterType))
+	md.AddParagraph(fmt.Sprintf("**Number of Broker Nodes**: %d", clusterMetrics.Metadata.NumberOfBrokerNodes))
 	md.AddParagraph(fmt.Sprintf("**Kafka Version**: %s", clusterMetrics.Metadata.KafkaVersion))
 	md.AddParagraph(fmt.Sprintf("**Enhanced Monitoring**: %s", clusterMetrics.Metadata.EnhancedMonitoring))
 	md.AddParagraph(fmt.Sprintf("**Period**: %d seconds", clusterMetrics.Metadata.Period))
@@ -152,16 +147,6 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 
 	// Add individual metric values
 	r.addIndividualMetricsSection(md, clusterMetrics.Metrics)
-}
-
-func (r *MetricReporter) extractClusterNameFromRegion(region string) string {
-	// Find the first ARN that matches this region
-	for _, arn := range r.clusterArns {
-		if r.extractRegionFromArn(arn) == region {
-			return utils.ExtractClusterNameFromArn(arn)
-		}
-	}
-	return "Unknown"
 }
 
 func (r *MetricReporter) addIndividualMetricsSection(md *markdown.Markdown, metrics []types.ProcessedMetric) {

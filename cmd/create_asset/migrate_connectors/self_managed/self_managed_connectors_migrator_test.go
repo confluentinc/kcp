@@ -263,7 +263,7 @@ func TestSelfManagedConnectorMigrator_Run_InvalidOutputDirectory(t *testing.T) {
 		Connectors: []types.SelfManagedConnector{
 			{
 				Name: "test-connector",
-					Config: map[string]any{
+				Config: map[string]any{
 					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
 				},
 			},

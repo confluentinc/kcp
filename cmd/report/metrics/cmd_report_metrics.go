@@ -35,14 +35,14 @@ func NewReportMetricsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag)")
 	reportMetricsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&start, "start", "", "inclusive start date for cost report (YYYY-MM-DD)")
-	optionalFlags.StringVar(&end, "end", "", "exclusive end date for cost report (YYYY-MM-DD)")
+	optionalFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag).  If not provided, all clusters in the state file will be included.")
+	optionalFlags.StringVar(&start, "start", "", "inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)")
+	optionalFlags.StringVar(&end, "end", "", "exclusive end date for metrics report (YYYY-MM-DD).  (Defaults to today).")
 	reportMetricsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -65,9 +65,8 @@ func NewReportMetricsCmd() *cobra.Command {
 	})
 
 	reportMetricsCmd.MarkFlagRequired("state-file")
-	reportMetricsCmd.MarkFlagRequired("cluster-arn")
 	// optional but if one is provided, the other must be provided
-	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end")
+	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end", "cluster-arn")
 
 	return reportMetricsCmd
 }
@@ -128,7 +127,6 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 		}
 	}
 
-	// default to the start and end date from metrics metadata in state file
 	if startDate == nil && endDate == nil {
 		if len(state.Regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")
@@ -138,8 +136,23 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 			return nil, fmt.Errorf("no clusters found in state file")
 		}
 
-		startDate = &state.Regions[0].Clusters[0].ClusterMetrics.MetricMetadata.StartDate
-		endDate = &state.Regions[0].Clusters[0].ClusterMetrics.MetricMetadata.EndDate
+		// default to the last 31 days.  Ensures a period of 30 full days ending on the previous day, since end date is exclusive in cloudwatch API.
+		now := time.Now()
+		start := now.AddDate(0, 0, -31)
+		startDate = &start
+		endDate = &now
+	}
+
+	if len(clusterArns) == 0 {
+		// retrieve all cluster ARNs from state file
+		for _, region := range state.Regions {
+			for _, cluster := range region.Clusters {
+				clusterArns = append(clusterArns, cluster.Arn)
+			}
+		}
+		if len(clusterArns) == 0 {
+			return nil, fmt.Errorf("no clusters found in state file")
+		}
 	}
 
 	opts := MetricReporterOpts{

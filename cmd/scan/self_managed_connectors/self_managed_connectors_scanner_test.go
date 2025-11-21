@@ -37,46 +37,46 @@ func (m *MockConnectClient) GetConnectorStatus(name string) (map[string]any, err
 }
 
 func TestSelfManagedConnectorsScanner_Run_NoSelfManagedConnectors(t *testing.T) {
-    var listedConnectors []string
-    
-    mockClient := &MockConnectClient{
-        ListConnectorsFunc: func() ([]string, error) {
-            listedConnectors = []string{} 
-            return listedConnectors, nil
-        },
-    }
+	var listedConnectors []string
 
-    state := &types.State{
-        Regions: []types.DiscoveredRegion{
-            {
-                Name: "us-east-1",
-                Clusters: []types.DiscoveredCluster{
-                    {
-                        Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-                        KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-                            ClusterID: "test-id",
-                        },
-                    },
-                },
-            },
-        },
-    }
+	mockClient := &MockConnectClient{
+		ListConnectorsFunc: func() ([]string, error) {
+			listedConnectors = []string{}
+			return listedConnectors, nil
+		},
+	}
 
-    scanner := &SelfManagedConnectorsScanner{
-        StateFile:     "/tmp/test-state.json",
-        State:         state,
-        ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-        client:        mockClient,
-    }
+	state := &types.State{
+		Regions: []types.DiscoveredRegion{
+			{
+				Name: "us-east-1",
+				Clusters: []types.DiscoveredCluster{
+					{
+						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+							ClusterID: "test-id",
+						},
+					},
+				},
+			},
+		},
+	}
 
-    err := scanner.Run()
-    
-    assert.NoError(t, err)
-    assert.Empty(t, listedConnectors, "should have received empty connector list")
-    
-    cluster := state.Regions[0].Clusters[0]
-    assert.Nil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors,
-        "SelfManagedConnectors should remain nil when no connectors exist")
+	scanner := &SelfManagedConnectorsScanner{
+		StateFile:  "/tmp/test-state.json",
+		State:      state,
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		client:     mockClient,
+	}
+
+	err := scanner.Run()
+
+	assert.NoError(t, err)
+	assert.Empty(t, listedConnectors, "should have received empty connector list")
+
+	cluster := state.Regions[0].Clusters[0]
+	assert.Nil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors,
+		"SelfManagedConnectors should remain nil when no connectors exist")
 }
 
 func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T) {
@@ -101,12 +101,12 @@ func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T
 			statuses := map[string]map[string]any{
 				"connector-1": {
 					"connector": map[string]any{
-						"state":     "RUNNING",
+						"state": "RUNNING",
 					},
 				},
 				"connector-2": {
 					"connector": map[string]any{
-						"state":     "PAUSED",
+						"state": "PAUSED",
 					},
 				},
 			}
@@ -131,10 +131,10 @@ func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T
 	}
 
 	scanner := &SelfManagedConnectorsScanner{
-		StateFile:     "/tmp/test-state.json",
-		State:         state,
+		StateFile:  "/tmp/test-state.json",
+		State:      state,
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-		client:        mockClient,
+		client:     mockClient,
 	}
 
 	err := scanner.Run()
@@ -177,10 +177,10 @@ func TestSelfManagedConnectorsScanner_Run_ListSelfManagedConnectorsError(t *test
 	}
 
 	scanner := &SelfManagedConnectorsScanner{
-		StateFile:     "/tmp/test-state.json",
-		State:         state,
+		StateFile:  "/tmp/test-state.json",
+		State:      state,
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-		client:        mockClient,
+		client:     mockClient,
 	}
 
 	err := scanner.Run()
@@ -194,10 +194,10 @@ func TestSelfManagedConnectorsScanner_Run_ListSelfManagedConnectorsError(t *test
 
 func TestSelfManagedConnectorsScanner_Run_NilClient(t *testing.T) {
 	scanner := &SelfManagedConnectorsScanner{
-		StateFile:     "/tmp/test-state.json",
-		State:         &types.State{},
+		StateFile:  "/tmp/test-state.json",
+		State:      &types.State{},
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-		client:        nil,
+		client:     nil,
 	}
 
 	err := scanner.Run()
@@ -220,7 +220,7 @@ func TestSelfManagedConnectorsScanner_GetConnectorDetails_Success(t *testing.T) 
 		GetConnectorStatusFunc: func(name string) (map[string]any, error) {
 			return map[string]any{
 				"connector": map[string]any{
-					"state":     "RUNNING",
+					"state": "RUNNING",
 				},
 			}, nil
 		},
@@ -302,7 +302,7 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_Success(t *testi
 	}
 
 	scanner := &SelfManagedConnectorsScanner{
-		State:         state,
+		State:      state,
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 	}
 
@@ -340,7 +340,7 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_ClusterNotFound(
 	}
 
 	scanner := &SelfManagedConnectorsScanner{
-		State:         state,
+		State:      state,
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/non-existent-cluster/xyz-789",
 	}
 
@@ -401,10 +401,10 @@ func TestSelfManagedConnectorsScanner_Run_PartialFailure(t *testing.T) {
 	}
 
 	scanner := &SelfManagedConnectorsScanner{
-		StateFile:     "/tmp/test-state.json",
-		State:         state,
+		StateFile:  "/tmp/test-state.json",
+		State:      state,
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-		client:        mockClient,
+		client:     mockClient,
 	}
 
 	err := scanner.Run()
