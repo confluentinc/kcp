@@ -64,12 +64,17 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 	if request.HasPublicCcEndpoints {
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
-	} else {
+	} else if request.UseJumpClusters {
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
 		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
+	} else {
+		// External outbound cluster linking
+		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
+		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
+		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
 
 	return extractVariableValues(allVars, request)
@@ -82,12 +87,17 @@ func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardReque
 	if request.HasPublicCcEndpoints {
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
-	} else {
+	} else if request.UseJumpClusters {
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
 		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
+	} else {
+		// External outbound cluster linking
+		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
+		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
+		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
 
 	return extractVariableDefinitions(allVars, request)
@@ -114,20 +124,41 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 
 		value := varDef.ValueExtractor(request)
 
-		// Only include non-empty values
+		// Only include non-empty values, keyed by Definition.Name for deduplication
 		switch v := value.(type) {
 		case string:
 			if v != "" {
-				values[varDef.Name] = v
+				// Check if already exists to avoid silent overwrites
+				if existing, exists := values[varDef.Definition.Name]; exists {
+					// If values match, it's fine (deduplication working as expected)
+					if existing != v {
+						// Optional: log warning or error about conflicting values
+						// For now, first-wins strategy (don't overwrite)
+						continue
+					}
+				}
+				values[varDef.Definition.Name] = v
 			}
 		case []string:
 			if len(v) > 0 {
-				values[varDef.Name] = v
+				if _, exists := values[varDef.Definition.Name]; !exists {
+					values[varDef.Definition.Name] = v
+				}
 			}
 		case bool:
-			values[varDef.Name] = v
+			if _, exists := values[varDef.Definition.Name]; !exists {
+				values[varDef.Definition.Name] = v
+			}
 		case int:
-			values[varDef.Name] = v
+			if _, exists := values[varDef.Definition.Name]; !exists {
+				values[varDef.Definition.Name] = v
+			}
+		case []types.ExtOutboundClusterKafkaBroker:
+			if len(v) > 0 {
+				if _, exists := values[varDef.Definition.Name]; !exists {
+					values[varDef.Definition.Name] = v
+				}
+			}
 		}
 	}
 
@@ -188,6 +219,10 @@ func GetModuleVariableName(moduleName string, varName string) string {
 		variables = toVariableDefinitions(GetConfluentCloudVariables())
 	case "private_link_target_cluster":
 		variables = toVariableDefinitions(GetTargetClusterPrivateLinkVariables())
+	case "ext_outbound_cluster_link":
+		variables = toVariableDefinitions(GetExternalOutboundClusterLinkingVariables())
+	case "msk_private_cluster_link":
+		variables = toVariableDefinitions(GetMskPrivateClusterLinkVariables())
 	default:
 		return "<variable not found>"
 	}

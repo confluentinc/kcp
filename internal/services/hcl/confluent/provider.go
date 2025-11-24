@@ -19,7 +19,7 @@ var ConfluentProviderVariables = []types.TerraformVariable{
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	confluentProvider := map[string]hclwrite.Tokens{
 		"source":  utils.TokensForStringTemplate("confluentinc/confluent"),
-		"version": utils.TokensForStringTemplate("2.50.0"),
+		"version": utils.TokensForStringTemplate("~> 2.5"),
 	}
 
 	return "confluent", utils.TokensForMap(confluentProvider)

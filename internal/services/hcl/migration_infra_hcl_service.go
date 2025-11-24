@@ -24,7 +24,12 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 	if request.HasPublicCcEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
-	return mi.handlePrivateMigrationInfrastructure(request)
+
+	if request.UseJumpClusters {
+		return mi.handlePrivateMigrationInfrastructure(request)
+	}
+
+	return mi.handleExternalOutboundClusterLinkingInfrastructure(request)
 }
 
 func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
@@ -96,6 +101,28 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 	}
 }
 
+func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+	// Use GetRootLevelVariableDefinitions to get only root-level variable definitions
+	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
+
+	return types.MigrationInfraTerraformProject{
+		MainTf:           mi.generateRootMainTfForExternalOutboundClusterLinkingInfrastructure(request),
+		ProvidersTf:      mi.generateRootProvidersTfForExternalOutboundClusterLinkingInfrastructure(),
+		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
+		Modules: []types.MigrationInfraTerraformModule{
+			{
+				Name:        "external_outbound_cluster_link",
+				MainTf:      mi.generateExternalOutboundClusterLinkMainTf(),
+				VariablesTf: mi.generateExternalOutboundClusterLinkVariablesTf(request),
+				AdditionalFiles: map[string]string{
+					"create-external-outbound-cluster-link.tpl": mi.generateCreateExternalOutboundClusterLinkTpl(),
+				},
+			},
+		},
+	}
+}
+
 // ============================================================================
 // Root-Level Generation - Public Migration
 // ============================================================================
@@ -107,7 +134,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastr
 	moduleBlock := rootBody.AppendNewBlock("module", []string{"cluster_link"})
 	moduleBody := moduleBlock.Body()
 
-	moduleBody.SetAttributeValue("source", cty.StringVal("./modules/cluster_link"))
+	moduleBody.SetAttributeValue("source", cty.StringVal("./cluster_link"))
 	moduleBody.AppendNewline()
 
 	clusterLinkVars := modules.GetClusterLinkVariables()
@@ -160,7 +187,7 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 	mskSaslScramBootstrapServersVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_bootstrap_servers")
 	mskSaslScramUsernameVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_username")
 	mskSaslScramPasswordVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_password")
-	
+
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -191,7 +218,7 @@ func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf(request types
 }
 
 // ============================================================================
-// Root-Level Generation - Private Migration
+// Root-Level Generation - Private Migration - Jump Clusters
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrastructure(request types.MigrationWizardRequest) string {
@@ -200,7 +227,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 	networkingModuleBlock := rootBody.AppendNewBlock("module", []string{"networking"})
 	networkingModuleBody := networkingModuleBlock.Body()
-	networkingModuleBody.SetAttributeValue("source", cty.StringVal("./modules/networking"))
+	networkingModuleBody.SetAttributeValue("source", cty.StringVal("./networking"))
 	networkingModuleBody.AppendNewline()
 
 	networkingModuleBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{
@@ -218,7 +245,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 	setupHostModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_cluster_setup_host"})
 	setupHostModuleBody := setupHostModuleBlock.Body()
-	setupHostModuleBody.SetAttributeValue("source", cty.StringVal("./modules/jump_cluster_setup_host"))
+	setupHostModuleBody.SetAttributeValue("source", cty.StringVal("./jump_cluster_setup_host"))
 	setupHostModuleBody.AppendNewline()
 
 	setupHostModuleBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{
@@ -246,7 +273,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 	jumpClustersModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_cluster"})
 	jumpClustersModuleBody := jumpClustersModuleBlock.Body()
-	jumpClustersModuleBody.SetAttributeValue("source", cty.StringVal("./modules/jump_cluster"))
+	jumpClustersModuleBody.SetAttributeValue("source", cty.StringVal("./jump_cluster"))
 	jumpClustersModuleBody.AppendNewline()
 
 	jumpClustersModuleBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{
@@ -271,7 +298,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 	privateLinkModuleBlock := rootBody.AppendNewBlock("module", []string{"private_link_connection"})
 	privateLinkModuleBody := privateLinkModuleBlock.Body()
-	privateLinkModuleBody.SetAttributeValue("source", cty.StringVal("./modules/private_link_connection"))
+	privateLinkModuleBody.SetAttributeValue("source", cty.StringVal("./private_link_connection"))
 	privateLinkModuleBody.AppendNewline()
 
 	privateLinkModuleBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{
@@ -742,6 +769,164 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVersionsTf() st
 }
 
 // ============================================================================
+// Root-Level Generation - Private Migration - External Outbound Cluster Link
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundClusterLinkingInfrastructure(request types.MigrationWizardRequest) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	//
+	// MSK Private Cluster Link Module
+	//
+	mskClusterLinkPrivateLinkModuleBlock := rootBody.AppendNewBlock("module", []string{"cluster-linking-aws-msk-private-link"})
+	mskClusterLinkPrivateLinkModuleBody := mskClusterLinkPrivateLinkModuleBlock.Body()
+
+	// https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private
+	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("source", cty.StringVal("git::https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private.git"))
+	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
+	
+	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("name_prefix", cty.StringVal("msk"))
+	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
+	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
+
+	mskClusterLinkPrivateLinkVars := modules.GetMskPrivateClusterLinkVariables()
+	for _, varDef := range mskClusterLinkPrivateLinkVars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+
+		mskClusterLinkPrivateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Definition.Name))
+	}
+	rootBody.AppendNewline()
+
+	//
+	// External Outbound Cluster Link Module
+	//
+	extOutboundClModuleBlock := rootBody.AppendNewBlock("module", []string{"external_outbound_cluster_link"})
+	extOutboundClModuleBody := extOutboundClModuleBlock.Body()
+
+	extOutboundClModuleBody.SetAttributeValue("source", cty.StringVal("./external_outbound_cluster_link"))
+	extOutboundClModuleBody.AppendNewline()
+
+	externalOutboundClusterLinkVars := modules.GetExternalOutboundClusterLinkingVariables()
+	for _, varDef := range externalOutboundClusterLinkVars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+		
+		extOutboundClModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+	}
+	rootBody.AppendNewline()
+
+	extOutboundClModuleBody.AppendNewline()
+	extOutboundClModuleBody.SetAttributeRaw("depends_on", utils.TokensForList([]string{"module.cluster-linking-aws-msk-private-link"}))
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateRootProvidersTfForExternalOutboundClusterLinkingInfrastructure() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
+	terraformBody := terraformBlock.Body()
+
+	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
+	requiredProvidersBody := requiredProvidersBlock.Body()
+
+	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
+	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(confluent.GenerateProviderBlock())
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// External Outbound Cluster Linking Module Generation (Private)
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() string {
+	subnetIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "subnet_id")
+	securityGroupIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "security_group_id")
+	targetClusterApiKeyVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_api_key")
+	targetClusterApiSecretVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_api_secret")
+	targetClusterRestEndpointVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_rest_endpoint")
+	targetClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_id")
+	clusterLinkNameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "cluster_link_name")
+	mskClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_cluster_id")
+	mskClusterBootstrapBrokersVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_cluster_bootstrap_servers")
+	mskSaslScramUsernameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_sasl_scram_username")
+	mskSaslScramPasswordVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_sasl_scram_password")
+
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	rootBody.AppendBlock(aws.GenerateAmiDataResource("amzn_linux_ami", "137112412989", true, map[string]string{
+		"name":                "al2023-ami-2023.*-kernel-6.1-x86_64",
+		"state":               "available",
+		"architecture":        "x86_64",
+		"virtualization-type": "hvm",
+	}))
+	rootBody.AppendNewline()
+
+	rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResource(
+		"external_outbound_cluster_link",
+		"data.aws_ami.amzn_linux_ami.id",
+		"t2.medium",
+		subnetIdVarName,
+		securityGroupIdVarName,
+		"", // No keypair needed as user will never need to access instance.
+		"create-external-outbound-cluster-link.tpl",
+		false,
+		map[string]hclwrite.Tokens{
+			"target_cluster_api_key":           utils.TokensForVarReference(targetClusterApiKeyVarName),
+			"target_cluster_api_secret":        utils.TokensForVarReference(targetClusterApiSecretVarName),
+			"target_cluster_rest_endpoint": utils.TokensForVarReference(targetClusterRestEndpointVarName),
+			"target_cluster_id":            utils.TokensForVarReference(targetClusterIdVarName),
+			"cluster_link_name":            utils.TokensForVarReference(clusterLinkNameVarName),
+			"msk_cluster_id":               utils.TokensForVarReference(mskClusterIdVarName),
+			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(mskClusterBootstrapBrokersVarName),
+			"msk_sasl_scram_username":      utils.TokensForVarReference(mskSaslScramUsernameVarName),
+			"msk_sasl_scram_password":      utils.TokensForVarReference(mskSaslScramPasswordVarName),
+		},
+		nil,
+	))
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
+}
+
+func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkVariablesTf(request types.MigrationWizardRequest) string {
+	return mi.generateVariablesTf(modules.GetExternalOutboundClusterLinkingModuleVariableDefinitions(request))
+}
+
+func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl() string {
+	return aws.GenerateCreateExternalOutboundClusterLinkTpl()
+}
+
+// func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkingVersionsTf() string {
+// 	f := hclwrite.NewEmptyFile()
+// 	rootBody := f.Body()
+
+// 	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
+// 	terraformBody := terraformBlock.Body()
+
+// 	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
+// 	requiredProvidersBody := requiredProvidersBlock.Body()
+
+// 	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
+
+// 	return string(f.Bytes())
+// }
+
+// ============================================================================
 // Shared/Utility Functions
 // ============================================================================
 
@@ -798,7 +983,7 @@ func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.Migra
 
 	// Use GetRootLevelVariableValues to get only root-level variables (not from module outputs)
 	values := modules.GetMigrationInfraRootVariableValues(request)
-	
+
 	varSeenVariables := make(map[string]bool)
 	for varName, value := range values {
 		if varSeenVariables[varName] {
@@ -819,6 +1004,24 @@ func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.Migra
 			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
 		case int:
 			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
+		case []types.ExtOutboundClusterKafkaBroker:
+			brokerObjects := make([]cty.Value, len(v))
+			for i, broker := range v {
+				endpoints := make([]cty.Value, len(broker.Endpoints))
+				for j, endpoint := range broker.Endpoints {
+					endpoints[j] = cty.ObjectVal(map[string]cty.Value{
+						"host": cty.StringVal(endpoint.Host),
+						"port": cty.NumberIntVal(int64(endpoint.Port)),
+						"ip":   cty.StringVal(endpoint.IP),
+					})
+				}
+				brokerObjects[i] = cty.ObjectVal(map[string]cty.Value{
+					"id":        cty.StringVal(broker.ID),
+					"subnet_id": cty.StringVal(broker.SubnetID),
+					"endpoints": cty.ListVal(endpoints),
+				})
+			}
+			rootBody.SetAttributeValue(varName, cty.ListVal(brokerObjects))
 		}
 	}
 

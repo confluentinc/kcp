@@ -18,7 +18,7 @@ var AwsProviderVariables = []types.TerraformVariable{
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	awsProvider := map[string]hclwrite.Tokens{
 		"source":  utils.TokensForStringTemplate("hashicorp/aws"),
-		"version": utils.TokensForStringTemplate("6.18.0"),
+		"version": utils.TokensForStringTemplate("~> 6.1"),
 	}
 
 	return "aws", utils.TokensForMap(awsProvider)

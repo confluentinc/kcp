@@ -58,7 +58,11 @@ func GenerateEc2UserDataInstanceResource(tfResourceName, amiIdRef, instanceType,
 	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType)) // Assumes the value is passed as a string rather than a variable reference.
 	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForVarReference(subnetIdRef))
 	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReferenceList([]string{securityGroupIdsRef}))
-	instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
+
+	if keyNameRef != "" {
+		instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
+	}
+
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
 	instanceBody.AppendNewline()
 
@@ -175,6 +179,9 @@ var jumpClusterWithSaslScramClusterLinksUserDataTpl string
 //go:embed ec2_user_data_templates/jump_cluster_with_iam_cluster_links_user_data.tpl
 var jumpClusterWithIamClusterLinksUserDataTpl string
 
+//go:embed ec2_user_data_templates/create-external-outbound-cluster-link.tpl
+var createExternalOutboundClusterLinkTpl string
+
 func GenerateJumpClusterSaslScramSetupHostUserDataTpl() string {
 	return jumpClusterSaslScramSetupHostUserDataTpl
 }
@@ -193,4 +200,8 @@ func GenerateJumpClusterWithSaslScramClusterLinksUserDataTpl() string {
 
 func GenerateJumpClusterWithIamClusterLinksUserDataTpl() string {
 	return jumpClusterWithIamClusterLinksUserDataTpl
+}
+
+func GenerateCreateExternalOutboundClusterLinkTpl() string {
+	return createExternalOutboundClusterLinkTpl
 }
