@@ -24,7 +24,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
     return {
       id: key,
       url: registry.url,
-      enabled: true,
+      migrate: true,
       subjects: subjectNames,
     }
   })
@@ -71,9 +71,9 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
               title: 'Schema Registry URL',
               readOnly: true,
             },
-            enabled: {
+            migrate: {
               type: 'boolean',
-              title: 'Include this schema registry',
+              title: 'Migrate this schema registry',
             },
             subjects: {
               type: 'array',
@@ -84,7 +84,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
               title: 'Subjects',
             },
           },
-          required: ['id', 'enabled'],
+          required: ['id', 'migrate'],
           dependencies: {
             id: {
               oneOf: Object.entries(idDependencies).map(([registryId, dependency]) => ({
@@ -96,18 +96,18 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
                 },
               })),
             },
-            enabled: {
+            migrate: {
               oneOf: [
                 {
                   properties: {
-                    enabled: {
+                    migrate: {
                       const: true,
                     },
                   },
                 },
                 {
                   properties: {
-                    enabled: {
+                    migrate: {
                       const: false,
                     },
                     subjects: {
@@ -138,7 +138,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
       'ui:title': 'Schema Registries',
       items: {
         'ui:title': '',
-        'ui:order': ['url', 'id', 'enabled', 'subjects'],
+        'ui:order': ['url', 'id', 'migrate', 'subjects'],
         id: {
           'ui:widget': 'hidden',
         },
@@ -146,7 +146,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           'ui:widget': 'text',
           'ui:readonly': true,
         },
-        enabled: {
+        migrate: {
           'ui:widget': 'radio',
         },
         subjects: {
