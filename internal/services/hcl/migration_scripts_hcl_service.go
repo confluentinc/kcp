@@ -35,16 +35,18 @@ func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.M
 	ms := types.MigrationScriptsTerraformProject{}
 	folders := []types.MigrationScriptsTerraformFolder{}
 	for _, schemaRegistry := range request.SchemaRegistries {
-		folderName := utils.URLToFolderName(schemaRegistry.SourceURL)
-		folder := types.MigrationScriptsTerraformFolder{
-			Name:             folderName,
-			MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
-			ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
-			VariablesTf:      s.generateMigrateSchemasVariablesTf(),
-			InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(request.ConfluentCloudSchemaRegistryURL, schemaRegistry),
-		}
+		if schemaRegistry.Migrate {
+			folderName := utils.URLToFolderName(schemaRegistry.SourceURL)
+			folder := types.MigrationScriptsTerraformFolder{
+				Name:             folderName,
+				MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
+				ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
+				VariablesTf:      s.generateMigrateSchemasVariablesTf(),
+				InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(request.ConfluentCloudSchemaRegistryURL, schemaRegistry),
+			}
 
-		folders = append(folders, folder)
+			folders = append(folders, folder)
+		}
 	}
 
 	ms.Folders = folders
