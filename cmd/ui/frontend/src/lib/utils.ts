@@ -157,11 +157,15 @@ export const convertTerraformFilesToTree = (files: TerraformFiles | null): TreeN
       const moduleChildren: TreeNode[] = []
 
       // Module's standard files
-      const moduleFiles: Array<'main.tf' | 'variables.tf' | 'outputs.tf' | 'versions.tf'> = [
+      const moduleFiles: Array<'main.tf' | 'variables.tf' | 'outputs.tf' | 'versions.tf' | 'providers.tf' | 'inputs.auto.tfvars'> = [
         'main.tf',
         'variables.tf',
         'outputs.tf',
         'versions.tf',
+
+        // todo additional files for scripts flow
+        'providers.tf',
+        'inputs.auto.tfvars',
       ]
 
       moduleFiles.forEach((fileName) => {
@@ -253,11 +257,15 @@ export const flattenTerraformFiles = (files: TerraformFiles | null): Record<stri
   // Module files
   if (files.modules && Array.isArray(files.modules)) {
     files.modules.forEach((module) => {
-      const moduleFiles: Array<'main.tf' | 'variables.tf' | 'outputs.tf' | 'versions.tf'> = [
+      const moduleFiles: Array<'main.tf' | 'variables.tf' | 'outputs.tf' | 'versions.tf' | 'providers.tf' | 'inputs.auto.tfvars'> = [
         'main.tf',
         'variables.tf',
         'outputs.tf',
         'versions.tf',
+
+        // todo additional files for scripts flow
+        'providers.tf',
+        'inputs.auto.tfvars',
       ]
 
       moduleFiles.forEach((fileName) => {

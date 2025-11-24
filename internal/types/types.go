@@ -201,7 +201,6 @@ type MigrateSchemasRequest struct {
 }
 
 type SchemaRegistryExporterConfig struct {
-	Id string `json:"id"`
 	// just default all to NONE context type for now
 	ContextType                     string   `json:"context_type" default:"NONE"`
 	Enabled                         bool     `json:"enabled"`

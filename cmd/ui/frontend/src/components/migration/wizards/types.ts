@@ -46,6 +46,10 @@ export interface TerraformModule {
   'outputs.tf'?: string
   'versions.tf'?: string
   additional_files?: Record<string, string> | null
+
+  // todo additional files for scripts flow
+  'providers.tf'?: string
+  'inputs.auto.tfvars'?: string
 }
 
 // Terraform files response structure from API

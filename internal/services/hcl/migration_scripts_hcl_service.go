@@ -41,7 +41,7 @@ func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.M
 			MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
 			ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
 			VariablesTf:      s.generateMigrateSchemasVariablesTf(),
-			InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(schemaRegistry.ConfluentCloudSchemaRegistryURL, schemaRegistry),
+			InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(schemaRegistry),
 		}
 
 		folders = append(folders, folder)
@@ -217,15 +217,15 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string 
 	return string(f.Bytes())
 }
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasInputsAutoTfvars(confluentCloudSchemaRegistryURL string, schemaRegistry types.SchemaRegistryExporterConfig) string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasInputsAutoTfvars(schemaRegistry types.SchemaRegistryExporterConfig) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	// hard code :(
 	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryURL, cty.StringVal(schemaRegistry.SourceURL))
 	rootBody.SetAttributeRaw(confluent.VarSubjects, utils.TokensForStringList(schemaRegistry.Subjects))
-	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryID, cty.StringVal(schemaRegistry.Id))
-	rootBody.SetAttributeValue(confluent.VarConfluentCloudSchemaRegistryURL, cty.StringVal(confluentCloudSchemaRegistryURL))
+	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryID, cty.StringVal("TODO 123"))
+	rootBody.SetAttributeValue(confluent.VarConfluentCloudSchemaRegistryURL, cty.StringVal(schemaRegistry.ConfluentCloudSchemaRegistryURL))
 
 	return string(f.Bytes())
 }
