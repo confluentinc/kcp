@@ -224,7 +224,6 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasInputsAutoTfvars(conf
 	// hard code :(
 	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryURL, cty.StringVal(schemaRegistry.SourceURL))
 	rootBody.SetAttributeRaw(confluent.VarSubjects, utils.TokensForStringList(schemaRegistry.Subjects))
-	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryID, cty.StringVal("TODO 123"))
 	rootBody.SetAttributeValue(confluent.VarConfluentCloudSchemaRegistryURL, cty.StringVal(confluentCloudSchemaRegistryURL))
 
 	return string(f.Bytes())

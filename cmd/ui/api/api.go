@@ -400,7 +400,6 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
-	// todo: validation ?
 	var req types.MigrateSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{

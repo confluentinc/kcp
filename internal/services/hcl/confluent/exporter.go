@@ -40,7 +40,8 @@ func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig) *
 
 	// schema_registry_cluster block
 	schemaRegistryClusterBlock := hclwrite.NewBlock("schema_registry_cluster", nil)
-	schemaRegistryClusterBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(VarSourceSchemaRegistryID))
+	schemaRegistryClusterBlock.Body().AppendUnstructuredTokens(utils.TokensForComment("# a value is required for the exporter - just using random string\n"))
+	schemaRegistryClusterBlock.Body().SetAttributeValue("id", cty.StringVal(utils.RandomString(8)))
 	exporterBlock.Body().AppendBlock(schemaRegistryClusterBlock)
 	exporterBlock.Body().AppendNewline()
 
