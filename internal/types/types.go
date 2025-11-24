@@ -197,16 +197,14 @@ type MigrateTopicsRequest struct {
 }
 
 type MigrateSchemasRequest struct {
-	SchemaRegistries []SchemaRegistryExporterConfig `json:"schema_registries"`
+	ConfluentCloudSchemaRegistryURL string                         `json:"confluent_cloud_schema_registry_url"`
+	SchemaRegistries                []SchemaRegistryExporterConfig `json:"schema_registries"`
 }
 
 type SchemaRegistryExporterConfig struct {
-	// just default all to NONE context type for now
-	ContextType                     string   `json:"context_type" default:"NONE"`
-	Enabled                         bool     `json:"enabled"`
-	Subjects                        []string `json:"subjects"`
-	ConfluentCloudSchemaRegistryURL string   `json:"confluent_cloud_schema_registry_url"`
-	SourceURL                       string   `json:"source_url"`
+	Migrate     bool     `json:"migrate"`
+	Subjects    []string `json:"subjects"`
+	SourceURL   string   `json:"source_url"`
 }
 
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure

@@ -58,7 +58,7 @@ func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig) *
 	exporterBlock.Body().SetAttributeRaw("subjects", utils.TokensForVarReference(VarSubjects))
 
 	// context_type attribute
-	exporterBlock.Body().SetAttributeValue("context_type", cty.StringVal(schemaRegistry.ContextType))
+	exporterBlock.Body().SetAttributeValue("context_type", cty.StringVal("NONE"))
 	exporterBlock.Body().AppendNewline()
 
 	// destination_schema_registry_cluster block

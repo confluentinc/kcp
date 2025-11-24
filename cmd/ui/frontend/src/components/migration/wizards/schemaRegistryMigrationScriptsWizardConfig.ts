@@ -164,9 +164,37 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
     title: 'Schema Migration Scripts Wizard',
     description: 'Select subjects from each schema registry to migrate',
     apiEndpoint: '/assets/migration-scripts/schemas',
-    initial: 'subject_selection',
+    initial: 'confluent_cloud_schema_registry_url',
 
     states: {
+      confluent_cloud_schema_registry_url: {
+        meta: {
+          title: 'Confluent Cloud Schema Registry URL',
+          description: 'Enter the URL for your Confluent Cloud schema registry',
+          schema: {
+            type: 'object',
+            properties: {
+              confluent_cloud_schema_registry_url: {
+                type: 'string',
+                title: 'Confluent Cloud Schema Registry URL',
+                format: 'uri',
+              },
+            },
+            required: ['confluent_cloud_schema_registry_url'],
+          },
+          uiSchema: {
+            confluent_cloud_schema_registry_url: {
+              'ui:placeholder': 'e.g., https://psrc-xxxxx.us-east-2.aws.confluent.cloud',
+            },
+          },
+        },
+        on: {
+          NEXT: {
+            target: 'subject_selection',
+            actions: 'save_step_data',
+          },
+        },
+      },
       subject_selection: {
         meta: {
           title: 'Select Subjects',
@@ -178,6 +206,10 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           NEXT: {
             target: 'confirmation',
             actions: 'save_step_data',
+          },
+          BACK: {
+            target: 'confluent_cloud_schema_registry_url',
+            actions: 'undo_save_step_data',
           },
         },
       },
