@@ -31,22 +31,25 @@ func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.Terraform
 	}, nil
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (map[string]types.TerraformFiles, error) {
-	// for each schema registry, generate the terraform files in a folder
-	folders := make(map[string]types.TerraformFiles)
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.MigrationScriptsTerraformProject, error) {
+	ms := types.MigrationScriptsTerraformProject{}
+	folders := []types.MigrationScriptsTerraformFolder{}
 	for _, schemaRegistry := range request.SchemaRegistries {
 		folderName := utils.URLToFolderName(schemaRegistry.SourceURL)
-		tfFiles := types.TerraformFiles{
+		folder := types.MigrationScriptsTerraformFolder{
+			Name:             folderName,
 			MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
 			ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
 			VariablesTf:      s.generateMigrateSchemasVariablesTf(),
 			InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(schemaRegistry.ConfluentCloudSchemaRegistryURL, schemaRegistry),
 		}
 
-		folders[folderName] = tfFiles
+		folders = append(folders, folder)
 	}
 
-	return folders, nil
+	ms.Folders = folders
+
+	return ms, nil
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateConnectorsFiles() (types.TerraformFiles, error) {

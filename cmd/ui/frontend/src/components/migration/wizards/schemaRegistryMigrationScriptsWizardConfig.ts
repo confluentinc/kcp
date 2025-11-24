@@ -23,7 +23,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
     const subjectNames = registry.subjects.map((subject) => subject.name)
     return {
       id: key,
-      url: registry.url,
+      source_url: registry.url,
       migrate: true,
       subjects: subjectNames,
     }
@@ -66,7 +66,7 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
               readOnly: true,
               enum: schemaRegistries.map((r) => sanitizeUrlToKey(r.url)),
             },
-            url: {
+            source_url: {
               type: 'string',
               title: 'Schema Registry URL',
               readOnly: true,
@@ -138,11 +138,11 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
       'ui:title': 'Schema Registries',
       items: {
         'ui:title': '',
-        'ui:order': ['url', 'id', 'migrate', 'subjects'],
+        'ui:order': ['source_url', 'id', 'migrate', 'subjects'],
         id: {
           'ui:widget': 'hidden',
         },
-        url: {
+        source_url: {
           'ui:widget': 'text',
           'ui:readonly': true,
         },

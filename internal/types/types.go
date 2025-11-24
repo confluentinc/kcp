@@ -197,7 +197,7 @@ type MigrateTopicsRequest struct {
 }
 
 type MigrateSchemasRequest struct {
-	SchemaRegistries                []SchemaRegistryExporterConfig `json:"schema_registries"`
+	SchemaRegistries []SchemaRegistryExporterConfig `json:"schema_registries"`
 }
 
 type SchemaRegistryExporterConfig struct {
@@ -229,4 +229,19 @@ type MigrationInfraTerraformProject struct {
 	VariablesTf      string                          `json:"variables.tf"`
 	InputsAutoTfvars string                          `json:"inputs.auto.tfvars"`
 	Modules          []MigrationInfraTerraformModule `json:"modules"`
+}
+
+// MigrationScriptsTerraformProject represents the complete Terraform configuration for migration scripts
+type MigrationScriptsTerraformProject struct {
+	// not really a module, but its the same structure
+	Folders []MigrationScriptsTerraformFolder `json:"modules"`
+}
+
+// MigrationScriptsTerraformFolder represents a Terraform folder within the migration scripts
+type MigrationScriptsTerraformFolder struct {
+	Name             string `json:"name"`
+	MainTf           string `json:"main.tf"`
+	ProvidersTf      string `json:"providers.tf"`
+	VariablesTf      string `json:"variables.tf"`
+	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
 }

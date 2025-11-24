@@ -409,10 +409,10 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFolders, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
+	migrationScriptsProject, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform folders",
+			"error":   "Failed to generate Migration Scripts project",
 			"message": err.Error(),
 		})
 	}
@@ -426,5 +426,24 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	// 	})
 	// }
 	// fmt.Println(string(json))
-	return c.JSON(http.StatusCreated, terraformFolders)
+	return c.JSON(http.StatusCreated, migrationScriptsProject)
 }
+
+/*
+{
+    "main.tf": "module \"cluster_link\" {\n  source = \"./cluster_link\"\n\n  confluent_cloud_api_key            = var.confluent_cloud_api_key\n  confluent_cloud_api_secret         = var.confluent_cloud_api_secret\n  msk_sasl_scram_username            = var.msk_sasl_scram_username\n  msk_sasl_scram_password            = var.msk_sasl_scram_password\n  confluent_cloud_cluster_api_key    = var.confluent_cloud_cluster_api_key\n  confluent_cloud_cluster_api_secret = var.confluent_cloud_cluster_api_secret\n}\n",
+    "providers.tf": "terraform {\n  required_providers {\n    confluent = {\n      source  = \"confluentinc/confluent\"\n      version = \"2.50.0\"\n    }\n  }\n}\n\nprovider \"confluent\" {\n  cloud_api_key    = var.confluent_cloud_api_key\n  cloud_api_secret = var.confluent_cloud_api_secret\n}\n\n",
+    "variables.tf": "variable \"confluent_cloud_api_key\" {\n  type        = string\n  description = \"Confluent Cloud API Key\"\n}\n\nvariable \"confluent_cloud_api_secret\" {\n  type        = string\n  description = \"Confluent Cloud API Secret\"\n  sensitive   = true\n}\n\nvariable \"msk_sasl_scram_username\" {\n  type        = string\n  description = \"MSK SASL SCRAM Username\"\n}\n\nvariable \"msk_sasl_scram_password\" {\n  type        = string\n  description = \"MSK SASL SCRAM Password\"\n  sensitive   = true\n}\n\nvariable \"confluent_cloud_cluster_api_key\" {\n  type        = string\n  description = \"Confluent Cloud cluster API key\"\n}\n\nvariable \"confluent_cloud_cluster_api_secret\" {\n  type        = string\n  description = \"Confluent Cloud cluster API secret\"\n  sensitive   = true\n}\n\n",
+    "inputs.auto.tfvars": "",
+    "modules": [
+        {
+            "name": "cluster_link",
+            "main.tf": "locals {\n  basic_auth_credentials = base64encode(\"${var.confluent_cloud_cluster_api_key}:${var.confluent_cloud_cluster_api_secret}\")\n}\n\nresource \"null_resource\" \"confluent_cluster_link\" {\n  triggers = {\n    source_cluster_id      = \"3Db5QLSqSZieL3rJBUUegA\"\n    destination_cluster_id = \"esffsdsd\"\n    bootstrap_servers      = \"b-2-public.publicretentionenvclus.i3n4q4.c2.kafka.eu-west-3.amazonaws.com:9196,b-1-public.publicretentionenvclus.i3n4q4.c2.kafka.eu-west-3.amazonaws.com:9196,b-3-public.publicretentionenvclus.i3n4q4.c2.kafka.eu-west-3.amazonaws.com:9196\"\n  }\n\n  provisioner \"local-exec\" {\n    command = \u003c\u003c-EOT\n    curl --request POST \\\n  --url 'dfsdffd/kafka/v3/clusters/esffsdsd/links/?link_name=dsgdffd' \\\n  --header 'Authorization: Basic ${local.basic_auth_credentials}' \\\n  --header \"Content-Type: application/json\" \\\n  --data '{\n    \"source_cluster_id\": \"3Db5QLSqSZieL3rJBUUegA\",\n    \"configs\": [\n      {\n        \"name\": \"bootstrap.servers\",\n        \"value\": \"b-2-public.publicretentionenvclus.i3n4q4.c2.kafka.eu-west-3.amazonaws.com:9196,b-1-public.publicretentionenvclus.i3n4q4.c2.kafka.eu-west-3.amazonaws.com:9196,b-3-public.publicretentionenvclus.i3n4q4.c2.kafka.eu-west-3.amazonaws.com:9196\"\n      },\n      {\n        \"name\": \"link.mode\",\n        \"value\": \"DESTINATION\"\n      },\n      {\n        \"name\": \"security.protocol\",\n        \"value\": \"SASL_SSL\"\n      },\n      {\n        \"name\": \"sasl.mechanism\",\n        \"value\": \"SCRAM-SHA-512\"\n      },\n      {\n        \"name\": \"sasl.jaas.config\",\n        \"value\": \"org.apache.kafka.common.security.scram.ScramLoginModule required username=\\\"${var.msk_sasl_scram_username}\\\" password=\\\"${var.msk_sasl_scram_password}\\\";\"\n      }\n    ]\n  }'\n    EOT\n  }\n}\n\n",
+            "variables.tf": "variable \"confluent_cloud_api_key\" {\n  type        = string\n  description = \"Confluent Cloud API Key\"\n}\n\nvariable \"confluent_cloud_api_secret\" {\n  type        = string\n  description = \"Confluent Cloud API Secret\"\n  sensitive   = true\n}\n\nvariable \"msk_sasl_scram_username\" {\n  type        = string\n  description = \"MSK SASL SCRAM Username\"\n}\n\nvariable \"msk_sasl_scram_password\" {\n  type        = string\n  description = \"MSK SASL SCRAM Password\"\n  sensitive   = true\n}\n\nvariable \"confluent_cloud_cluster_api_key\" {\n  type        = string\n  description = \"Confluent Cloud cluster API key\"\n}\n\nvariable \"confluent_cloud_cluster_api_secret\" {\n  type        = string\n  description = \"Confluent Cloud cluster API secret\"\n  sensitive   = true\n}\n\n",
+            "outputs.tf": "",
+            "versions.tf": "",
+            "additional_files": null
+        }
+    ]
+}
+*/
