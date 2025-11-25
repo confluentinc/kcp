@@ -163,7 +163,7 @@ export const convertTerraformFilesToTree = (files: TerraformFiles | null): TreeN
         'outputs.tf',
         'versions.tf',
 
-        // todo additional files for scripts flow
+        // additional files for scripts flow
         'providers.tf',
         'inputs.auto.tfvars',
       ]
@@ -263,7 +263,7 @@ export const flattenTerraformFiles = (files: TerraformFiles | null): Record<stri
         'outputs.tf',
         'versions.tf',
 
-        // todo additional files for scripts flow
+        // additional files for scripts flow
         'providers.tf',
         'inputs.auto.tfvars',
       ]
