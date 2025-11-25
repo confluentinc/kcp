@@ -80,7 +80,6 @@ export const MigrationPhaseCard = ({
                 size="sm"
                 onClick={onGenerate}
                 className="flex-1"
-                disabled={phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS}
               >
                 {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
                   ? 'Generate Migration Assets'
@@ -101,7 +100,6 @@ export const MigrationPhaseCard = ({
               size="sm"
               onClick={onGenerate}
               className="w-auto"
-              disabled={phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS}
             >
               {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
                 ? 'Generate Assets'

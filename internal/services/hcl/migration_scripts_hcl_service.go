@@ -31,12 +31,27 @@ func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.Terraform
 	}, nil
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.TerraformFiles, error) {
-	return types.TerraformFiles{
-		MainTf:      s.generateMigrateSchemasMainTf(request),
-		ProvidersTf: s.generateMigrateSchemasProvidersTf(),
-		VariablesTf: s.generateMigrateSchemasVariablesTf(),
-	}, nil
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.MigrationScriptsTerraformProject, error) {
+	ms := types.MigrationScriptsTerraformProject{}
+	folders := []types.MigrationScriptsTerraformFolder{}
+	for _, schemaRegistry := range request.SchemaRegistries {
+		if schemaRegistry.Migrate {
+			folderName := utils.URLToFolderName(schemaRegistry.SourceURL)
+			folder := types.MigrationScriptsTerraformFolder{
+				Name:             folderName,
+				MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
+				ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
+				VariablesTf:      s.generateMigrateSchemasVariablesTf(),
+				InputsAutoTfvars: s.generateMigrateSchemasInputsAutoTfvars(request.ConfluentCloudSchemaRegistryURL, schemaRegistry),
+			}
+
+			folders = append(folders, folder)
+		}
+	}
+
+	ms.Folders = folders
+
+	return ms, nil
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateConnectorsFiles() (types.TerraformFiles, error) {
@@ -154,14 +169,12 @@ func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() stri
 // Migrate Schemas Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(request types.MigrateSchemasRequest) string {
+func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(schemaRegistry types.SchemaRegistryExporterConfig) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	for _, exporter := range request.Exporters {
-		rootBody.AppendBlock(confluent.GenerateSchemaExporter(exporter))
-		rootBody.AppendNewline()
-	}
+	rootBody.AppendBlock(confluent.GenerateSchemaExporter(schemaRegistry))
+	rootBody.AppendNewline()
 
 	return string(f.Bytes())
 }
@@ -192,7 +205,8 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string 
 	for _, v := range confluent.SchemaExporterVariables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
 		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
+
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
 		if v.Description != "" {
 			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
 		}
@@ -201,6 +215,18 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string 
 		}
 		rootBody.AppendNewline()
 	}
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateSchemasInputsAutoTfvars(confluentCloudSchemaRegistryURL string, schemaRegistry types.SchemaRegistryExporterConfig) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	// hard code :(
+	rootBody.SetAttributeValue(confluent.VarSourceSchemaRegistryURL, cty.StringVal(schemaRegistry.SourceURL))
+	rootBody.SetAttributeRaw(confluent.VarSubjects, utils.TokensForStringList(schemaRegistry.Subjects))
+	rootBody.SetAttributeValue(confluent.VarConfluentCloudSchemaRegistryURL, cty.StringVal(confluentCloudSchemaRegistryURL))
 
 	return string(f.Bytes())
 }
