@@ -2,7 +2,11 @@ import { useState } from 'react'
 import { FileText, MessageSquare, Shield, ArrowLeft, Image } from 'lucide-react'
 import { WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
-import { Wizard, createSchemaRegistryMigrationScriptsWizardConfig } from '@/components/migration/wizards'
+import {
+    Wizard,
+    createSchemaRegistryMigrationScriptsWizardConfig,
+    createMirrorTopicsMigrationScriptsWizardConfig,
+} from '@/components/migration/wizards'
 
 interface MigrationScriptsSelectionProps {
     clusterArn: string
@@ -33,8 +37,8 @@ export const MigrationScriptsSelection = ({
 
     // If a wizard is selected, show that wizard or placeholder
     if (selectedWizardType) {
-        // Show placeholder for ACLs and Topics for now
-        if (selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS || selectedWizardType === WIZARD_TYPES.MIGRATE_TOPICS) {
+        // Show placeholder for ACLs for now
+        if (selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS) {
             return (
                 <div className="relative flex flex-col items-center justify-center p-12 min-h-[400px]">
                     <button
@@ -48,8 +52,7 @@ export const MigrationScriptsSelection = ({
                         <Image className="w-16 h-16 text-gray-400 dark:text-gray-500" />
                     </div>
                     <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                        {selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS && 'ACL Migration Scripts'}
-                        {selectedWizardType === WIZARD_TYPES.MIGRATE_TOPICS && 'Topic Migration Scripts'}
+                        ACL Migration Scripts
                     </h3>
                     <p className="text-gray-600 dark:text-gray-400 mb-6">
                         Coming soon - This wizard is under development
@@ -58,7 +61,19 @@ export const MigrationScriptsSelection = ({
             )
         }
 
-        // Show wizard for schema registry
+        // Get the appropriate wizard config based on type
+        const getWizardConfig = () => {
+            switch (selectedWizardType) {
+                case WIZARD_TYPES.MIGRATE_SCHEMAS:
+                    return createSchemaRegistryMigrationScriptsWizardConfig()
+                case WIZARD_TYPES.MIGRATE_TOPICS:
+                    return createMirrorTopicsMigrationScriptsWizardConfig()
+                default:
+                    return createSchemaRegistryMigrationScriptsWizardConfig()
+            }
+        }
+
+        // Show wizard for schema registry or mirror topics
         return (
             <div className="relative">
                 <button
@@ -69,7 +84,7 @@ export const MigrationScriptsSelection = ({
                     Back to Selection
                 </button>
                 <Wizard
-                    config={createSchemaRegistryMigrationScriptsWizardConfig()}
+                    config={getWizardConfig()}
                     clusterKey={clusterArn}
                     wizardType={selectedWizardType}
                     onComplete={handleWizardComplete}
