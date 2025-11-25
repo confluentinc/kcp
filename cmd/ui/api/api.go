@@ -408,13 +408,13 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
+	migrationScriptsProject, err := ui.migrationScriptsHCLService.GenerateMigrateSchemasFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
-			"error":   "Failed to generate Terraform files",
+			"error":   "Failed to generate Migration Scripts project",
 			"message": err.Error(),
 		})
 	}
 
-	return c.JSON(http.StatusCreated, terraformFiles)
+	return c.JSON(http.StatusCreated, migrationScriptsProject)
 }

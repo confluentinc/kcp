@@ -90,6 +90,12 @@ func TokensForStringList(items []string) hclwrite.Tokens {
 	return hclwrite.TokensForValue(cty.ListVal(values))
 }
 
+func TokensForComment(comment string) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenComment, Bytes: []byte(comment)},
+	}
+}
+
 // TokensForFunctionCall creates tokens for a function call with a string template argument
 // e.g., base64encode("${var.key}:${var.secret}")
 func TokensForFunctionCall(functionName string, args ...hclwrite.Tokens) hclwrite.Tokens {

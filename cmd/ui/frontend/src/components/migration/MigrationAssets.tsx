@@ -6,7 +6,6 @@ import {
   Wizard,
   createTargetInfraWizardConfig,
   createMigrationInfraWizardConfig,
-  createMigrationScriptsWizardConfig,
 } from '@/components/migration/wizards'
 import type { Cluster, WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
@@ -15,6 +14,7 @@ import { getWizardTitle, getWizardFilesTitle } from '@/lib/wizardUtils'
 import { MigrationFlow } from './MigrationFlow'
 import { ClusterAccordion } from './ClusterAccordion'
 import { TerraformFileViewer } from './TerraformFileViewer'
+import { MigrationScriptsSelection } from './MigrationScriptsSelection'
 
 export const MigrationAssets = () => {
   const regions = useRegions()
@@ -85,7 +85,16 @@ export const MigrationAssets = () => {
     setSelectedClusterForWizard(null)
   }
 
-  const handleWizardComplete = (clusterKey: string) => {
+  const handleMigrationScriptsComplete = (selectedWizardType: WizardType) => {
+    if (selectedClusterForWizard) {
+      const clusterArn = getClusterArn(selectedClusterForWizard.cluster)
+      if (clusterArn) {
+        handleWizardComplete(clusterArn, selectedWizardType, selectedClusterForWizard.cluster.name)
+      }
+    }
+  }
+
+  const handleWizardComplete = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
     // Close the wizard
     setIsWizardOpen(false)
     setWizardType(null)
@@ -93,6 +102,9 @@ export const MigrationAssets = () => {
 
     // Expand the cluster
     setExpandedCluster(clusterKey)
+
+    // Open the file viewer modal to show the generated Terraform files
+    handleViewTerraform(clusterKey, wizardType, clusterName)
   }
 
   const toggleCluster = (clusterKey: string) => {
@@ -199,7 +211,9 @@ export const MigrationAssets = () => {
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {
-                    if (clusterArn) handleWizardComplete(clusterArn)
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.TARGET_INFRA, selectedClusterForWizard.cluster.name)
+                    }
                   }}
                   onClose={handleCloseWizard}
                 />
@@ -210,19 +224,17 @@ export const MigrationAssets = () => {
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {
-                    if (clusterArn) handleWizardComplete(clusterArn)
+                    if (clusterArn) {
+                      handleWizardComplete(clusterArn, WIZARD_TYPES.MIGRATION_INFRA, selectedClusterForWizard.cluster.name)
+                    }
                   }}
                   onClose={handleCloseWizard}
                 />
               )}
               {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && (
-                <Wizard
-                  config={createMigrationScriptsWizardConfig(clusterArn)}
-                  clusterKey={clusterArn}
-                  wizardType={wizardType}
-                  onComplete={() => {
-                    if (clusterArn) handleWizardComplete(clusterArn)
-                  }}
+                <MigrationScriptsSelection
+                  clusterArn={clusterArn}
+                  onComplete={handleMigrationScriptsComplete}
                   onClose={handleCloseWizard}
                 />
               )}
