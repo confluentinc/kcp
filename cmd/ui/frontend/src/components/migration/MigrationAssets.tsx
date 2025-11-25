@@ -119,15 +119,40 @@ export const MigrationAssets = () => {
   }
 
   const getPhaseStatus = (clusterKey: string, wizardType: WizardType): 'completed' | 'pending' => {
+    // For MIGRATION_SCRIPTS, check if any of the sub-types have files
+    if (wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS) {
+      const hasSchemas = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_SCHEMAS)
+      const hasTopics = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_TOPICS)
+      const hasAcls = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_ACLS)
+      return (hasSchemas || hasTopics || hasAcls) ? 'completed' : 'pending'
+    }
+    
     const files = getTerraformFiles(clusterKey, wizardType)
     return files ? 'completed' : 'pending'
   }
 
   const handleViewTerraform = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
+    // For MIGRATION_SCRIPTS, determine which specific sub-type to show
+    let actualWizardType = wizardType
+    if (wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS) {
+      // Check which sub-types have files and pick the first available one
+      const hasTopics = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_TOPICS)
+      const hasSchemas = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_SCHEMAS)
+      const hasAcls = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_ACLS)
+      
+      if (hasTopics) {
+        actualWizardType = WIZARD_TYPES.MIGRATE_TOPICS
+      } else if (hasSchemas) {
+        actualWizardType = WIZARD_TYPES.MIGRATE_SCHEMAS
+      } else if (hasAcls) {
+        actualWizardType = WIZARD_TYPES.MIGRATE_ACLS
+      }
+    }
+    
     setFileViewerModal({
       isOpen: true,
       clusterKey,
-      wizardType,
+      wizardType: actualWizardType,
       clusterName,
     })
   }
