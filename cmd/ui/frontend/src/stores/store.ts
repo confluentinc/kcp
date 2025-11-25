@@ -38,6 +38,9 @@ interface MigrationAssets {
     [WIZARD_TYPES.TARGET_INFRA]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATION_INFRA]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATION_SCRIPTS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_SCHEMAS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_TOPICS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_ACLS]: TerraformFiles | null
   }
 }
 
@@ -667,4 +670,16 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
   }
 
   return null
+}
+
+// Utility function to get all schema registries from state
+export const getAllSchemaRegistries = (): SchemaRegistry[] => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState?.schema_registries) {
+    return []
+  }
+
+  return kcpState.schema_registries
 }

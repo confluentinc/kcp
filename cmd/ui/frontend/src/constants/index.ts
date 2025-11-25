@@ -47,6 +47,9 @@ export const WIZARD_TYPES = {
   TARGET_INFRA: 'target-infra',
   MIGRATION_INFRA: 'migration-infra',
   MIGRATION_SCRIPTS: 'migration-scripts',
+  MIGRATE_SCHEMAS: 'migrate-schemas',
+  MIGRATE_TOPICS: 'migrate-topics',
+  MIGRATE_ACLS: 'migrate-acls',
 } as const
 
 /**

@@ -61,3 +61,29 @@ func TestConvertKafkaVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestURLToFolderName(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedOutput string
+	}{
+		{
+			name:           "http://localhost:8081 should convert to localhost_8081",
+			input:          "http://localhost:8081",
+			expectedOutput: "localhost_8081",
+		},
+		{
+			name: "",
+			input:          "https://psrc-ab123.us-east-2.aws.confluent.cloud",
+			expectedOutput: "psrc-ab123_us-east-2_aws_confluent_cloud",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := URLToFolderName(tt.input)
+			assert.Equal(t, tt.expectedOutput, result, "URLToFolderName should return expected output")
+		})
+	}
+}

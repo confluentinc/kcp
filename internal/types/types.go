@@ -197,15 +197,14 @@ type MigrateTopicsRequest struct {
 }
 
 type MigrateSchemasRequest struct {
-	SourceSchemaRegistryURL string     `json:"source_schema_registry_url"`
-	Exporters               []Exporter `json:"exporters"`
+	ConfluentCloudSchemaRegistryURL string                         `json:"confluent_cloud_schema_registry_url"`
+	SchemaRegistries                []SchemaRegistryExporterConfig `json:"schema_registries"`
 }
 
-type Exporter struct {
-	Name        string   `json:"name"`
-	ContextType string   `json:"context_type"`
-	ContextName string   `json:"context_name"`
+type SchemaRegistryExporterConfig struct {
+	Migrate     bool     `json:"migrate"`
 	Subjects    []string `json:"subjects"`
+	SourceURL   string   `json:"source_url"`
 }
 
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure
@@ -227,4 +226,19 @@ type MigrationInfraTerraformProject struct {
 	VariablesTf      string                          `json:"variables.tf"`
 	InputsAutoTfvars string                          `json:"inputs.auto.tfvars"`
 	Modules          []MigrationInfraTerraformModule `json:"modules"`
+}
+
+// MigrationScriptsTerraformProject represents the complete Terraform configuration for migration scripts
+type MigrationScriptsTerraformProject struct {
+	// not really a module, but its the same structure
+	Folders []MigrationScriptsTerraformFolder `json:"modules"`
+}
+
+// MigrationScriptsTerraformFolder represents a Terraform folder within the migration scripts
+type MigrationScriptsTerraformFolder struct {
+	Name             string `json:"name"`
+	MainTf           string `json:"main.tf"`
+	ProvidersTf      string `json:"providers.tf"`
+	VariablesTf      string `json:"variables.tf"`
+	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
 }

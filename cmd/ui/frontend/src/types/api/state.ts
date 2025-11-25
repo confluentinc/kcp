@@ -6,6 +6,8 @@ import type { Region } from '@/types'
 export interface SchemaRegistry {
   type: string
   url: string
+  default_compatibility: string
+  contexts: Array<string>
   subjects: Array<{
     name: string
     schema_type: string
