@@ -168,7 +168,9 @@ func (u *Updater) createBackup(source, backup string) error {
 
 	// Check if we need sudo
 	if u.needsSudo(source) {
-		return exec.Command("sudo", "cp", source, backup).Run()
+		if err := exec.Command("sudo", "cp", source, backup).Run(); err != nil {
+			return fmt.Errorf("failed to create backup with sudo: %w", err)
+		}
 	}
 
 	return u.copyFile(source, backup)
