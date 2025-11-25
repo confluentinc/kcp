@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	VarConfluentCloudAPIKey = "confluent_cloud_api_key"
+	VarConfluentCloudAPIKey    = "confluent_cloud_api_key"
 	VarConfluentCloudAPISecret = "confluent_cloud_api_secret"
 )
 
@@ -19,7 +19,7 @@ var ConfluentProviderVariables = []types.TerraformVariable{
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	confluentProvider := map[string]hclwrite.Tokens{
 		"source":  utils.TokensForStringTemplate("confluentinc/confluent"),
-		"version": utils.TokensForStringTemplate("~> 2.5"),
+		"version": utils.TokensForStringTemplate("~> 2.0"),
 	}
 
 	return "confluent", utils.TokensForMap(confluentProvider)

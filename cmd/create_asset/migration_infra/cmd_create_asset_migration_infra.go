@@ -85,6 +85,16 @@ func NewMigrationInfraCmd() *cobra.Command {
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, typeOneFlags, typeTwoFlags}
 		groupNames := []string{"Required Flags", "Optional Flags", "Type 1 Flags", "Type 2 Flags"}
 
+		if c.HasAvailableSubCommands() {
+			fmt.Println("Available subcommands:")
+			for _, subCmd := range c.Commands() {
+				if !subCmd.Hidden {
+					fmt.Printf("  %-20s %s\n", subCmd.Name(), subCmd.Short)
+				}
+			}
+			fmt.Println()
+		}
+
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
@@ -100,6 +110,8 @@ func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd.MarkFlagRequired("state-file")
 	migrationInfraCmd.MarkFlagRequired("cluster-arn")
 	migrationInfraCmd.MarkFlagRequired("type")
+
+	migrationInfraCmd.AddCommand(NewExternalOutboundCmd())
 
 	return migrationInfraCmd
 }
