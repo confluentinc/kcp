@@ -67,7 +67,7 @@ export const MigrationScriptsSelection = ({
                 case WIZARD_TYPES.MIGRATE_SCHEMAS:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
                 case WIZARD_TYPES.MIGRATE_TOPICS:
-                    return createMirrorTopicsMigrationScriptsWizardConfig()
+                    return createMirrorTopicsMigrationScriptsWizardConfig(clusterArn)
                 default:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
             }

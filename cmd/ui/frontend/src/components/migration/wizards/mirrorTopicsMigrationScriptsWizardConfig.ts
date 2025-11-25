@@ -1,19 +1,21 @@
 import type { WizardConfig } from './types'
 import { getClusterDataByArn } from '@/stores/store'
-import type { Topic } from '@/types/aws/msk'
 
-export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig => {
+export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterArn: string): WizardConfig => {
   const cluster = getClusterDataByArn(clusterArn)
 
   const topics = cluster?.kafka_admin_client_information?.topics?.details || []
-  const topicNames = topics.filter((topic: Topic) => !topic.name.startsWith('__')).map((topic: Topic) => topic.name)
+  const topicNames = topics.filter((topic: any) => !topic.name.startsWith('__')).map((topic: any) => topic.name)
+  const topicEnumValues = topicNames.length > 0 ? topicNames : ['No topics available']
+
+  console.log(topicEnumValues)
 
   return {
     id: 'mirror-topics-migration-scripts-wizard',
     title: 'Mirror Topics Migration Scripts Wizard',
     description: 'Configure your mirror topics migration scripts',
     apiEndpoint: '/assets/migration-scripts/topics',
-    initial: 'mirror_topics_question',
+    initial: 'target_cluster_inputs',
 
     states: {
       target_cluster_inputs: {
@@ -22,38 +24,77 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
           schema: {
             type: 'object',
             properties: {
-              target_environment_id: {
-                type: 'boolean',
-                title: 'I need to create a new Confluent Cloud environment',
-                default: true,
+              target_cluster_id: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster ID',
+              },
+              target_cluster_rest_endpoint: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster REST Endpoint',
+              },
+              cluster_link_name: {
+                type: 'string',
+                title: 'Cluster Link Name',
               },
             },
-            required: ['needs_environment'],
+            required: ['target_cluster_id', 'target_cluster_rest_endpoint', 'cluster_link_name'],
           },
           uiSchema: {
-            needs_environment: {
-              'ui:widget': 'radio',
+            target_cluster_id: {
+              'ui:placeholder': 'e.g., lkc-xxxxxx',
+            },
+            target_cluster_rest_endpoint: {
+              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
+            },
+            cluster_link_name: {
+              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
             },
           },
         },
         on: {
           NEXT: [
             {
-              target: 'create_environment',
-              guard: 'needs_environment',
-              actions: 'save_step_data',
-            },
-            {
-              target: 'cluster_question',
-              guard: 'does_not_need_environment',
-              actions: 'save_step_data',
-            },
-            {
-              target: 'cluster_question',
-              guard: 'needs_environment',
+              target: 'topic_selection',
               actions: 'save_step_data',
             },
           ],
+        },
+      },
+      topic_selection: {
+        meta: {
+          title: 'Select Topics to Mirror',
+          description: `Select the topics you wish to generate mirror topic scripts for from ${cluster?.name}.`,
+          schema: {
+            type: 'object',
+            properties: {
+              selected_topics: {
+                type: 'array',
+                title: 'Topics',
+                description: `Select one or more topics to mirror (${topicNames.length} topics available)`,
+                items: {
+                  type: 'string',
+                  enum: topicEnumValues,
+                },
+                uniqueItems: true,
+                minItems: 1,
+              },
+            },
+            required: ['selected_topics'],
+          },
+          uiSchema: {
+            selected_topics: {
+              'ui:widget': 'checkboxes',
+              'ui:options': {
+                enum: topicEnumValues,
+              },
+            },
+          },
+        },
+        on: {
+          NEXT: {
+            target: 'confirmation',
+            actions: 'save_step_data',
+          },
         },
       },
       confirmation: {
@@ -67,17 +108,7 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
           },
           BACK: [
             {
-              target: 'create_private_link',
-              guard: 'came_from_create_private_link',
-              actions: 'undo_save_step_data',
-            },
-            {
-              target: 'private_link_question',
-              guard: 'came_from_private_link_question',
-              actions: 'undo_save_step_data',
-            },
-            {
-              target: 'cluster_question',
+              target: 'topic_selection',
               actions: 'undo_save_step_data',
             },
           ],
@@ -87,17 +118,14 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
         type: 'final',
         meta: {
           title: 'Configuration Complete',
-          message: 'Your Confluent Cloud configuration is ready to be processed...',
+          message: 'Your mirror topics migration scripts are ready to be processed...',
         },
       },
     },
 
     guards: {
-      needs_environment: ({ event }) => {
-        return event.data?.needs_environment === true
-      },
-      came_from_private_link_question: ({ context }) => {
-        return context.previousStep === 'private_link_question'
+      came_from_topic_selection: ({ context }) => {
+        return context.previousStep === 'topic_selection'
       },
     },
 
