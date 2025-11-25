@@ -252,11 +252,26 @@ func (u *Updater) extractAndInstall(gzipReader io.Reader, targetPath string) err
 
 func (u *Updater) installBinary(newBinary, targetPath string) error {
 	slog.Info("Installing new binary...")
+	slog.Info("installBinary: [1] Starting installation", "newBinary", newBinary, "targetPath", targetPath)
 
-	if u.needsSudo(targetPath) {
-		return exec.Command("sudo", "cp", newBinary, targetPath).Run()
+	slog.Info("installBinary: [2] Checking if sudo is required", "targetPath", targetPath)
+	needsSudo := u.needsSudo(targetPath)
+	slog.Info("installBinary: [2] Sudo check completed", "needsSudo", needsSudo, "targetPath", targetPath)
+
+	if needsSudo {
+		slog.Info("installBinary: [3] Taking sudo path", "newBinary", newBinary, "targetPath", targetPath)
+		slog.Info("installBinary: [4] Executing sudo cp command", "source", newBinary, "dest", targetPath)
+		err := exec.Command("sudo", "cp", newBinary, targetPath).Run()
+		if err != nil {
+			slog.Error("installBinary: [4] Failed to copy with sudo", "error", err, "newBinary", newBinary, "targetPath", targetPath)
+			return err
+		}
+		slog.Info("installBinary: [4] Successfully copied with sudo", "targetPath", targetPath)
+		slog.Info("installBinary: [5] Sudo path completed successfully")
+		return nil
 	}
 
+	slog.Info("installBinary: [3] Taking non-sudo path, calling copyFile", "newBinary", newBinary, "targetPath", targetPath)
 	return u.copyFile(newBinary, targetPath)
 }
 
@@ -272,38 +287,73 @@ func (u *Updater) rollback(backupPath, targetPath string) {
 }
 
 func (u *Updater) needsSudo(path string) bool {
+	slog.Info("needsSudo: [1] Starting sudo check", "path", path)
+
 	dir := filepath.Dir(path)
+	slog.Info("needsSudo: [2] Extracted directory", "dir", dir, "path", path)
+
+	slog.Info("needsSudo: [3] Attempting to create test file", "dir", dir)
 	testFile, err := os.CreateTemp(dir, ".kcp-test-*")
 	if err != nil {
+		slog.Info("needsSudo: [3] Failed to create test file, assuming sudo needed", "error", err, "dir", dir)
 		return true // Assume sudo needed if we can't test
 	}
+	slog.Info("needsSudo: [3] Successfully created test file", "testFile", testFile.Name())
+
+	slog.Info("needsSudo: [4] Closing test file", "testFile", testFile.Name())
 	testFile.Close()
+
+	slog.Info("needsSudo: [5] Removing test file", "testFile", testFile.Name())
 	os.Remove(testFile.Name())
+	slog.Info("needsSudo: [5] Successfully removed test file")
+
+	slog.Info("needsSudo: [6] Sudo not needed, returning false")
 	return false
 }
 
 func (u *Updater) copyFile(src, dst string) error {
+	slog.Info("copyFile: [1] Starting file copy", "src", src, "dst", dst)
+
+	slog.Info("copyFile: [2] Opening source file", "src", src)
 	sourceFile, err := os.Open(src)
 	if err != nil {
+		slog.Error("copyFile: [2] Failed to open source file", "error", err, "src", src)
 		return err
 	}
 	defer sourceFile.Close()
+	slog.Info("copyFile: [2] Successfully opened source file")
 
+	slog.Info("copyFile: [3] Creating destination file", "dst", dst)
 	destFile, err := os.Create(dst)
 	if err != nil {
+		slog.Error("copyFile: [3] Failed to create destination file", "error", err, "dst", dst)
 		return err
 	}
 	defer destFile.Close()
+	slog.Info("copyFile: [3] Successfully created destination file")
 
+	slog.Info("copyFile: [4] Copying content from source to destination")
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		slog.Error("copyFile: [4] Failed to copy content", "error", err, "src", src, "dst", dst)
 		return err
 	}
+	slog.Info("copyFile: [4] Successfully copied content")
 
-	// Copy permissions
+	slog.Info("copyFile: [5] Getting source file info for permissions", "src", src)
 	sourceInfo, err := os.Stat(src)
 	if err != nil {
+		slog.Error("copyFile: [5] Failed to stat source file", "error", err, "src", src)
 		return err
 	}
+	slog.Info("copyFile: [5] Successfully got source file info", "mode", sourceInfo.Mode())
 
-	return os.Chmod(dst, sourceInfo.Mode())
+	slog.Info("copyFile: [6] Setting permissions on destination file", "dst", dst, "mode", sourceInfo.Mode())
+	if err := os.Chmod(dst, sourceInfo.Mode()); err != nil {
+		slog.Error("copyFile: [6] Failed to set permissions", "error", err, "dst", dst)
+		return err
+	}
+	slog.Info("copyFile: [6] Successfully set permissions")
+
+	slog.Info("copyFile: [7] File copy completed successfully", "src", src, "dst", dst)
+	return nil
 }
