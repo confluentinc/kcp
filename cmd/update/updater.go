@@ -252,31 +252,49 @@ func (u *Updater) extractAndInstall(gzipReader io.Reader, targetPath string) err
 
 func (u *Updater) installBinary(newBinary, targetPath string) error {
 	slog.Info("Installing new binary...")
+	slog.Info("installBinary: [1] Starting installation", "newBinary", newBinary, "targetPath", targetPath)
 
-	if u.needsSudo(targetPath) {
+	slog.Info("installBinary: [2] Checking if sudo is required", "targetPath", targetPath)
+	needsSudo := u.needsSudo(targetPath)
+	slog.Info("installBinary: [2] Sudo check completed", "needsSudo", needsSudo, "targetPath", targetPath)
+
+	if needsSudo {
+		slog.Info("installBinary: [3] Taking sudo path")
 		// For sudo case, use atomic rename via a temp file in the same directory
 		dir := filepath.Dir(targetPath)
 		tempPath := filepath.Join(dir, filepath.Base(targetPath)+".tmp")
+		slog.Info("installBinary: [4] Created temp path for sudo install", "tempPath", tempPath, "dir", dir)
 
+		slog.Info("installBinary: [5] Executing sudo cp command", "source", newBinary, "dest", tempPath)
 		if err := exec.Command("sudo", "cp", newBinary, tempPath).Run(); err != nil {
+			slog.Error("installBinary: [5] Failed to copy to temp file", "error", err, "tempPath", tempPath)
 			return fmt.Errorf("failed to copy to temp file: %w", err)
 		}
+		slog.Info("installBinary: [5] Successfully copied to temp file", "tempPath", tempPath)
 
+		slog.Info("installBinary: [6] Executing sudo chmod command", "tempPath", tempPath, "mode", "755")
 		if err := exec.Command("sudo", "chmod", "755", tempPath).Run(); err != nil {
+			slog.Error("installBinary: [6] Failed to make executable, cleaning up", "error", err, "tempPath", tempPath)
 			exec.Command("sudo", "rm", tempPath).Run() // Clean up on error
 			return fmt.Errorf("failed to make executable: %w", err)
 		}
+		slog.Info("installBinary: [6] Successfully set permissions", "tempPath", tempPath)
 
 		// Atomic rename (works even on executing files)
+		slog.Info("installBinary: [7] Executing sudo mv for atomic rename", "tempPath", tempPath, "targetPath", targetPath)
 		if err := exec.Command("sudo", "mv", tempPath, targetPath).Run(); err != nil {
+			slog.Error("installBinary: [7] Failed to install binary, cleaning up", "error", err, "tempPath", tempPath)
 			exec.Command("sudo", "rm", tempPath).Run() // Clean up on error
 			return fmt.Errorf("failed to install binary: %w", err)
 		}
+		slog.Info("installBinary: [7] Successfully completed atomic rename", "targetPath", targetPath)
 
+		slog.Info("installBinary: [8] Sudo path completed successfully")
 		return nil
 	}
 
 	// For non-sudo case, use atomic rename via a temp file
+	slog.Info("installBinary: [3] Taking non-sudo path, calling installBinaryAtomic", "newBinary", newBinary, "targetPath", targetPath)
 	return u.installBinaryAtomic(newBinary, targetPath)
 }
 
@@ -296,88 +314,151 @@ func (u *Updater) rollback(backupPath, targetPath string) {
 }
 
 func (u *Updater) needsSudo(path string) bool {
+	slog.Info("needsSudo: [1] Starting sudo check", "path", path)
+
 	dir := filepath.Dir(path)
+	slog.Info("needsSudo: [2] Extracted directory", "dir", dir, "path", path)
+
+	slog.Info("needsSudo: [3] Attempting to create test file", "dir", dir)
 	testFile, err := os.CreateTemp(dir, ".kcp-test-*")
 	if err != nil {
+		slog.Info("needsSudo: [3] Failed to create test file, assuming sudo needed", "error", err, "dir", dir)
 		return true // Assume sudo needed if we can't test
 	}
+	slog.Info("needsSudo: [3] Successfully created test file", "testFile", testFile.Name())
+
+	slog.Info("needsSudo: [4] Closing test file", "testFile", testFile.Name())
 	testFile.Close()
+
+	slog.Info("needsSudo: [5] Removing test file", "testFile", testFile.Name())
 	os.Remove(testFile.Name())
+	slog.Info("needsSudo: [5] Successfully removed test file")
+
+	slog.Info("needsSudo: [6] Sudo not needed, returning false")
 	return false
 }
 
 func (u *Updater) installBinaryAtomic(newBinary, targetPath string) error {
+	slog.Info("installBinaryAtomic: [1] Starting atomic install", "newBinary", newBinary, "targetPath", targetPath)
+
 	// Create temp file in the same directory as target (required for atomic rename)
 	dir := filepath.Dir(targetPath)
 	tempPath := filepath.Join(dir, filepath.Base(targetPath)+".tmp")
+	slog.Info("installBinaryAtomic: [2] Created temp path", "tempPath", tempPath, "dir", dir)
 
+	slog.Info("installBinaryAtomic: [3] Opening source file", "newBinary", newBinary)
 	sourceFile, err := os.Open(newBinary)
 	if err != nil {
+		slog.Error("installBinaryAtomic: [3] Failed to open source", "error", err, "newBinary", newBinary)
 		return fmt.Errorf("failed to open source: %w", err)
 	}
 	defer sourceFile.Close()
+	slog.Info("installBinaryAtomic: [3] Successfully opened source file")
 
+	slog.Info("installBinaryAtomic: [4] Creating temp file", "tempPath", tempPath)
 	destFile, err := os.Create(tempPath)
 	if err != nil {
+		slog.Error("installBinaryAtomic: [4] Failed to create temp file", "error", err, "tempPath", tempPath)
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
+	slog.Info("installBinaryAtomic: [4] Successfully created temp file")
 
 	renameSucceeded := false
 	defer func() {
+		slog.Info("installBinaryAtomic: [defer] Closing dest file and cleaning up if needed", "renameSucceeded", renameSucceeded, "tempPath", tempPath)
 		destFile.Close()
 		if !renameSucceeded {
+			slog.Info("installBinaryAtomic: [defer] Removing temp file due to failed rename", "tempPath", tempPath)
 			os.Remove(tempPath)
 		}
 	}()
 
+	slog.Info("installBinaryAtomic: [5] Copying content from source to temp file")
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		slog.Error("installBinaryAtomic: [5] Failed to copy to temp file", "error", err, "tempPath", tempPath)
 		return fmt.Errorf("failed to copy to temp file: %w", err)
 	}
+	slog.Info("installBinaryAtomic: [5] Successfully copied content to temp file")
 
+	slog.Info("installBinaryAtomic: [6] Getting source file info for permissions", "newBinary", newBinary)
 	sourceInfo, err := os.Stat(newBinary)
 	if err != nil {
+		slog.Error("installBinaryAtomic: [6] Failed to stat source", "error", err, "newBinary", newBinary)
 		return fmt.Errorf("failed to stat source: %w", err)
 	}
+	slog.Info("installBinaryAtomic: [6] Successfully got source file info", "mode", sourceInfo.Mode())
 
+	slog.Info("installBinaryAtomic: [7] Setting permissions on temp file", "tempPath", tempPath, "mode", sourceInfo.Mode())
 	if err := os.Chmod(tempPath, sourceInfo.Mode()); err != nil {
+		slog.Error("installBinaryAtomic: [7] Failed to set permissions", "error", err, "tempPath", tempPath)
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
+	slog.Info("installBinaryAtomic: [7] Successfully set permissions")
 
+	slog.Info("installBinaryAtomic: [8] Closing dest file", "tempPath", tempPath)
 	if err := destFile.Close(); err != nil {
+		slog.Error("installBinaryAtomic: [8] Failed to close temp file", "error", err, "tempPath", tempPath)
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
+	slog.Info("installBinaryAtomic: [8] Successfully closed dest file")
 
 	// Atomic rename - this works even if target is currently executing
+	slog.Info("installBinaryAtomic: [9] Performing atomic rename", "tempPath", tempPath, "targetPath", targetPath)
 	if err := os.Rename(tempPath, targetPath); err != nil {
+		slog.Error("installBinaryAtomic: [9] Failed to rename temp file", "error", err, "tempPath", tempPath, "targetPath", targetPath)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
+	slog.Info("installBinaryAtomic: [9] Successfully completed atomic rename", "targetPath", targetPath)
 
 	renameSucceeded = true
+	slog.Info("installBinaryAtomic: [10] Atomic install completed successfully")
 	return nil
 }
 
 func (u *Updater) copyFile(src, dst string) error {
+	slog.Info("copyFile: [1] Starting file copy", "src", src, "dst", dst)
+
+	slog.Info("copyFile: [2] Opening source file", "src", src)
 	sourceFile, err := os.Open(src)
 	if err != nil {
+		slog.Error("copyFile: [2] Failed to open source file", "error", err, "src", src)
 		return err
 	}
 	defer sourceFile.Close()
+	slog.Info("copyFile: [2] Successfully opened source file")
 
+	slog.Info("copyFile: [3] Creating destination file", "dst", dst)
 	destFile, err := os.Create(dst)
 	if err != nil {
+		slog.Error("copyFile: [3] Failed to create destination file", "error", err, "dst", dst)
 		return err
 	}
+	slog.Info("copyFile: [3] Successfully created destination file before defer")
 	defer destFile.Close()
+	slog.Info("copyFile: [3] Successfully created destination file after defer")
 
+	slog.Info("copyFile: [4] Copying content from source to destination")
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		slog.Error("copyFile: [4] Failed to copy content", "error", err, "src", src, "dst", dst)
 		return err
 	}
+	slog.Info("copyFile: [4] Successfully copied content")
 
-	// Copy permissions
+	slog.Info("copyFile: [5] Getting source file info for permissions", "src", src)
 	sourceInfo, err := os.Stat(src)
 	if err != nil {
+		slog.Error("copyFile: [5] Failed to stat source file", "error", err, "src", src)
 		return err
 	}
+	slog.Info("copyFile: [5] Successfully got source file info", "mode", sourceInfo.Mode())
 
-	return os.Chmod(dst, sourceInfo.Mode())
+	slog.Info("copyFile: [6] Setting permissions on destination file", "dst", dst, "mode", sourceInfo.Mode())
+	if err := os.Chmod(dst, sourceInfo.Mode()); err != nil {
+		slog.Error("copyFile: [6] Failed to set permissions", "error", err, "dst", dst)
+		return err
+	}
+	slog.Info("copyFile: [6] Successfully set permissions")
+
+	slog.Info("copyFile: [7] File copy completed successfully", "src", src, "dst", dst)
+	return nil
 }
