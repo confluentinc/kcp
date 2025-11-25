@@ -245,6 +245,12 @@ export const MigrationAssets = () => {
                   clusterArn={clusterArn}
                   onComplete={handleMigrationScriptsComplete}
                   onClose={handleCloseWizard}
+                  hasGeneratedFiles={(wizardType) => !!getTerraformFiles(clusterArn, wizardType)}
+                  onViewTerraform={(wizardType) => {
+                    // Close the wizard modal and open the file viewer modal
+                    handleCloseWizard()
+                    handleViewTerraform(clusterArn, wizardType, selectedClusterForWizard.cluster.name)
+                  }}
                 />
               )}
             </Modal>
