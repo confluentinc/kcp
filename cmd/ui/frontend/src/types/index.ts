@@ -60,3 +60,6 @@ export type {
   ConnectorTab,
   WizardType,
 } from './constants'
+
+// Re-export wizard types (used by MigrationScriptsFileViewer)
+export type { TerraformFiles } from '@/components/migration/wizards/types'

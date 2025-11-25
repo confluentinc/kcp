@@ -15,6 +15,7 @@ import { MigrationFlow } from './MigrationFlow'
 import { ClusterAccordion } from './ClusterAccordion'
 import { TerraformFileViewer } from './TerraformFileViewer'
 import { MigrationScriptsSelection } from './MigrationScriptsSelection'
+import { MigrationScriptsFileViewer } from './MigrationScriptsFileViewer'
 
 export const MigrationAssets = () => {
   const regions = useRegions()
@@ -132,27 +133,10 @@ export const MigrationAssets = () => {
   }
 
   const handleViewTerraform = (clusterKey: string, wizardType: WizardType, clusterName: string) => {
-    // For MIGRATION_SCRIPTS, determine which specific sub-type to show
-    let actualWizardType = wizardType
-    if (wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS) {
-      // Check which sub-types have files and pick the first available one
-      const hasTopics = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_TOPICS)
-      const hasSchemas = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_SCHEMAS)
-      const hasAcls = getTerraformFiles(clusterKey, WIZARD_TYPES.MIGRATE_ACLS)
-      
-      if (hasTopics) {
-        actualWizardType = WIZARD_TYPES.MIGRATE_TOPICS
-      } else if (hasSchemas) {
-        actualWizardType = WIZARD_TYPES.MIGRATE_SCHEMAS
-      } else if (hasAcls) {
-        actualWizardType = WIZARD_TYPES.MIGRATE_ACLS
-      }
-    }
-    
     setFileViewerModal({
       isOpen: true,
       clusterKey,
-      wizardType: actualWizardType,
+      wizardType,
       clusterName,
     })
   }
@@ -288,11 +272,21 @@ export const MigrationAssets = () => {
             {fileViewerModal.clusterKey &&
               fileViewerModal.wizardType &&
               fileViewerModal.clusterName && (
-                <TerraformFileViewer
-                  files={getTerraformFiles(fileViewerModal.clusterKey, fileViewerModal.wizardType)}
-                  clusterName={fileViewerModal.clusterName}
-                  wizardType={fileViewerModal.wizardType}
-                />
+                <>
+                  {fileViewerModal.wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS ? (
+                    <MigrationScriptsFileViewer
+                      clusterKey={fileViewerModal.clusterKey}
+                      clusterName={fileViewerModal.clusterName}
+                      getTerraformFiles={getTerraformFiles}
+                    />
+                  ) : (
+                    <TerraformFileViewer
+                      files={getTerraformFiles(fileViewerModal.clusterKey, fileViewerModal.wizardType)}
+                      clusterName={fileViewerModal.clusterName}
+                      wizardType={fileViewerModal.wizardType}
+                    />
+                  )}
+                </>
               )}
           </div>
         </Modal>

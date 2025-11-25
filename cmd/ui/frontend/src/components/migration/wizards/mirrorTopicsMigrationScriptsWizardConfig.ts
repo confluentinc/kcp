@@ -70,6 +70,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterArn: strin
               selected_topics: {
                 type: 'array',
                 title: 'Topics',
+                default: topicEnumValues,
                 description: `Select one or more topics to mirror (${topicNames.length} topics available)`,
                 items: {
                   type: 'string',
@@ -106,12 +107,11 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterArn: strin
           CONFIRM: {
             target: 'complete',
           },
-          BACK: [
-            {
-              target: 'topic_selection',
-              actions: 'undo_save_step_data',
-            },
-          ],
+          BACK:
+          {
+            target: 'target_cluster_inputs',
+            actions: 'undo_save_step_data',
+          },
         },
       },
       complete: {
