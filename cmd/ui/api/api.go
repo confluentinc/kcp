@@ -221,11 +221,20 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 			})
 		}
 	} else {
-		if err := validatePrivateLinkRequest(req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid request body",
-				"message": err.Error(),
-			})
+		if req.UseJumpClusters {
+			if err := validatePrivateLinkRequest(req); err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]any{
+					"error":   "Invalid request body",
+					"message": err.Error(),
+				})
+			}
+		} else {
+			if err := validatePrivateClusterLinkRequest(req); err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]any{
+					"error":   "Invalid request body",
+					"message": err.Error(),
+				})
+			}
 		}
 	}
 
@@ -319,6 +328,51 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 
 	if len(allErrors) > 0 {
 		return fmt.Errorf("invalid configuration: %s", strings.Join(allErrors, "; "))
+	}
+
+	return nil
+}
+
+func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
+	var missingFields []string
+
+	if req.VpcId == "" {
+		missingFields = append(missingFields, "vpcId")
+	}
+	if req.MskRegion == "" {
+		missingFields = append(missingFields, "mskRegion")
+	}
+	if req.MskClusterId == "" {
+		missingFields = append(missingFields, "mskClusterId")
+	}
+	if req.ExtOutboundSecurityGroupId == "" {
+		missingFields = append(missingFields, "extOutboundSecurityGroupId")
+	}
+	if req.ExtOutboundSubnetId == "" {
+		missingFields = append(missingFields, "extOutboundSubnetId")
+	}
+	if req.ExtOutboundBrokers == nil {
+		missingFields = append(missingFields, "extOutboundBrokers")
+	}
+	if req.TargetEnvironmentId == "" {
+		missingFields = append(missingFields, "targetEnvironmentId")
+	}
+	if req.TargetClusterId == "" {
+		missingFields = append(missingFields, "targetClusterId")
+	}
+	if req.TargetRestEndpoint == "" {
+		missingFields = append(missingFields, "targetRestEndpoint")
+	}
+	if req.ClusterLinkName == "" {
+		missingFields = append(missingFields, "clusterLinkName")
+	}
+
+	var conditionalErrors []string
+
+	if len(missingFields) > 0 {
+		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))}
+	if len(conditionalErrors) > 0 {
+		return fmt.Errorf("invalid configuration: %s", strings.Join(conditionalErrors, "; "))
 	}
 
 	return nil

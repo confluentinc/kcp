@@ -6,6 +6,27 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
 
   const instanceType = cluster?.metrics?.metadata?.instance_type || 'kafka.m5.xlarge'
 
+  const brokerNodes = cluster?.aws_client_information?.nodes?.filter(
+    (node: any) => node.NodeType === 'BROKER' && node.BrokerNodeInfo
+  ) || []
+
+  const subnets = cluster?.aws_client_information?.cluster_networking?.subnets || []
+
+  const awsKafkaBrokers = brokerNodes.map((node: any) => {
+    const brokerId = node.BrokerNodeInfo.BrokerId
+    const matchingSubnet = subnets.find((subnet: any) => subnet.subnet_msk_broker_id === brokerId)
+    
+    return {
+      broker_id: brokerId?.toString() || '',
+      subnet_id: node.BrokerNodeInfo.ClientSubnet || '',
+      endpoints: node.BrokerNodeInfo.Endpoints?.map((endpoint: string) => ({
+        host: endpoint,
+        port: 9096,
+        ip: matchingSubnet?.private_ip_address || ''
+      })) || []
+    }
+  })
+
   return {
     id: 'migration-infra-wizard',
     title: 'Migration Infrastructure Wizard',
@@ -46,7 +67,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'save_step_data',
             },
             {
-              target: 'private_link_existing_question',
+              target: 'private_migration_method_question',
               guard: 'has_private_cc_endpoints',
               actions: 'save_step_data',
             },
@@ -114,6 +135,203 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
+      private_migration_method_question: {
+        meta: {
+          title: 'Private Migration | Method',
+          description: 'MSK to Confluent Cloud migrations can be performed through either jump clusters or external outbound cluster linking.',
+          schema: {
+            type: 'object',
+            properties: {
+              use_jump_clusters: {
+                type: 'boolean',
+                title: 'Do you want to use jump clusters for your migration?',
+                oneOf: [
+                  { title: 'Yes', const: true },
+                  { title: 'No, use external outbound cluster linking', const: false },
+                ],
+              },
+            },
+            required: ['use_jump_clusters'],
+          },
+          uiSchema: {
+            use_jump_clusters: {
+              'ui:widget': 'radio',
+            },
+          },
+        },
+        on: {
+          NEXT: [
+            {
+              target: 'external_outbound_cluster_linking_inputs',
+              guard: 'use_external_outbound_cluster_linking',
+              actions: 'save_step_data',
+            },
+            {
+              target: 'private_link_existing_question',
+              guard: 'use_jump_clusters',
+              actions: 'save_step_data',
+            }
+          ],
+          BACK: {
+            target: 'confluent_cloud_endpoints_question',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
+      external_outbound_cluster_linking_inputs: {
+        meta: {
+          title: 'Private Migration | External Outbound Cluster Linking',
+          description: 'Enter configuration details for your external outbound cluster linking',
+          schema: {
+            type: 'object',
+            properties: {
+              cluster_link_name: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster Link Name',
+              },
+              target_environment_id: {
+                type: 'string',
+                title: 'Confluent Cloud Environment ID',
+              },
+              target_cluster_id: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster ID',
+              },
+              target_rest_endpoint: {
+                type: 'string',
+                title: 'Confluent Cloud Cluster REST Endpoint',
+              },
+              ext_outbound_subnet_id: {
+                type: 'string',
+                title: 'Subnet ID',
+                description: 'MSK broker 1 subnet ID is used by default for the external outbound cluster linking.',
+                default: cluster?.aws_client_information?.cluster_networking?.subnet_ids?.[0] || 'failed to retrieve subnet ID from statefile.'
+              },
+              ext_outbound_security_group_id: {
+                type: 'string',
+                title: 'Security Group ID',
+                description: 'MSK cluster security group ID is used by default for the external outbound cluster linking.',
+                default: cluster?.aws_client_information?.cluster_networking?.security_groups?.[0] || 'failed to retrieve security group ID from statefile.'
+              },
+              msk_region: {
+                type: 'string',
+                title: 'MSK Region',
+                default: cluster?.region || 'failed to retrieve AWS region from statefile.'
+              },
+              msk_cluster_id: {
+                type: 'string',
+                title: 'MSK Cluster ID',
+                default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
+              },
+              msk_sasl_scram_bootstrap_servers: {
+                type: 'string',
+                title: 'MSK Bootstrap Servers',
+                default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (public) from statefile.'
+              },
+              vpc_id: {
+                type: 'string',
+                title: 'VPC ID',
+                default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
+              },
+              aws_kafka_brokers: {
+                type: 'array',
+                title: 'AWS Kafka Brokers',
+                default: awsKafkaBrokers.length > 0 ? awsKafkaBrokers : undefined,
+                items: {
+                  type: "object",
+                  properties: {
+                    broker_id: {
+                      type: 'string',
+                      title: 'Broker ID',
+                    },
+                    subnet_id: {
+                      type: 'string',
+                      title: 'Subnet ID',
+                    },
+                    endpoints: {
+                      type: 'array',
+                      title: 'Endpoints',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          host: {
+                            type: 'string',
+                            title: 'Host',
+                          },
+                          port: {
+                            type: 'number',
+                            title: 'Port',
+                          },
+                          ip: {
+                            type: 'string',
+                            title: 'IP',
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'msk_region', 'vpc_id', 'msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'aws_kafka_brokers'],
+          },
+          uiSchema: {
+            cluster_link_name: {
+              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
+            },
+            target_environment_id: {
+              'ui:placeholder': 'e.g., env-xxxxxx',
+            },
+            target_cluster_id: {
+              'ui:placeholder': 'e.g., lkc-xxxxxx',
+            },
+            target_rest_endpoint: {
+              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
+            },
+            ext_outbound_subnet_id: {
+              'ui:placeholder': 'e.g., subnet-xxxxxx',
+            },
+            ext_outbound_security_group_id: {
+              'ui:placeholder': 'e.g., sg-xxxxxx',
+            },
+            msk_region: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
+            msk_cluster_id: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
+            msk_sasl_scram_bootstrap_servers: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
+            vpc_id: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
+            aws_kafka_brokers: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+              'ui:options': {
+                addable: true,
+                orderable: false,
+                removable: true,
+              },
+            },
+          },
+        },
+        on: {
+          NEXT: {
+            target: 'confirmation',
+            actions: 'save_step_data',
+          },
+          BACK: {
+            target: 'private_migration_method_question',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
       private_link_existing_question: {
         meta: {
           title: 'Private Migration | Private Link',
@@ -144,7 +362,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             actions: 'save_step_data',
           },
           BACK: {
-            target: 'confluent_cloud_endpoints_question',
+            target: 'private_migration_method_question',
             actions: 'undo_save_step_data',
           },
         },
@@ -300,7 +518,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       private_link_internet_gateway_question: {
         meta: {
           title: 'Private Migration | Private Link - Internet Gateway',
-          description: 'When migrating data from MSK to Confluent Cloud over a private network, a jump cluster is required and some dependencies will need to be installed on these jump clusters from the internet.',
+          description: 'When migrating data from MSK to Confluent Cloud over a private network, a jump cluster is required and some dependencies will need to be installed on these on the jump cluster brokers from the internet.',
           schema: {
             type: 'object',
             properties: {
@@ -630,6 +848,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'undo_save_step_data',
             },
             {
+              target: 'external_outbound_cluster_linking_inputs',
+              guard: 'came_from_external_outbound_cluster_linking_inputs',
+              actions: 'undo_save_step_data',
+            },
+            {
               target: 'msk_jump_cluster_authentication_sasl_scram',
               guard: 'came_from_msk_jump_cluster_authentication_sasl_scram',
               actions: 'undo_save_step_data',
@@ -658,6 +881,12 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       has_private_cc_endpoints: ({ event}) => {
         return event.data?.has_public_cc_endpoints === false
       },
+      use_jump_clusters: ({ event }) => {
+        return event.data?.use_jump_clusters === true
+      },
+      use_external_outbound_cluster_linking: ({ event }) => {
+        return event.data?.use_jump_clusters === false
+      },
       reuse_existing_subnets: ({ event }) => {
         return event.data?.reuse_existing_subnets === true
       },
@@ -672,6 +901,9 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       },
       selected_msk_jump_cluster_authentication_iam: ({ event }) => {
         return event.data?.msk_jump_cluster_auth_type === 'iam'
+      },
+      came_from_external_outbound_cluster_linking_inputs: ({ context }) => {
+        return context.previousStep === 'external_outbound_cluster_linking_inputs'
       },
       came_from_msk_jump_cluster_authentication_sasl_scram: ({ context }) => {
         return context.previousStep === 'msk_jump_cluster_authentication_sasl_scram'

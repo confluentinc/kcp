@@ -4,8 +4,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetNetworkingVariables() []MigrationInfraVariableDefinition {
-	return []MigrationInfraVariableDefinition{
+func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
+	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "vpc_id",
 			Definition: types.TerraformVariable{
