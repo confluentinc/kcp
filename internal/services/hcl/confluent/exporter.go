@@ -12,9 +12,10 @@ const (
 	VarSourceSchemaRegistryURL            = "source_schema_registry_url"
 	VarSourceSchemaRegistryUsername       = "source_schema_registry_username"
 	VarSourceSchemaRegistryPassword       = "source_schema_registry_password"
-	VarConfluentCloudSchemaRegistryURL    = "target_schema_registry_url"
-	VarConfluentCloudSchemaRegistryAPIKey = "target_schema_registry_api_key"
-	VarConfluentCloudSchemaRegistrySecret = "target_schema_registry_api_secret"
+	VarConfluentCloudSchemaRegistryURL    = "confluent_cloud_schema_registry_url"
+	VarConfluentCloudSchemaRegistryAPIKey = "confluent_cloud_schema_registry_api_key"
+	VarConfluentCloudSchemaRegistrySecret = "confluent_cloud_schema_registry_api_secret"
+	VarSubjects                           = "subjects"
 )
 
 // SchemaExporterVariables defines all the variables needed for schema exporter resources
@@ -26,20 +27,21 @@ var SchemaExporterVariables = []types.TerraformVariable{
 	{Name: VarConfluentCloudSchemaRegistryURL, Description: "URL of the target schema registry (Confluent Cloud)", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudSchemaRegistryAPIKey, Description: "API key for the target schema registry (Confluent Cloud)", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudSchemaRegistrySecret, Description: "API secret for the target schema registry (Confluent Cloud)", Sensitive: true, Type: "string"},
+	{Name: VarSubjects, Description: "List of subjects to export", Sensitive: false, Type: "list(string)"},
 }
 
-// GenerateSchemaExporter creates a Terraform resource for a single confluent_schema_exporter
-func GenerateSchemaExporter(exporter types.Exporter) *hclwrite.Block {
-	resourceName := utils.FormatHclResourceName(exporter.Name)
+func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig) *hclwrite.Block {
+	resourceName := "kcp_schema_exporter"
 	exporterBlock := hclwrite.NewBlock("resource", []string{"confluent_schema_exporter", resourceName})
 
 	// Set name attribute
-	exporterBlock.Body().SetAttributeValue("name", cty.StringVal(exporter.Name))
+	exporterBlock.Body().SetAttributeValue("name", cty.StringVal(resourceName))
 	exporterBlock.Body().AppendNewline()
 
 	// schema_registry_cluster block
 	schemaRegistryClusterBlock := hclwrite.NewBlock("schema_registry_cluster", nil)
-	schemaRegistryClusterBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(VarSourceSchemaRegistryID))
+	schemaRegistryClusterBlock.Body().AppendUnstructuredTokens(utils.TokensForComment("# a value is required for the exporter - just using random string\n"))
+	schemaRegistryClusterBlock.Body().SetAttributeValue("id", cty.StringVal(utils.RandomString(8)))
 	exporterBlock.Body().AppendBlock(schemaRegistryClusterBlock)
 	exporterBlock.Body().AppendNewline()
 
@@ -54,14 +56,10 @@ func GenerateSchemaExporter(exporter types.Exporter) *hclwrite.Block {
 	exporterBlock.Body().AppendNewline()
 
 	// subjects attribute
-	exporterBlock.Body().SetAttributeRaw("subjects", utils.TokensForStringList(exporter.Subjects))
+	exporterBlock.Body().SetAttributeRaw("subjects", utils.TokensForVarReference(VarSubjects))
 
-	// context_type and context attributes
-	exporterBlock.Body().SetAttributeValue("context_type", cty.StringVal(exporter.ContextType))
-	// only custom context type has a context name
-	if exporter.ContextType == "CUSTOM" {
-		exporterBlock.Body().SetAttributeValue("context", cty.StringVal(exporter.ContextName))
-	}
+	// context_type attribute
+	exporterBlock.Body().SetAttributeValue("context_type", cty.StringVal("NONE"))
 	exporterBlock.Body().AppendNewline()
 
 	// destination_schema_registry_cluster block
