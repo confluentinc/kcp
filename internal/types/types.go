@@ -163,6 +163,11 @@ type MigrationWizardRequest struct {
 
 	VpcId string `json:"vpc_id"`
 
+	UseJumpClusters            bool                            `json:"use_jump_clusters"`
+	ExtOutboundSecurityGroupId string                          `json:"ext_outbound_security_group_id"`
+	ExtOutboundSubnetId        string                          `json:"ext_outbound_subnet_id"`
+	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"aws_kafka_brokers"`
+
 	HasExistingPrivateLink       bool     `json:"has_existing_private_link"`
 	ReuseExistingSubnets         bool     `json:"reuse_existing_subnets"`
 	PrivateLinkExistingSubnetIds []string `json:"private_link_existing_subnet_ids"`
@@ -186,6 +191,18 @@ type MigrationWizardRequest struct {
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
 	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
 	ClusterLinkName              string `json:"cluster_link_name"`
+}
+
+type ExtOutboundClusterKafkaBroker struct {
+	ID        string                            `json:"broker_id"`
+	SubnetID  string                            `json:"subnet_id"`
+	Endpoints []ExtOutboundClusterKafkaEndpoint `json:"endpoints"`
+}
+
+type ExtOutboundClusterKafkaEndpoint struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	IP   string `json:"ip"`
 }
 
 type MigrateTopicsRequest struct {

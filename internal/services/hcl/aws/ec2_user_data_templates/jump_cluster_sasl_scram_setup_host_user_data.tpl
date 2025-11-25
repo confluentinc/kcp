@@ -18,7 +18,7 @@ kafka_controller:
   hosts:
     ${broker_ips[0]}:
 
-kafka_broker:
+kafka_broker: 
   hosts:
 %{ for ip in broker_ips ~}
     ${ip}:
@@ -37,102 +37,92 @@ all:
     ansible_python_interpreter: /usr/bin/python3.11
 EOF
 
-cat << 'EOF' > /home/ec2-user/verify-dependencies-installed.yml
+cat << 'EOF' > /home/ec2-user/wait-for-hosts-ready.yml
 ---
-- name: Check Python 3.11 and dependencies
+- name: Wait for jump cluster instances to be SSH accessible and ready
   hosts: all
-  become: yes
+  gather_facts: no
   vars:
-    target_user: ec2-user
-    target_home: /home/ec2-user
-    ansible_python_interpreter: /usr/bin/python3
-    
+    ansible_python_interpreter: /usr/bin/python3.11
+  
   tasks:
-    - name: Check if Python 3.11 is installed
-      command: python3.11 --version
+    - name: Wait for SSH connection to be available
+      raw: echo "SSH connection test"
+      register: ssh_test
+      failed_when: false
+      changed_when: false
+      retries: 20
+      delay: 15
+      until: ssh_test.rc == 0
+    
+    - name: Wait for Python 3 to be available
+      raw: python3 --version
+      register: python3_check
+      failed_when: false
+      changed_when: false
+      retries: 20
+      delay: 15
+      until: python3_check.rc == 0
+    
+    - name: Wait for Python 3.11 to be installed
+      raw: python3.11 --version
       register: python311_check
       failed_when: false
       changed_when: false
-      retries: 5
-      delay: 3
+      retries: 20
+      delay: 15
       until: python311_check.rc == 0
-      
-    - name: Fail if Python 3.11 is not installed after retries
+    
+    - name: Fail if Python 3.11 is not available after retries
       fail:
-        msg: "Python 3.11 is NOT installed on {{ inventory_hostname }} after {{ ansible_loop.revs }} attempts"
+        msg: "Python 3.11 is NOT installed on {{ inventory_hostname }} after waiting"
       when: python311_check.rc != 0
-      
-    - name: Display Python 3.11 status
-      debug:
-        msg: "Python 3.11 is installed: {{ python311_check.stdout }}"
-        
-    - name: Check if packaging module is installed
-      command: python3.11 -c "import packaging; print('packaging version:', packaging.__version__)"
+    
+    - name: Wait for packaging module to be installed
+      raw: python3.11 -c "import packaging; print('packaging version:', packaging.__version__)"
       register: packaging_check
       failed_when: false
       changed_when: false
-      retries: 3
-      delay: 2
+      retries: 10
+      delay: 15
       until: packaging_check.rc == 0
-      
+    
     - name: Fail if packaging module is not installed after retries
       fail:
-        msg: "packaging module is NOT installed on {{ inventory_hostname }} after retries"
+        msg: "packaging module is NOT installed on {{ inventory_hostname }} after waiting"
       when: packaging_check.rc != 0
-      
-    - name: Display packaging module status
-      debug:
-        msg: "packaging module is installed: {{ packaging_check.stdout }}"
-      
-    - name: Check if PyYAML module is installed
-      command: python3.11 -c "import yaml; print('PyYAML version:', yaml.__version__)"
+    
+    - name: Wait for PyYAML module to be installed
+      raw: python3.11 -c "import yaml; print('PyYAML version:', yaml.__version__)"
       register: pyyaml_check
       failed_when: false
       changed_when: false
-      retries: 3
-      delay: 2
+      retries: 10
+      delay: 15
       until: pyyaml_check.rc == 0
-      
+    
     - name: Fail if PyYAML module is not installed after retries
       fail:
-        msg: "PyYAML module is NOT installed on {{ inventory_hostname }} after retries"
+        msg: "PyYAML module is NOT installed on {{ inventory_hostname }} after waiting"
       when: pyyaml_check.rc != 0
-      
-    - name: Display PyYAML module status
+    
+    - name: Test Ansible ping module with Python 3.11 (verify Python modules work)
+      ping:
+      register: ansible_ping_test
+      failed_when: false
+      changed_when: false
+      retries: 5
+      delay: 5
+      until: ansible_ping_test.ping is defined
+    
+    - name: Fail if Ansible cannot use Python 3.11
+      fail:
+        msg: "Ansible cannot connect using Python 3.11 on {{ inventory_hostname }}"
+      when: ansible_ping_test.ping is not defined
+    
+    - name: Display readiness status
       debug:
-        msg: "PyYAML module is installed: {{ pyyaml_check.stdout }}"
-      
-    - name: All dependencies verified
-      debug:
-        msg: "All dependencies are installed on {{ inventory_hostname }}"
-
-EOF
-
-wget https://github.com/aws/aws-msk-iam-auth/releases/download/v2.3.2/aws-msk-iam-auth-2.3.2-all.jar -P /home/ec2-user/jars
-
-cat << 'EOF' > /home/ec2-user/jar-deployment.yml
----
-- name: Distribute custom JARs to Kafka Brokers
-  hosts: kafka_broker
-  become: true
-
-  tasks:
-    - name: Create the directory for the custom JARs
-      ansible.builtin.file:
-        path: /usr/share/java/kafka
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Copy AWS MSK IAM Auth JAR
-      ansible.builtin.copy:
-        src: /home/ec2-user/jars/aws-msk-iam-auth-2.3.2-all.jar
-        dest: /usr/share/java/kafka/aws-msk-iam-auth-2.3.2-all.jar
-        owner: root
-        group: root
-        mode: '0644'
-
+        msg: "{{ inventory_hostname }} is ready with Python {{ python311_check.stdout }}, packaging {{ packaging_check.stdout }}, PyYAML {{ pyyaml_check.stdout }}"
 EOF
 
 cat << 'EOF' > /home/ec2-user/cluster-link-setup.yml
@@ -216,9 +206,8 @@ cat << 'EOF' > /home/ec2-user/cluster-link-setup.yml
 
 EOF
 
+ansible-playbook -i hosts.yml wait-for-hosts-ready.yml
 ansible -i hosts.yml all -m ping
 ansible-playbook -i hosts.yml confluent.platform.validate_hosts
-ansible-playbook -i hosts.yml verify-dependencies-installed.yml
-ansible-playbook -i hosts.yml jar-deployment.yml
 ansible-playbook -i hosts.yml confluent.platform.all --tags=kafka_controller,kafka_broker,schema_registry
 ansible-playbook -i hosts.yml cluster-link-setup.yml

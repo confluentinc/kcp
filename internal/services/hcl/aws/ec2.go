@@ -22,6 +22,7 @@ func GenerateAmiDataResource(tfResourceName, owners string, mostRecent bool, fil
 
 	body.SetAttributeRaw("owners", utils.TokensForStringList([]string{owners}))
 	body.SetAttributeValue("most_recent", cty.BoolVal(mostRecent))
+	body.AppendNewline()
 
 	for filterName, filterValue := range filters {
 		filterBlock := body.AppendNewBlock("filter", nil)
@@ -57,7 +58,11 @@ func GenerateEc2UserDataInstanceResource(tfResourceName, amiIdRef, instanceType,
 	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType)) // Assumes the value is passed as a string rather than a variable reference.
 	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForVarReference(subnetIdRef))
 	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReferenceList([]string{securityGroupIdsRef}))
-	instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
+
+	if keyNameRef != "" {
+		instanceBody.SetAttributeRaw("key_name", utils.TokensForVarReference(keyNameRef))
+	}
+
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
 	instanceBody.AppendNewline()
 
@@ -159,8 +164,11 @@ func appendOptionalBlocks(instanceBody *hclwrite.Body, optionalBlocks OptionalBl
 	}
 }
 
-//go:embed ec2_user_data_templates/jump_cluster_setup_host_user_data.tpl
-var jumpClusterSetupHostUserDataTpl string
+//go:embed ec2_user_data_templates/jump_cluster_sasl_scram_setup_host_user_data.tpl
+var jumpClusterSaslScramSetupHostUserDataTpl string
+
+//go:embed ec2_user_data_templates/jump_cluster_sasl_iam_setup_host_user_data.tpl
+var jumpClusterSaslIamSetupHostUserDataTpl string
 
 //go:embed ec2_user_data_templates/jump_cluster_user_data.tpl
 var jumpClusterUserDataTpl string
@@ -171,8 +179,15 @@ var jumpClusterWithSaslScramClusterLinksUserDataTpl string
 //go:embed ec2_user_data_templates/jump_cluster_with_iam_cluster_links_user_data.tpl
 var jumpClusterWithIamClusterLinksUserDataTpl string
 
-func GenerateJumpClusterSetupHostUserDataTpl() string {
-	return jumpClusterSetupHostUserDataTpl
+//go:embed ec2_user_data_templates/create-external-outbound-cluster-link.tpl
+var createExternalOutboundClusterLinkTpl string
+
+func GenerateJumpClusterSaslScramSetupHostUserDataTpl() string {
+	return jumpClusterSaslScramSetupHostUserDataTpl
+}
+
+func GenerateJumpClusterSaslIamSetupHostUserDataTpl() string {
+	return jumpClusterSaslIamSetupHostUserDataTpl
 }
 
 func GenerateJumpClusterUserDataTpl() string {
@@ -185,4 +200,8 @@ func GenerateJumpClusterWithSaslScramClusterLinksUserDataTpl() string {
 
 func GenerateJumpClusterWithIamClusterLinksUserDataTpl() string {
 	return jumpClusterWithIamClusterLinksUserDataTpl
+}
+
+func GenerateCreateExternalOutboundClusterLinkTpl() string {
+	return createExternalOutboundClusterLinkTpl
 }
