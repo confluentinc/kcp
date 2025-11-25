@@ -98,7 +98,6 @@ func RandomString(length int) string {
 	return base64.URLEncoding.EncodeToString(b)[:length]
 }
 
-// todo - may use this for scheama registry exporter generations
 func URLToFolderName(urlStr string) string {
 	parsed, err := url.Parse(urlStr)
 	if err != nil {
