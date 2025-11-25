@@ -42,7 +42,6 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
   const context = state.context as WizardContext
 
   const handleFormSubmit = async (formData: Record<string, unknown>) => {
-    console.log('formData - ', JSON.stringify(formData, null, 2))
     // Send the event with form data
     send({
       type: 'NEXT',
@@ -99,7 +98,6 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
 
       // Call onComplete callback to exit wizard and switch tab
       if (onComplete) {
-        console.log('onComplete - ')
         onComplete()
       }
     } catch {
