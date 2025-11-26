@@ -42,19 +42,19 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
-              has_public_cc_endpoints: {
+              has_public_msk_brokers: {
                 type: 'boolean',
-                title: 'Are your Confluent Cloud endpoints publicly accessible?',
+                title: 'Are your MSK brokers publicly accessible?',
                 oneOf: [
                   { title: 'Yes', const: true },
                   { title: 'No', const: false },
                 ],
               },
             },
-            required: ['has_public_cc_endpoints'],
+            required: ['has_public_msk_brokers'],
           },
           uiSchema: {
-            has_public_cc_endpoints: {
+            has_public_msk_brokers: {
               'ui:widget': 'radio',
             },
           },
@@ -63,7 +63,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           NEXT: [
             {
               target: 'public_cluster_link_inputs',
-              guard: 'has_public_cc_endpoints',
+              guard: 'has_public_msk_brokers',
               actions: 'save_step_data',
             },
             {
@@ -875,11 +875,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
     },
 
     guards: {
-      has_public_cc_endpoints: ({ event}) => {
-        return event.data?.has_public_cc_endpoints === true
+      has_public_msk_brokers: ({ event}) => {
+        return event.data?.has_public_msk_brokers === true
       },
       has_private_cc_endpoints: ({ event}) => {
-        return event.data?.has_public_cc_endpoints === false
+        return event.data?.has_public_msk_brokers === false
       },
       use_jump_clusters: ({ event }) => {
         return event.data?.use_jump_clusters === true

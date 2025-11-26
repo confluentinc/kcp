@@ -21,7 +21,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	if request.HasPublicCcEndpoints {
+	if request.HasPublicMskEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
 
@@ -785,7 +785,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	// https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("source", cty.StringVal("git::https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private.git"))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
-	
+
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("name_prefix", cty.StringVal("msk"))
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
@@ -814,7 +814,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 		if varDef.Condition != nil && !varDef.Condition(request) {
 			continue
 		}
-		
+
 		extOutboundClModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
 	}
 	rootBody.AppendNewline()
@@ -886,15 +886,15 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 		"create-external-outbound-cluster-link.tpl",
 		false,
 		map[string]hclwrite.Tokens{
-			"target_cluster_api_key":           utils.TokensForVarReference(targetClusterApiKeyVarName),
-			"target_cluster_api_secret":        utils.TokensForVarReference(targetClusterApiSecretVarName),
-			"target_cluster_rest_endpoint": utils.TokensForVarReference(targetClusterRestEndpointVarName),
-			"target_cluster_id":            utils.TokensForVarReference(targetClusterIdVarName),
-			"cluster_link_name":            utils.TokensForVarReference(clusterLinkNameVarName),
-			"msk_cluster_id":               utils.TokensForVarReference(mskClusterIdVarName),
+			"target_cluster_api_key":        utils.TokensForVarReference(targetClusterApiKeyVarName),
+			"target_cluster_api_secret":     utils.TokensForVarReference(targetClusterApiSecretVarName),
+			"target_cluster_rest_endpoint":  utils.TokensForVarReference(targetClusterRestEndpointVarName),
+			"target_cluster_id":             utils.TokensForVarReference(targetClusterIdVarName),
+			"cluster_link_name":             utils.TokensForVarReference(clusterLinkNameVarName),
+			"msk_cluster_id":                utils.TokensForVarReference(mskClusterIdVarName),
 			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(mskClusterBootstrapBrokersVarName),
-			"msk_sasl_scram_username":      utils.TokensForVarReference(mskSaslScramUsernameVarName),
-			"msk_sasl_scram_password":      utils.TokensForVarReference(mskSaslScramPasswordVarName),
+			"msk_sasl_scram_username":       utils.TokensForVarReference(mskSaslScramUsernameVarName),
+			"msk_sasl_scram_password":       utils.TokensForVarReference(mskSaslScramPasswordVarName),
 		},
 		nil,
 	))

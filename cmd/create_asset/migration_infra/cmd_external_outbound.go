@@ -143,7 +143,7 @@ func runExternalOutbound(cmd *cobra.Command, args []string) error {
 	mskClusterId := aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID)
 
 	request := types.MigrationWizardRequest{
-		HasPublicCcEndpoints:         false,
+		HasPublicMskEndpoints:        false,
 		UseJumpClusters:              false,
 		VpcId:                        vpcId,
 		ExtOutboundSubnetId:          subnetId,

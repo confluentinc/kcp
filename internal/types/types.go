@@ -159,7 +159,7 @@ type TerraformOutput struct {
 }
 
 type MigrationWizardRequest struct {
-	HasPublicCcEndpoints bool `json:"has_public_cc_endpoints"`
+	HasPublicMskEndpoints bool `json:"has_public_msk_brokers"`
 
 	VpcId string `json:"vpc_id"`
 
