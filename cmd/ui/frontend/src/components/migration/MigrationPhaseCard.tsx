@@ -74,26 +74,37 @@ export const MigrationPhaseCard = ({
 
           {/* Action Buttons */}
           {isCompleted ? (
-            <div className="flex gap-2 w-full">
+            phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS ? (
+              // For Migration Scripts, only show Generate button (access files from inside modal)
               <Button
                 variant="outline"
                 size="sm"
                 onClick={onGenerate}
-                className="flex-1"
+                className="w-auto"
               >
-                {phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS
-                  ? 'Generate Migration Assets'
-                  : 'Generate Terraform'}
+                Generate Migration Assets
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onView}
-                className="flex-1"
-              >
-                View Terraform
-              </Button>
-            </div>
+            ) : (
+              // For other phases, show both Generate and View buttons
+              <div className="flex gap-2 w-full">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onGenerate}
+                  className="flex-1"
+                >
+                  Generate Terraform
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onView}
+                  className="flex-1"
+                >
+                  View Terraform
+                </Button>
+              </div>
+            )
           ) : (
             <Button
               variant="outline"

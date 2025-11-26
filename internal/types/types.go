@@ -205,12 +205,11 @@ type ExtOutboundClusterKafkaEndpoint struct {
 	IP   string `json:"ip"`
 }
 
-type MigrateTopicsRequest struct {
-	MigrationType                     string   `json:"migration_type"`
-	SelectedTopics                    []string `json:"selected_topics"`
-	ClusterLinkName                   string   `json:"cluster_link_name"`
-	ConfluentCloudClusterId           string   `json:"confluent_cloud_cluster_id"`
-	ConfluentCloudClusterRestEndpoint string   `json:"confluent_cloud_cluster_rest_endpoint"`
+type MirrorTopicsRequest struct {
+	SelectedTopics            []string `json:"selected_topics"`
+	ClusterLinkName           string   `json:"cluster_link_name"`
+	TargetClusterId           string   `json:"target_cluster_id"`
+	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
 }
 
 type MigrateSchemasRequest struct {
@@ -219,9 +218,9 @@ type MigrateSchemasRequest struct {
 }
 
 type SchemaRegistryExporterConfig struct {
-	Migrate     bool     `json:"migrate"`
-	Subjects    []string `json:"subjects"`
-	SourceURL   string   `json:"source_url"`
+	Migrate   bool     `json:"migrate"`
+	Subjects  []string `json:"subjects"`
+	SourceURL string   `json:"source_url"`
 }
 
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure

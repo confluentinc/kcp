@@ -434,7 +434,7 @@ func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
-	var req types.MigrateTopicsRequest
+	var req types.MirrorTopicsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -442,7 +442,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateTopicsFiles(req)
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",

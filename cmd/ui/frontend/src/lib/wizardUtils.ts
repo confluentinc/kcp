@@ -32,6 +32,12 @@ export const getWizardFilesTitle = (wizardType: WizardType): string => {
       return 'Migration Infrastructure Files'
     case WIZARD_TYPES.MIGRATION_SCRIPTS:
       return 'Migration Scripts Files'
+    case WIZARD_TYPES.MIGRATE_SCHEMAS:
+      return 'Schema Registry Migration Scripts'
+    case WIZARD_TYPES.MIGRATE_TOPICS:
+      return 'Mirror Topics Migration Scripts'
+    case WIZARD_TYPES.MIGRATE_ACLS:
+      return 'ACL Migration Scripts'
     default:
       return 'Migration Scripts Files'
   }
