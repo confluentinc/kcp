@@ -13,7 +13,7 @@ export { createWizardMachine } from './factory/createWizardMachine.ts'
 
 export { createTargetInfraWizardConfig } from './targetInfraWizardConfig.ts'
 export { createMigrationInfraWizardConfig } from './migrationInfraWizardConfig.ts'
-export { createMigrationScriptsWizardConfig } from './migrationScriptsWizardConfig.ts'
+export { createMirrorTopicsMigrationScriptsWizardConfig } from './mirrorTopicsMigrationScriptsWizardConfig.ts'
 export { createSchemaRegistryMigrationScriptsWizardConfig } from './schemaRegistryMigrationScriptsWizardConfig.ts'
 
 export type {

@@ -15,9 +15,9 @@ func NewMigrationScriptsHCLService() *MigrationScriptsHCLService {
 	return &MigrationScriptsHCLService{}
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateTopicsFiles(request types.MigrateTopicsRequest) (types.TerraformFiles, error) {
+func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.MirrorTopicsRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:      s.generateMigrateTopicsTf(request),
+		MainTf:      s.generateMirrorTopicsTf(request),
 		ProvidersTf: s.generateProvidersTf(),
 		VariablesTf: s.generateMirrorTopicsVariablesTf(),
 	}, nil
@@ -85,13 +85,13 @@ func (s *MigrationScriptsHCLService) generateProvidersTf() string {
 // Migrate Topics Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMigrateTopicsTf(request types.MigrateTopicsRequest) string {
+func (s *MigrationScriptsHCLService) generateMirrorTopicsTf(request types.MirrorTopicsRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	for _, topic := range request.SelectedTopics {
 		tfResourceName := utils.FormatHclResourceName(topic)
-		rootBody.AppendBlock(confluent.GenerateMirrorTopic(tfResourceName, topic, request.ClusterLinkName, request.ConfluentCloudClusterId, request.ConfluentCloudClusterRestEndpoint))
+		rootBody.AppendBlock(confluent.GenerateMirrorTopic(tfResourceName, topic, request.ClusterLinkName, request.TargetClusterId, request.TargetClusterRestEndpoint))
 		rootBody.AppendNewline()
 	}
 
@@ -107,8 +107,8 @@ func (s *MigrationScriptsHCLService) generateMirrorTopicsVariablesTf() string {
 		description string
 		sensitive   bool
 	}{
-		{"confluent_cloud_api_key", "Confluent Cloud API Key", false},
-		{"confluent_cloud_api_secret", "Confluent Cloud API Secret", true},
+		{"target_cluster_api_key", "Target Cluster API Key", false},
+		{"target_cluster_api_secret", "Target Cluster API Secret", true},
 		{"confluent_cloud_cluster_api_key", "Confluent Cloud cluster API key", false},
 		{"confluent_cloud_cluster_api_secret", "Confluent Cloud cluster API secret", true},
 	}

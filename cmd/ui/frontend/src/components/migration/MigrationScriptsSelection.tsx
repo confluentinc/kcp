@@ -1,24 +1,40 @@
 import { useState } from 'react'
-import { FileText, MessageSquare, Shield, ArrowLeft, Image } from 'lucide-react'
+import { FileText, MessageSquare, Shield, ArrowLeft, Image, Eye } from 'lucide-react'
+import { Button } from '@/components/common/ui/button'
 import { WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
-import { Wizard, createSchemaRegistryMigrationScriptsWizardConfig } from '@/components/migration/wizards'
+import {
+    Wizard,
+    createSchemaRegistryMigrationScriptsWizardConfig,
+    createMirrorTopicsMigrationScriptsWizardConfig,
+} from '@/components/migration/wizards'
 
 interface MigrationScriptsSelectionProps {
     clusterArn: string
     onComplete: (wizardType: WizardType) => void
     onClose: () => void
+    hasGeneratedFiles?: (wizardType: WizardType) => boolean
+    onViewTerraform?: (wizardType: WizardType) => void
 }
 
 export const MigrationScriptsSelection = ({
     clusterArn,
     onComplete,
     onClose,
+    hasGeneratedFiles,
+    onViewTerraform,
 }: MigrationScriptsSelectionProps) => {
     const [selectedWizardType, setSelectedWizardType] = useState<WizardType | null>(null)
 
     const handleCardClick = (wizardType: WizardType) => {
         setSelectedWizardType(wizardType)
+    }
+
+    const handleViewTerraform = (e: React.MouseEvent, wizardType: WizardType) => {
+        e.stopPropagation() // Prevent card click
+        if (onViewTerraform) {
+            onViewTerraform(wizardType)
+        }
     }
 
     const handleBackToSelection = () => {
@@ -33,8 +49,8 @@ export const MigrationScriptsSelection = ({
 
     // If a wizard is selected, show that wizard or placeholder
     if (selectedWizardType) {
-        // Show placeholder for ACLs and Topics for now
-        if (selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS || selectedWizardType === WIZARD_TYPES.MIGRATE_TOPICS) {
+        // Show placeholder for ACLs for now
+        if (selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS) {
             return (
                 <div className="relative flex flex-col items-center justify-center p-12 min-h-[400px]">
                     <button
@@ -48,8 +64,7 @@ export const MigrationScriptsSelection = ({
                         <Image className="w-16 h-16 text-gray-400 dark:text-gray-500" />
                     </div>
                     <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                        {selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS && 'ACL Migration Scripts'}
-                        {selectedWizardType === WIZARD_TYPES.MIGRATE_TOPICS && 'Topic Migration Scripts'}
+                        ACL Migration Scripts
                     </h3>
                     <p className="text-gray-600 dark:text-gray-400 mb-6">
                         Coming soon - This wizard is under development
@@ -58,7 +73,19 @@ export const MigrationScriptsSelection = ({
             )
         }
 
-        // Show wizard for schema registry
+        // Get the appropriate wizard config based on type
+        const getWizardConfig = () => {
+            switch (selectedWizardType) {
+                case WIZARD_TYPES.MIGRATE_SCHEMAS:
+                    return createSchemaRegistryMigrationScriptsWizardConfig()
+                case WIZARD_TYPES.MIGRATE_TOPICS:
+                    return createMirrorTopicsMigrationScriptsWizardConfig(clusterArn)
+                default:
+                    return createSchemaRegistryMigrationScriptsWizardConfig()
+            }
+        }
+
+        // Show wizard for schema registry or mirror topics
         return (
             <div className="relative">
                 <button
@@ -69,7 +96,7 @@ export const MigrationScriptsSelection = ({
                     Back to Selection
                 </button>
                 <Wizard
-                    config={createSchemaRegistryMigrationScriptsWizardConfig()}
+                    config={getWizardConfig()}
                     clusterKey={clusterArn}
                     wizardType={selectedWizardType}
                     onComplete={handleWizardComplete}
@@ -86,48 +113,87 @@ export const MigrationScriptsSelection = ({
                 Choose the type of migration scripts you want to generate for this cluster.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <button
-                    onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_ACLS)}
-                    className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group"
-                >
-                    <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
-                        <Shield className="w-6 h-6" />
-                    </div>
-                    <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
-                        ACL Migration Scripts
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
-                        Generate scripts to migrate ACLs to Confluent Cloud
-                    </p>
-                </button>
-                <button
-                    onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_SCHEMAS)}
-                    className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group"
-                >
-                    <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
-                        <FileText className="w-6 h-6" />
-                    </div>
-                    <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
-                        Schema Registry Migration Scripts
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
-                        Generate scripts to migrate schemas to Confluent Cloud
-                    </p>
-                </button>
-                <button
-                    onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_TOPICS)}
-                    className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group"
-                >
-                    <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
-                        <MessageSquare className="w-6 h-6" />
-                    </div>
-                    <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
-                        Topic Migration Scripts
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
-                        Generate scripts to migrate topics to Confluent Cloud
-                    </p>
-                </button>
+                <div className="relative">
+                    <button
+                        onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_ACLS)}
+                        className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group w-full h-full min-h-[240px]"
+                    >
+                        <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
+                            <Shield className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
+                            ACL Migration Scripts
+                        </h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center flex-1">
+                            Generate scripts to migrate ACLs to Confluent Cloud
+                        </p>
+                        {hasGeneratedFiles && hasGeneratedFiles(WIZARD_TYPES.MIGRATE_ACLS) && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => handleViewTerraform(e, WIZARD_TYPES.MIGRATE_ACLS)}
+                                className="text-xs mt-4"
+                            >
+                                <Eye className="h-3 w-3 mr-1" />
+                                View Terraform
+                            </Button>
+                        )}
+                    </button>
+                </div>
+                <div className="relative">
+                    <button
+                        onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_SCHEMAS)}
+                        className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group w-full h-full min-h-[240px]"
+                    >
+                        <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
+                            <FileText className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
+                            Schema Registry Migration Scripts
+                        </h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center flex-1">
+                            Generate scripts to migrate schemas to Confluent Cloud
+                        </p>
+                        {hasGeneratedFiles && hasGeneratedFiles(WIZARD_TYPES.MIGRATE_SCHEMAS) && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => handleViewTerraform(e, WIZARD_TYPES.MIGRATE_SCHEMAS)}
+                                className="text-xs mt-4"
+                            >
+                                <Eye className="h-3 w-3 mr-1" />
+                                View Terraform
+                            </Button>
+                        )}
+                    </button>
+                </div>
+                <div className="relative">
+                    <button
+                        onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_TOPICS)}
+                        className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group w-full h-full min-h-[240px]"
+                    >
+                        <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
+                            <MessageSquare className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
+                            Topic Migration Scripts
+                        </h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center flex-1">
+                            Generate scripts to migrate topics to Confluent Cloud
+                        </p>
+                        {hasGeneratedFiles && hasGeneratedFiles(WIZARD_TYPES.MIGRATE_TOPICS) && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => handleViewTerraform(e, WIZARD_TYPES.MIGRATE_TOPICS)}
+                                className="text-xs mt-4"
+                            >
+                                <Eye className="h-3 w-3 mr-1" />
+                                View Terraform
+                            </Button>
+                        )}
+                    </button>
+                </div>
             </div>
         </div>
     )

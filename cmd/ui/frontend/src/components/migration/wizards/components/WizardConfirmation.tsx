@@ -59,13 +59,19 @@ export const WizardConfirmation = ({
                 <div className="space-y-4">
                   {value.map((item, index) => (
                     <div key={index} className="border border-gray-200 dark:border-border rounded-md p-4 bg-white dark:bg-card/50">
-                      <div className="space-y-1">
-                        {Object.entries(item as Record<string, unknown>).map(([itemKey, itemValue]) => (
-                          <div key={itemKey} className="text-gray-600 dark:text-gray-400 text-sm font-mono whitespace-pre-line">
-                            <span className="font-medium text-gray-900 dark:text-gray-100">{formatKey(itemKey)}:</span> {renderValue(itemValue)}
-                          </div>
-                        ))}
-                      </div>
+                      {typeof item === 'object' && item !== null ? (
+                        <div className="space-y-1">
+                          {Object.entries(item as Record<string, unknown>).map(([itemKey, itemValue]) => (
+                            <div key={itemKey} className="text-gray-600 dark:text-gray-400 text-sm font-mono whitespace-pre-line">
+                              <span className="font-medium text-gray-900 dark:text-gray-100">{formatKey(itemKey)}:</span> {renderValue(itemValue)}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-gray-600 dark:text-gray-400 text-sm font-mono">
+                          {renderValue(item)}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
