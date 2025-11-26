@@ -37,6 +37,7 @@ type TargetInfraHCLService struct {
 	ResourceNames TerraformResourceNames
 }
 
+//
 func NewTerraformResourceNames() TerraformResourceNames {
 	return TerraformResourceNames{
 		// Confluent Resources
@@ -291,7 +292,8 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	rootBody.AppendNewline()
 
 	description := fmt.Sprintf("Service account to manage the %s environment.", envVarName)
-	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, "app-manager", description))
+	serviceAccountName := fmt.Sprintf("app-manager-%s", request.ClusterName[0:6])
+	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, serviceAccountName, description))
 	rootBody.AppendNewline()
 
 	serviceAccountRef := fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount)
