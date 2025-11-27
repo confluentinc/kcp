@@ -45,11 +45,11 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 	}
 
 	switch mt.manifest.MigrationInfraType {
-	case types.MskCpCcPrivateSaslIam, types.MskCpCcPrivateSaslScram:
+	case types.JumpClusterReuseExistingSubnetsSaslScram, types.JumpClusterReuseExistingSubnetsIam:
 		if err := mt.generateJumpClusterMigrationScripts(outputDir, mt.mirrorTopics); err != nil {
 			return fmt.Errorf("failed to generate jump cluster migrate topics scripts: %w", err)
 		}
-	case types.MskCcPublic:
+	case types.PublicMskEndpoints:
 		if err := mt.generateMskToCCMigrationScripts(outputDir, mt.mirrorTopics); err != nil {
 			return fmt.Errorf("failed to generate msk to cc migrate topics scripts: %w", err)
 		}

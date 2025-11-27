@@ -152,7 +152,7 @@ func getRequiredTFStateFields(manifest types.Manifest) []string {
 		"confluent_cloud_cluster_id",
 	}
 
-	if manifest.MigrationInfraType == types.MskCpCcPrivateSaslIam || manifest.MigrationInfraType == types.MskCpCcPrivateSaslScram {
+	if manifest.MigrationInfraType == types.JumpClusterReuseExistingSubnetsSaslScram || manifest.MigrationInfraType == types.JumpClusterReuseExistingSubnetsIam {
 		requiredFields = append(requiredFields, "confluent_platform_controller_bootstrap_server")
 	}
 

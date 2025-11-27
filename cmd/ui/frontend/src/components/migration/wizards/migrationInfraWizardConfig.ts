@@ -569,7 +569,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               jump_cluster_broker_storage: {
                 type: 'number',
-                title: 'Broker Storage per Broker (GB)',
+                title: 'Storage per Broker (GB)',
                 default: cluster?.aws_client_information?.msk_cluster_config?.Provisioned?.BrokerNodeGroupInfo?.StorageInfo?.EbsStorageInfo?.VolumeSize || 500
               },
               jump_cluster_broker_subnet_cidr: {
@@ -584,7 +584,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               jump_cluster_setup_host_subnet_cidr: {
                 type: 'string',
-                title: 'Jump Cluster Setup Host',
+                title: 'Jump Cluster Setup Host CIDR',
                 description: 'The subnet CIDR range for EC2 instance that will provision the jump cluster instances.',
               }
             },

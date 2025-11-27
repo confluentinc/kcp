@@ -3,8 +3,8 @@ package migration_infra
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,82 +18,74 @@ var (
 	stateFile          string
 	clusterArn         string
 	migrationInfraType string
+	clusterLinkName    string
+	outputDir          string
 
-	ccEnvName     string
-	ccClusterName string
-
-	securityGroupIds []string
-
-	ccClusterType                 string
-	jumpClusterBrokerSubnetConfig string
-	ansibleControlNodeSubnetCIDR  net.IPNet
-
-	jumpClusterBrokerIAMRoleName string
+	targetEnvironmentId string
+	targetClusterId     string
+	targetRestEndpoint  string
+	subnetId            string
+	securityGroupId     string
 )
 
 func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd := &cobra.Command{
 		Use:           "migration-infra",
-		Short:         "Create assets for the migration infrastructure",
-		Long:          "Create Terraform assets that provision the migration infrastructure - Confluent Cloud, cluster linking, etc.",
+		Short:         "migration-infra",
+		Long:          "migration-infra",
 		SilenceErrors: true,
-		PreRunE:       preRunCreateMigrationInfra,
-		RunE:          runCreateMigrationInfra,
+		RunE:          runMigrationInfra,
+		PreRunE:       preRunMigrationInfra,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
 
-	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration infrastructure for.")
-	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options")
+	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options.")
 	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	// Optional flags.
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&ccEnvName, "cc-env-name", "", "Confluent Cloud environment name")
-	optionalFlags.StringVar(&ccClusterName, "cc-cluster-name", "", "Confluent Cloud cluster name")
-	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
+	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory to output the migration infrastructure assets to.")
 	migrationInfraCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
-	// Type 1 flags.
-	typeOneFlags := pflag.NewFlagSet("type-1", pflag.ExitOnError)
-	typeOneFlags.SortFlags = false
-	typeOneFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
-	typeOneFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
-	typeOneFlags.StringVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", "", "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
-	typeOneFlags.StringVar(&jumpClusterBrokerIAMRoleName, "jump-cluster-broker-iam-role-name", "", "The Jump cluster broker IAM role name")
-	migrationInfraCmd.Flags().AddFlagSet(typeOneFlags)
-	groups[typeOneFlags] = "Type 1 Flags"
+	baseFlags := pflag.NewFlagSet("base", pflag.ExitOnError)
+	baseFlags.SortFlags = false
+	baseFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link for the migration.")
+	baseFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID.")
+	baseFlags.StringVar(&targetRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint.")
+	migrationInfraCmd.Flags().AddFlagSet(baseFlags)
+	groups[baseFlags] = "Base Flags"
 
-	typeTwoFlags := pflag.NewFlagSet("type-2", pflag.ExitOnError)
+	typeTwoFlags := pflag.NewFlagSet("type-two", pflag.ExitOnError)
 	typeTwoFlags.SortFlags = false
-	typeTwoFlags.StringVar(&ccClusterType, "cc-cluster-type", "", "Confluent Cloud cluster type - 'Dedicated' or 'Enterprise'")
-	typeTwoFlags.IPNetVar(&ansibleControlNodeSubnetCIDR, "ansible-control-node-subnet-cidr", net.IPNet{}, "Ansible control node subnet CIDR (e.g. 10.0.255.0/24)")
-	typeTwoFlags.StringVar(&jumpClusterBrokerSubnetConfig, "jump-cluster-broker-subnet-config", "", "Jump cluster broker subnet config (e.g. us-east-1a:10.0.150.0/24,us-east-1b:10.0.160.0/24,us-east-1c:10.0.170.0/24)")
+	typeTwoFlags.StringVar(&targetEnvironmentId, "target-environment-id", "", "The Confluent Cloud environment ID.")
+	typeTwoFlags.StringVar(&subnetId, "subnet-id", "", "Override subnet ID for the EC2 instance (defaults to MSK broker 1 subnet).")
+	typeTwoFlags.StringVar(&securityGroupId, "security-group-id", "", "Override security group ID for the EC2 instance (defaults to MSK cluster security group).")
 	migrationInfraCmd.Flags().AddFlagSet(typeTwoFlags)
-	groups[typeTwoFlags] = "Type 2 Flags"
+	groups[typeTwoFlags] = "Type Two Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, baseFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Base Migration Flags"}
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, typeOneFlags, typeTwoFlags}
-		groupNames := []string{"Required Flags", "Optional Flags", "Type 1 Flags", "Type 2 Flags"}
+		fmt.Println(`Types:
+  Public MSK Endpoints:
+    Type 1: Cluster Link [SASL/SCRAM]
+  Private MSK Endpoints:
+    Type 2: External Outbound Cluster Link [SASL/SCRAM]
+    Type 3: Jump Cluster, Reuse Existing Subnets [SASL/SCRAM]
+    Type 4: Jump Cluster, Reuse Existing Subnets [IAM]
+    Type 5: Jump Cluster, New Subnets [SASL/SCRAM]
+    Type 6: Jump Cluster, New Subnets [IAM]
 
-		if c.HasAvailableSubCommands() {
-			fmt.Println("Available subcommands:")
-			for _, subCmd := range c.Commands() {
-				if !subCmd.Hidden {
-					fmt.Printf("  %-20s %s\n", subCmd.Name(), subCmd.Short)
-				}
-			}
-			fmt.Println()
-		}
+Refer to the kcp docs for more information on each migration type.
+		`)
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -110,56 +102,49 @@ func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd.MarkFlagRequired("state-file")
 	migrationInfraCmd.MarkFlagRequired("cluster-arn")
 	migrationInfraCmd.MarkFlagRequired("type")
-
-	migrationInfraCmd.AddCommand(NewExternalOutboundCmd())
+	migrationInfraCmd.MarkFlagRequired("cluster-link-name")
+	migrationInfraCmd.MarkFlagRequired("target-cluster-id")
+	migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
 
 	return migrationInfraCmd
 }
 
-// sets flag values from corresponding environment variables if flags weren't explicitly provided
-func preRunCreateMigrationInfra(cmd *cobra.Command, args []string) error {
+func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
 
-	targetType, err := types.ToMigrationInfraType(migrationInfraType)
+	targetType, err := types.ToMigrationType(migrationInfraType)
 	if err != nil {
 		return fmt.Errorf("invalid --type: %v", err)
 	}
 
 	switch targetType {
-	case types.MskCpCcPrivateSaslIam:
-		cmd.MarkFlagRequired("jump-cluster-broker-subnet-config")
-		cmd.MarkFlagRequired("ansible-control-node-subnet-cidr")
-		cmd.MarkFlagRequired("cc-cluster-type")
-		cmd.MarkFlagRequired("jump-cluster-broker-iam-role-name")
-
-	case types.MskCpCcPrivateSaslScram:
-		cmd.MarkFlagRequired("jump-cluster-broker-subnet-config")
-		cmd.MarkFlagRequired("ansible-control-node-subnet-cidr")
-		cmd.MarkFlagRequired("cc-cluster-type")
+	case types.PublicMskEndpoints:
+		// No additional flag requirements.
+	case types.ExternalOutboundClusterLink:
+		cmd.MarkFlagRequired("target-environment-id")
 	}
 
 	return nil
 }
 
-func runCreateMigrationInfra(cmd *cobra.Command, args []string) error {
+func runMigrationInfra(cmd *cobra.Command, args []string) error {
 	opts, err := parseMigrationInfraOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse migration infra opts: %v", err)
+		return fmt.Errorf("failed to parse migration infra options: %w", err)
 	}
 
-	migrationInfraAssetGenerator := NewMigrationInfraAssetGenerator(*opts)
-	if err := migrationInfraAssetGenerator.Run(); err != nil {
-		return fmt.Errorf("failed to create migration infrastructure assets: %v", err)
+	generator := NewMigrationInfraAssetGenerator(*opts)
+	if err := generator.Run(); err != nil {
+		return fmt.Errorf("failed to run migration infra generator: %w", err)
 	}
 
 	return nil
 }
 
 func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
-	// ignoring error as already validated in preRunCreateMigrationInfra
-	migrationInfraType, _ := types.ToMigrationInfraType(migrationInfraType)
+	targetType, _ := types.ToMigrationType(migrationInfraType)
 
 	file, err := os.ReadFile(stateFile)
 	if err != nil {
@@ -176,50 +161,94 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	region := aws.ToString(&cluster.Region)
+	// Recurring statefile values.
 	vpcId := aws.ToString(&cluster.AWSClientInformation.ClusterNetworking.VpcId)
-
-	if ccEnvName == "" {
-		ccEnvName = aws.ToString(&cluster.Name)
-	}
-
-	if ccClusterName == "" {
-		ccClusterName = aws.ToString(&cluster.Name)
-	}
-
-	bootstrapBrokers, err := getBootstrapBrokers(cluster, migrationInfraType)
+	region := aws.ToString(&cluster.Region)
+	mskClusterId := aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID)
+	bootstrapBrokers, err := getBootstrapBrokers(cluster, targetType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bootstrap brokers: %v", err)
 	}
 
-	opts := MigrationInfraOpts{
-		Region:                        region,
-		VPCId:                         vpcId,
-		JumpClusterBrokerSubnetConfig: jumpClusterBrokerSubnetConfig,
-		CcEnvName:                     ccEnvName,
-		CcClusterName:                 ccClusterName,
-		CcClusterType:                 strings.ToLower(ccClusterType),
-		AnsibleControlNodeSubnetCIDR:  ansibleControlNodeSubnetCIDR.String(),
-		JumpClusterBrokerIAMRoleName:  jumpClusterBrokerIAMRoleName,
-		MigrationInfraType:            migrationInfraType,
-		SecurityGroupIds:              securityGroupIds,
-		BootstrapBrokers:              bootstrapBrokers,
-		MskClusterId:                  aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID),
-		MskClusterArn:                 aws.ToString(&cluster.Arn),
+	opts := &MigrationInfraOpts{
+		VpcId:            vpcId,
+		Region:           region,
+		MskClusterId:     mskClusterId,
+		BootstrapBrokers: bootstrapBrokers,
+
+		ClusterLinkName:     clusterLinkName,
+		TargetEnvironmentId: targetEnvironmentId,
+		TargetClusterId:     targetClusterId,
+		TargetRestEndpoint:  targetRestEndpoint,
+		SubnetId:            subnetId,
+		SecurityGroupId:     securityGroupId,
+
+		MigrationType: targetType,
 	}
 
-	return &opts, nil
+	switch targetType {
+	case types.ExternalOutboundClusterLink:
+		if opts.SubnetId == "" {
+			if len(cluster.AWSClientInformation.ClusterNetworking.SubnetIds) > 0 {
+				opts.SubnetId = cluster.AWSClientInformation.ClusterNetworking.SubnetIds[0]
+			} else {
+				return nil, fmt.Errorf("no subnet IDs found in cluster networking information")
+			}
+		}
+
+		if opts.SecurityGroupId == "" {
+			if len(cluster.AWSClientInformation.ClusterNetworking.SecurityGroups) > 0 {
+				opts.SecurityGroupId = cluster.AWSClientInformation.ClusterNetworking.SecurityGroups[0]
+			} else {
+				return nil, fmt.Errorf("no security groups found in cluster networking information")
+			}
+		}
+
+		if opts.ClusterLinkName == "" {
+			opts.ClusterLinkName = "kcp-msk-to-cc-link"
+		}
+
+		// Extract broker information for external outbound
+		opts.ExtOutboundBrokers = extractBrokerInformation(cluster)
+	}
+
+	return opts, nil
 }
 
-func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationInfraType types.MigrationInfraType) (string, error) {
-	switch migrationInfraType {
-	case types.MskCpCcPrivateSaslIam:
-		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslIam), nil
-	case types.MskCpCcPrivateSaslScram:
-		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram), nil
-	case types.MskCcPublic:
+func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.MigrationType) (string, error) {
+	switch migrationType {
+	case types.PublicMskEndpoints:
 		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram), nil
 	default:
-		return "", fmt.Errorf("invalid target type: %d", migrationInfraType)
+		return "<bootstrap broker address not found>", fmt.Errorf("invalid target type: %d", migrationType)
 	}
+}
+
+func extractBrokerInformation(cluster *types.DiscoveredCluster) []types.ExtOutboundClusterKafkaBroker {
+	var brokers []types.ExtOutboundClusterKafkaBroker
+	bootstrapBrokers := strings.Split(aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram), ",")
+
+	var formattedBootstrapBrokers []string
+	for _, broker := range bootstrapBrokers {
+		formattedBootstrapBrokers = append(formattedBootstrapBrokers, strings.TrimSuffix(broker, ":9096"))
+	}
+	slices.Sort(formattedBootstrapBrokers)
+
+	for _, subnet := range cluster.AWSClientInformation.ClusterNetworking.Subnets {
+		broker := types.ExtOutboundClusterKafkaBroker{
+			ID:       fmt.Sprintf("%d", subnet.SubnetMskBrokerId),
+			SubnetID: subnet.SubnetId,
+			Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
+				{
+					Host: formattedBootstrapBrokers[subnet.SubnetMskBrokerId-1],
+					Port: 9096, // Default port for SASL/SCRAM.
+					IP:   subnet.PrivateIpAddress,
+				},
+			},
+		}
+
+		brokers = append(brokers, broker)
+	}
+
+	return brokers
 }
