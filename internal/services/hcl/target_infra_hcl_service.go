@@ -439,7 +439,7 @@ func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.T
 	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
 		ti.ResourceNames.Route53Record,
 		fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone),
-		"*", // TODO: we might want to consider using an actual record name versus the wildcard -- only concern is the impact of record name vs wildcard.
+		"*", // TODO: we might want to consider using an actual record name versus the wildcard -- only concern is the impact of having a record name vs a wildcard.
 		fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
 	))
 	rootBody.AppendNewline()

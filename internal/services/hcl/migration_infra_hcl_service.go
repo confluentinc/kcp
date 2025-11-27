@@ -682,11 +682,29 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 	awsRegionVarName := modules.GetModuleVariableName("private_link_connection", "aws_region")
 	targetEnvironmentIdVarName := modules.GetModuleVariableName("private_link_connection", "target_environment_id")
 	vpcIdVarName := modules.GetModuleVariableName("private_link_connection", "vpc_id")
-	jumpClusterBrokerSubnetIdsVarName := modules.GetModuleVariableName("private_link_connection", "jump_cluster_broker_subnet_ids")
 	securityGroupIdVarName := modules.GetModuleVariableName("private_link_connection", "security_group_id")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
+
+	var privateLinkSubnetsRef string
+	if !request.ReuseExistingSubnets {
+		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("available"))
+		rootBody.AppendNewline()
+
+		privateLinkSubnetsCidrsVarName := modules.GetModuleVariableName("private_link_connection", "private_link_new_subnet_cidrs")
+
+		rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
+			"private_link_subnets",
+			privateLinkSubnetsCidrsVarName,
+			fmt.Sprintf("data.aws_availability_zones.%s", "available"),
+			vpcIdVarName,
+		))
+
+		privateLinkSubnetsRef = fmt.Sprintf("aws_subnet.%s[*].id", "private_link_subnets")
+	}  else {
+		privateLinkSubnetsRef = modules.GetModuleVariableName("private_link_connection", "private_link_subnet_ids")
+	}
 
 	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResource(
 		"jump_cluster_private_link_attachment",
@@ -696,12 +714,13 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 	))
 	rootBody.AppendNewline()
 
+	// HERE!!!!!!!!!
 	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
 		"jump_cluster_vpc_endpoint",
 		vpcIdVarName,
 		"confluent_private_link_attachment.jump_cluster_private_link_attachment.aws[0].vpc_endpoint_service_name",
-		securityGroupIdVarName,
-		jumpClusterBrokerSubnetIdsVarName,
+		fmt.Sprintf("var.%s", securityGroupIdVarName),
+		fmt.Sprintf("var.%s", privateLinkSubnetsRef),
 		[]string{"confluent_private_link_attachment.jump_cluster_private_link_attachment"},
 	))
 	rootBody.AppendNewline()

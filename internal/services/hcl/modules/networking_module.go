@@ -30,9 +30,7 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.JumpClusterBrokerSubnetCidr
 			},
-			Condition: func(request types.MigrationWizardRequest) bool {
-				return !request.ReuseExistingSubnets
-			},
+			Condition: nil,
 		},
 		{
 			Name: "jump_cluster_setup_host_subnet_cidr",
@@ -45,9 +43,7 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.JumpClusterSetupHostSubnetCidr
 			},
-			Condition: func(request types.MigrationWizardRequest) bool {
-				return !request.ReuseExistingSubnets
-			},
+			Condition: nil,
 		},
 	}
 }
