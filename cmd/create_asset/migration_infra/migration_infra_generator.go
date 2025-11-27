@@ -11,103 +11,42 @@ import (
 )
 
 type MigrationInfraOpts struct {
-	VpcId            string
-	Region           string
-	MskClusterId     string
-	BootstrapBrokers string
+	MigrationWizardRequest types.MigrationWizardRequest
 
-	ClusterLinkName     string
-	TargetEnvironmentId string
-	TargetClusterId     string
-	TargetRestEndpoint  string
-	SubnetId            string
-	SecurityGroupId     string
-	ExtOutboundBrokers  []types.ExtOutboundClusterKafkaBroker
-
+	OutputDir     string
 	MigrationType types.MigrationType
 }
 
 type MigrationInfraAssetGenerator struct {
-	vpcId            string
-	region           string
-	mskClusterId     string
-	bootstrapBrokers string
+	MigrationWizardRequest types.MigrationWizardRequest
 
-	clusterLinkName     string
-	targetEnvironmentId string
-	targetClusterId     string
-	targetRestEndpoint  string
-	subnetId            string
-	securityGroupId     string
-	extOutboundBrokers  []types.ExtOutboundClusterKafkaBroker
-
+	outputDir     string
 	migrationType types.MigrationType
 }
 
 func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAssetGenerator {
 	return &MigrationInfraAssetGenerator{
-		vpcId:               opts.VpcId,
-		region:              opts.Region,
-		mskClusterId:        opts.MskClusterId,
-		bootstrapBrokers:    opts.BootstrapBrokers,
-		clusterLinkName:     opts.ClusterLinkName,
-		targetEnvironmentId: opts.TargetEnvironmentId,
-		targetClusterId:     opts.TargetClusterId,
-		targetRestEndpoint:  opts.TargetRestEndpoint,
-		subnetId:            opts.SubnetId,
-		securityGroupId:     opts.SecurityGroupId,
-		extOutboundBrokers:  opts.ExtOutboundBrokers,
-
-		migrationType: opts.MigrationType,
+		MigrationWizardRequest: opts.MigrationWizardRequest,
+		outputDir:              opts.OutputDir,
+		migrationType:          opts.MigrationType,
 	}
 }
 
 func (mi *MigrationInfraAssetGenerator) Run() error {
 	slog.Info("🏁 generating migration infrastructure", "targetType", mi.migrationType)
 
-	outputDir := "migration-infra"
+	outputDir := mi.outputDir
+	if outputDir == "" {
+		outputDir = "migration-infra"
+	}
 	slog.Info("📁 creating migration-infra directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create migration-infra directory: %w", err)
 	}
 
-	var request types.MigrationWizardRequest
-
-	switch mi.migrationType {
-	case 1: // PublicMskEndpoints
-		request = types.MigrationWizardRequest{
-			HasPublicMskEndpoints:        true,
-			VpcId:                        mi.vpcId,
-			MskRegion:                    mi.region,
-			MskClusterId:                 mi.mskClusterId,
-			MskSaslScramBootstrapServers: mi.bootstrapBrokers,
-			TargetClusterId:              mi.targetClusterId,
-			TargetRestEndpoint:           mi.targetRestEndpoint,
-			ClusterLinkName:              mi.clusterLinkName,
-		}
-	case 2: // ExternalOutboundClusterLink
-		request = types.MigrationWizardRequest{
-			HasPublicMskEndpoints:        false,
-			UseJumpClusters:              false,
-			VpcId:                        mi.vpcId,
-			ExtOutboundSubnetId:          mi.subnetId,
-			ExtOutboundSecurityGroupId:   mi.securityGroupId,
-			ExtOutboundBrokers:           mi.extOutboundBrokers,
-			MskRegion:                    mi.region,
-			MskClusterId:                 mi.mskClusterId,
-			MskSaslScramBootstrapServers: mi.bootstrapBrokers,
-			TargetEnvironmentId:          mi.targetEnvironmentId,
-			TargetClusterId:              mi.targetClusterId,
-			TargetRestEndpoint:           mi.targetRestEndpoint,
-			ClusterLinkName:              mi.clusterLinkName,
-		}
-	default:
-		return fmt.Errorf("unsupported migration type: %d", mi.migrationType)
-	}
-
 	slog.Info("📋 generating Terraform configuration")
 	hclService := hcl.NewMigrationInfraHCLService()
-	project := hclService.GenerateTerraformModules(request)
+	project := hclService.GenerateTerraformModules(mi.MigrationWizardRequest)
 
 	if err := mi.buildTerraformProject(outputDir, project); err != nil {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
