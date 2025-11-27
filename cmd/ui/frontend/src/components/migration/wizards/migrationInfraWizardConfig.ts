@@ -687,6 +687,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
+              target_environment_id: {
+                type: 'string',
+                title: 'Confluent Cloud Environment ID',
+              },
               target_cluster_id: {
                 type: 'string',
                 title: 'Confluent Cloud Cluster ID'
@@ -704,7 +708,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'Confluent Cloud Cluster Link Name'
               },
             },
-            required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
+            required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
           },
           uiSchema: {
             msk_cluster_id: {
@@ -715,6 +719,9 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
             msk_region: {
               'ui:disabled': true,
+            },
+            target_environment_id: {
+              'ui:placeholder': 'e.g., env-xxxxxx',
             },
             target_cluster_id: {
               'ui:placeholder': 'e.g., lkc-xxxxxx',

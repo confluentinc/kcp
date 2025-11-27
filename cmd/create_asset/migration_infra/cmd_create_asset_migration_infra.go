@@ -20,7 +20,10 @@ var (
 	clusterArn         string
 	migrationInfraType string
 	clusterLinkName    string
-	outputDir          string
+
+	existingPrivateLink     bool
+	existingInternetGateway bool
+	outputDir               string
 
 	targetEnvironmentId     string
 	targetClusterId         string
@@ -59,6 +62,8 @@ func NewMigrationInfraCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
+	optionalFlags.BoolVar(&existingInternetGateway, "existing-internet-gateway", false, "Whether to use an existing internet gateway. (default: false)")
+	optionalFlags.BoolVar(&existingPrivateLink, "existing-private-link", false, "Whether to use an existing private link. (default: false)")
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory to output the migration infrastructure assets to. (default: 'migration-infra')")
 	migrationInfraCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
@@ -81,12 +86,13 @@ func NewMigrationInfraCmd() *cobra.Command {
 
 	typeThreeFlags := pflag.NewFlagSet("type-three", pflag.ExitOnError)
 	typeThreeFlags.SortFlags = false
+	typeThreeFlags.StringVar(&targetEnvironmentId, "target-environment-id", "", "The Confluent Cloud environment ID.")
+	typeThreeFlags.StringVar(&targetBootstrapEndpoint, "target-bootstrap-endpoint", "", "The bootstrap endpoint to use for the Confluent Cloud cluster.")
+	typeThreeFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
+	typeThreeFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
 	typeThreeFlags.StringSliceVar(&existingPrivateLinkSubnetIds, "pl-subnet-ids", []string{}, "[Optiona] The IDs of the existing private link subnets to use for the jump cluster. (default: MSK cluster broker subnets).")
 	typeThreeFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: t3.medium).")
 	typeThreeFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
-	typeThreeFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR block to use for the jump cluster broker subnets.")
-	typeThreeFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
-	typeThreeFlags.StringVar(&targetBootstrapEndpoint, "target-bootstrap-endpoint", "", "The bootstrap endpoint to use for the Confluent Cloud cluster.")
 	migrationInfraCmd.Flags().AddFlagSet(typeThreeFlags)
 	groups[typeThreeFlags] = "Type Three Flags"
 
@@ -157,9 +163,10 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	case types.ExternalOutboundClusterLink:
 		cmd.MarkFlagRequired("target-environment-id")
 	case types.JumpClusterReuseExistingSubnetsSaslScram:
+		cmd.MarkFlagRequired("target-environment-id")
+		cmd.MarkFlagRequired("target-bootstrap-endpoint")
 		cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
 		cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
-		cmd.MarkFlagRequired("target-bootstrap-endpoint")
 	}
 
 	return nil
@@ -208,6 +215,9 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 
 	opts := &MigrationInfraOpts{
 		MigrationWizardRequest: types.MigrationWizardRequest{
+			HasExistingInternetGateway: existingInternetGateway,
+			HasExistingPrivateLink: existingPrivateLink,
+
 			VpcId:        vpcId,
 			MskRegion:    region,
 			MskClusterId: mskClusterId,
@@ -231,9 +241,15 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 
 	switch targetType {
 	case types.PublicMskEndpoints:
+		opts.MigrationWizardRequest.HasPublicMskEndpoints = true
+		opts.MigrationWizardRequest.UseJumpClusters = false
+
 		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
 
 	case types.ExternalOutboundClusterLink:
+		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
+		opts.MigrationWizardRequest.UseJumpClusters = false
+
 		opts.MigrationWizardRequest.ExtOutboundSubnetId = extOutboundSubnetId
 		opts.MigrationWizardRequest.ExtOutboundSecurityGroupId = extOutboundSecurityGroupId
 
@@ -258,6 +274,13 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.ExtOutboundBrokers = buildExtOutboundBrokers(cluster)
 
 	case types.JumpClusterReuseExistingSubnetsSaslScram:
+		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
+		opts.MigrationWizardRequest.UseJumpClusters = true
+
+		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
+			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d). You should provide as many CIDRs as the MSK cluster has broker nodes.", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
+		}
+
 		if len(existingPrivateLinkSubnetIds) == 0 {
 			existingPrivateLinkSubnetIds = cluster.AWSClientInformation.ClusterNetworking.SubnetIds
 		}
@@ -270,20 +293,24 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			jumpClusterBrokerStorage = int(*cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
 		}
 
-		opts.MigrationWizardRequest.UseJumpClusters = true
-		opts.MigrationWizardRequest.ReuseExistingSubnets = true
-		opts.MigrationWizardRequest.MskJumpClusterAuthType = "SASL/SCRAM"
-		opts.MigrationWizardRequest.JumpClusterInstanceType = jumpClusterInstanceType
-		opts.MigrationWizardRequest.JumpClusterBrokerStorage = jumpClusterBrokerStorage
-		opts.MigrationWizardRequest.PrivateLinkExistingSubnetIds = existingPrivateLinkSubnetIds
+		opts.MigrationWizardRequest.TargetEnvironmentId = targetEnvironmentId
 		opts.MigrationWizardRequest.TargetBootstrapEndpoint = targetBootstrapEndpoint
 
-		fmt.Println(opts)
+		opts.MigrationWizardRequest.ReuseExistingSubnets = true
+		opts.MigrationWizardRequest.PrivateLinkExistingSubnetIds = existingPrivateLinkSubnetIds
+
+		opts.MigrationWizardRequest.JumpClusterBrokerSubnetCidr = convertIpToStrings(jumpClusterBrokerSubnetCidr)
+		opts.MigrationWizardRequest.JumpClusterSetupHostSubnetCidr = jumpClusterSetupHostSubnetCidr.String()
+		opts.MigrationWizardRequest.JumpClusterInstanceType = jumpClusterInstanceType
+		opts.MigrationWizardRequest.JumpClusterBrokerStorage = jumpClusterBrokerStorage
+
+		opts.MigrationWizardRequest.MskJumpClusterAuthType = "sasl_scram"
+		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
 
 		// case types.JumpClusterReuseExistingSubnetsIam:
 		// 	opts.MigrationWizardRequest.UseJumpClusters = true
 		// 	opts.MigrationWizardRequest.ReuseExistingSubnets = true
-		// 	opts.MigrationWizardRequest.MskJumpClusterAuthType = "IAM"
+		// 	opts.MigrationWizardRequest.MskJumpClusterAuthType = "iam"
 		// 	opts.MigrationWizardRequest.JumpClusterInstanceType = jumpClusterInstanceType
 		// 	opts.MigrationWizardRequest.JumpClusterBrokerStorage = jumpClusterBrokerStorage
 		// 	opts.MigrationWizardRequest.PrivateLinkExistingSubnetIds = existingPrivateLinkSubnetIds
