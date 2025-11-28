@@ -10,7 +10,7 @@ cat <<EOL | sudo tee /etc/nginx/nginx.conf
 load_module /usr/lib/nginx/modules/ngx_stream_module.so;
 events {}
 stream {
-    map \$ssl_preread_server_name \$targetBackend { default \$ssl_preread_server_name; }
+    map $ssl_preread_server_name $targetBackend { default $ssl_preread_server_name; }
 
     # On lookup failure, reconfigure to use the cloud provider's resolver
     # resolver 169.254.169.253; # for AWS
@@ -25,7 +25,7 @@ stream {
 
         resolver 169.254.169.253;
 
-        proxy_pass \$targetBackend:9092;
+        proxy_pass $targetBackend:9092;
         ssl_preread on;
     }
 
@@ -37,15 +37,15 @@ stream {
 
         resolver 169.254.169.253;
 
-        proxy_pass \$targetBackend:443;
+        proxy_pass $targetBackend:443;
         ssl_preread on;
     }
 
-    log_format stream_routing '[\$time_local] remote address \$remote_addr with SNI name "\$ssl_preread_server_name" proxied to "\$upstream_addr" \$protocol \$status \$bytes_sent \$bytes_received \$session_time';
+    log_format stream_routing '[$time_local] remote address $remote_addr with SNI name "$ssl_preread_server_name" proxied to "$upstream_addr" $protocol $status $bytes_sent $bytes_received $session_time';
     access_log /var/log/nginx/stream-access.log stream_routing;
 }
 EOL
 
 # Restart NGINX to apply the changes
 sudo systemctl restart nginx
-EOF
+

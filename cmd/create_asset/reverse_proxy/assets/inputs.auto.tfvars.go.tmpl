@@ -1,5 +1,0 @@
-aws_region                                   = "{{.AWSRegion}}"
-public_subnet_cidr                           = "{{.PublicSubnetCIDR}}"
-vpc_id                                       = "{{.VPCID}}"
-confluent_cloud_cluster_bootstrap_endpoint   = "{{.ConfluentCloudClusterBootstrapEndpoint}}"
-aws_security_group_ids                       = [{{range $i, $sg := .SecurityGroupIds}}{{if $i}}, {{end}}"{{$sg}}"{{end}}]

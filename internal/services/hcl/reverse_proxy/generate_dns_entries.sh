@@ -12,5 +12,3 @@ for i in $(seq -w 0 100); do
     sudo sh -c "echo $ip $hostname >> dns_entries.txt"
 done
 
-
-

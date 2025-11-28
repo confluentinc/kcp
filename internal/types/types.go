@@ -215,6 +215,13 @@ type MirrorTopicsRequest struct {
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
 }
 
+type ReverseProxyRequest struct {
+	Region                              string `json:"region"`
+	VPCId                               string `json:"vpc_id"`
+	PublicSubnetCidr                     string `json:"public_subnet_cidr"`
+	ConfluentCloudClusterBootstrapEndpoint string `json:"confluent_cloud_cluster_bootstrap_endpoint"`
+}
+
 type MigrateSchemasRequest struct {
 	ConfluentCloudSchemaRegistryURL string                         `json:"confluent_cloud_schema_registry_url"`
 	SchemaRegistries                []SchemaRegistryExporterConfig `json:"schema_registries"`
