@@ -704,6 +704,7 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 		privateLinkSubnetsRef = fmt.Sprintf("aws_subnet.%s[*].id", "private_link_subnets")
 	}  else {
 		privateLinkSubnetsRef = modules.GetModuleVariableName("private_link_connection", "private_link_subnet_ids")
+		privateLinkSubnetsRef = fmt.Sprintf("var.%s", privateLinkSubnetsRef)
 	}
 
 	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResource(
@@ -714,13 +715,12 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 	))
 	rootBody.AppendNewline()
 
-	// HERE!!!!!!!!!
 	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
 		"jump_cluster_vpc_endpoint",
 		vpcIdVarName,
 		"confluent_private_link_attachment.jump_cluster_private_link_attachment.aws[0].vpc_endpoint_service_name",
 		fmt.Sprintf("var.%s", securityGroupIdVarName),
-		fmt.Sprintf("var.%s", privateLinkSubnetsRef),
+		privateLinkSubnetsRef,
 		[]string{"confluent_private_link_attachment.jump_cluster_private_link_attachment"},
 	))
 	rootBody.AppendNewline()
