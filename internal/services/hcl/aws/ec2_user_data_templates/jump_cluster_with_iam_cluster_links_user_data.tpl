@@ -15,7 +15,8 @@ cd /home/ec2-user/
 #
 # Create MSK -> CP cluster link
 #
-echo "bootstrap.servers=${msk_cluster_bootstrap_brokers}
+echo "auto.create.mirror.topics.enable=true
+bootstrap.servers=${msk_cluster_bootstrap_brokers}
 security.protocol=SASL_SSL
 sasl.mechanism=AWS_MSK_IAM
 sasl.jaas.config=software.amazon.msk.auth.iam.IAMLoginModule required;
@@ -24,7 +25,20 @@ sasl.client.callback.handler.class=software.amazon.msk.auth.iam.IAMClientCallbac
 echo "bootstrap.servers=`hostname`:9092
 security.protocol=PLAINTEXT" > /home/ec2-user/destination-cluster.properties
 
-kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --config-file client.properties
+# Create topic filters JSON to auto-mirror all topics. Note: this takes around ~5 mins.
+cat > /home/ec2-user/topic-filters.json << 'FILTERS'
+{
+  "topicFilters": [
+    {
+      "name": "*",
+      "patternType": "LITERAL",
+      "filterType": "INCLUDE"
+    }
+  ]
+}
+FILTERS
+
+kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --topic-filters-json-file /home/ec2-user/topic-filters.json --config-file client.properties
 
 #
 # Create CP -> CC destination cluster link
@@ -39,6 +53,9 @@ curl --request POST \
   --header "Authorization: Basic $BASIC_AUTH_CREDENTIALS" \
   --header "Content-Type: application/json" \
   --data "{\"source_cluster_id\": \"$CONFLUENTPLATFORM_CLUSTER_ID\", \"configs\": [{\"name\": \"link.mode\", \"value\": \"DESTINATION\"}, {\"name\": \"connection.mode\", \"value\": \"INBOUND\"}]}"
+
+echo "Waiting for Confluent Cloud cluster link propagation..."
+sleep 15
 
 #
 # Create CC -> CP source cluster link

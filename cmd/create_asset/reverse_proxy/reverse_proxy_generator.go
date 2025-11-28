@@ -1,44 +1,29 @@
 package reverse_proxy
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
-	"text/template"
 
+	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-//go:embed assets
-var assetsFS embed.FS
-
 type ReverseProxyOpts struct {
-	Region           string
-	PublicSubnetCidr string
-	VPCId            string
-	TerraformOutput  types.TerraformOutputOld
-	SecurityGroupIds []string
+	Region                                 string
+	PublicSubnetCidr                       string
+	VPCId                                  string
+	ConfluentCloudClusterBootstrapEndpoint string
 }
 
 type ReverseProxyAssetGenerator struct {
-	region           string
-	publicSubnetCidr string
-	vpcId            string
-	terraformOutput  types.TerraformOutputOld
-	securityGroupIds []string
+	opts ReverseProxyOpts
 }
 
 func NewReverseProxyAssetGenerator(opts ReverseProxyOpts) *ReverseProxyAssetGenerator {
 	return &ReverseProxyAssetGenerator{
-		region:           opts.Region,
-		publicSubnetCidr: opts.PublicSubnetCidr,
-		vpcId:            opts.VPCId,
-		terraformOutput:  opts.TerraformOutput,
-		securityGroupIds: opts.SecurityGroupIds,
+		opts: opts,
 	}
 }
 
@@ -51,107 +36,75 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 		return fmt.Errorf("failed to create reverse proxy directory: %w", err)
 	}
 
-	assetsDir := "assets"
-	slog.Info("📋 copying assets to target directory", "from", assetsDir, "to", outputDir)
-	if err := rp.copyFiles(assetsDir, outputDir); err != nil {
-		return fmt.Errorf("failed to copy reverse proxy files: %w", err)
+	// Create request from opts
+	request := types.ReverseProxyRequest{
+		Region:                                 rp.opts.Region,
+		VPCId:                                  rp.opts.VPCId,
+		PublicSubnetCidr:                       rp.opts.PublicSubnetCidr,
+		ConfluentCloudClusterBootstrapEndpoint: rp.opts.ConfluentCloudClusterBootstrapEndpoint,
 	}
 
-	if err := rp.generateTfvarsFiles(outputDir); err != nil {
-		return fmt.Errorf("failed to generate tfvars files: %w", err)
+	// Generate Terraform files using HCL service
+	hclService := hcl.NewReverseProxyHCLService()
+	terraformFiles, err := hclService.GenerateReverseProxyFiles(request)
+	if err != nil {
+		return fmt.Errorf("failed to generate Terraform files: %w", err)
 	}
+
+	// Write Terraform files to disk
+	if err := rp.writeTerraformFiles(outputDir, terraformFiles); err != nil {
+		return fmt.Errorf("failed to write Terraform files: %w", err)
+	}
+
+	// Write user-data template
+	userDataTemplate := hclService.GenerateReverseProxyUserDataTemplate()
+	userDataPath := filepath.Join(outputDir, "reverse-proxy-user-data.tpl")
+	if err := os.WriteFile(userDataPath, []byte(userDataTemplate), 0644); err != nil {
+		return fmt.Errorf("failed to write user-data template: %w", err)
+	}
+	slog.Info("✅ wrote reverse-proxy-user-data.tpl")
+
+	// Write shell script from HCL service
+	scriptContent := hclService.GenerateReverseProxyShellScript()
+	scriptPath := filepath.Join(outputDir, "generate_dns_entries.sh")
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		return fmt.Errorf("failed to write shell script: %w", err)
+	}
+	slog.Info("✅ wrote generate_dns_entries.sh")
 
 	slog.Info("✅ reverse proxy assets generated", "directory", outputDir)
 
 	return nil
 }
 
-func (rp *ReverseProxyAssetGenerator) copyFiles(sourceDir, destDir string) error {
-	return fs.WalkDir(assetsFS, sourceDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+func (rp *ReverseProxyAssetGenerator) writeTerraformFiles(outputDir string, files types.TerraformFiles) error {
+	if files.MainTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
+			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-
-		// Skip the source directory itself
-		if path == sourceDir {
-			return nil
-		}
-
-		// exclude template files
-		if strings.HasSuffix(path, ".tmpl") {
-			return nil
-		}
-
-		// Calculate relative path from source directory
-		relPath, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
-		}
-
-		destPath := filepath.Join(destDir, relPath)
-
-		if d.IsDir() {
-			return os.MkdirAll(destPath, 0755)
-		}
-
-		// Read file content from embedded filesystem
-		content, err := assetsFS.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("failed to read embedded file %s: %w", path, err)
-		}
-
-		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", destPath, err)
-		}
-
-		return nil
-	})
-}
-
-func (rp *ReverseProxyAssetGenerator) generateTfvarsFiles(terraformDir string) error {
-	if err := rp.generateInputsTfvars(terraformDir); err != nil {
-		return fmt.Errorf("failed to generate inputs tfvars file: %w", err)
+		slog.Info("✅ wrote main.tf")
 	}
 
-	return nil
-}
-
-func (rp *ReverseProxyAssetGenerator) generateInputsTfvars(terraformDir string) error {
-	templatePath := "assets/inputs.auto.tfvars.go.tmpl"
-	templateContent, err := assetsFS.ReadFile(templatePath)
-	if err != nil {
-		return fmt.Errorf("failed to read template file: %w", err)
+	if files.ProvidersTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
+			return fmt.Errorf("failed to write providers.tf: %w", err)
+		}
+		slog.Info("✅ wrote providers.tf")
 	}
 
-	tmpl, err := template.New("tfvars").Parse(string(templateContent))
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
+	if files.VariablesTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
+			return fmt.Errorf("failed to write variables.tf: %w", err)
+		}
+		slog.Info("✅ wrote variables.tf")
 	}
 
-	templateData := struct {
-		AWSRegion                              string
-		PublicSubnetCIDR                       string
-		VPCID                                  string
-		ConfluentCloudClusterBootstrapEndpoint string
-		SecurityGroupIds                       []string
-	}{
-		AWSRegion:                              rp.region,
-		PublicSubnetCIDR:                       rp.publicSubnetCidr,
-		VPCID:                                  rp.vpcId,
-		ConfluentCloudClusterBootstrapEndpoint: rp.terraformOutput.ConfluentCloudClusterBootstrapEndpoint.Value.(string),
-		SecurityGroupIds:                       rp.securityGroupIds,
+	if files.InputsAutoTfvars != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(files.InputsAutoTfvars), 0644); err != nil {
+			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
+		}
+		slog.Info("✅ wrote inputs.auto.tfvars")
 	}
 
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, templateData); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	tfvarsPath := filepath.Join(terraformDir, "inputs.auto.tfvars")
-	if err := os.WriteFile(tfvarsPath, []byte(buf.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write tfvars file: %w", err)
-	}
-
-	slog.Info("✅ generated inputs tfvars file from template", "file", tfvarsPath)
 	return nil
 }

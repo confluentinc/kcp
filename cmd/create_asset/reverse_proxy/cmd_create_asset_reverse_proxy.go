@@ -10,11 +10,10 @@ import (
 )
 
 var (
-	region               string
-	vpcId                string
-	reverseProxyCidr     net.IPNet
-	migrationInfraFolder string
-	securityGroupIds     []string
+	region            string
+	vpcId             string
+	reverseProxyCidr  net.IPNet
+	bootstrapEndpoint string
 )
 
 func NewReverseProxyCmd() *cobra.Command {
@@ -25,6 +24,7 @@ func NewReverseProxyCmd() *cobra.Command {
 		SilenceErrors: true,
 		PreRunE:       preRunCreateReverseProxy,
 		RunE:          runCreateReverseProxy,
+		Hidden:        true,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -32,25 +32,18 @@ func NewReverseProxyCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.IPNetVar(&reverseProxyCidr, "reverse-proxy-cidr", net.IPNet{}, "Revese proxy subnet CIDR (e.g. 10.0.255.0/24)")
-	requiredFlags.StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration-infra folder produced from 'kcp create-asset migration-infra' command after applying the Terraform")
+	requiredFlags.IPNetVar(&reverseProxyCidr, "reverse-proxy-cidr", net.IPNet{}, "Reverse proxy subnet CIDR (e.g. 10.0.255.0/24)")
 	requiredFlags.StringVar(&region, "region", "", "AWS region the reverse proxy is provisioned in")
 	requiredFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
+	requiredFlags.StringVar(&bootstrapEndpoint, "bootstrap-endpoint", "", "The Confluent Cloud cluster bootstrap endpoint (e.g. pkc-xxxxx.us-east-1.aws.confluent.cloud:9092)")
 	reverseProxyCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
-
-	// Optional flags.
-	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
-	optionalFlags.SortFlags = false
-	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
-	reverseProxyCmd.Flags().AddFlagSet(optionalFlags)
-	groups[optionalFlags] = "Optional Flags"
 
 	reverseProxyCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Optional Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags}
+		groupNames := []string{"Required Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -66,9 +59,9 @@ func NewReverseProxyCmd() *cobra.Command {
 	})
 
 	reverseProxyCmd.MarkFlagRequired("reverse-proxy-cidr")
-	reverseProxyCmd.MarkFlagRequired("migration-infra-folder")
 	reverseProxyCmd.MarkFlagRequired("region")
 	reverseProxyCmd.MarkFlagRequired("vpc-id")
+	reverseProxyCmd.MarkFlagRequired("bootstrap-endpoint")
 
 	return reverseProxyCmd
 }
@@ -96,18 +89,11 @@ func runCreateReverseProxy(cmd *cobra.Command, args []string) error {
 }
 
 func parseReverseProxyOpts() (*ReverseProxyOpts, error) {
-	requiredTFStateFields := []string{"confluent_cloud_cluster_bootstrap_endpoint"}
-	terraformState, err := utils.ParseTerraformState(migrationInfraFolder, requiredTFStateFields)
-	if err != nil {
-		return nil, fmt.Errorf("error: %v\n please run terraform apply in the migration infra folder", err)
-	}
-
 	opts := ReverseProxyOpts{
-		Region:           region,
-		VPCId:            vpcId,
-		PublicSubnetCidr: reverseProxyCidr.String(),
-		TerraformOutput:  terraformState.Outputs,
-		SecurityGroupIds: securityGroupIds,
+		Region:                                 region,
+		VPCId:                                  vpcId,
+		PublicSubnetCidr:                       reverseProxyCidr.String(),
+		ConfluentCloudClusterBootstrapEndpoint: bootstrapEndpoint,
 	}
 
 	return &opts, nil
