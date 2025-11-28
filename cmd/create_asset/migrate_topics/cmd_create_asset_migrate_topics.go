@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,16 +14,19 @@ import (
 )
 
 var (
-	stateFile            string
-	migrationInfraFolder string
-	clusterArn           string
+	stateFile                 string
+	clusterArn                string
+	targetClusterId           string
+	targetClusterRestEndpoint string
+	clusterLinkName           string
+	outputDir                 string
 )
 
 func NewMigrateTopicsCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
 		Use:           "migrate-topics",
 		Short:         "Create assets for the migrate topics",
-		Long:          "Create shell scripts for setting up mirror topics used by the cluster links to migrate data to the target cluster in Confluent Cloud",
+		Long:          "Create Terraform files for setting up mirror topics used by the cluster links to migrate data to the target cluster in Confluent Cloud",
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateTopics,
 		RunE:          runMigrateTopics,
@@ -36,16 +38,25 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&migrationInfraFolder, "migration-infra-folder", "", "The migration-infra folder produced from 'kcp create-asset migration-infra' command after applying the Terraform")
 	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration scripts for.")
+	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
+	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-cluster-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
+	requiredFlags.StringVar(&clusterLinkName, "target-cluster-link-name", "", "The name of the cluster link (e.g., msk-to-cc-migration-link).")
 	migrationCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&outputDir, "output-dir", "migrate_topics", "The directory to output the Terraform files to. (default: 'migrate_topics')")
+	migrationCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
 
 	migrationCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -60,8 +71,10 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	})
 
 	migrationCmd.MarkFlagRequired("state-file")
-	migrationCmd.MarkFlagRequired("migration-infra-folder")
 	migrationCmd.MarkFlagRequired("cluster-arn")
+	migrationCmd.MarkFlagRequired("target-cluster-id")
+	migrationCmd.MarkFlagRequired("target-cluster-rest-endpoint")
+	migrationCmd.MarkFlagRequired("target-cluster-link-name")
 
 	return migrationCmd
 }
@@ -113,48 +126,13 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 		}
 	}
 
-	manifestPath := filepath.Join(migrationInfraFolder, "manifest.json")
-	manifestFile, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var manifest types.Manifest
-	if err := json.Unmarshal(manifestFile, &manifest); err != nil {
-		return nil, err
-	}
-
-	if !manifest.MigrationInfraType.IsValid() {
-		return nil, fmt.Errorf("invalid migration infra type in manifest: %d", manifest.MigrationInfraType)
-	}
-
-	requiredTFStateFields := getRequiredTFStateFields(manifest)
-	terraformState, err := utils.ParseTerraformState(migrationInfraFolder, requiredTFStateFields)
-	if err != nil {
-		return nil, fmt.Errorf("error: %v\n please run terraform apply in the migration infra folder", err)
-	}
-
 	opts := MigrateTopicsOpts{
-		MirrorTopics:    mirrorTopics,
-		TerraformOutput: terraformState.Outputs,
-		Manifest:        manifest,
+		MirrorTopics:              mirrorTopics,
+		TargetClusterId:           targetClusterId,
+		TargetClusterRestEndpoint: targetClusterRestEndpoint,
+		ClusterLinkName:           clusterLinkName,
+		OutputDir:                 outputDir,
 	}
 
 	return &opts, nil
-}
-
-func getRequiredTFStateFields(manifest types.Manifest) []string {
-	requiredFields := []string{
-		"confluent_cloud_cluster_api_key",
-		"confluent_cloud_cluster_api_key_secret",
-		"confluent_cloud_cluster_rest_endpoint",
-		"confluent_cloud_cluster_bootstrap_endpoint",
-		"confluent_cloud_cluster_id",
-	}
-
-	if manifest.MigrationInfraType == types.JumpClusterReuseExistingSubnetsSaslScram || manifest.MigrationInfraType == types.JumpClusterReuseExistingSubnetsIam {
-		requiredFields = append(requiredFields, "confluent_platform_controller_bootstrap_server")
-	}
-
-	return requiredFields
 }
