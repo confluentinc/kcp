@@ -3,6 +3,7 @@ package migration_infra
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"slices"
@@ -83,7 +84,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeTwoFlags := pflag.NewFlagSet("type-two", pflag.ExitOnError)
 	typeTwoFlags.SortFlags = false
 	typeTwoFlags.StringVar(&targetEnvironmentId, "target-environment-id", "", "The Confluent Cloud environment ID.")
-	typeTwoFlags.StringVar(&extOutboundSubnetId, "subnet-id", "", "[Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default:  MSK broker 1 subnet).")
+	typeTwoFlags.StringVar(&extOutboundSubnetId, "subnet-id", "", "[Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default:  MSK broker #1 subnet).")
 	typeTwoFlags.StringVar(&extOutboundSecurityGroupId, "security-group-id", "", "[Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).")
 	migrationInfraCmd.Flags().AddFlagSet(typeTwoFlags)
 	groups[typeTwoFlags] = "Type Two Flags"
@@ -95,7 +96,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeThreeFlags.StringSliceVar(&existingPrivateLinkSubnetIds, "pl-subnet-ids", []string{}, "[Optiona] The IDs of the existing private link subnets to use for the jump cluster. (default: MSK cluster broker subnets).")
 	typeThreeFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
 	typeThreeFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
-	typeThreeFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: t3.medium).")
+	typeThreeFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeThreeFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeThreeFlags)
 	groups[typeThreeFlags] = "Type Three Flags"
@@ -108,7 +109,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeFourFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
 	typeFourFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
 	typeFourFlags.StringVar(&jumpClusterIamAuthRoleName, "jump-cluster-iam-auth-role-name", "", " The IAM role name to authenticate the cluster link between MSK and the jump cluster.")
-	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: t3.medium).")
+	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeFourFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFourFlags)
 	groups[typeFourFlags] = "Type Four Flags"
@@ -120,7 +121,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeFiveFlags.IPNetSliceVar(&newPrivateLinkSubnetCidr, "pl-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the new private link subnets. Three CIDRs are required.")
 	typeFiveFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
 	typeFiveFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
-	typeFiveFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: t3.medium).")
+	typeFiveFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeFiveFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFiveFlags)
 	groups[typeFiveFlags] = "Type Five Flags"
@@ -133,7 +134,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeSixFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
 	typeSixFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
 	typeSixFlags.StringVar(&jumpClusterIamAuthRoleName, "jump-cluster-iam-auth-role-name", "", " The IAM role name to authenticate the cluster link between MSK and the jump cluster.")
-	typeSixFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: t3.medium).")
+	typeSixFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeSixFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeSixFlags)
 	groups[typeSixFlags] = "Type Six Flags"
@@ -302,6 +303,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
+		slog.Info("ℹ️ no cluster link name provided, using default", "default", "kcp-msk-to-cc-link")
 		opts.MigrationWizardRequest.ClusterLinkName = "kcp-msk-to-cc-link"
 	}
 
