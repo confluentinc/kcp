@@ -17,6 +17,9 @@ func GenerateEnvironmentResource(tfResourceName, envVarName string) *hclwrite.Bl
 	streamGovernanceBlock := hclwrite.NewBlock("stream_governance", nil)
 	streamGovernanceBlock.Body().SetAttributeValue("package", cty.StringVal("ADVANCED"))
 	environmentBlock.Body().AppendBlock(streamGovernanceBlock)
+	environmentBlock.Body().AppendNewline()
+
+	utils.GenerateLifecycleBlock(environmentBlock, "prevent_destroy", true)
 
 	return environmentBlock
 }

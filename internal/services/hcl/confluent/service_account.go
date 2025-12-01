@@ -11,6 +11,10 @@ func GenerateServiceAccount(tfResourceName, name, description string) *hclwrite.
 	serviceAccountBlock := hclwrite.NewBlock("resource", []string{"confluent_service_account", tfResourceName})
 	serviceAccountBlock.Body().SetAttributeValue("display_name", cty.StringVal(name))
 	serviceAccountBlock.Body().SetAttributeValue("description", cty.StringVal(description))
+	serviceAccountBlock.Body().AppendNewline()
+
+	utils.GenerateLifecycleBlock(serviceAccountBlock, "prevent_destroy", true)
+
 	return serviceAccountBlock
 }
 
@@ -20,5 +24,9 @@ func GenerateRoleBinding(tfResourceName, principal, roleName string, crnPattern 
 	roleBindingBlock.Body().SetAttributeRaw("principal", utils.TokensForStringTemplate(principal))
 	roleBindingBlock.Body().SetAttributeValue("role_name", cty.StringVal(roleName))
 	roleBindingBlock.Body().SetAttributeRaw("crn_pattern", crnPattern)
+	roleBindingBlock.Body().AppendNewline()
+
+	utils.GenerateLifecycleBlock(roleBindingBlock, "prevent_destroy", true)
+
 	return roleBindingBlock
 }

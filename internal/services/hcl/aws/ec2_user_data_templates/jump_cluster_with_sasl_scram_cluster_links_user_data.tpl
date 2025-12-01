@@ -15,7 +15,8 @@ cd /home/ec2-user/
 #
 # Create MSK -> CP cluster link
 #
-echo "bootstrap.servers=${msk_cluster_bootstrap_brokers}
+echo "auto.create.mirror.topics.enable=true
+bootstrap.servers=${msk_cluster_bootstrap_brokers}
 security.protocol=SASL_SSL
 sasl.mechanism=SCRAM-SHA-512
 sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required \
@@ -25,7 +26,20 @@ sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule require
 echo "bootstrap.servers=`hostname`:9092
 security.protocol=PLAINTEXT" > /home/ec2-user/destination-cluster.properties
 
-kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --config-file client.properties
+# Create topic filters JSON to auto-mirror all topics. Note: this takes around ~5 mins.
+cat > /home/ec2-user/topic-filters.json << 'FILTERS'
+{
+  "topicFilters": [
+    {
+      "name": "*",
+      "patternType": "LITERAL",
+      "filterType": "INCLUDE"
+    }
+  ]
+}
+FILTERS
+
+kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --topic-filters-json-file /home/ec2-user/topic-filters.json --config-file client.properties
 
 #
 # Create CP -> CC destination cluster link

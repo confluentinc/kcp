@@ -115,16 +115,36 @@ func GetMigrationInfraPrivateLinkVariables() []ModuleVariable[types.MigrationWiz
 			FromModuleOutput: "",
 		},
 		{
-			Name: "jump_cluster_broker_subnet_ids",
+			Name: "private_link_subnet_ids",
 			Definition: types.TerraformVariable{
-				Name:        "jump_cluster_broker_subnet_ids",
-				Description: "The IDs of the subnets that the jump cluster broker instances are deployed to.",
+				Name:        "private_link_subnet_ids",
+				Description: "The IDs of the subnets that the private link connection is established in.",
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor:   nil,
-			Condition:        nil,
-			FromModuleOutput: "networking",
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.PrivateLinkExistingSubnetIds
+			},
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.ReuseExistingSubnets
+			},
+			FromModuleOutput: "",
+		},
+		{
+			Name: "private_link_new_subnet_cidrs",
+			Definition: types.TerraformVariable{
+				Name:        "private_link_new_subnet_cidrs",
+				Description: "The CIDR ranges of the new subnets that the private link connection is established in.",
+				Sensitive:   false,
+				Type:        "list(string)",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.PrivateLinkNewSubnetsCidr
+			},
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return !request.ReuseExistingSubnets
+			},
+			FromModuleOutput: "",
 		},
 		{
 			Name: "security_group_id",

@@ -21,7 +21,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	if request.HasPublicCcEndpoints {
+	if request.HasPublicMskEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
 
@@ -682,11 +682,30 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 	awsRegionVarName := modules.GetModuleVariableName("private_link_connection", "aws_region")
 	targetEnvironmentIdVarName := modules.GetModuleVariableName("private_link_connection", "target_environment_id")
 	vpcIdVarName := modules.GetModuleVariableName("private_link_connection", "vpc_id")
-	jumpClusterBrokerSubnetIdsVarName := modules.GetModuleVariableName("private_link_connection", "jump_cluster_broker_subnet_ids")
 	securityGroupIdVarName := modules.GetModuleVariableName("private_link_connection", "security_group_id")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
+
+	var privateLinkSubnetsRef string
+	if !request.ReuseExistingSubnets {
+		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("available"))
+		rootBody.AppendNewline()
+
+		privateLinkSubnetsCidrsVarName := modules.GetModuleVariableName("private_link_connection", "private_link_new_subnet_cidrs")
+
+		rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
+			"private_link_subnets",
+			privateLinkSubnetsCidrsVarName,
+			fmt.Sprintf("data.aws_availability_zones.%s", "available"),
+			vpcIdVarName,
+		))
+
+		privateLinkSubnetsRef = fmt.Sprintf("aws_subnet.%s[*].id", "private_link_subnets")
+	}  else {
+		privateLinkSubnetsRef = modules.GetModuleVariableName("private_link_connection", "private_link_subnet_ids")
+		privateLinkSubnetsRef = fmt.Sprintf("var.%s", privateLinkSubnetsRef)
+	}
 
 	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResource(
 		"jump_cluster_private_link_attachment",
@@ -700,8 +719,8 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 		"jump_cluster_vpc_endpoint",
 		vpcIdVarName,
 		"confluent_private_link_attachment.jump_cluster_private_link_attachment.aws[0].vpc_endpoint_service_name",
-		securityGroupIdVarName,
-		jumpClusterBrokerSubnetIdsVarName,
+		fmt.Sprintf("var.%s", securityGroupIdVarName),
+		privateLinkSubnetsRef,
 		[]string{"confluent_private_link_attachment.jump_cluster_private_link_attachment"},
 	))
 	rootBody.AppendNewline()
@@ -785,7 +804,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	// https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("source", cty.StringVal("git::https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private.git"))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
-	
+
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("name_prefix", cty.StringVal("msk"))
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
@@ -814,7 +833,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 		if varDef.Condition != nil && !varDef.Condition(request) {
 			continue
 		}
-		
+
 		extOutboundClModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
 	}
 	rootBody.AppendNewline()
@@ -886,15 +905,15 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 		"create-external-outbound-cluster-link.tpl",
 		false,
 		map[string]hclwrite.Tokens{
-			"target_cluster_api_key":           utils.TokensForVarReference(targetClusterApiKeyVarName),
-			"target_cluster_api_secret":        utils.TokensForVarReference(targetClusterApiSecretVarName),
-			"target_cluster_rest_endpoint": utils.TokensForVarReference(targetClusterRestEndpointVarName),
-			"target_cluster_id":            utils.TokensForVarReference(targetClusterIdVarName),
-			"cluster_link_name":            utils.TokensForVarReference(clusterLinkNameVarName),
-			"msk_cluster_id":               utils.TokensForVarReference(mskClusterIdVarName),
+			"target_cluster_api_key":        utils.TokensForVarReference(targetClusterApiKeyVarName),
+			"target_cluster_api_secret":     utils.TokensForVarReference(targetClusterApiSecretVarName),
+			"target_cluster_rest_endpoint":  utils.TokensForVarReference(targetClusterRestEndpointVarName),
+			"target_cluster_id":             utils.TokensForVarReference(targetClusterIdVarName),
+			"cluster_link_name":             utils.TokensForVarReference(clusterLinkNameVarName),
+			"msk_cluster_id":                utils.TokensForVarReference(mskClusterIdVarName),
 			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(mskClusterBootstrapBrokersVarName),
-			"msk_sasl_scram_username":      utils.TokensForVarReference(mskSaslScramUsernameVarName),
-			"msk_sasl_scram_password":      utils.TokensForVarReference(mskSaslScramPasswordVarName),
+			"msk_sasl_scram_username":       utils.TokensForVarReference(mskSaslScramUsernameVarName),
+			"msk_sasl_scram_password":       utils.TokensForVarReference(mskSaslScramPasswordVarName),
 		},
 		nil,
 	))

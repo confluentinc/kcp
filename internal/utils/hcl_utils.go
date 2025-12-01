@@ -3,7 +3,6 @@ package utils
 import (
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -136,18 +135,16 @@ func TokensForMap(entries map[string]hclwrite.Tokens) hclwrite.Tokens {
 
 // GenerateLifecyleBlock creates tokens for a lifecycle block - supports only 'prevent_destroy' and
 // 'create_before_destroy'.
-func GenerateLifecycleBlock(lifecycle string, boolean bool) (hclwrite.Tokens, error) {
+func GenerateLifecycleBlock(resourceBlock *hclwrite.Block, lifecycle string, boolean bool) error {
 	var acceptedLifecycles = []string{"prevent_destroy", "create_before_destroy"}
 	if !slices.Contains(acceptedLifecycles, lifecycle) {
-		return nil, fmt.Errorf("invalid lifecycle: %s", lifecycle)
+		return fmt.Errorf("invalid lifecycle: %s", lifecycle)
 	}
 
-	return hclwrite.Tokens{
-		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
-		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(lifecycle)},
-		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(strconv.FormatBool(boolean))},
-		&hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")},
-	}, nil
+	lifecycleBlock := resourceBlock.Body().AppendNewBlock("lifecycle", nil)
+	lifecycleBlock.Body().SetAttributeValue(lifecycle, cty.BoolVal(boolean))
+
+	return nil
 }
 
 func ConvertToCtyValue(v any) cty.Value {

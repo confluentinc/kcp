@@ -37,6 +37,7 @@ type TargetInfraHCLService struct {
 	ResourceNames TerraformResourceNames
 }
 
+//
 func NewTerraformResourceNames() TerraformResourceNames {
 	return TerraformResourceNames{
 		// Confluent Resources
@@ -291,7 +292,8 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	rootBody.AppendNewline()
 
 	description := fmt.Sprintf("Service account to manage the %s environment.", envVarName)
-	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, "app-manager", description))
+	serviceAccountName := fmt.Sprintf("app-manager-%s", request.ClusterName[:min(len(request.ClusterName), 6)])
+	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, serviceAccountName, description))
 	rootBody.AppendNewline()
 
 	serviceAccountRef := fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount)
@@ -437,7 +439,7 @@ func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.T
 	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
 		ti.ResourceNames.Route53Record,
 		fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone),
-		"*", // TODO: we might want to consider using an actual record name versus the wildcard -- only concern is the impact of record name vs wildcard.
+		"*", // TODO: we might want to consider using an actual record name versus the wildcard -- only concern is the impact of having a record name vs a wildcard.
 		fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
 	))
 	rootBody.AppendNewline()
