@@ -75,7 +75,7 @@ func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWiza
 				return request.MskRegion
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return !request.HasPublicCcEndpoints
+				return !request.HasPublicMskEndpoints
 			},
 		},
 	}

@@ -213,7 +213,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.HasPublicCcEndpoints {
+	if req.HasPublicMskEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",
@@ -370,7 +370,8 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	var conditionalErrors []string
 
 	if len(missingFields) > 0 {
-		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))}
+		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
+	}
 	if len(conditionalErrors) > 0 {
 		return fmt.Errorf("invalid configuration: %s", strings.Join(conditionalErrors, "; "))
 	}

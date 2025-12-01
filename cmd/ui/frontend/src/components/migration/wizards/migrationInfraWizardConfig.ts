@@ -42,19 +42,19 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
-              has_public_cc_endpoints: {
+              has_public_msk_brokers: {
                 type: 'boolean',
-                title: 'Are your Confluent Cloud endpoints publicly accessible?',
+                title: 'Are your MSK brokers publicly accessible?',
                 oneOf: [
                   { title: 'Yes', const: true },
                   { title: 'No', const: false },
                 ],
               },
             },
-            required: ['has_public_cc_endpoints'],
+            required: ['has_public_msk_brokers'],
           },
           uiSchema: {
-            has_public_cc_endpoints: {
+            has_public_msk_brokers: {
               'ui:widget': 'radio',
             },
           },
@@ -63,7 +63,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           NEXT: [
             {
               target: 'public_cluster_link_inputs',
-              guard: 'has_public_cc_endpoints',
+              guard: 'has_public_msk_brokers',
               actions: 'save_step_data',
             },
             {
@@ -569,7 +569,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               jump_cluster_broker_storage: {
                 type: 'number',
-                title: 'Broker Storage per Broker (GB)',
+                title: 'Storage per Broker (GB)',
                 default: cluster?.aws_client_information?.msk_cluster_config?.Provisioned?.BrokerNodeGroupInfo?.StorageInfo?.EbsStorageInfo?.VolumeSize || 500
               },
               jump_cluster_broker_subnet_cidr: {
@@ -584,7 +584,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               jump_cluster_setup_host_subnet_cidr: {
                 type: 'string',
-                title: 'Jump Cluster Setup Host',
+                title: 'Jump Cluster Setup Host CIDR',
                 description: 'The subnet CIDR range for EC2 instance that will provision the jump cluster instances.',
               }
             },
@@ -687,6 +687,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
+              target_environment_id: {
+                type: 'string',
+                title: 'Confluent Cloud Environment ID',
+              },
               target_cluster_id: {
                 type: 'string',
                 title: 'Confluent Cloud Cluster ID'
@@ -704,7 +708,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'Confluent Cloud Cluster Link Name'
               },
             },
-            required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
+            required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
           },
           uiSchema: {
             msk_cluster_id: {
@@ -715,6 +719,9 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             },
             msk_region: {
               'ui:disabled': true,
+            },
+            target_environment_id: {
+              'ui:placeholder': 'e.g., env-xxxxxx',
             },
             target_cluster_id: {
               'ui:placeholder': 'e.g., lkc-xxxxxx',
@@ -875,11 +882,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
     },
 
     guards: {
-      has_public_cc_endpoints: ({ event}) => {
-        return event.data?.has_public_cc_endpoints === true
+      has_public_msk_brokers: ({ event}) => {
+        return event.data?.has_public_msk_brokers === true
       },
       has_private_cc_endpoints: ({ event}) => {
-        return event.data?.has_public_cc_endpoints === false
+        return event.data?.has_public_msk_brokers === false
       },
       use_jump_clusters: ({ event }) => {
         return event.data?.use_jump_clusters === true
