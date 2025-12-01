@@ -3,6 +3,7 @@ package aws
 import (
 	_ "embed"
 	"fmt"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -204,4 +205,91 @@ func GenerateJumpClusterWithIamClusterLinksUserDataTpl() string {
 
 func GenerateCreateExternalOutboundClusterLinkTpl() string {
 	return createExternalOutboundClusterLinkTpl
+}
+
+// ProvisionerConfig represents configuration for a provisioner block
+type ProvisionerConfig struct {
+	Type       string // e.g., "local-exec"
+	When       string // e.g., "create" or empty
+	OnFailure  string // e.g., "continue" or empty
+	Command    string // The command to execute
+	WorkingDir string // Optional working directory
+}
+
+// GenerateEc2UserDataInstanceResourceWithProvisioner generates an EC2 instance with user_data and optional provisioner
+func GenerateEc2UserDataInstanceResourceWithProvisioner(tfResourceName, amiIdRef, instanceType, subnetIdRef, securityGroupIdsRef, keyNameRef, userDataTemplatePath string, publicIp bool, userDataArgs map[string]hclwrite.Tokens, provisioner *ProvisionerConfig, optionalBlocks OptionalBlocksConfig) *hclwrite.Block {
+	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", tfResourceName})
+	instanceBody := resourceBlock.Body()
+
+	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference(amiIdRef))
+	instanceBody.SetAttributeValue("instance_type", cty.StringVal(instanceType))
+	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForResourceReference(subnetIdRef))
+
+	// Handle conditional security groups - if securityGroupIdsRef is a variable reference, use it directly
+	// Otherwise, treat it as a resource reference
+	if securityGroupIdsRef != "" {
+		// Check if it's a variable reference (starts with "var.") or a resource reference
+		if len(securityGroupIdsRef) > 4 && securityGroupIdsRef[:4] == "var." {
+			instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForVarReferenceList([]string{securityGroupIdsRef}))
+		} else {
+			instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForStringList([]string{securityGroupIdsRef}))
+		}
+	}
+
+	if keyNameRef != "" {
+		instanceBody.SetAttributeRaw("key_name", utils.TokensForResourceReference(keyNameRef))
+	}
+
+	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
+	instanceBody.AppendNewline()
+
+	if userDataTemplatePath != "" {
+		templatefileTokens := utils.TokensForFunctionCall(
+			"templatefile",
+			utils.TokensForStringTemplate(fmt.Sprintf("${path.module}/%s", userDataTemplatePath)),
+			utils.TokensForMap(userDataArgs),
+		)
+		instanceBody.SetAttributeRaw("user_data", templatefileTokens)
+		instanceBody.AppendNewline()
+	}
+
+	// Add provisioner if provided
+	if provisioner != nil {
+		provisionerBlock := instanceBody.AppendNewBlock("provisioner", []string{provisioner.Type})
+		provisionerBody := provisionerBlock.Body()
+
+		if provisioner.When != "" {
+			provisionerBody.SetAttributeValue("when", cty.StringVal(provisioner.When))
+		}
+
+		if provisioner.OnFailure != "" {
+			provisionerBody.SetAttributeValue("on_failure", cty.StringVal(provisioner.OnFailure))
+		}
+
+		if provisioner.Command != "" {
+			// Use heredoc format for command
+			// Format: <<-EOF\n<command>\nEOF
+			// Construct tokens manually for heredoc syntax
+			commandLines := strings.Split(provisioner.Command, "\n")
+			tokens := hclwrite.Tokens{
+				&hclwrite.Token{Type: hclsyntax.TokenOHeredoc, Bytes: []byte("<<-")},
+				&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("EOF")},
+				&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+			}
+			for _, line := range commandLines {
+				tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenQuotedLit, Bytes: []byte("      " + line)})
+				tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")})
+			}
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("    EOF")})
+			provisionerBody.SetAttributeRaw("command", tokens)
+		}
+
+		if provisioner.WorkingDir != "" {
+			provisionerBody.SetAttributeValue("working_dir", cty.StringVal(provisioner.WorkingDir))
+		}
+	}
+
+	appendOptionalBlocks(instanceBody, optionalBlocks)
+
+	return resourceBlock
 }

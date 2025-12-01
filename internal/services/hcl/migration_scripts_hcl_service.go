@@ -107,8 +107,8 @@ func (s *MigrationScriptsHCLService) generateMirrorTopicsVariablesTf() string {
 		description string
 		sensitive   bool
 	}{
-		{"target_cluster_api_key", "Target Cluster API Key", false},
-		{"target_cluster_api_secret", "Target Cluster API Secret", true},
+		{confluent.VarConfluentCloudAPIKey, "Confluent Cloud API Key", false},
+		{confluent.VarConfluentCloudAPISecret, "Confluent Cloud API Secret", true},
 		{"confluent_cloud_cluster_api_key", "Confluent Cloud cluster API key", false},
 		{"confluent_cloud_cluster_api_secret", "Confluent Cloud cluster API secret", true},
 	}

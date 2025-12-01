@@ -90,37 +90,40 @@ type ConnectTlsAuth struct {
 	ClientKey  string
 }
 
-type MigrationInfraType int
+type MigrationType int
 
 const (
-	MskCpCcPrivateSaslIam   MigrationInfraType = 1 // MSK to CP to CC Private with SASL/IAM
-	MskCpCcPrivateSaslScram MigrationInfraType = 2 // MSK to CP to CC Private with SASL/SCRAM
-	MskCcPublic             MigrationInfraType = 3 // MSK to CC Public
+	PublicMskEndpoints                       MigrationType = 1
+	ExternalOutboundClusterLink              MigrationType = 2
+	JumpClusterReuseExistingSubnetsSaslScram MigrationType = 3
+	JumpClusterReuseExistingSubnetsIam       MigrationType = 4
+	JumpClusterNewSubnetsSaslScram           MigrationType = 5
+	JumpClusterNewSubnetsIam                 MigrationType = 6
 )
 
-func (m MigrationInfraType) IsValid() bool {
+func (m MigrationType) IsValid() bool {
 	switch m {
-	case MskCpCcPrivateSaslIam, MskCpCcPrivateSaslScram, MskCcPublic:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterReuseExistingSubnetsSaslScram, JumpClusterReuseExistingSubnetsIam, JumpClusterNewSubnetsSaslScram, JumpClusterNewSubnetsIam:
 		return true
 	default:
 		return false
 	}
 }
 
-func ToMigrationInfraType(input string) (MigrationInfraType, error) {
+func ToMigrationType(input string) (MigrationType, error) {
 	value, err := strconv.Atoi(input)
 	if err != nil {
 		return 0, fmt.Errorf("invalid input: must be a number")
 	}
-	m := MigrationInfraType(value)
+	m := MigrationType(value)
 	if !m.IsValid() {
-		return 0, fmt.Errorf("invalid MigrationInfraType value: %d", value)
+		return 0, fmt.Errorf("invalid MigrationType value: %d", value)
 	}
 	return m, nil
 }
 
 type Manifest struct {
-	MigrationInfraType MigrationInfraType `json:"migration_infra_type"`
+	MigrationInfraType MigrationType `json:"migration_infra_type"`
 }
 
 type TargetClusterWizardRequest struct {
@@ -159,7 +162,7 @@ type TerraformOutput struct {
 }
 
 type MigrationWizardRequest struct {
-	HasPublicCcEndpoints bool `json:"has_public_cc_endpoints"`
+	HasPublicMskEndpoints bool `json:"has_public_msk_brokers"`
 
 	VpcId string `json:"vpc_id"`
 
@@ -210,6 +213,13 @@ type MirrorTopicsRequest struct {
 	ClusterLinkName           string   `json:"cluster_link_name"`
 	TargetClusterId           string   `json:"target_cluster_id"`
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
+}
+
+type ReverseProxyRequest struct {
+	Region                              string `json:"region"`
+	VPCId                               string `json:"vpc_id"`
+	PublicSubnetCidr                     string `json:"public_subnet_cidr"`
+	ConfluentCloudClusterBootstrapEndpoint string `json:"confluent_cloud_cluster_bootstrap_endpoint"`
 }
 
 type MigrateSchemasRequest struct {
