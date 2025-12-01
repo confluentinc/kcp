@@ -292,7 +292,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	rootBody.AppendNewline()
 
 	description := fmt.Sprintf("Service account to manage the %s environment.", envVarName)
-	serviceAccountName := fmt.Sprintf("app-manager-%s", request.ClusterName[0:6])
+	serviceAccountName := fmt.Sprintf("app-manager-%s", request.ClusterName[:min(len(request.ClusterName), 6)])
 	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, serviceAccountName, description))
 	rootBody.AppendNewline()
 

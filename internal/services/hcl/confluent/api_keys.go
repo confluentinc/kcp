@@ -29,6 +29,9 @@ func GenerateSchemaRegistryAPIKey(tfResourceName, envVarName, serviceAccountIdRe
 	environmentApiKeyBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
 	managedResourceBlock.Body().AppendBlock(environmentApiKeyBlock)
 	apiKeyBlock.Body().AppendBlock(managedResourceBlock)
+	apiKeyBlock.Body().AppendNewline()
+
+	utils.GenerateLifecycleBlock(apiKeyBlock, "prevent_destroy", true)
 
 	return apiKeyBlock
 }
@@ -59,7 +62,12 @@ func GenerateKafkaAPIKey(tfResourceName, envVarName, serviceAccountIdRef, servic
 	apiKeyBlock.Body().AppendBlock(managedResourceBlock)
 	apiKeyBlock.Body().AppendNewline()
 
+	utils.TokensForComment("Terraform will attempt to validate API key creation by listing topics, which will fail without access to the Kafka REST API when deploying outside of the VPC.")
+	utils.TokensForComment("https://github.com/confluentinc/terraform-provider-confluent/blob/master/examples/configurations/dedicated-privatelink-aws-kafka-rbac/README.md?plain=1#L5-L13")
 	apiKeyBlock.Body().SetAttributeValue("disable_wait_for_ready", cty.BoolVal(true))
+	apiKeyBlock.Body().AppendNewline()
+
+	utils.GenerateLifecycleBlock(apiKeyBlock, "prevent_destroy", true)
 
 	apiKeyBlock.Body().SetAttributeRaw("depends_on", utils.TokensForList([]string{
 		dependsOnRoleBindingRef,

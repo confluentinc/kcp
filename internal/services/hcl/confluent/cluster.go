@@ -35,6 +35,10 @@ func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, r
 	environmentRefBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(environmentIdRef))
 
 	clusterBlock.Body().AppendBlock(environmentRefBlock)
+	clusterBlock.Body().AppendNewline()
+
+	utils.GenerateLifecycleBlock(clusterBlock, "prevent_destroy", true)
+
 	return clusterBlock
 }
 
