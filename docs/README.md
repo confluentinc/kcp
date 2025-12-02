@@ -38,13 +38,14 @@ You can download kcp from GitHub under the [releases tab](https://github.com/con
 
 The following reference workflow should work on most linux and darwin systems:
 
-
 Set a variable for the latest release:
+
 ```
 LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 ```
 
 Set a variable for your platform (comment and uncomment as appropriate):
+
 ```
 PLATFORM=$(echo darwin_amd64)
 # PLATFORM=$(echo darwin_arm64)
@@ -53,26 +54,31 @@ PLATFORM=$(echo darwin_amd64)
 ```
 
 Download the binary:
+
 ```
 curl -L -o kcp_${LATEST_TAG}.tar.gz "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}.tar.gz"
 ```
 
 Untar the binary:
+
 ```
 tar -xzf kcp_${LATEST_TAG}.tar.gz
 ```
 
 Ensure binary is executable:
+
 ```
 chmod +x ./kcp/kcp
 ```
 
 Test the binary:
+
 ```
 ./kcp/kcp version
 ```
 
 You should see output similar to :
+
 ```
 Executing kcp with build version=0.4.5 commit=a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08 date=2025-11-13T12:56:00Z
 Version: 0.4.5
@@ -87,11 +93,13 @@ sudo mv ./kcp/kcp /usr/local/bin/kcp
 ```
 
 Test the installation to your PATH:
+
 ```
 kcp version
 ```
 
 You should see output similar to :
+
 ```
 Executing kcp with build version=0.4.5 commit=a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08 date=2025-11-13T12:56:00Z
 Version: 0.4.5
@@ -168,7 +176,7 @@ or
 
 `kcp discover --region us-east-1,eu-west-3`
 
-The command will produce a cluster-credentials.yaml and a kcp-state.json file
+The command will produce a cluster-credentials.yaml and a kcp-state.json file. An overview will be output to the terminal and a more in-depth breakdown can be seen in the [UI](#kcp-ui).
 
 This command requires the following permissions:
 
@@ -303,7 +311,7 @@ kcp scan clusters \
 ```
 
 **Output:**
-The command appends the gathered list of ACLs, topics and the Kafka cluster ID to each cluster's entries in the kcp-state.json file. If provided with sufficient permissions, kcp will also consume from the `connect-status` and `connect-configs` topics, if they exist, and gather self-managed connectors and their running state/configs.
+The command appends the gathered list of ACLs, topics and the Kafka cluster ID to each cluster's entries in the kcp-state.json file. If provided with sufficient permissions, kcp will also consume from the `connect-status` and `connect-configs` topics, if they exist, and gather self-managed connectors and their running state/configs. An overview will be output to the terminal and a more in-depth breakdown can be seen in the [UI](#kcp-ui).
 
 ---
 
@@ -423,9 +431,9 @@ Generate a cost report for given region(s) based on the data collected by `kcp d
 
 - `--region`: The AWS region(s) to include in the report (comma separated list or repeated flag). (If not provided, all regions in the state file will be included.)
 - `--start`: Inclusive start date for cost report (YYYY-MM-DD) (Defaults to 31 days prior to today)
-- `--end`: Exclusive end date for cost report (YYYY-MM-DD)  (Defaults to today)
+- `--end`: Exclusive end date for cost report (YYYY-MM-DD) (Defaults to today)
 
-The above optional arguments are all required if one is supplied.  If none are supplied, a report generating costs for all regions present in the `state-file.json` for the last thirty full days will be generated.
+The above optional arguments are all required if one is supplied. If none are supplied, a report generating costs for all regions present in the `state-file.json` for the last thirty full days will be generated.
 
 **Example Usage**
 
@@ -468,11 +476,11 @@ Generate a metrics report for given cluster(s) based on the data collected by `k
 
 **Optional Arguments**:
 
-- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag).  If not provided, all clusters in the state file will be included.
-- `--start`: Inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)
-- `--end`: Exclusive end date for cost report (YYYY-MM-DD).  (Defaults to today)
+- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag). If not provided, all clusters in the state file will be included.
+- `--start`: Inclusive start date for metrics report (YYYY-MM-DD). (Defaults to 31 days prior to today)
+- `--end`: Exclusive end date for cost report (YYYY-MM-DD). (Defaults to today)
 
-The above optional arguments are all required if one is supplied.  If none are supplied, a report generating metrics for all clusters present in the `state-file.json` for the last thirty full days will be generated.
+The above optional arguments are all required if one is supplied. If none are supplied, a report generating metrics for all clusters present in the `state-file.json` for the last thirty full days will be generated.
 
 **Example Usage**
 
@@ -1222,55 +1230,175 @@ This will generate a Terraform file per Confluent Cloud connector based on the M
 
 ---
 
+#### `kcp create-asset target-infra`
+
+This command generates Terraform assets for Confluent Cloud target infrastructure including environment, cluster, and private link setup. The infrastructure to be provisioned can be managed using the `--needs-environment`, `--needs-cluster` and `--needs-private-link` flags.
+
+**Required**:
+
+One of the following combinations is required - `--state-file` + `--cluster-arn` OR `--aws-region` + `--vpc-id`.
+
+- `--state-file`: Path to kcp state file.
+- `--cluster-arn`: MSK cluster ARN.
+
+- `--aws-region`: AWS region for the infrastructure to be provisioned.
+- `--vpc-id`: The AWS VPC ID used by Private Link.
+
+**Target Environment**:
+
+- `--needs-environment`: Whether to create a new environment (true) or use existing (false)
+- `--env-name`: Name for new environment (required when `--needs-environment=true`)
+- `--env-id`: ID of existing environment (required when `--needs-environment=false`)
+
+**Target Cluster**:
+
+- `--needs-cluster`: Whether to create a new cluster (true) or use existing (false)
+- `--cluster-name`: Name for new cluster (required when `--needs-cluster=true`)
+- `--cluster-id`: ID of existing cluster (required when `--needs-cluster=false`)
+- `--cluster-type`: Cluster type (e.g., 'basic', 'standard', 'dedicated', 'enterprise')
+
+**Private Link**:
+
+- `--needs-private-link`: Whether the infrastructure needs private link setup
+- `--subnet-cidrs`: Subnet CIDRs for private link (required when `--needs-private-link=true`)
+
+**Optional Arguments**:
+
+- `--output-dir`: Output directory for generated Terraform files (default: "target_infra")
+
+**Example Usage**
+
+```bash
+kcp create-asset target-infra \
+--state-file kcp-state.json \
+--cluster-arn arn:aws:kafka:us-east-1:XXX:cluster/XXX/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
+--needs-environment true \
+--env-name example-environment \
+--needs-cluster true \
+--cluster-name example-cluster \
+--cluster-type enterprise \
+--needs-private-link true \
+--subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16 \
+--output-dir confluent-cloud-infrastructure
+```
+
+**Output:**
+The command creates a directory (default: `target-infra`) containing Terraform configurations that will provision a Confluent Cloud setup based on the provided flags.
+
+---
+
 #### `kcp create-asset migration-infra`
 
-This command generates the required Terraform to provision your migration environment. The `--type` flag will determine how the Confluent Platform jump cluster with authenticate with MSK - using either IAM or SASL/SCRAM.
+This command generates the required Terraform to provision your migration environment. The `--type` flag will determine how the Confluent Platform jump cluster will authenticate with MSK - using either IAM or SASL/SCRAM - as well some aspects of the networking.
 
 **Required Arguments**:
 
 - `--state-file`: Path to kcp-state.json file
 - `--cluster-arn`: The cluster-arn to target
-- `--vpc-id`: The VPC ID of the VPC that the **MSK cluster is deployed in**
 - `--type`: The type of authentication to use to establish the cluster link between AWS MSK and Confluent Platform jump cluster
-- `--cc-env-name`: The Confluent Cloud environment name where data will be migrated to
-- `--cc-cluster-name`: The Confluent Cloud cluster name where data will be migrated to
-- `--cc-cluster-type`: The Confluent Cloud cluster type - Dedicated or Enterprise
 
-**Optional Arguments**:
+**Base Migration Flags**:
 
-- `--security-group-ids`: When set, Terraform will use this security group for the ansible host and CP jump cluster.
+- `--cluster-link-name`: The name of the cluster link for the migration.
+- `--target-cluster-id`: The Confluent Cloud cluster ID.
+- `--target-rest-endpoint`: The Confluent Cloud cluster REST endpoint.
+
+**Base Optional Arguments**:
+
+- `--existing-internet-gateway`: Whether to use an existing internet gateway. (default: false)
+- `--existing-private-link`: Whether to use an existing private link. (default: false)
+- `--output-dir`: The directory to output the migration infrastructure assets to. (default: 'migration-infra')
+
+**Type Two Flags**:
+
+- `--target-environment-id`: The Confluent Cloud environment ID.
+- `--subnet-id`: [Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default: MSK broker #1 subnet).
+- `--security-group-id`: [Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).
+
+**Type Three Flags**:
+
+- `--target-environment-id`: The Confluent Cloud environment ID.
+- `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
+- `--pl-subnet-ids`: [Optional] The IDs of the existing private link subnets to use for the jump cluster. (default: MSK cluster broker subnets).
+- `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
+- `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
+- `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
+- `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
+
+**Type Four Flags**:
+
+- `--target-environment-id`: The Confluent Cloud environment ID.
+- `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
+- `--pl-subnet-ids`: [Optional] The IDs of the existing private link subnets to use for the jump cluster. (default: MSK cluster broker subnets).
+- `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
+- `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
+- `--jump-cluster-iam-auth-role-name`: The IAM role name to authenticate the cluster link between MSK and the jump cluster.
+- `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
+- `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
+
+**Type Five Flags**:
+
+- `--target-environment-id`: The Confluent Cloud environment ID.
+- `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
+- `--pl-subnet-cidr`: The CIDR blocks to use for the new private link subnets. Three CIDRs are required.
+- `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
+- `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
+- `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
+- `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
+
+**Type Six Flags**:
+
+- `--target-environment-id`: The Confluent Cloud environment ID.
+- `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
+- `--pl-subnet-cidr`: The CIDR blocks to use for the new private link subnets. Three CIDRs are required.
+- `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
+- `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
+- `--jump-cluster-iam-auth-role-name`: The IAM role name to authenticate the cluster link between MSK and the jump cluster.
+- `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
+- `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
 
 **Type Options** (choose one):
 
-- 1: MSK private cluster w/ SASL_IAM authentication to Confluent Cloud private cluster.
-- 2: MSK private cluster w/ SASL_SCRAM authentication to Confluent Cloud private cluster.
-- 3: MSK public cluster w/ SASL_SCRAM authentication to Confluent Cloud public cluster.
+_Public MSK Endpoints:_
+
+- Type 1: Cluster Link [SASL/SCRAM]
+
+_Private MSK Endpoints:_
+
+- Type 2: External Outbound Cluster Link [SASL/SCRAM]
+- Type 3: Jump Cluster, Reuse Existing Subnets [SASL/SCRAM]
+- Type 4: Jump Cluster, Reuse Existing Subnets [IAM]
+- Type 5: Jump Cluster, New Subnets [SASL/SCRAM]
+- Type 6: Jump Cluster, New Subnets [IAM]
 
 **Example Usage**
 
 > [!NOTE]
-> The example below uses `--type 2` which indicates that SASL/SCRAM will be used to establish a connection between AWS MSK and the Confluent Platform jump clusters. Moreover, some values like the VPC ID and Confluent Cloud environment/cluster name have been inferred from `--cluster-file`, though can be overwritten by their respective flags.
+> The example below uses `--type 3` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Moreover, `--type 3` also indicates that the migration will re-use the existing subnets of the MSK broker for the Private Link connection between the jump cluster and Confluent Cloud.
 
 ```bash
-kcp create-asset migration-infra \
-  --state-file path/to/kcp-state.json \
-  -- cluster-arn arn:aws:kafka:us-east-3:635910096382:cluster/my-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2 \
-  --type 2 \
-  --cluster-link-sasl-scram-username my-cluster-link-user \
-  --cluster-link-sasl-scram-password pa55word \
-  --cc-cluster-type enterprise \
-  --ansible-control-node-subnet-cidr 10.0.XXX.0/24 \
-  --jump-cluster-broker-subnet-config us-east-1a:10.0.XXX.0/24,us-east-1b:10.0.XXX.0/24,us-east-1c:10.0.XXX.0/24 \
-  --security-group-ids sg-xxxxxxxxxx
+kcp create-asset migration-infra /
+--state-file kcp-state.json /
+--cluster-arn arn:aws:kafka:eu-west-3:635910096382:cluster/public-retention-env-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2 /
+--existing-internet-gateway /
+--existing-private-link /
+--output-dir type-3 /
+--type 3 /
+--jump-cluster-broker-subnet-cidr 10.0.101.0/24,10.0.102.0/24,10.0.103.0/24 /
+--jump-cluster-setup-host-subnet-cidr 10.0.104.0/24 /
+--cluster-link-name type-3-link /
+--target-environment-id env-x5vmok /
+--target-cluster-id lkc-n81mzz /
+--target-rest-endpoint https://lkc-n81mzz.eu-west-3.aws.private.confluent.cloud:443 /
+--target-bootstrap-endpoint lkc-n81mzz.eu-west-3.aws.private.confluent.cloud:9092
 ```
 
 **Output:**
-The command creates a `migration-infra` directory containing Terraform configurations that provision:
+The command creates a directory (default: `migration-infra`) containing Terraform configurations that provision:
 
-- **EC2 Instance** - Ansible Control Node that will provision the Confluent Platform jump cluster.
-- **3x EC2 Instances** - Confluent Platform jump clusters made up of 3 brokers.
-- **Networking** - NAT gateway, Elastic IPs, subnets, security groups, route tables & associations. Security Groups are created when `--security-group-ids` parameter is not provided.
-- **Confluent Cloud** - Environment, Cluster, Schema Registry, Service Accounts, API keys.
+- **Jump Cluster Setup Host** - EC2 instance running that will provision the Confluent Platform jump cluster.
+- **N Jump Cluster Nodes** - EC2 instances that will host the Confluent Platform jump clusters made up of N brokers.
+- **Networking** - NAT gateway, Elastic IPs, subnets, security groups, route tables & associations.
 - **Private Link** - Establish VPC connectivity between the MSK VPC and Confluent Cloud cluster.
 
 ---
@@ -1303,6 +1431,7 @@ The command creates a `migrate_schemas` directory containing Terraform files:
 The generated Terraform configuration creates Schema Exporter resources that continuously sync schemas from your source Schema Registry to Confluent Cloud's Schema Registry. By default, it exports all subjects (`:*:`) with context type `NONE`.
 
 **Next Steps:**
+
 1. Navigate to the generated `migrate_schemas` directory
 2. Review and customize the Terraform configuration if needed
 3. Run `terraform init` to initialize the Terraform workspace
@@ -1314,6 +1443,18 @@ The generated Terraform configuration creates Schema Exporter resources that con
 #### `kcp create-asset migrate-topics`
 
 This command generates migration scripts that mirror topics from MSK to Confluent Platform jump clusters and then finally to Confluent Cloud.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to.
+- `--cluster-arn`: The ARN of the MSK cluster to create migration scripts for.
+- `--target-cluster-id`: The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).
+- `--target-cluster-rest-endpoint`: The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).
+- `--target-cluster-link-name`: The name of the cluster link (e.g., msk-to-cc-migration-link).
+
+**Optional Arguments**:
+
+- `--output-dir`: The directory to output the Terraform files to. (default: 'migrate_topics')
 
 **Example Usage**:
 
@@ -1340,6 +1481,9 @@ The command creates a `migrate_topics` directory containing shell scripts:
 ---
 
 #### `kcp create-asset reverse-proxy`
+
+> [!NOTE]
+> This command is currently hidden while the reverse proxy is being reworked.
 
 Create reverse proxy infrastructure assets to allow observability into migrated data in Confluent Cloud.
 
