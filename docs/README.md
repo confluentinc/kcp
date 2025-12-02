@@ -1460,23 +1460,18 @@ This command generates migration scripts that mirror topics from MSK to Confluen
 
 ```shell
 kcp create-asset migrate-topics \
-  --state-file kcp-state.json \
-  --cluster-arn arn:aws:kafka:us-east-3:635910096382:cluster/my-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2 \
-  --migration-infra-folder migration_infra
+    --state-file kcp-state.json \
+    --cluster-arn arn:aws:kafka:us-east-1:XXX:cluster/XXX/1a2345b6-bf9f-4670-b13b-710985f5645d-5 \
+    --target-cluster-id lkc-xyz123 \
+    --target-cluster-rest-endpoint https://lkc-xyz123.eu-west-3.aws.private.confluent.cloud:443 \
+    --target-cluster-link-name example-cluster-link-name
 ```
 
-> [!NOTE]
-> This command does not require AWS IAM permissions as it generates local scripts and configuration files. The mirror topics piggyback off the authentication link established in the cluster link.
-
 **Output:**
-The command creates a `migrate_topics` directory containing shell scripts:
-
-- `msk-to-cp-mirror-topics.sh` - Individual `kafka-mirror` commands per topic to move data from MSK to the Confluent Platform jump cluster.
-- `destination-cluster-properties` - Kafka client configuration file.
-- `cp-to-cc-mirror-topics.sh` - Individual cURL requests to the Confluent Cloud API per topic move data from the Confluent Platform jump cluster to Confluent Cloud.
+The command creates a `migrate_topics` directory containing Terraform to migrate the topics through the established Confluent Cloud cluster link.
 
 > [!NOTE]
-> A `README.md` is generated in the `migrate_topics` directory to further assist in migrating the data from MSK to Confluent Cloud.
+> The command generates a `confluent_kafka_mirror_topic` Terraform resource per topic. If you prefer to finegrain this and only migrate some topics, you may manually edit the Terraform or use the [kcp UI](#kcp-ui) and following the 'Migration Scripts > Mirror Topics' wizard.
 
 ---
 
