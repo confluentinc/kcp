@@ -4,16 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
+	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/services/msk_connect"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type DiscovererOpts struct {
@@ -148,6 +151,10 @@ func (d *Discoverer) discoverRegions() error {
 		}
 	}
 
+	if err := d.outputClusterSummaryTable(state); err != nil {
+		slog.Warn("failed to output cluster summary table", "error", err)
+	}
+
 	return nil
 }
 
@@ -258,4 +265,71 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	}
 
 	return clusterAuth, nil
+}
+
+// TODO: If/when we add the topic discovery to `kcp discover`, we should add topics/partitions count to this table to.
+func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
+	allClusters := []types.DiscoveredCluster{}
+	for _, region := range state.Regions {
+		allClusters = append(allClusters, region.Clusters...)
+	}
+
+	if len(allClusters) == 0 {
+		return nil
+	}
+
+	headers := []string{"Cluster Name", "Region", "# of Brokers", "Public Access", "Kafka Version", "MSK Connectors"}
+	data := [][]string{}
+	arnData := [][]string{}
+
+	for _, cluster := range allClusters {
+		clusterName := cluster.Name
+		clusterArn := cluster.Arn
+		region := cluster.Region
+		numBrokers := strconv.Itoa(cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
+		publicAccess := getPublicAccess(cluster)
+		kafkaVersion := utils.GetKafkaVersion(cluster.AWSClientInformation)
+		connectorCount := len(cluster.AWSClientInformation.Connectors)
+
+		data = append(data, []string{
+			clusterName,
+			region,
+			numBrokers,
+			publicAccess,
+			kafkaVersion,
+			strconv.Itoa(connectorCount),
+		})
+		arnData = append(arnData, []string{clusterName, clusterArn})
+	}
+
+	md := markdown.New()
+	md.AddHeading("Discovered Clusters Summary", 1)
+	md.AddParagraph("This report shows a quick overview of the discovered clusters. More detailed information can be found in the `kcp ui`.")
+
+	md.AddTable(headers, data)
+
+	// Separate ARN table to reduce the truncation of the column names due to the length of the ARNs.
+	md.AddHeading("Cluster ARNs", 2)
+	arnHeaders := []string{"Cluster Name", "Cluster ARN"}
+	md.AddTable(arnHeaders, arnData)
+
+	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
+}
+
+func getPublicAccess(cluster types.DiscoveredCluster) string {
+	clusterType := cluster.AWSClientInformation.MskClusterConfig.ClusterType
+
+	if clusterType == kafkatypes.ClusterTypeProvisioned {
+		if cluster.AWSClientInformation.MskClusterConfig.Provisioned != nil &&
+			cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo != nil &&
+			cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo != nil &&
+			cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess != nil {
+			publicAccessType := cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess.Type
+			if publicAccessType != nil && aws.ToString(publicAccessType) == "SERVICE_PROVIDED_EIPS" {
+				return "true"
+			}
+		}
+	}
+
+	return "false"
 }
