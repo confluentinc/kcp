@@ -3,11 +3,13 @@ package clusters
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
 	"github.com/confluentinc/kcp/internal/client"
 	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
+	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -48,6 +50,10 @@ func (cs *ClustersScanner) Run() error {
 
 	if err := cs.State.PersistStateFile(cs.StateFile); err != nil {
 		return fmt.Errorf("❌ failed to save discovery state: %v", err)
+	}
+
+	if err := cs.outputExecutiveSummary(); err != nil {
+		slog.Warn("failed to output executive summary", "error", err)
 	}
 
 	return nil
@@ -143,4 +149,97 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	}
 
 	return &kafkaAdmin, nil
+}
+
+func (cs *ClustersScanner) outputExecutiveSummary() error {
+	// Only include clusters that have had been hit against the KAfka Admin API.
+	allClusters := []types.DiscoveredCluster{}
+	for _, region := range cs.State.Regions {
+		for _, cluster := range region.Clusters {
+			if cluster.KafkaAdminClientInformation.ClusterID != "" {
+				allClusters = append(allClusters, cluster)
+			}
+		}
+	}
+
+	if len(allClusters) == 0 {
+		return nil
+	}
+
+	md := markdown.New()
+	md.AddHeading("Scan Summary", 1)
+	md.AddParagraph("This report shows a summary of scanned Kafka resources across all clusters. More detailed information can be found in the `kcp ui`.")
+
+	headers := []string{"Cluster Name", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+	data := [][]string{}
+	for _, cluster := range allClusters {
+		if cluster.KafkaAdminClientInformation.Topics != nil {
+			summary := cluster.KafkaAdminClientInformation.Topics.Summary
+			data = append(data, []string{
+				cluster.Name,
+				strconv.Itoa(summary.Topics),
+				strconv.Itoa(summary.InternalTopics),
+				strconv.Itoa(summary.TotalPartitions),
+				strconv.Itoa(summary.TotalInternalPartitions),
+				strconv.Itoa(summary.CompactTopics),
+				strconv.Itoa(summary.CompactPartitions),
+			})
+		}
+	}
+
+	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster availabe to prove this.
+	if len(data) > 0 {
+		md.AddHeading("Topics", 2)
+		md.AddTable(headers, data)
+	}
+
+	aclsByPrincipal := cs.getACLsByPrincipal(allClusters)
+	if len(aclsByPrincipal) > 0 {
+		md.AddHeading("ACLs", 2)
+		headers := []string{"Principal", "Total ACLs"}
+		data := [][]string{}
+		for principal, count := range aclsByPrincipal {
+			data = append(data, []string{principal, strconv.Itoa(count)})
+		}
+		md.AddTable(headers, data)
+	}
+
+	connectorsByState := cs.getConnectorsByState(allClusters)
+	if len(connectorsByState) > 0 {
+		md.AddHeading("Self-Managed Connectors", 2)
+		headers := []string{"State", "Count"}
+		data := [][]string{}
+		for state, count := range connectorsByState {
+			data = append(data, []string{state, strconv.Itoa(count)})
+		}
+		md.AddTable(headers, data)
+	}
+
+	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
+}
+
+func (cs *ClustersScanner) getACLsByPrincipal(clusters []types.DiscoveredCluster) map[string]int {
+	aclsByPrincipal := make(map[string]int)
+	for _, cluster := range clusters {
+		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
+			aclsByPrincipal[acl.Principal]++
+		}
+	}
+	return aclsByPrincipal
+}
+
+func (cs *ClustersScanner) getConnectorsByState(clusters []types.DiscoveredCluster) map[string]int {
+	connectorsByState := make(map[string]int)
+	for _, cluster := range clusters {
+		if cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil {
+			for _, connector := range cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors {
+				state := connector.State
+				if state == "" {
+					state = "unknown state"
+				}
+				connectorsByState[state]++
+			}
+		}
+	}
+	return connectorsByState
 }
