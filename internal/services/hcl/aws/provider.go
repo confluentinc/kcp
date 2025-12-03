@@ -28,6 +28,14 @@ func GenerateProviderBlock(region string) *hclwrite.Block {
 	providerBlock := hclwrite.NewBlock("provider", []string{"aws"})
 	providerBody := providerBlock.Body()
 	providerBody.SetAttributeValue("region", cty.StringVal(region))
+	providerBody.AppendNewline()
+
+	defaultTagsBlock := hclwrite.NewBlock("default_tags", nil)
+	defaultTagsBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
+		"managed_by":            utils.TokensForStringTemplate("kcp"),
+		"deployment_identifier": utils.TokensForStringTemplate(utils.RandomString(8)),
+	}))
+	providerBody.AppendBlock(defaultTagsBlock)
 
 	return providerBlock
 }
@@ -37,6 +45,14 @@ func GenerateProviderBlockWithVar() *hclwrite.Block {
 	providerBlock := hclwrite.NewBlock("provider", []string{"aws"})
 	providerBody := providerBlock.Body()
 	providerBody.SetAttributeRaw("region", utils.TokensForVarReference(VarAwsRegion))
+	providerBody.AppendNewline()
+
+	defaultTagsBlock := hclwrite.NewBlock("default_tags", nil)
+	defaultTagsBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
+		"managed_by":            utils.TokensForStringTemplate("kcp"),
+		"deployment_identifier": utils.TokensForStringTemplate(utils.RandomString(8)),
+	}))
+	providerBody.AppendBlock(defaultTagsBlock)
 
 	return providerBlock
 }
