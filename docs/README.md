@@ -1180,11 +1180,29 @@ This will generate either a directory based on the cluster name or into a user-d
 
 The `kcp create-asset migrate-connectors` command generates Terraform based on MSK Connect connectors discovered by the `kcp discover` command and self-managed connectors discovered by `kcp scan clusters`. It includes the following sub-commands:
 
+- `connector-utility`
 - `msk`
 - `self-managed`
 
 > [!NOTE]
 > This requires having provisioned a Confluent Cloud environment and cluster as well as having API keys with the `Cloud Resource Management` scope. This is due to using the `.../translate/config` Confluent API endpoint to convert self-managed connector configs to fully-managed configs.
+
+#### `kcp create-asset migrate-connectors connector-utility`
+
+This command generates the JSON per MSK cluster that can be used by the [Connect Migration Utility](https://github.com/confluentinc/connect-migration-utility) to migrate connectors.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the cluster discovery reports have been written to.
+
+**Optional Arguments**:
+
+- `--cluster-arn`: The ARN of the MSK cluster to generate the connector configs JSON from.
+- `--output-dir`: The directory where the Confluent Cloud Terraform connector assets will be written to.
+
+**Output:**
+
+This will generate a JSON file per MSK cluster containing the connector configs discovered from `kcp discover` and `kcp scan clusters` in a directory named `discovered-connector-configs` or by the `--output-dir` flag.
 
 #### `kcp create-asset migrate-connectors msk`
 
