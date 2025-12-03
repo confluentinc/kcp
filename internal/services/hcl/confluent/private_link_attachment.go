@@ -18,8 +18,6 @@ func GeneratePrivateLinkAttachmentResource(tfResourceName, displayName, awsRegio
 	privateLinkAttachmentBlock.Body().AppendBlock(environmentBlock)
 	privateLinkAttachmentBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(privateLinkAttachmentBlock, "prevent_destroy", true)
-
 	return privateLinkAttachmentBlock
 }
 
@@ -42,8 +40,6 @@ func GeneratePrivateLinkAttachmentConnectionResource(tfResourceName, displayName
 	privateLinkAttachment.Body().SetAttributeRaw("id", utils.TokensForResourceReference(privateLinkAttachmentIdRef))
 	privateLinkAttachmentConnectionBlock.Body().AppendBlock(privateLinkAttachment)
 	privateLinkAttachmentConnectionBlock.Body().AppendNewline()
-
-	utils.GenerateLifecycleBlock(privateLinkAttachmentConnectionBlock, "prevent_destroy", true)
 
 	return privateLinkAttachmentConnectionBlock
 }

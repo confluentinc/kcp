@@ -544,10 +544,18 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             target: 'jump_cluster_networking_inputs',
             actions: 'save_step_data',
           },
-          BACK: {
-            target: 'private_link_create_new_subnets',
-            actions: 'undo_save_step_data',
-          },
+          BACK: [
+            {
+              target: 'private_link_create_new_subnets',
+              guard: 'came_from_private_link_create_new_subnets',
+              actions: 'undo_save_step_data',
+            },
+            {
+              target: 'private_link_reuse_existing_subnets',
+              guard: 'came_from_private_link_reuse_existing_subnets',
+              actions: 'undo_save_step_data',
+            },
+          ]
         },
       },
       jump_cluster_networking_inputs: {
@@ -634,8 +642,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               msk_jump_cluster_auth_type: {
                 type: 'string',
                 title: 'MSK Jump Cluster Authentication Type',
-                enum: ['sasl_scram', 'iam'],
-                enumNames: ['SASL/SCRAM', 'IAM'],
+                oneOf: [
+                  { title: 'SASL/SCRAM', const: 'sasl_scram' },
+                  { title: 'IAM', const: 'iam' },
+                ],
               },
             },
             required: ['msk_jump_cluster_auth_type'],
@@ -899,6 +909,12 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       },
       create_new_subnets: ({ event }) => {
         return event.data?.reuse_existing_subnets === false
+      },
+      came_from_private_link_create_new_subnets: ({ context }) => {
+        return context.previousStep === 'private_link_create_new_subnets'
+      },
+      came_from_private_link_reuse_existing_subnets: ({ context }) => {
+        return context.previousStep === 'private_link_reuse_existing_subnets'
       },
       came_from_public_cluster_link_inputs: ({ context }) => {
         return context.previousStep === 'public_cluster_link_inputs'
