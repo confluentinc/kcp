@@ -47,6 +47,11 @@ func GenerateEc2InstanceResource(tfResourceName, amiIdRef, instanceType, subnetI
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(publicIp))
 
 	appendOptionalBlocks(instanceBody, optionalBlocks)
+	instanceBody.AppendNewline()
+
+	instanceBody.SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
+		"Name": hclwrite.TokensForValue(cty.StringVal(tfResourceName)),
+	}))
 
 	return resourceBlock
 }
@@ -76,6 +81,12 @@ func GenerateEc2UserDataInstanceResource(tfResourceName, amiIdRef, instanceType,
 	instanceBody.SetAttributeRaw("user_data", templatefileTokens)
 
 	appendOptionalBlocks(instanceBody, optionalBlocks)
+
+	instanceBody.AppendNewline()
+
+	instanceBody.SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
+		"Name": hclwrite.TokensForValue(cty.StringVal(tfResourceName)),
+	}))
 
 	return resourceBlock
 }
@@ -131,6 +142,12 @@ func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, in
 	instanceBody.AppendNewline()
 
 	appendOptionalBlocks(instanceBody, optionalBlocks)
+
+	instanceBody.AppendNewline()
+
+	instanceBody.SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
+		"Name": hclwrite.TokensForValue(cty.StringVal(tfResourceName)),
+	}))
 
 	return resourceBlock
 }
@@ -216,6 +233,7 @@ type ProvisionerConfig struct {
 	WorkingDir string // Optional working directory
 }
 
+// Reverse Proxy instance - not used yet.
 // GenerateEc2UserDataInstanceResourceWithProvisioner generates an EC2 instance with user_data and optional provisioner
 func GenerateEc2UserDataInstanceResourceWithProvisioner(tfResourceName, amiIdRef, instanceType, subnetIdRef, securityGroupIdsRef, keyNameRef, userDataTemplatePath string, publicIp bool, userDataArgs map[string]hclwrite.Tokens, provisioner *ProvisionerConfig, optionalBlocks OptionalBlocksConfig) *hclwrite.Block {
 	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", tfResourceName})
