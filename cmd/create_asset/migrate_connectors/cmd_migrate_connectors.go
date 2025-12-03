@@ -3,6 +3,7 @@ package migrate_connectors
 import (
 	msk_connectors "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/msk"
 	self_managed_connectors "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/self_managed"
+	connector_utility "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/connector_utility"
 
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,7 @@ This command translates self-managed connector configurations to Confluent Cloud
 	migrateConnectorsCmd.AddCommand(
 		self_managed_connectors.NewMigrateSelfManagedConnectorsCmd(),
 		msk_connectors.NewMigrateMskConnectorsCmd(),
+		connector_utility.NewConnectorUtilityCmd(),
 	)
 
 	return migrateConnectorsCmd
