@@ -109,7 +109,7 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 	confluentCloudBlock := rootBody.AppendNewBlock("module", []string{"confluent_cloud"})
 	confluentCloudBody := confluentCloudBlock.Body()
 
-	confluentCloudBody.SetAttributeValue("source", cty.StringVal("./modules/confluent_cloud"))
+	confluentCloudBody.SetAttributeValue("source", cty.StringVal("./confluent_cloud"))
 	confluentCloudBody.AppendNewline()
 
 	confluentCloudBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{"confluent": utils.TokensForResourceReference("confluent")}))
@@ -127,7 +127,7 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 		rootBody.AppendNewline()
 		privateLinkBlock := rootBody.AppendNewBlock("module", []string{"private_link"})
 		privateLinkBody := privateLinkBlock.Body()
-		privateLinkBody.SetAttributeValue("source", cty.StringVal("./modules/private_link"))
+		privateLinkBody.SetAttributeValue("source", cty.StringVal("./private_link"))
 		privateLinkBody.AppendNewline()
 
 		privateLinkBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{"aws": utils.TokensForResourceReference("aws"), "confluent": utils.TokensForResourceReference("confluent")}))
