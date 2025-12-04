@@ -48,16 +48,8 @@ func (g *TargetInfraGenerator) BuildTerraformProject(project types.MigrationInfr
 		slog.Info("✅ wrote root inputs.auto.tfvars")
 	}
 
-	// Create modules directory
-	modulesDir := filepath.Join(g.OutputDir, "modules")
-	if len(project.Modules) > 0 {
-		if err := os.MkdirAll(modulesDir, 0755); err != nil {
-			return fmt.Errorf("failed to create modules directory: %w", err)
-		}
-	}
-
 	for _, module := range project.Modules {
-		moduleDir := filepath.Join(modulesDir, module.Name)
+		moduleDir := filepath.Join(g.OutputDir, module.Name)
 		if err := os.MkdirAll(moduleDir, 0755); err != nil {
 			return fmt.Errorf("failed to create module directory %s: %w", module.Name, err)
 		}

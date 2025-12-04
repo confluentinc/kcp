@@ -90,13 +90,13 @@ func NewTargetInfraCmd() *cobra.Command {
 	clusterFlags.StringVar(&needsClusterStr, "needs-cluster", "false", "Whether to create a new cluster (true) or use existing (false)")
 	clusterFlags.StringVar(&clusterName, "cluster-name", "", "Name for new cluster (required when --needs-cluster=true)")
 	clusterFlags.StringVar(&clusterId, "cluster-id", "", "ID of existing cluster (required when --needs-cluster=false)")
-	clusterFlags.StringVar(&clusterType, "cluster-type", "", "Cluster type (e.g., 'basic', 'standard', 'dedicated', 'enterprise')")
+	clusterFlags.StringVar(&clusterType, "cluster-type", "", "Cluster type (e.g. 'dedicated' or 'enterprise')")
 	targetInfraCmd.Flags().AddFlagSet(clusterFlags)
 	groups[clusterFlags] = "Target Cluster"
 
 	privateLinkFlags := pflag.NewFlagSet("privatelink", pflag.ExitOnError)
 	privateLinkFlags.SortFlags = false
-	privateLinkFlags.StringVar(&needsPrivateLinkStr, "needs-private-link", "false", "Whether the infrastructure needs private link setup")
+	privateLinkFlags.StringVar(&needsPrivateLinkStr, "needs-private-link", "false", "Whether the infrastructure needs private link setup. If using Enterprise clusters, Private Link is required.")
 	privateLinkFlags.StringSliceVar(&subnetCidrs, "subnet-cidrs", []string{}, "Subnet CIDRs for private link (required when --needs-private-link=true)")
 	targetInfraCmd.Flags().AddFlagSet(privateLinkFlags)
 	groups[privateLinkFlags] = "Private Link"
