@@ -427,7 +427,23 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
-	return c.JSON(http.StatusCreated, "todo")
+	var req types.MigrateAclsRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateAclsFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
 func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
