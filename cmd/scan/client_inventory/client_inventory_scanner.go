@@ -3,12 +3,9 @@ package client_inventory
 import (
 	"bufio"
 	"context"
-	"encoding/csv"
 	"fmt"
 	"log/slog"
-	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -21,15 +18,17 @@ var (
 )
 
 type ClientInventoryScannerOpts struct {
-	S3Uri  string
-	Region string
+	S3Uri       string
+	Region      string
+	ClusterName string
+	StateFile   string
 }
 
 type ClientInventoryScanner struct {
 	s3Service            S3Service
 	kafkaTraceLineParser *KafkaApiTraceLineParser
-	s3Uri                string
-	region               string
+	state                types.State
+	opts                 ClientInventoryScannerOpts
 }
 
 type S3Service interface {
@@ -49,21 +48,21 @@ type RequestMetadata struct {
 	Timestamp    time.Time
 }
 
-func NewClientInventoryScanner(s3Service S3Service, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
+func NewClientInventoryScanner(s3Service S3Service, state types.State, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
 	return &ClientInventoryScanner{
 		s3Service:            s3Service,
 		kafkaTraceLineParser: &KafkaApiTraceLineParser{},
-		s3Uri:                opts.S3Uri,
-		region:               opts.Region,
+		state:                state,
+		opts:                 opts,
 	}, nil
 }
 
 func (cis *ClientInventoryScanner) Run() error {
-	slog.Info("🚀 starting client inventory scan", "s3_uri", cis.s3Uri)
+	slog.Info("🚀 starting client inventory scan", "s3_uri", cis.opts.S3Uri)
 
 	ctx := context.Background()
 
-	bucket, prefix, err := cis.s3Service.ParseS3URI(cis.s3Uri)
+	bucket, prefix, err := cis.s3Service.ParseS3URI(cis.opts.S3Uri)
 	if err != nil {
 		return fmt.Errorf("failed to parse S3 URI: %w", err)
 	}
@@ -78,10 +77,26 @@ func (cis *ClientInventoryScanner) Run() error {
 		return nil
 	}
 
-	// write this to the state file
 	discoveredClients := cis.handleLogFiles(ctx, bucket, logFiles)
 
-	_ = discoveredClients
+	slog.Info("🔍 looking for region and cluster in state file", "region", cis.opts.Region, "cluster_name", cis.opts.ClusterName)
+	for i := range cis.state.Regions {
+		region := &cis.state.Regions[i]
+		if region.Name == cis.opts.Region {
+			for j := range region.Clusters {
+				cluster := &region.Clusters[j]
+				if cluster.Name == cis.opts.ClusterName {
+					// TODO: this should not overwrite existing clients, but merge them
+					cluster.DiscoveredClients = discoveredClients
+					break
+				}
+			}
+		}
+	}
+
+	if err := cis.state.PersistStateFile(cis.opts.StateFile); err != nil {
+		return fmt.Errorf("failed to persist state file: %w", err)
+	}
 
 	return nil
 }
@@ -168,84 +183,4 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, ke
 	}
 
 	return requestsMetadata, nil
-}
-
-type csvColumn struct {
-	header        string
-	extractorFunc func(*RequestMetadata) string
-}
-
-func (cis *ClientInventoryScanner) generateCSV(requestMetadataByCompositeKey map[string]*RequestMetadata) error {
-	fileName := "client_inventory_scan_results.csv"
-
-	file, err := os.Create(fileName)
-	if err != nil {
-		return fmt.Errorf("failed to create CSV file: %w", err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	columns := []csvColumn{
-		{
-			header:        "Client ID",
-			extractorFunc: func(m *RequestMetadata) string { return m.ClientId },
-		},
-		{
-			header:        "Role",
-			extractorFunc: func(m *RequestMetadata) string { return m.Role },
-		},
-		{
-			header:        "Topic",
-			extractorFunc: func(m *RequestMetadata) string { return m.Topic },
-		},
-		{
-			header:        "Auth",
-			extractorFunc: func(m *RequestMetadata) string { return m.Auth },
-		},
-		{
-			header:        "Principal",
-			extractorFunc: func(m *RequestMetadata) string { return m.Principal },
-		},
-		{
-			header:        "Timestamp",
-			extractorFunc: func(m *RequestMetadata) string { return m.Timestamp.Format("2006-01-02 15:04:05") },
-		},
-	}
-
-	header := make([]string, len(columns))
-	for i, col := range columns {
-		header[i] = col.header
-	}
-	if err := writer.Write(header); err != nil {
-		return fmt.Errorf("failed to write CSV header: %w", err)
-	}
-
-	if len(requestMetadataByCompositeKey) == 0 {
-		slog.Info("no requests to write to CSV")
-		return nil
-	}
-
-	// Convert map to slice and sort by timestamp
-	var allMetadata []*RequestMetadata
-	for _, metadata := range requestMetadataByCompositeKey {
-		allMetadata = append(allMetadata, metadata)
-	}
-
-	sort.Slice(allMetadata, func(i, j int) bool {
-		return allMetadata[i].Timestamp.Before(allMetadata[j].Timestamp)
-	})
-
-	for _, metadata := range allMetadata {
-		record := make([]string, len(columns))
-		for i, col := range columns {
-			record[i] = col.extractorFunc(metadata)
-		}
-		if err := writer.Write(record); err != nil {
-			return fmt.Errorf("failed to write CSV record: %w", err)
-		}
-	}
-
-	return nil
 }

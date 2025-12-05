@@ -121,3 +121,46 @@ func TestExtractRegionFromS3Uri(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractClusterNameFromS3Uri(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedOutput string
+		expectedError  error
+	}{
+		{
+			name:           "valid s3 uri - extracts mytestcluster",
+			input:          "s3://kcp-demo-test-logs/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/mytestcluster-a5adc230-1179-4e38-83bc-bf96b62377b3-2/2025-12-01-10/",
+			expectedOutput: "mytestcluster",
+		},
+		{
+			name:          "invalid s3 uri - too few segments",
+			input:         "s3://kcp-demo-logs/AWSLogs/635910096382/KafkaBrokerLogs/eu-west-1/",
+			expectedError: fmt.Errorf("invalid S3 URI format: expected at least 5 path segments (AWSLogs/account/KafkaBrokerLogs/region/cluster-name/...)"),
+		},
+		{
+			name:          "invalid s3 uri - missing cluster name",
+			input:         "s3://kcp-demo-logs/AWSLogs/",
+			expectedError: fmt.Errorf("invalid S3 URI format: expected at least 5 path segments (AWSLogs/account/KafkaBrokerLogs/region/cluster-name/...)"),
+		},
+		{
+			name:          "invalid s3 uri - cluster segment without UUID pattern",
+			input:         "s3://kcp-demo-logs/AWSLogs/635910096382/KafkaBrokerLogs/eu-west-1/just-a-cluster-name/2025-08-26-23/",
+			expectedError: fmt.Errorf("invalid S3 URI format: cluster segment 'just-a-cluster-name' does not contain a valid UUID pattern"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ExtractClusterNameFromS3Uri(tt.input)
+			if tt.expectedError != nil {
+				assert.Error(t, err, "ExtractClusterNameFromS3Uri should return an error")
+				assert.Equal(t, tt.expectedError.Error(), err.Error(), "ExtractClusterNameFromS3Uri should return expected error")
+			} else {
+				assert.NoError(t, err, "ExtractClusterNameFromS3Uri should not return an error")
+			}
+			assert.Equal(t, tt.expectedOutput, result, "ExtractClusterNameFromS3Uri should return expected output")
+		})
+	}
+}

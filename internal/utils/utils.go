@@ -120,7 +120,7 @@ func ExtractRegionFromS3Uri(s3Uri string) (string, error) {
 	}
 
 	// Remove leading slash and split path
-	path := strings.TrimPrefix(u.Path, "/")
+	path := strings.Trim(u.Path, "/")
 	parts := strings.Split(path, "/")
 
 	if len(parts) < 4 {
@@ -128,4 +128,33 @@ func ExtractRegionFromS3Uri(s3Uri string) (string, error) {
 	}
 
 	return parts[3], nil
+}
+
+func ExtractClusterNameFromS3Uri(s3Uri string) (string, error) {
+	u, err := url.Parse(s3Uri)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse S3 URI: %w", err)
+	}
+
+	path := strings.Trim(u.Path, "/")
+	pathSegments := strings.Split(path, "/")
+
+	// Expected format: AWSLogs/account/KafkaBrokerLogs/region/cluster-name-uuid/date/
+	if len(pathSegments) < 5 {
+		return "", fmt.Errorf("invalid S3 URI format: expected at least 5 path segments (AWSLogs/account/KafkaBrokerLogs/region/cluster-name/...)")
+	}
+
+	clusterSegment := pathSegments[4]
+
+	// Match UUID pattern: -[8 hex]-[4 hex]-[4 hex]-[4 hex]-[12 hex] followed by optional suffix
+	uuidPattern := regexp.MustCompile(`-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[0-9a-f]+)?$`)
+	uuidMatch := uuidPattern.FindStringIndex(clusterSegment)
+
+	if uuidMatch == nil {
+		return "", fmt.Errorf("invalid S3 URI format: cluster segment '%s' does not contain a valid UUID pattern", clusterSegment)
+	}
+
+	// Extract cluster name by taking everything before the UUID
+	clusterName := clusterSegment[:uuidMatch[0]]
+	return clusterName, nil
 }
