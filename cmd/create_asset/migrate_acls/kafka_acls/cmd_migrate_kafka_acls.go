@@ -12,10 +12,12 @@ import (
 )
 
 var (
-	stateFile       string
-	clusterArn      string
-	outputDir       string
-	skipAuditReport bool
+	stateFile                 string
+	clusterArn                string
+	targetClusterId           string
+	targetClusterRestEndpoint string
+	outputDir                 string
+	skipAuditReport           bool
 )
 
 func NewConvertKafkaAclsCmd() *cobra.Command {
@@ -34,6 +36,8 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to convert ACLs from.")
+	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
+	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	aclsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -62,7 +66,10 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 		return nil
 	})
 
-	aclsCmd.MarkFlagRequired("cluster-file")
+	aclsCmd.MarkFlagRequired("state-file")
+	aclsCmd.MarkFlagRequired("cluster-arn")
+	aclsCmd.MarkFlagRequired("target-cluster-id")
+	aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
 	return aclsCmd
 }
@@ -81,8 +88,8 @@ func runConvertKafkaAcls(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse migrate Kafka ACLs opts: %v", err)
 	}
 
-	kafkaAclsMigrator := NewKafkaAclsMigrator(*opts)
-	if err := kafkaAclsMigrator.Run(); err != nil {
+	kafkaAclsGenerator := NewKafkaAclsGenerator(*opts)
+	if err := kafkaAclsGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to migrate Kafka ACLs: %v", err)
 	}
 
@@ -110,10 +117,12 @@ func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
 	}
 
 	opts := MigrateKafkaAclsOpts{
-		clusterName:     cluster.Name,
-		kafkaAcls:       cluster.KafkaAdminClientInformation.Acls,
-		OutputDir:       outputDir,
-		SkipAuditReport: skipAuditReport,
+		ClusterName:               cluster.Name,
+		KafkaAcls:                 cluster.KafkaAdminClientInformation.Acls,
+		TargetClusterId:           targetClusterId,
+		TargetClusterRestEndpoint: targetClusterRestEndpoint,
+		OutputDir:                 outputDir,
+		SkipAuditReport:           skipAuditReport,
 	}
 
 	return &opts, nil

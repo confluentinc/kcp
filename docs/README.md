@@ -204,8 +204,7 @@ This command requires the following permissions:
         "kafka:DescribeConfigurationRevision",
         "kafka:DescribeReplicator",
         "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector",
-        "ec2:DescribeSubnets"
+        "kafkaconnect:DescribeConnector"
       ],
       "Resource": "*"
     },

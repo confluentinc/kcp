@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { FileText, MessageSquare, Shield, ArrowLeft, Image, Eye } from 'lucide-react'
+import { FileText, MessageSquare, Shield, ArrowLeft, Eye } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
 import { WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
 import {
     Wizard,
+    createAclMigrationScriptsWizardConfig,
     createSchemaRegistryMigrationScriptsWizardConfig,
     createMirrorTopicsMigrationScriptsWizardConfig,
 } from '@/components/migration/wizards'
@@ -49,33 +50,11 @@ export const MigrationScriptsSelection = ({
 
     // If a wizard is selected, show that wizard or placeholder
     if (selectedWizardType) {
-        // Show placeholder for ACLs for now
-        if (selectedWizardType === WIZARD_TYPES.MIGRATE_ACLS) {
-            return (
-                <div className="relative flex flex-col items-center justify-center p-12 min-h-[400px]">
-                    <button
-                        onClick={handleBackToSelection}
-                        className="absolute top-4 left-4 flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
-                    >
-                        <ArrowLeft className="w-4 h-4" />
-                        Back to Selection
-                    </button>
-                    <div className="mb-6 p-4 rounded-full bg-gray-100 dark:bg-gray-800">
-                        <Image className="w-16 h-16 text-gray-400 dark:text-gray-500" />
-                    </div>
-                    <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                        ACL Migration Scripts
-                    </h3>
-                    <p className="text-gray-600 dark:text-gray-400 mb-6">
-                        Coming soon - This wizard is under development
-                    </p>
-                </div>
-            )
-        }
-
         // Get the appropriate wizard config based on type
         const getWizardConfig = () => {
             switch (selectedWizardType) {
+                case WIZARD_TYPES.MIGRATE_ACLS:
+                    return createAclMigrationScriptsWizardConfig(clusterArn)
                 case WIZARD_TYPES.MIGRATE_SCHEMAS:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
                 case WIZARD_TYPES.MIGRATE_TOPICS:

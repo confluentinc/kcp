@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -10,9 +11,12 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// FormatHclResourceName ensures that resources are all 'snake_case'.
+var specialCharsRegex = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
+// FormatHclResourceName ensures that resources are all 'snake_case' and only contains alphanumeric characters and underscores.
 func FormatHclResourceName(resourceName string) string {
-	return strings.ToLower(strings.ReplaceAll(resourceName, "-", "_"))
+	result := specialCharsRegex.ReplaceAllString(resourceName, "_")
+	return strings.ToLower(result)
 }
 
 // TokensForModuleOutput creates tokens for a Terraform module output reference (e.g., "module.networking.jump_cluster_broker_subnet_ids")
