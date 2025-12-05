@@ -1,6 +1,8 @@
 package hcl
 
 import (
+	"fmt"
+
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -23,11 +25,12 @@ func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.Mir
 	}, nil
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles() (types.TerraformFiles, error) {
+func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:      s.generateMigrateACLsMainTf(),
+		MainTf:      s.generateMigrateACLsMainTf(request),
 		ProvidersTf: s.generateProvidersTf(),
 		VariablesTf: s.generateMigrateACLsVariablesTf(),
+		InputsAutoTfvars: s.generateMigrateACLsInputsAutoTfvars(request),
 	}, nil
 }
 
@@ -133,17 +136,79 @@ func (s *MigrationScriptsHCLService) generateMirrorTopicsVariablesTf() string {
 // Migrate ACLs Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMigrateACLsMainTf() string {
+func (s *MigrationScriptsHCLService) generateMigrateACLsMainTf(request types.MigrateAclsRequest) string {
 	f := hclwrite.NewEmptyFile()
-	// rootBody := f.Body()
+	rootBody := f.Body()
+
+	for principal, acls := range request.SelectedPrincipals {
+		serviceAccountResourceName := utils.FormatHclResourceName(principal)
+		rootBody.AppendUnstructuredTokens(utils.TokensForComment("// Migrated principal: " + principal))
+		rootBody.AppendNewline()
+		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal))
+		rootBody.AppendNewline()
+
+		for i, acl := range acls {
+			tfResourceName := utils.FormatHclResourceName(fmt.Sprintf("%s_%s_%s_%d", acl.PermissionType, acl.ResourceType, acl.Operation, i))
+
+			rootBody.AppendBlock(confluent.GenerateKafkaACL(
+				tfResourceName,
+				acl.ResourceType,
+				acl.ResourceName,
+				acl.ResourcePatternType,
+				fmt.Sprintf("User:${confluent_service_account.%s.id}", serviceAccountResourceName),
+				acl.Operation,
+				"var.confluent_cloud_cluster_id",
+				"var.confluent_cloud_cluster_rest_endpoint",
+				"var.confluent_cloud_cluster_api_key",
+				"var.confluent_cloud_cluster_api_secret",
+			))
+			rootBody.AppendNewline()
+		}
+	}
 
 	return string(f.Bytes())
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateACLsVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
-	// rootBody := f.Body()
+	rootBody := f.Body()
 
+	variables := []struct {
+		name        string
+		description string
+		sensitive   bool
+	}{
+		{confluent.VarConfluentCloudAPIKey, "Confluent Cloud API Key", false},
+		{confluent.VarConfluentCloudAPISecret, "Confluent Cloud API Secret", true},
+		{"confluent_cloud_cluster_id", "Confluent Cloud cluster ID", false},
+		{"confluent_cloud_cluster_rest_endpoint", "Confluent Cloud cluster REST endpoint", false},
+		{"confluent_cloud_cluster_api_key", "Confluent Cloud cluster API key", false},
+		{"confluent_cloud_cluster_api_secret", "Confluent Cloud cluster API secret", true},
+	}
+
+	for _, v := range variables {
+		variableBlock := rootBody.AppendNewBlock("variable", []string{v.name})
+		variableBody := variableBlock.Body()
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference("string"))
+		if v.description != "" {
+			variableBody.SetAttributeValue("description", cty.StringVal(v.description))
+		}
+		if v.sensitive {
+			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
+		}
+		rootBody.AppendNewline()
+	}
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateACLsInputsAutoTfvars(request types.MigrateAclsRequest) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	rootBody.SetAttributeValue("confluent_cloud_cluster_id", cty.StringVal(request.TargetClusterId))
+	rootBody.SetAttributeValue("confluent_cloud_cluster_rest_endpoint", cty.StringVal(request.TargetClusterRestEndpoint))
+	
 	return string(f.Bytes())
 }
 

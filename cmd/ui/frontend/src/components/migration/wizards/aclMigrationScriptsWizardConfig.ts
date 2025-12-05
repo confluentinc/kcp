@@ -1,16 +1,34 @@
 import type { WizardConfig } from './types'
 import { getClusterDataByArn } from '@/stores/store'
 
+interface Acl {
+  ResourceType: string
+  ResourceName: string
+  ResourcePatternType: string
+  Principal: string
+  Host: string
+  Operation: string
+  PermissionType: string
+}
+
 export const createAclMigrationScriptsWizardConfig = (clusterArn: string): WizardConfig => {
   const cluster = getClusterDataByArn(clusterArn)
 
-  const principals = cluster?.kafka_admin_client_information?.acls?.map((acl: any) => acl.Principal) || []
-  const principalsFiltered = principals.filter((principal: any) => principal !== null && principal !== undefined && principal !== '')
-  const principalEnumValues = principalsFiltered.filter((principal, index) => 
-    principalsFiltered.indexOf(principal) === index
-  )
+  const acls: Acl[] = cluster?.kafka_admin_client_information?.acls || []
 
-  console.log(principalEnumValues)
+  // Build a map of principal -> ACLs
+  const principalAclsMap: Record<string, Acl[]> = {}
+  for (const acl of acls) {
+    if (acl.Principal && acl.Principal !== '') {
+      if (!principalAclsMap[acl.Principal]) {
+        principalAclsMap[acl.Principal] = []
+      }
+      principalAclsMap[acl.Principal].push(acl)
+    }
+  }
+
+  // Get unique principal names for the form
+  const principalEnumValues = Object.keys(principalAclsMap)
 
   return {
     id: 'acl-migration-scripts-wizard',
@@ -123,6 +141,27 @@ export const createAclMigrationScriptsWizardConfig = (clusterArn: string): Wizar
     actions: {
       save_step_data: 'save_step_data',
       undo_save_step_data: 'undo_save_step_data',
+    },
+
+    // Transform the selected principals array into a map of principal -> ACLs
+    transformPayload: (data: Record<string, unknown>) => {
+      const selectedPrincipals = data.selected_principals as string[] | undefined
+      if (!selectedPrincipals || !Array.isArray(selectedPrincipals)) {
+        return data
+      }
+
+      // Build the map of selected principals with their ACLs
+      const selectedPrincipalsWithAcls: Record<string, Acl[]> = {}
+      for (const principal of selectedPrincipals) {
+        if (principalAclsMap[principal]) {
+          selectedPrincipalsWithAcls[principal] = principalAclsMap[principal]
+        }
+      }
+
+      return {
+        ...data,
+        selected_principals: selectedPrincipalsWithAcls,
+      }
     },
   }
 }
