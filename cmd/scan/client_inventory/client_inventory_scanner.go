@@ -79,19 +79,8 @@ func (cis *ClientInventoryScanner) Run() error {
 
 	discoveredClients := cis.handleLogFiles(ctx, bucket, logFiles)
 
-	slog.Info("🔍 looking for region and cluster in state file", "region", cis.opts.Region, "cluster_name", cis.opts.ClusterName)
-	for i := range cis.state.Regions {
-		region := &cis.state.Regions[i]
-		if region.Name == cis.opts.Region {
-			for j := range region.Clusters {
-				cluster := &region.Clusters[j]
-				if cluster.Name == cis.opts.ClusterName {
-					// TODO: this should not overwrite existing clients, but merge them
-					cluster.DiscoveredClients = discoveredClients
-					break
-				}
-			}
-		}
+	if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
+		return fmt.Errorf("failed to upsert discovered clients: %w", err)
 	}
 
 	if err := cis.state.PersistStateFile(cis.opts.StateFile); err != nil {
@@ -184,3 +173,41 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, ke
 
 	return requestsMetadata, nil
 }
+
+// func (cis *ClientInventoryScanner) addDiscoveredClientsToState(discoveredClients []types.DiscoveredClient) {
+// 	slog.Info("🔍 looking for region and cluster in state file", "region", cis.opts.Region, "cluster_name", cis.opts.ClusterName)
+// 	for i := range cis.state.Regions {
+// 		region := &cis.state.Regions[i]
+// 		if region.Name == cis.opts.Region {
+// 			for j := range region.Clusters {
+// 				cluster := &region.Clusters[j]
+// 				if cluster.Name == cis.opts.ClusterName {
+// 					// Merge existing clients from state with newly discovered clients
+// 					allClients := append(cluster.DiscoveredClients, discoveredClients...)
+// 					cluster.DiscoveredClients = dedupDiscoveredClients(allClients)
+// 					break
+// 				}
+// 			}
+// 		}
+// 	}
+// }
+
+// func dedupDiscoveredClients(discoveredClients []types.DiscoveredClient) []types.DiscoveredClient {
+// 	// Deduplicate by composite key, keeping the client with the most recent timestamp
+// 	clientsByCompositeKey := make(map[string]types.DiscoveredClient)
+
+// 	for _, currentClient := range discoveredClients {
+// 		existingClient, exists := clientsByCompositeKey[currentClient.CompositeKey]
+
+// 		if !exists || currentClient.Timestamp.After(existingClient.Timestamp) {
+// 			clientsByCompositeKey[currentClient.CompositeKey] = currentClient
+// 		}
+// 	}
+
+// 	dedupedClients := make([]types.DiscoveredClient, 0, len(clientsByCompositeKey))
+// 	for _, client := range clientsByCompositeKey {
+// 		dedupedClients = append(dedupedClients, client)
+// 	}
+
+// 	return dedupedClients
+// }
