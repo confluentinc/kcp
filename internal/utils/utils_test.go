@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,7 +75,7 @@ func TestURLToFolderName(t *testing.T) {
 			expectedOutput: "localhost_8081",
 		},
 		{
-			name: "",
+			name:           "",
 			input:          "https://psrc-ab123.us-east-2.aws.confluent.cloud",
 			expectedOutput: "psrc-ab123_us-east-2_aws_confluent_cloud",
 		},
@@ -84,6 +85,39 @@ func TestURLToFolderName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := URLToFolderName(tt.input)
 			assert.Equal(t, tt.expectedOutput, result, "URLToFolderName should return expected output")
+		})
+	}
+}
+
+func TestExtractRegionFromS3Uri(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedOutput string
+		expectedError  error
+	}{
+		{
+			name:           "valid s3 uri",
+			input:          "s3://kcp-demo-logs/AWSLogs/635910096382/KafkaBrokerLogs/eu-west-1/kcp-demo-cluster-bb10f1f7-7557-4f1d-a75a-a2241429a5e8-5/2025-08-23-04/",
+			expectedOutput: "eu-west-1",
+		},
+		{
+			name:          "invalid s3 uri",
+			input:         "s3://kcp-demo-logs/AWSLogs/",
+			expectedError: fmt.Errorf("invalid S3 URI format: expected at least 5 path segments"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ExtractRegionFromS3Uri(tt.input)
+			if tt.expectedError != nil {
+				assert.Error(t, err, "ExtractRegionFromS3Uri should return an error")
+				assert.Equal(t, tt.expectedError, err, "ExtractRegionFromS3Uri should return expected error")
+			} else {
+				assert.NoError(t, err, "ExtractRegionFromS3Uri should not return an error")
+			}
+			assert.Equal(t, tt.expectedOutput, result, "ExtractRegionFromS3Uri should return expected output")
 		})
 	}
 }

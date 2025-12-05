@@ -112,3 +112,20 @@ func URLToFolderName(urlStr string) string {
 
 	return folderName
 }
+
+func ExtractRegionFromS3Uri(s3Uri string) (string, error) {
+	u, err := url.Parse(s3Uri)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse S3 URI: %w", err)
+	}
+
+	// Remove leading slash and split path
+	path := strings.TrimPrefix(u.Path, "/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 4 {
+		return "", fmt.Errorf("invalid S3 URI format: expected at least 5 path segments")
+	}
+
+	return parts[3], nil
+}

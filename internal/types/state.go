@@ -161,6 +161,7 @@ type DiscoveredCluster struct {
 	ClusterMetrics              ClusterMetrics              `json:"metrics"`
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
 }
 
 type AWSClientInformation struct {
@@ -339,6 +340,16 @@ func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []Self
 	c.SelfManagedConnectors = &SelfManagedConnectors{
 		Connectors: connectors,
 	}
+}
+
+type DiscoveredClient struct {
+	CompositeKey string    `json:"composite_key"`
+	ClientID     string    `json:"client_id"`
+	Role         string    `json:"role"`
+	Topic        string    `json:"topic"`
+	Auth         string    `json:"auth"`
+	Principal    string    `json:"principal"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // ----- metrics -----

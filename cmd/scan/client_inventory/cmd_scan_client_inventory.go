@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	s3Uri  string
-	region string
+	s3Uri string
 )
 
 func NewScanClientInventoryCmd() *cobra.Command {
@@ -30,7 +29,6 @@ func NewScanClientInventoryCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&region, "region", "", "The AWS region")
 	requiredFlags.StringVar(&s3Uri, "s3-uri", "", "The S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
 
 	clientInventoryCmd.Flags().AddFlagSet(requiredFlags)
@@ -95,6 +93,11 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 }
 
 func parseScanClientInventoryOpts() (*ClientInventoryScannerOpts, error) {
+	region, err := utils.ExtractRegionFromS3Uri(s3Uri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract region from S3 URI: %w", err)
+	}
+
 	opts := ClientInventoryScannerOpts{
 		S3Uri:  s3Uri,
 		Region: region,
