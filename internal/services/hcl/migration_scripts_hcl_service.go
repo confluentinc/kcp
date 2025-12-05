@@ -27,9 +27,9 @@ func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.Mir
 
 func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:      s.generateMigrateACLsMainTf(request),
-		ProvidersTf: s.generateProvidersTf(),
-		VariablesTf: s.generateMigrateACLsVariablesTf(),
+		MainTf:           s.generateMigrateACLsMainTf(request),
+		ProvidersTf:      s.generateProvidersTf(),
+		VariablesTf:      s.generateMigrateACLsVariablesTf(),
 		InputsAutoTfvars: s.generateMigrateACLsInputsAutoTfvars(request),
 	}, nil
 }
@@ -156,7 +156,9 @@ func (s *MigrationScriptsHCLService) generateMigrateACLsMainTf(request types.Mig
 				acl.ResourceName,
 				acl.ResourcePatternType,
 				fmt.Sprintf("User:${confluent_service_account.%s.id}", serviceAccountResourceName),
+				acl.Host,
 				acl.Operation,
+				acl.PermissionType,
 				"var.confluent_cloud_cluster_id",
 				"var.confluent_cloud_cluster_rest_endpoint",
 				"var.confluent_cloud_cluster_api_key",
@@ -208,7 +210,7 @@ func (s *MigrationScriptsHCLService) generateMigrateACLsInputsAutoTfvars(request
 
 	rootBody.SetAttributeValue("confluent_cloud_cluster_id", cty.StringVal(request.TargetClusterId))
 	rootBody.SetAttributeValue("confluent_cloud_cluster_rest_endpoint", cty.StringVal(request.TargetClusterRestEndpoint))
-	
+
 	return string(f.Bytes())
 }
 
