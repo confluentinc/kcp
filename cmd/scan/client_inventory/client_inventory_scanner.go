@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 var (
@@ -76,16 +78,15 @@ func (cis *ClientInventoryScanner) Run() error {
 		return nil
 	}
 
-	requestMetadataByCompositeKey := cis.handleLogFiles(ctx, bucket, logFiles)
+	// write this to the state file
+	discoveredClients := cis.handleLogFiles(ctx, bucket, logFiles)
 
-	if err := cis.generateCSV(requestMetadataByCompositeKey); err != nil {
-		slog.Error("failed to write CSV file", "error", err)
-	}
+	_ = discoveredClients
 
 	return nil
 }
 
-func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) map[string]*RequestMetadata {
+func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) []types.DiscoveredClient {
 	requestMetadataByCompositeKey := make(map[string]*RequestMetadata)
 
 	for _, file := range logFiles {
@@ -115,7 +116,22 @@ func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket st
 		}
 	}
 
-	return requestMetadataByCompositeKey
+	discoveredClients := []types.DiscoveredClient{}
+	for _, metadata := range requestMetadataByCompositeKey {
+		discoveredClient := types.DiscoveredClient{
+			CompositeKey: metadata.CompositeKey,
+			ClientId:     metadata.ClientId,
+			Role:         metadata.Role,
+			Topic:        metadata.Topic,
+			Auth:         metadata.Auth,
+			Principal:    metadata.Principal,
+			Timestamp:    metadata.Timestamp,
+		}
+
+		discoveredClients = append(discoveredClients, discoveredClient)
+	}
+
+	return discoveredClients
 }
 
 func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {

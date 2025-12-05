@@ -344,7 +344,7 @@ func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []Self
 
 type DiscoveredClient struct {
 	CompositeKey string    `json:"composite_key"`
-	ClientID     string    `json:"client_id"`
+	ClientId    string    `json:"client_id"`
 	Role         string    `json:"role"`
 	Topic        string    `json:"topic"`
 	Auth         string    `json:"auth"`

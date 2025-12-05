@@ -12,6 +12,7 @@ import (
 
 var (
 	s3Uri string
+	stateFile string
 )
 
 func NewScanClientInventoryCmd() *cobra.Command {
@@ -30,6 +31,7 @@ func NewScanClientInventoryCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&s3Uri, "s3-uri", "", "The S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the client inventory reports have been written to.")
 
 	clientInventoryCmd.Flags().AddFlagSet(requiredFlags)
 
@@ -53,8 +55,8 @@ func NewScanClientInventoryCmd() *cobra.Command {
 		return nil
 	})
 
-	clientInventoryCmd.MarkFlagRequired("region")
 	clientInventoryCmd.MarkFlagRequired("s3-uri")
+	clientInventoryCmd.MarkFlagRequired("state-file")
 
 	return clientInventoryCmd
 }
