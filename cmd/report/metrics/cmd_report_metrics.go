@@ -132,10 +132,6 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 			return nil, fmt.Errorf("no regions found in state file")
 		}
 
-		if len(state.Regions[0].Clusters) == 0 {
-			return nil, fmt.Errorf("no clusters found in state file")
-		}
-
 		// default to the last 31 days.  Ensures a period of 30 full days ending on the previous day, since end date is exclusive in cloudwatch API.
 		now := time.Now()
 		start := now.AddDate(0, 0, -31)
@@ -150,6 +146,7 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 				clusterArns = append(clusterArns, cluster.Arn)
 			}
 		}
+
 		if len(clusterArns) == 0 {
 			return nil, fmt.Errorf("no clusters found in state file")
 		}
