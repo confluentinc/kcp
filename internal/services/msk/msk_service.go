@@ -2,6 +2,8 @@ package msk
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"log/slog"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 type MSKService struct {
@@ -268,6 +271,125 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 	}
 
 	slog.Info("✨ found configurations", "count", len(configurations))
+
+	return configurations, nil
+}
+
+func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
+	slog.Info("listing topics")
+
+	var topics []kafkatypes.TopicInfo
+	var nextToken *string
+
+	for {
+		output, err := ms.client.ListTopics(ctx, &kafka.ListTopicsInput{
+			ClusterArn: &clusterArn,
+			MaxResults: &maxResults,
+			NextToken:  nextToken,
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to list topics through the AWS API: %v", err)
+		}
+
+		topics = append(topics, output.Topics...)
+
+		if output.NextToken == nil {
+			break
+		}
+		nextToken = output.NextToken
+	}
+
+	slog.Info("found topics", "count", len(topics))
+	return topics, nil
+}
+
+func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topicName string) (*kafka.DescribeTopicOutput, error) {
+	slog.Info("🔍 describing topic via AWS API", "clusterArn", clusterArn, "topicName", topicName)
+
+	output, err := ms.client.DescribeTopic(ctx, &kafka.DescribeTopicInput{
+		ClusterArn: &clusterArn,
+		TopicName:  &topicName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to describe topic %s: %v", topicName, err)
+	}
+
+	return output, nil
+}
+
+func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
+	slog.Info("🔍 scanning topics via AWS API", "clusterArn", clusterArn)
+
+	// First, list all topics
+	topicList, err := ms.ListTopics(ctx, clusterArn, 100)
+	if err != nil {
+		return nil, err
+	}
+
+	var topicDetails []types.TopicDetails
+
+	// Then describe each topic to get full configuration
+	for _, topicInfo := range topicList {
+		if topicInfo.TopicName == nil {
+			continue
+		}
+
+		topicDesc, err := ms.DescribeTopic(ctx, clusterArn, *topicInfo.TopicName)
+		if err != nil {
+			slog.Warn("⚠️ failed to describe topic", "topicName", *topicInfo.TopicName, "error", err)
+			continue
+		}
+
+		// Decode Base64-encoded configurations
+		configurations, err := decodeTopicConfigs(topicDesc.Configs)
+		if err != nil {
+			slog.Warn("⚠️ failed to decode topic configs", "topicName", *topicInfo.TopicName, "error", err)
+			configurations = make(map[string]*string)
+		}
+
+		partitionCount := 0
+		replicationFactor := 0
+		if topicDesc.PartitionCount != nil {
+			partitionCount = int(*topicDesc.PartitionCount)
+		}
+		if topicDesc.ReplicationFactor != nil {
+			replicationFactor = int(*topicDesc.ReplicationFactor)
+		}
+
+		topicDetails = append(topicDetails, types.TopicDetails{
+			Name:              *topicInfo.TopicName,
+			Partitions:        partitionCount,
+			ReplicationFactor: replicationFactor,
+			Configurations:    configurations,
+		})
+	}
+
+	slog.Info("✨ retrieved topic details via AWS API", "count", len(topicDetails))
+	return topicDetails, nil
+}
+
+// The topic configs are encoded in base64 when returned by the `DescribeTopic` API.
+func decodeTopicConfigs(encodedConfigs *string) (map[string]*string, error) {
+	if encodedConfigs == nil || *encodedConfigs == "" {
+		return make(map[string]*string), nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(*encodedConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 configs: %w", err)
+	}
+
+	var configMap map[string]string
+	if err := json.Unmarshal(decoded, &configMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal configs JSON: %w", err)
+	}
+
+	configurations := make(map[string]*string)
+	for key, value := range configMap {
+		v := value
+		configurations[key] = &v
+	}
 
 	return configurations, nil
 }
