@@ -313,6 +313,32 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	arnHeaders := []string{"Cluster Name", "Cluster ARN"}
 	md.AddTable(arnHeaders, arnData)
 
+	md.AddHeading("Discovered Topics", 2)
+	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+
+	topicData := [][]string{}
+	for _, cluster := range allClusters {
+		// Skip clusters without topic information
+		if cluster.KafkaAdminClientInformation.Topics == nil {
+			continue
+		}
+
+		summary := cluster.KafkaAdminClientInformation.Topics.Summary
+		topicData = append(topicData, []string{
+			cluster.Name,
+			strconv.Itoa(summary.Topics),
+			strconv.Itoa(summary.InternalTopics),
+			strconv.Itoa(summary.TotalPartitions),
+			strconv.Itoa(summary.TotalInternalPartitions),
+			strconv.Itoa(summary.CompactTopics),
+			strconv.Itoa(summary.CompactPartitions),
+		})
+	}
+
+	if len(topicData) > 0 {
+		md.AddTable(topicHeaders, topicData)
+	}
+
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
 

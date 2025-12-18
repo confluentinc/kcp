@@ -2,14 +2,17 @@ package msk
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"log/slog"
-
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 type MSKService struct {
@@ -268,6 +271,153 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 	}
 
 	slog.Info("✨ found configurations", "count", len(configurations))
+
+	return configurations, nil
+}
+
+func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
+	slog.Info("🔍 listing topics", "clusterArn", clusterArn)
+
+	var topics []kafkatypes.TopicInfo
+	var nextToken *string
+
+	for {
+		output, err := ms.client.ListTopics(ctx, &kafka.ListTopicsInput{
+			ClusterArn: &clusterArn,
+			MaxResults: &maxResults,
+			NextToken:  nextToken,
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to list topics through the AWS API: %v", err)
+		}
+
+		topics = append(topics, output.Topics...)
+
+		if output.NextToken == nil {
+			break
+		}
+		nextToken = output.NextToken
+	}
+
+	slog.Info("✨ found topics", "count", len(topics))
+	return topics, nil
+}
+
+func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topicName string) (*kafka.DescribeTopicOutput, error) {
+	output, err := ms.client.DescribeTopic(ctx, &kafka.DescribeTopicInput{
+		ClusterArn: &clusterArn,
+		TopicName:  &topicName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe topic %s: %v", topicName, err)
+	}
+
+	return output, nil
+}
+
+func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
+	const numWorkers = 25
+	slog.Info("scanning topics via AWS API", "clusterArn", clusterArn)
+
+	topicList, err := ms.ListTopics(ctx, clusterArn, 100)
+	if err != nil {
+		return nil, err
+	}
+
+	topicChan := make(chan kafkatypes.TopicInfo, len(topicList))
+	resultChan := make(chan types.TopicDetails, len(topicList))
+
+	var wg sync.WaitGroup
+	var progressCount int
+
+	for range numWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for topicInfo := range topicChan {
+				if topicInfo.TopicName == nil {
+					continue
+				}
+
+				topicDesc, err := ms.DescribeTopic(ctx, clusterArn, *topicInfo.TopicName)
+				if err != nil {
+					slog.Warn("failed to describe topic", "topicName", *topicInfo.TopicName, "error", err)
+					continue
+				}
+
+				configurations, err := decodeTopicConfigs(topicDesc.Configs)
+				if err != nil {
+					slog.Warn("failed to decode topic configuration", "topicName", *topicInfo.TopicName, "error", err)
+					configurations = make(map[string]*string)
+				}
+
+				partitionCount := 0
+				if topicDesc.PartitionCount != nil {
+					partitionCount = int(*topicDesc.PartitionCount)
+				}
+
+				replicationFactor := 0
+				if topicDesc.ReplicationFactor != nil {
+					replicationFactor = int(*topicDesc.ReplicationFactor)
+				}
+
+				resultChan <- types.TopicDetails{
+					Name:              *topicInfo.TopicName,
+					Partitions:        partitionCount,
+					ReplicationFactor: replicationFactor,
+					Configurations:    configurations,
+				}
+
+				progressCount++
+				if progressCount%250 == 0 {
+					slog.Info("🔍 describing topics", "processed", progressCount, "total", len(topicList))
+				}
+			}
+		}()
+	}
+
+	for _, topic := range topicList {
+		topicChan <- topic
+	}
+	close(topicChan)
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	var topicDetails []types.TopicDetails
+	for result := range resultChan {
+		topicDetails = append(topicDetails, result)
+	}
+
+	slog.Info("✨ discovered topics", "count", len(topicDetails))
+	return topicDetails, nil
+}
+
+// The topic configs are encoded in base64 when returned by the `DescribeTopic` API.
+func decodeTopicConfigs(encodedConfigs *string) (map[string]*string, error) {
+	if encodedConfigs == nil || *encodedConfigs == "" {
+		return make(map[string]*string), nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(*encodedConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 configs: %w", err)
+	}
+
+	var configMap map[string]string
+	if err := json.Unmarshal(decoded, &configMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal configs JSON: %w", err)
+	}
+
+	configurations := make(map[string]*string)
+	for key, value := range configMap {
+		v := value
+		configurations[key] = &v
+	}
 
 	return configurations, nil
 }
