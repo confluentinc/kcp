@@ -5,10 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log/slog"
-
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -305,67 +305,95 @@ func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResu
 }
 
 func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topicName string) (*kafka.DescribeTopicOutput, error) {
-	slog.Info("🔍 describing topic via AWS API", "clusterArn", clusterArn, "topicName", topicName)
-
 	output, err := ms.client.DescribeTopic(ctx, &kafka.DescribeTopicInput{
 		ClusterArn: &clusterArn,
 		TopicName:  &topicName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe topic %s: %v", topicName, err)
+		return nil, fmt.Errorf("failed to describe topic %s: %v", topicName, err)
 	}
 
 	return output, nil
 }
 
 func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
-	slog.Info("🔍 scanning topics via AWS API", "clusterArn", clusterArn)
+	const numWorkers = 25
+	slog.Info("scanning topics via AWS API", "clusterArn", clusterArn)
 
-	// First, list all topics
 	topicList, err := ms.ListTopics(ctx, clusterArn, 100)
 	if err != nil {
 		return nil, err
 	}
 
-	var topicDetails []types.TopicDetails
+	topicChan := make(chan kafkatypes.TopicInfo, len(topicList))
+	resultChan := make(chan types.TopicDetails, len(topicList))
 
-	// Then describe each topic to get full configuration
-	for _, topicInfo := range topicList {
-		if topicInfo.TopicName == nil {
-			continue
-		}
+	var wg sync.WaitGroup
+	var progressCount int
 
-		topicDesc, err := ms.DescribeTopic(ctx, clusterArn, *topicInfo.TopicName)
-		if err != nil {
-			slog.Warn("⚠️ failed to describe topic", "topicName", *topicInfo.TopicName, "error", err)
-			continue
-		}
+	for range numWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		// Decode Base64-encoded configurations
-		configurations, err := decodeTopicConfigs(topicDesc.Configs)
-		if err != nil {
-			slog.Warn("⚠️ failed to decode topic configs", "topicName", *topicInfo.TopicName, "error", err)
-			configurations = make(map[string]*string)
-		}
+			for topicInfo := range topicChan {
+				if topicInfo.TopicName == nil {
+					continue
+				}
 
-		partitionCount := 0
-		replicationFactor := 0
-		if topicDesc.PartitionCount != nil {
-			partitionCount = int(*topicDesc.PartitionCount)
-		}
-		if topicDesc.ReplicationFactor != nil {
-			replicationFactor = int(*topicDesc.ReplicationFactor)
-		}
+				topicDesc, err := ms.DescribeTopic(ctx, clusterArn, *topicInfo.TopicName)
+				if err != nil {
+					slog.Warn("failed to describe topic", "topicName", *topicInfo.TopicName, "error", err)
+					continue
+				}
 
-		topicDetails = append(topicDetails, types.TopicDetails{
-			Name:              *topicInfo.TopicName,
-			Partitions:        partitionCount,
-			ReplicationFactor: replicationFactor,
-			Configurations:    configurations,
-		})
+				configurations, err := decodeTopicConfigs(topicDesc.Configs)
+				if err != nil {
+					slog.Warn("failed to decode topic configuration", "topicName", *topicInfo.TopicName, "error", err)
+					configurations = make(map[string]*string)
+				}
+
+				partitionCount := 0
+				if topicDesc.PartitionCount != nil {
+					partitionCount = int(*topicDesc.PartitionCount)
+				}
+
+				replicationFactor := 0
+				if topicDesc.ReplicationFactor != nil {
+					replicationFactor = int(*topicDesc.ReplicationFactor)
+				}
+
+				resultChan <- types.TopicDetails{
+					Name:              *topicInfo.TopicName,
+					Partitions:        partitionCount,
+					ReplicationFactor: replicationFactor,
+					Configurations:    configurations,
+				}
+
+				progressCount++
+				if progressCount%50 == 0 {
+					slog.Info("topic processing progress", "processed", progressCount, "total", len(topicList))
+				}
+			}
+		}()
 	}
 
-	slog.Info("✨ retrieved topic details via AWS API", "count", len(topicDetails))
+	for _, topic := range topicList {
+		topicChan <- topic
+	}
+	close(topicChan)
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	var topicDetails []types.TopicDetails
+	for result := range resultChan {
+		topicDetails = append(topicDetails, result)
+	}
+
+	slog.Info("retrieved topic details via AWS API", "count", len(topicDetails))
 	return topicDetails, nil
 }
 
