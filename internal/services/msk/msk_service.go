@@ -276,7 +276,7 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 }
 
 func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
-	slog.Info("listing topics")
+	slog.Info("🔍 listing topics", "clusterArn", clusterArn)
 
 	var topics []kafkatypes.TopicInfo
 	var nextToken *string
@@ -300,7 +300,7 @@ func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResu
 		nextToken = output.NextToken
 	}
 
-	slog.Info("found topics", "count", len(topics))
+	slog.Info("✨ found topics", "count", len(topics))
 	return topics, nil
 }
 
@@ -372,7 +372,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 
 				progressCount++
 				if progressCount%250 == 0 {
-					slog.Info("topic processing progress", "processed", progressCount, "total", len(topicList))
+					slog.Info("🔍 describing topics", "processed", progressCount, "total", len(topicList))
 				}
 			}
 		}()
@@ -393,7 +393,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 		topicDetails = append(topicDetails, result)
 	}
 
-	slog.Info("retrieved topic details via AWS API", "count", len(topicDetails))
+	slog.Info("✨ discovered topics", "count", len(topicDetails))
 	return topicDetails, nil
 }
 
