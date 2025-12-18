@@ -371,7 +371,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 				}
 
 				progressCount++
-				if progressCount%50 == 0 {
+				if progressCount%250 == 0 {
 					slog.Info("topic processing progress", "processed", progressCount, "total", len(topicList))
 				}
 			}
