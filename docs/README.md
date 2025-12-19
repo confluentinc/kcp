@@ -204,10 +204,33 @@ This command requires the following permissions:
         "kafka:DescribeConfigurationRevision",
         "kafka:DescribeReplicator",
         "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector",
-        "ec2:DescribeSubnets"
+        "kafkaconnect:DescribeConnector"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "MSKClusterConnect",
+      "Effect": "Allow",
+      "Action": [
+        "kafka-cluster:Connect",
+        "kafka-cluster:DescribeCluster"
+      ],
+      "Resource": [
+        "arn:aws:kafka:eu-west-3:635910096382:cluster/public-retention-env-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2"
+      ]
+    },
+    {
+      "Sid": "MSKTopicActions",
+      "Effect": "Allow",
+      "Action": [
+        "kafka:ListTopics",
+        "kafka:DescribeTopic",
+        "kafka-cluster:DescribeTopic",
+        "kafka-cluster:DescribeTopicDynamicConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:kafka:eu-west-3:635910096382:topic/public-retention-env-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2/*"
+      ]
     },
     {
       "Sid": "CostMetricsScanPermissions",
@@ -221,10 +244,12 @@ This command requires the following permissions:
       "Resource": "*"
     },
     {
-      "Sid": "MSKNetworkingScanPermission",
-      "Effect": "Allow",
-      "Action": ["ec2:DescribeSubnets"],
-      "Resource": "*"
+        "Sid": "MSKNetworkingScanPermission",
+        "Effect": "Allow",
+        "Action": [
+            "ec2:DescribeSubnets"
+        ],
+        "Resource": "*"
     }
   ]
 }

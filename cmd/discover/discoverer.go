@@ -56,7 +56,9 @@ func (d *Discoverer) discoverRegions() error {
 	credentials := types.NewCredentialsFrom(d.credentials)
 
 	for _, region := range d.regions {
-		mskClient, err := client.NewMSKClient(region)
+		// Use conservative rate limits to avoid AWS 429 Too Many Requests errors
+		// 10 requests per second with burst of 1
+		mskClient, err := client.NewMSKClient(region, 10, 1)
 		if err != nil {
 			slog.Error("failed to create msk client", "region", region, "error", err)
 			continue
