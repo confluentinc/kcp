@@ -2,22 +2,28 @@ package msk
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"log/slog"
-
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/types"
+	"golang.org/x/sync/semaphore"
 )
 
 type MSKService struct {
-	client *kafka.Client
+	client *client.RateLimitedMSKClient
 }
 
-func NewMSKService(client *kafka.Client) *MSKService {
-	return &MSKService{client: client}
+func NewMSKService(mskClient *client.RateLimitedMSKClient) *MSKService {
+	return &MSKService{client: mskClient}
 }
 
 func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error) {
@@ -268,6 +274,155 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 	}
 
 	slog.Info("✨ found configurations", "count", len(configurations))
+
+	return configurations, nil
+}
+
+func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
+	slog.Info("🔍 listing topics", "clusterArn", clusterArn)
+
+	var topics []kafkatypes.TopicInfo
+	var nextToken *string
+
+	for {
+		output, err := ms.client.ListTopics(ctx, &kafka.ListTopicsInput{
+			ClusterArn: &clusterArn,
+			MaxResults: &maxResults,
+			NextToken:  nextToken,
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to list topics through the AWS API: %v", err)
+		}
+
+		topics = append(topics, output.Topics...)
+
+		if output.NextToken == nil {
+			break
+		}
+		nextToken = output.NextToken
+	}
+
+	slog.Info("✨ found topics", "count", len(topics))
+	return topics, nil
+}
+
+func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topicName string) (*kafka.DescribeTopicOutput, error) {
+	output, err := ms.client.DescribeTopic(ctx, &kafka.DescribeTopicInput{
+		ClusterArn: &clusterArn,
+		TopicName:  &topicName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe topic %s: %v", topicName, err)
+	}
+
+	return output, nil
+}
+
+func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
+	slog.Info("scanning topics via AWS API", "clusterArn", clusterArn)
+
+	topicList, err := ms.ListTopics(ctx, clusterArn, 100)
+	if err != nil {
+		return nil, err
+	}
+
+	// Concurrency limiting with semaphore
+	const maxConcurrency = 65 // 3120 9:14 minutes // 65 ~6:46 minutes // 10 ~7 minutes
+	sem := semaphore.NewWeighted(maxConcurrency)
+
+	resultChan := make(chan types.TopicDetails, len(topicList))
+
+	var wg sync.WaitGroup
+	var progressCount atomic.Int32
+
+	for _, t := range topicList {
+		if t.TopicName == nil {
+			continue
+		}
+		topicName := *t.TopicName
+
+		if err := sem.Acquire(ctx, 1); err != nil {
+			slog.Warn("failed to acquire semaphore", "error", err)
+			break
+		}
+
+		wg.Add(1)
+		go func(name string) {
+			defer sem.Release(1)
+			defer wg.Done()
+
+			topicDesc, err := ms.DescribeTopic(ctx, clusterArn, name)
+			if err != nil {
+				slog.Warn("failed to describe topic", "topicName", name, "error", err)
+				return
+			}
+
+			configurations, err := decodeTopicConfigs(topicDesc.Configs)
+			if err != nil {
+				slog.Warn("failed to decode topic configuration", "topicName", name, "error", err)
+				configurations = make(map[string]*string)
+			}
+
+			partitionCount := 0
+			if topicDesc.PartitionCount != nil {
+				partitionCount = int(*topicDesc.PartitionCount)
+			}
+
+			replicationFactor := 0
+			if topicDesc.ReplicationFactor != nil {
+				replicationFactor = int(*topicDesc.ReplicationFactor)
+			}
+
+			resultChan <- types.TopicDetails{
+				Name:              name,
+				Partitions:        partitionCount,
+				ReplicationFactor: replicationFactor,
+				Configurations:    configurations,
+			}
+
+			current := progressCount.Add(1)
+			if current%250 == 0 {
+				slog.Info("🔍 describing topics", "processed", current, "total", len(topicList))
+			}
+		}(topicName)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	var topicDetails []types.TopicDetails
+	for result := range resultChan {
+		topicDetails = append(topicDetails, result)
+	}
+
+	slog.Info("✨ discovered topics", "count", len(topicDetails))
+	return topicDetails, nil
+}
+
+// The topic configs are encoded in base64 when returned by the `DescribeTopic` API.
+func decodeTopicConfigs(encodedConfigs *string) (map[string]*string, error) {
+	if encodedConfigs == nil || *encodedConfigs == "" {
+		return make(map[string]*string), nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(*encodedConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 configs: %w", err)
+	}
+
+	var configMap map[string]string
+	if err := json.Unmarshal(decoded, &configMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal configs JSON: %w", err)
+	}
+
+	configurations := make(map[string]*string)
+	for key, value := range configMap {
+		v := value
+		configurations[key] = &v
+	}
 
 	return configurations, nil
 }

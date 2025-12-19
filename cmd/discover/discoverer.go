@@ -56,7 +56,9 @@ func (d *Discoverer) discoverRegions() error {
 	credentials := types.NewCredentialsFrom(d.credentials)
 
 	for _, region := range d.regions {
-		mskClient, err := client.NewMSKClient(region)
+		// Use conservative rate limits to avoid AWS 429 Too Many Requests errors
+		// 10 requests per second with burst of 1
+		mskClient, err := client.NewMSKClient(region, 10, 1)
 		if err != nil {
 			slog.Error("failed to create msk client", "region", region, "error", err)
 			continue
@@ -312,6 +314,32 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	md.AddHeading("Cluster ARNs", 2)
 	arnHeaders := []string{"Cluster Name", "Cluster ARN"}
 	md.AddTable(arnHeaders, arnData)
+
+	md.AddHeading("Discovered Topics", 2)
+	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+
+	topicData := [][]string{}
+	for _, cluster := range allClusters {
+		// Skip clusters without topic information
+		if cluster.KafkaAdminClientInformation.Topics == nil {
+			continue
+		}
+
+		summary := cluster.KafkaAdminClientInformation.Topics.Summary
+		topicData = append(topicData, []string{
+			cluster.Name,
+			strconv.Itoa(summary.Topics),
+			strconv.Itoa(summary.InternalTopics),
+			strconv.Itoa(summary.TotalPartitions),
+			strconv.Itoa(summary.TotalInternalPartitions),
+			strconv.Itoa(summary.CompactTopics),
+			strconv.Itoa(summary.CompactPartitions),
+		})
+	}
+
+	if len(topicData) > 0 {
+		md.AddTable(topicHeaders, topicData)
+	}
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
