@@ -166,7 +166,10 @@ Before starting the migration process, you need to make some key decisions about
 
 ### `kcp discover`
 
-The kcp discover command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
+The kcp discover command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources including topics as well as costs and metrics.
+
+>[!NOTE]
+> Clusters with a large topic count may take a considerable amount of time to complete the discovery due to limits on the MSK API. If you wish to skip the topic discovery, you can use the `--skip-topics` flag and later use the `kcp scan clusters` command to perform topic discovery through the Kafka Admin API that does not have the same request limits. However, this will require the cluster to be either publicly accessible or within the same network as kcp to complete.
 
 **Example Usage**
 
@@ -204,10 +207,33 @@ This command requires the following permissions:
         "kafka:DescribeConfigurationRevision",
         "kafka:DescribeReplicator",
         "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector",
-        "ec2:DescribeSubnets"
+        "kafkaconnect:DescribeConnector"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "MSKClusterConnect",
+      "Effect": "Allow",
+      "Action": [
+        "kafka-cluster:Connect",
+        "kafka-cluster:DescribeCluster"
+      ],
+      "Resource": [
+        "*"
+      ]
+    },
+    {
+      "Sid": "MSKTopicActions",
+      "Effect": "Allow",
+      "Action": [
+        "kafka:ListTopics",
+        "kafka:DescribeTopic",
+        "kafka-cluster:DescribeTopic",
+        "kafka-cluster:DescribeTopicDynamicConfiguration"
+      ],
+      "Resource": [
+        "*"
+      ]
     },
     {
       "Sid": "CostMetricsScanPermissions",
@@ -221,14 +247,19 @@ This command requires the following permissions:
       "Resource": "*"
     },
     {
-      "Sid": "MSKNetworkingScanPermission",
-      "Effect": "Allow",
-      "Action": ["ec2:DescribeSubnets"],
-      "Resource": "*"
+        "Sid": "MSKNetworkingScanPermission",
+        "Effect": "Allow",
+        "Action": [
+            "ec2:DescribeSubnets"
+        ],
+        "Resource": "*"
     }
   ]
 }
 ```
+
+>[!NOTE]
+> Some permissions like 'MSKClusterConnect' or 'MSKTopicActions' can be fine-grained to specifically the cluster or topics by  
 
 ### `kcp scan`
 
