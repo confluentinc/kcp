@@ -28,6 +28,7 @@ type ClusterDiscovererMSKService interface {
 	GetClusterPolicy(ctx context.Context, clusterArn string) (*kafka.GetClusterPolicyOutput, error)
 	GetCompatibleKafkaVersions(ctx context.Context, clusterArn string) (*kafka.GetCompatibleKafkaVersionsOutput, error)
 	IsFetchFromFollowerEnabled(ctx context.Context, cluster kafkatypes.Cluster) (bool, error)
+	GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error)
 }
 
 type ClusterDiscovererMetricService interface {
@@ -60,8 +61,8 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string) (*types.DiscoveredCluster, error) {
-	awsClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn)
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool) (*types.DiscoveredCluster, error) {
+	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
 	if err != nil {
 		return nil, err
 	}
@@ -72,62 +73,64 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 	}
 
 	return &types.DiscoveredCluster{
-		Name:                 aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
-		Arn:                  clusterArn,
-		Region:               region,
-		AWSClientInformation: *awsClientInfo,
-		ClusterMetrics:       *clusterMetric,
+		Name:                        aws.ToString(awsClientInfo.MskClusterConfig.ClusterName),
+		Arn:                         clusterArn,
+		Region:                      region,
+		AWSClientInformation:        *awsClientInfo,
+		KafkaAdminClientInformation: *kafkaClientInfo,
+		ClusterMetrics:              *clusterMetric,
 	}, nil
 }
 
-func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string) (*types.AWSClientInformation, error) {
+func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
 	awsClientInfo := types.AWSClientInformation{}
+	kafkaClientInfo := types.KafkaAdminClientInformation{}
 
 	cluster, err := cd.describeCluster(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.MskClusterConfig = *cluster.ClusterInfo
 
 	brokers, err := cd.getBootstrapBrokers(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.BootstrapBrokers = *brokers
 
 	connections, err := cd.scanClusterVpcConnections(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.ClientVpcConnections = connections
 
 	operations, err := cd.scanClusterOperations(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.ClusterOperations = operations
 
 	nodes, err := cd.scanClusterNodes(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.Nodes = nodes
 
 	scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.ScramSecrets = scramSecrets
 
 	policy, err := cd.getClusterPolicy(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.Policy = *policy
 
 	versions, err := cd.getCompatibleKafkaVersions(ctx, clusterArn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.CompatibleVersions = *versions
 
@@ -136,18 +139,28 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	} else {
 		networking, err := cd.scanNetworkingInfo(ctx, cluster, nodes)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		awsClientInfo.ClusterNetworking = networking
 	}
 
 	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	awsClientInfo.Connectors = connectors
 
-	return &awsClientInfo, nil
+	if !skipTopics {
+		topics, err := cd.discoverTopics(ctx, clusterArn)
+		if err != nil {
+			return nil, nil, err
+		}
+		kafkaClientInfo.SetTopics(topics)
+	} else {
+		slog.Info("⏭️ skipping topic discovery")
+	}
+
+	return &awsClientInfo, &kafkaClientInfo, nil
 }
 
 func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
@@ -445,4 +458,26 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 	}
 
 	return matchingConnectors, nil
+}
+
+func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
+	slog.Info("🔍 scanning for topics", "clusterArn", clusterArn)
+
+	topics, err := cd.mskService.GetTopicsWithConfigs(ctx, clusterArn)
+	if err != nil {
+		slog.Error("❌ failed to list topics", "clusterArn", clusterArn, "error", err)
+	}
+
+	var topicDetails []types.TopicDetails
+	for _, topic := range topics {
+
+		topicDetails = append(topicDetails, types.TopicDetails{
+			Name:              topic.Name,
+			Partitions:        topic.Partitions,
+			ReplicationFactor: topic.ReplicationFactor,
+			Configurations:    topic.Configurations,
+		})
+	}
+
+	return topicDetails, nil
 }
