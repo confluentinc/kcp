@@ -166,7 +166,10 @@ Before starting the migration process, you need to make some key decisions about
 
 ### `kcp discover`
 
-The kcp discover command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources, costs and metrics.
+The kcp discover command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources including topics as well as costs and metrics.
+
+>[!NOTE]
+> Clusters with a large topic count may take a considerable amount of time to complete the discovery due to limits on the MSK API. If you wish to skip the topic discovery, you can use the `--skip-topics` flag and later use the `kcp scan clusters` command to perform topic discovery through the Kafka Admin API that does not have the same request limits. However, this will require the cluster to be either publicly accessible or within the same network as kcp to complete.
 
 **Example Usage**
 
@@ -216,7 +219,7 @@ This command requires the following permissions:
         "kafka-cluster:DescribeCluster"
       ],
       "Resource": [
-        "arn:aws:kafka:eu-west-3:635910096382:cluster/public-retention-env-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2"
+        "*"
       ]
     },
     {
@@ -229,7 +232,7 @@ This command requires the following permissions:
         "kafka-cluster:DescribeTopicDynamicConfiguration"
       ],
       "Resource": [
-        "arn:aws:kafka:eu-west-3:635910096382:topic/public-retention-env-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2/*"
+        "*"
       ]
     },
     {
@@ -254,6 +257,9 @@ This command requires the following permissions:
   ]
 }
 ```
+
+>[!NOTE]
+> Some permissions like 'MSKClusterConnect' or 'MSKTopicActions' can be fine-grained to specifically the cluster or topics by  
 
 ### `kcp scan`
 
