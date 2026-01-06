@@ -322,6 +322,8 @@ func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topi
 func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
 	slog.Info("scanning topics via AWS API", "clusterArn", clusterArn)
 
+	// NOTE: No definitive `maxResults` limit in the docs. However, upping to something like a 1000 doesn't speed up the process of listing topics. Moreover, the MSK console
+	// populates the topics at 100 topic intervals which to me hints at that being the limit.
 	topicList, err := ms.ListTopics(ctx, clusterArn, 100)
 	if err != nil {
 		return nil, err
@@ -335,6 +337,8 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 
 	var wg sync.WaitGroup
 	var progressCount atomic.Int32
+	var failedTopics []string
+	var failedTopicsMu sync.Mutex
 
 	for _, t := range topicList {
 		if t.TopicName == nil {
@@ -354,32 +358,17 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 
 			topicDesc, err := ms.DescribeTopic(ctx, clusterArn, name)
 			if err != nil {
-				slog.Warn("failed to describe topic", "topicName", name, "error", err)
+				// Capture failure (typically 429 - rate limiting) for retry.
+				slog.Warn("failed to describe topic, queuing for retry", "topicName", name, "error", err)
+				
+				failedTopicsMu.Lock()
+				defer failedTopicsMu.Unlock()
+				failedTopics = append(failedTopics, name)
+				
 				return
 			}
 
-			configurations, err := decodeTopicConfigs(topicDesc.Configs)
-			if err != nil {
-				slog.Warn("failed to decode topic configuration", "topicName", name, "error", err)
-				configurations = make(map[string]*string)
-			}
-
-			partitionCount := 0
-			if topicDesc.PartitionCount != nil {
-				partitionCount = int(*topicDesc.PartitionCount)
-			}
-
-			replicationFactor := 0
-			if topicDesc.ReplicationFactor != nil {
-				replicationFactor = int(*topicDesc.ReplicationFactor)
-			}
-
-			resultChan <- types.TopicDetails{
-				Name:              name,
-				Partitions:        partitionCount,
-				ReplicationFactor: replicationFactor,
-				Configurations:    configurations,
-			}
+			resultChan <- buildTopicDetails(name, topicDesc)
 
 			current := progressCount.Add(1)
 			if current%250 == 0 {
@@ -396,6 +385,18 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 	var topicDetails []types.TopicDetails
 	for result := range resultChan {
 		topicDetails = append(topicDetails, result)
+	}
+
+	if len(failedTopics) > 0 {
+		slog.Info("retrying failed topics", "count", len(failedTopics))
+		for _, name := range failedTopics {
+			topicDesc, err := ms.DescribeTopic(ctx, clusterArn, name)
+			if err != nil {
+				slog.Error("permanently failed to describe topic", "topicName", name, "error", err)
+				continue
+			}
+			topicDetails = append(topicDetails, buildTopicDetails(name, topicDesc))
+		}
 	}
 
 	slog.Info("✨ discovered topics", "count", len(topicDetails))
@@ -425,4 +426,29 @@ func decodeTopicConfigs(encodedConfigs *string) (map[string]*string, error) {
 	}
 
 	return configurations, nil
+}
+
+func buildTopicDetails(name string, topicDesc *kafka.DescribeTopicOutput) types.TopicDetails {
+	configurations, err := decodeTopicConfigs(topicDesc.Configs)
+	if err != nil {
+		slog.Warn("failed to decode topic configuration", "topicName", name, "error", err)
+		configurations = make(map[string]*string)
+	}
+
+	partitionCount := 0
+	if topicDesc.PartitionCount != nil {
+		partitionCount = int(*topicDesc.PartitionCount)
+	}
+
+	replicationFactor := 0
+	if topicDesc.ReplicationFactor != nil {
+		replicationFactor = int(*topicDesc.ReplicationFactor)
+	}
+
+	return types.TopicDetails{
+		Name:              name,
+		Partitions:        partitionCount,
+		ReplicationFactor: replicationFactor,
+		Configurations:    configurations,
+	}
 }

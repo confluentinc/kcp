@@ -60,8 +60,8 @@ func (d *Discoverer) discoverRegions() error {
 
 	for _, region := range d.regions {
 		// Using conservative rate limits to avoid AWS 429 Too Many Requests errors
-		// 8 requests per second with burst of 1 - 
-		mskClient, err := client.NewMSKClient(region, 8, 1)
+		// 8 requests per second with burst of 1 -
+		mskClient, err := client.NewMSKClient(region, 8, 1) // At the time of writing 8 requests is safe without rate limits. However, with the failed topics retry logic, we could bump this.
 		if err != nil {
 			slog.Error("failed to create msk client", "region", region, "error", err)
 			continue

@@ -465,7 +465,6 @@ func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn stri
 
 	topics, err := cd.mskService.GetTopicsWithConfigs(ctx, clusterArn)
 	if err != nil {
-		// return nil, fmt.Errorf("failed to list topics: %v", err)
 		slog.Error("❌ failed to list topics", "clusterArn", clusterArn, "error", err)
 	}
 
