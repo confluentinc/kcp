@@ -21,12 +21,14 @@ import (
 
 type DiscovererOpts struct {
 	Regions     []string
+	SkipTopics  bool
 	State       *types.State
 	Credentials *types.Credentials
 }
 
 type Discoverer struct {
 	regions     []string
+	skipTopics  bool
 	state       *types.State
 	credentials *types.Credentials
 }
@@ -34,6 +36,7 @@ type Discoverer struct {
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
 		regions:     opts.Regions,
+		skipTopics:  opts.SkipTopics,
 		state:       opts.State,
 		credentials: opts.Credentials,
 	}
@@ -56,9 +59,9 @@ func (d *Discoverer) discoverRegions() error {
 	credentials := types.NewCredentialsFrom(d.credentials)
 
 	for _, region := range d.regions {
-		// Use conservative rate limits to avoid AWS 429 Too Many Requests errors
-		// 10 requests per second with burst of 1
-		mskClient, err := client.NewMSKClient(region, 10, 1)
+		// Using conservative rate limits to avoid AWS 429 Too Many Requests errors
+		// 8 requests per second with burst of 1 - 
+		mskClient, err := client.NewMSKClient(region, 8, 1)
 		if err != nil {
 			slog.Error("failed to create msk client", "region", region, "error", err)
 			continue
@@ -105,7 +108,7 @@ func (d *Discoverer) discoverRegions() error {
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		for _, clusterArn := range discoveredRegion.ClusterArns {
-			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region)
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics)
 			if err != nil {
 				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
@@ -269,7 +272,6 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	return clusterAuth, nil
 }
 
-// TODO: If/when we add the topic discovery to `kcp discover`, we should add topics/partitions count to this table to.
 func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	allClusters := []types.DiscoveredCluster{}
 	for _, region := range state.Regions {

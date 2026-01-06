@@ -23,8 +23,8 @@ func NewMSKClient(region string, requestsPerSecond float64, burstSize int) (*Rat
 		// https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-retries-timeouts.html
 		config.WithRetryer(func() aws.Retryer {
 			return retry.NewStandard(func(opts *retry.StandardOptions) {
-				opts.MaxAttempts = 10
-				opts.MaxBackoff = 5 * time.Second
+				opts.MaxAttempts = 3
+				opts.MaxBackoff = 20 * time.Second
 			})
 		}),
 	)

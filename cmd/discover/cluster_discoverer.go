@@ -61,8 +61,8 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string) (*types.DiscoveredCluster, error) {
-	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn)
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool) (*types.DiscoveredCluster, error) {
+	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 	}, nil
 }
 
-func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
+func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
 	awsClientInfo := types.AWSClientInformation{}
 	kafkaClientInfo := types.KafkaAdminClientInformation{}
 
@@ -150,11 +150,15 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.Connectors = connectors
 
-	topics, err := cd.discoverTopics(ctx, clusterArn)
-	if err != nil {
-		return nil, nil, err
+	if !skipTopics {
+		topics, err := cd.discoverTopics(ctx, clusterArn)
+		if err != nil {
+			return nil, nil, err
+		}
+		kafkaClientInfo.SetTopics(topics)
+	} else {
+		slog.Info("⏭️ skipping topic discovery")
 	}
-	kafkaClientInfo.SetTopics(topics)
 
 	return &awsClientInfo, &kafkaClientInfo, nil
 }

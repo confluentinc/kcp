@@ -328,7 +328,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 	}
 
 	// Concurrency limiting with semaphore
-	const maxConcurrency = 65 // 3120 9:14 minutes // 65 ~6:46 minutes // 10 ~7 minutes
+	const maxConcurrency = 25
 	sem := semaphore.NewWeighted(maxConcurrency)
 
 	resultChan := make(chan types.TopicDetails, len(topicList))
