@@ -19,6 +19,7 @@ const (
 
 var (
 	regions []string
+	skipTopics bool
 )
 
 func NewDiscoverCmd() *cobra.Command {
@@ -36,18 +37,21 @@ func NewDiscoverCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-
 	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
-
 	discoverCmd.Flags().AddFlagSet(requiredFlags)
-
 	groups[requiredFlags] = "Required Flags"
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skips the topic discovery through the AWS MSK API")
+	discoverCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
 
 	discoverCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -128,6 +132,7 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 
 	return &DiscovererOpts{
 		Regions:     regions,
+		SkipTopics:  skipTopics,
 		State:       state,
 		Credentials: credentials,
 	}, nil
