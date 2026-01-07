@@ -17,12 +17,12 @@ export const ClusterClients = ({ clients }: ClusterClientsProps) => {
 
   const getRoleBadge = (role: string) => {
     const colors: Record<string, string> = {
-      producer: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-      consumer: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+      producer: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-700/50',
+      consumer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-700/50',
     }
 
     const normalizedRole = role?.toLowerCase() || ''
-    const colorClass = colors[normalizedRole] || 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200'
+    const colorClass = colors[normalizedRole] || 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200 border border-gray-200 dark:border-gray-700'
 
     return (
       <span
@@ -35,14 +35,14 @@ export const ClusterClients = ({ clients }: ClusterClientsProps) => {
 
   const getAuthBadge = (auth: string) => {
     const colors: Record<string, string> = {
-      iam: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-      sasl_scram: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
-      tls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200',
-      unauthenticated: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+      iam: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700/50',
+      sasl_scram: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-700/50',
+      tls: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300 border border-teal-200 dark:border-teal-700/50',
+      unauthenticated: 'bg-slate-100 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300 border border-slate-200 dark:border-slate-700/50',
     }
 
     const normalizedAuth = auth?.toLowerCase() || ''
-    const colorClass = colors[normalizedAuth] || 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200'
+    const colorClass = colors[normalizedAuth] || 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200 border border-gray-200 dark:border-gray-700'
 
     return (
       <span
