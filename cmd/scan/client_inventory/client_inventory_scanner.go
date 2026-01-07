@@ -78,78 +78,8 @@ func (cis *ClientInventoryScanner) Run() error {
 	}
 
 	discoveredClients := cis.handleLogFiles(ctx, bucket, logFiles)
-	// soem random data to test the deduplication
-	discoveredClients = []types.DiscoveredClient{
-		{
-			CompositeKey: "orders-consumer|orders|Consumer|IAM|arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			ClientId:     "orders-consumer",
-			Role:         "Consumer",
-			Topic:        "orders",
-			Auth:         "IAM",
-			Principal:    "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			Timestamp:    time.Date(2025, 8, 21, 13, 1, 22, 0, time.UTC),
-		},
-		{
-			CompositeKey: "stock-levels-producer|stock-levels|Producer|IAM|arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			ClientId:     "stock-levels-producer",
-			Role:         "Producer",
-			Topic:        "stock-levels",
-			Auth:         "IAM",
-			Principal:    "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			Timestamp:    time.Date(2025, 8, 21, 13, 1, 28, 0, time.UTC),
-		},
-		{
-			CompositeKey: "customers-consumer|customers|Consumer|IAM|arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			ClientId:     "customers-consumer",
-			Role:         "Consumer",
-			Topic:        "customers",
-			Auth:         "IAM",
-			Principal:    "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			Timestamp:    time.Date(2025, 8, 21, 13, 2, 17, 0, time.UTC),
-		},
-		{
-			CompositeKey: "sarama|customers|Consumer|IAM|arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			ClientId:     "sarama",
-			Role:         "Consumer",
-			Topic:        "customers",
-			Auth:         "IAM",
-			Principal:    "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
-			Timestamp:    time.Date(2025, 8, 21, 13, 2, 17, 0, time.UTC),
-		},
-		{
-			CompositeKey: "sarama|dogs|Producer|SASL_SCRAM|User:kafka-user-2",
-			ClientId:     "sarama",
-			Role:         "Producer",
-			Topic:        "dogs",
-			Auth:         "SASL_SCRAM",
-			Principal:    "User:kafka-user-2",
-			Timestamp:    time.Date(2025, 8, 21, 13, 2, 17, 0, time.UTC),
-		},
-		{
-			CompositeKey: "sarama|cats|Producer|SASL_SCRAM|User:kafka-user-2",
-			ClientId:     "sarama",
-			Role:         "Producer",
-			Topic:        "cats",
-			Auth:         "SASL_SCRAM",
-			Principal:    "User:kafka-user-2",
-			Timestamp:    time.Date(2025, 8, 21, 13, 2, 17, 0, time.UTC),
-		},
-		{
-			CompositeKey: "sarama|cats|Producer|SASL_SCRAM|User:kafka-user-2",
-			ClientId:     "sarama",
-			Role:         "Producer",
-			Topic:        "cats",
-			Auth:         "SASL_SCRAM",
-			Principal:    "User:kafka-user-2",
-			Timestamp:    time.Date(2025, 8, 21, 14, 2, 17, 0, time.UTC),
-		},
-	}
 
-	// if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
-	// hack cluster name and region for now
-	clusterName := "public-retention-env-cluster"
-	region := "eu-west-3"
-	if err := cis.state.UpsertDiscoveredClients(region, clusterName, discoveredClients); err != nil {
+	if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
 		return fmt.Errorf("failed to upsert discovered clients: %w", err)
 	}
 
@@ -225,12 +155,11 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, ke
 		case KafkaApiTracePattern.MatchString(line):
 			metadata, err := cis.kafkaTraceLineParser.Parse(line, lineNumber, key)
 			if err != nil {
-				slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
+				// slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
 				continue
 			}
 			requestsMetadata = append(requestsMetadata, *metadata)
 		default:
-			slog.Debug("not a log line we want to process", "line", line)
 			continue
 		}
 
@@ -243,41 +172,3 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, ke
 
 	return requestsMetadata, nil
 }
-
-// func (cis *ClientInventoryScanner) addDiscoveredClientsToState(discoveredClients []types.DiscoveredClient) {
-// 	slog.Info("🔍 looking for region and cluster in state file", "region", cis.opts.Region, "cluster_name", cis.opts.ClusterName)
-// 	for i := range cis.state.Regions {
-// 		region := &cis.state.Regions[i]
-// 		if region.Name == cis.opts.Region {
-// 			for j := range region.Clusters {
-// 				cluster := &region.Clusters[j]
-// 				if cluster.Name == cis.opts.ClusterName {
-// 					// Merge existing clients from state with newly discovered clients
-// 					allClients := append(cluster.DiscoveredClients, discoveredClients...)
-// 					cluster.DiscoveredClients = dedupDiscoveredClients(allClients)
-// 					break
-// 				}
-// 			}
-// 		}
-// 	}
-// }
-
-// func dedupDiscoveredClients(discoveredClients []types.DiscoveredClient) []types.DiscoveredClient {
-// 	// Deduplicate by composite key, keeping the client with the most recent timestamp
-// 	clientsByCompositeKey := make(map[string]types.DiscoveredClient)
-
-// 	for _, currentClient := range discoveredClients {
-// 		existingClient, exists := clientsByCompositeKey[currentClient.CompositeKey]
-
-// 		if !exists || currentClient.Timestamp.After(existingClient.Timestamp) {
-// 			clientsByCompositeKey[currentClient.CompositeKey] = currentClient
-// 		}
-// 	}
-
-// 	dedupedClients := make([]types.DiscoveredClient, 0, len(clientsByCompositeKey))
-// 	for _, client := range clientsByCompositeKey {
-// 		dedupedClients = append(dedupedClients, client)
-// 	}
-
-// 	return dedupedClients
-// }
