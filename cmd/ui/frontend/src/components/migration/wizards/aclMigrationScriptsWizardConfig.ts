@@ -80,6 +80,16 @@ export const createAclMigrationScriptsWizardConfig = (clusterArn: string): Wizar
           schema: {
             type: 'object',
             properties: {
+              msk_region: {
+                type: 'string',
+                title: 'MSK Region',
+                default: cluster?.region || 'failed to retrieve AWS region from statefile.'
+              },
+              msk_cluster_arn: {
+                type: 'string',
+                title: 'MSK Cluster ARN',
+                default: cluster?.arn || 'failed to retrieve MSK cluster ARN from statefile.'
+              },
               selected_principals: {
                 type: 'array',
                 title: 'Principals',
@@ -101,6 +111,14 @@ export const createAclMigrationScriptsWizardConfig = (clusterArn: string): Wizar
               'ui:options': {
                 enum: principalEnumValues,
               },
+            },
+            msk_region: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
+            msk_cluster_arn: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
             },
           },
         },
@@ -141,27 +159,6 @@ export const createAclMigrationScriptsWizardConfig = (clusterArn: string): Wizar
     actions: {
       save_step_data: 'save_step_data',
       undo_save_step_data: 'undo_save_step_data',
-    },
-
-    // Transform the selected principals array into a map of principal -> ACLs
-    transformPayload: (data: Record<string, unknown>) => {
-      const selectedPrincipals = data.selected_principals as string[] | undefined
-      if (!selectedPrincipals || !Array.isArray(selectedPrincipals)) {
-        return data
-      }
-
-      // Build the map of selected principals with their ACLs
-      const selectedPrincipalsWithAcls: Record<string, Acl[]> = {}
-      for (const principal of selectedPrincipals) {
-        if (principalAclsMap[principal]) {
-          selectedPrincipalsWithAcls[principal] = principalAclsMap[principal]
-        }
-      }
-
-      return {
-        ...data,
-        selected_principals: selectedPrincipalsWithAcls,
-      }
     },
   }
 }

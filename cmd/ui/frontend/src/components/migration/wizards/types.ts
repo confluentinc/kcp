@@ -36,8 +36,6 @@ export interface WizardConfig {
   apiEndpoint: string
   initial?: string
   states: Record<string, unknown>
-  // Optional function to transform form data before sending to API
-  transformPayload?: (data: Record<string, unknown>) => Record<string, unknown>
 }
 
 // Terraform module structure

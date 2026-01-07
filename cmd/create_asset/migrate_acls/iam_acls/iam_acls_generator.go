@@ -87,10 +87,16 @@ func (ig *IamAclsGenerator) Run() error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
+	principalNames := make([]string, 0, len(allAclsByPrincipal))
+	for principal := range allAclsByPrincipal {
+		principalNames = append(principalNames, principal)
+	}
+	
 	request := types.MigrateAclsRequest{
-		SelectedPrincipals:        allAclsByPrincipal,
+		SelectedPrincipals:        principalNames,
 		TargetClusterId:           ig.opts.TargetClusterId,
 		TargetClusterRestEndpoint: ig.opts.TargetClusterRestEndpoint,
+		AclsByPrincipal:           allAclsByPrincipal,
 	}
 
 	hclService := hcl.NewMigrationScriptsHCLService()

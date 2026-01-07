@@ -89,10 +89,8 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
 
   const handleConfirmation = async () => {
     try {
-      // Transform payload if the config provides a transformer
-      const payload = config.transformPayload ? config.transformPayload(flattenedData) : flattenedData
-      const files = await generateTerraform(payload)
-
+      const files = await generateTerraform(flattenedData)
+      
       // Store files in zustand if cluster info is provided
       if (clusterKey && wizardType && files) {
         setTerraformFiles(clusterKey, wizardType, files)

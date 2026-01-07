@@ -50,10 +50,16 @@ func (kg *KafkaAclsGenerator) Run() error {
 		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)
 	}
 
+	principalNames := make([]string, 0, len(aclsByPrincipal))
+	for principal := range aclsByPrincipal {
+		principalNames = append(principalNames, principal)
+	}
+	
 	request := types.MigrateAclsRequest{
-		SelectedPrincipals:        aclsByPrincipal,
+		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
 		TargetClusterRestEndpoint: kg.opts.TargetClusterRestEndpoint,
+		AclsByPrincipal:           aclsByPrincipal,
 	}
 
 	hclService := hcl.NewMigrationScriptsHCLService()

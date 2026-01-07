@@ -140,7 +140,7 @@ func (s *MigrationScriptsHCLService) generateMigrateACLsMainTf(request types.Mig
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	for principal, acls := range request.SelectedPrincipals {
+	for principal, acls := range request.AclsByPrincipal {
 		serviceAccountResourceName := utils.FormatHclResourceName(principal)
 		rootBody.AppendUnstructuredTokens(utils.TokensForComment("// Migrated principal: " + principal))
 		rootBody.AppendNewline()
