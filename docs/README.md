@@ -328,30 +328,35 @@ This command scans a hour window folder in s3 to identify as many clients as pos
 
 ```shell
 kcp scan client-inventory \
---region us-east-1 \
 --s3-uri  s3://my-cluster-logs-bucket/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-1a2345b6-bf9f-4670-b13b-710985f5645d-5/2025-08-13-14/
+--state-file kcp-state.json
 ```
 
 **Output:**
-The command generates a csv file - `broker_logs_scan_results.csv` containing:
+The command writes to `discovered_clients` in the state file for the corresponding cluster:
 
 - All the unique clients it could identify based on a combination of values:
   - i.e. clientID + topic + role + auth + principal
 
 example output
 
-```csv
-Client ID,Role,Topic,Auth,Principal,Timestamp
-consumer1,Consumer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-18 10:15:16
-default-producer-id,Producer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-18 10:15:18
-consumer2,Consumer,test-topic-1,UNAUTHENTICATED,User:ANONYMOUS,2025-08-18 10:18:22
-default-producer-id,Producer,test-topic-1,UNAUTHENTICATED,User:ANONYMOUS,2025-08-18 10:18:24
+```json
+ "discovered_clients": [
+    {
+        "composite_key": "stock-levels-producer|stock-levels|Producer|IAM|arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
+        "client_id": "stock-levels-producer",
+        "role": "Producer",
+        "topic": "stock-levels",
+        "auth": "IAM",
+        "principal": "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
+        "timestamp": "2025-08-21T13:01:28Z"
+    }
+  ]
 ```
 
 Alternatively, the following environment variables need to be set:
 
 ```shell
-export REGION=<aws-region>
 export S3_URI=<folder-in-s3>
 ```
 
