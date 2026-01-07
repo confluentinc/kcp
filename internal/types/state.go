@@ -550,6 +550,7 @@ type ProcessedCluster struct {
 	ClusterMetrics              ProcessedClusterMetrics     `json:"metrics"` // Flattened from raw CloudWatch metrics
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
 }
 
 type ProcessedClusterMetrics struct {

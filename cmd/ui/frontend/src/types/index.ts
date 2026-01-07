@@ -26,7 +26,18 @@ export interface Cluster {
     }
   }
   kafka_admin_client_information: KafkaAdminInfo
+  discovered_clients: DiscoveredClient[]
   timestamp?: string
+}
+
+export interface DiscoveredClient {
+  composite_key: string
+  client_id: string
+  role: string
+  topic: string
+  auth: string
+  principal: string
+  timestamp: string
 }
 
 export interface Region {
