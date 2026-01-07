@@ -165,6 +165,18 @@ func dedupDiscoveredClients(discoveredClients []DiscoveredClient) []DiscoveredCl
 	return dedupedClients
 }
 
+func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
+	for _, region := range s.Regions {
+		for _, cluster := range region.Clusters {
+			if cluster.Arn == clusterArn {
+				return &cluster, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
+}
+
 type DiscoveredRegion struct {
 	Name           string                                      `json:"name"`
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
