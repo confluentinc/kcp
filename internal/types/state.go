@@ -126,6 +126,57 @@ func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 	s.Regions = append(s.Regions, newRegion)
 }
 
+func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
+	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
+	for i := range s.Regions {
+		region := &s.Regions[i]
+		if region.Name == regionName {
+			for j := range region.Clusters {
+				cluster := &region.Clusters[j]
+				if cluster.Name == clusterName {
+					// Merge existing clients from state with newly discovered clients
+					allClients := append(cluster.DiscoveredClients, discoveredClients...)
+					cluster.DiscoveredClients = dedupDiscoveredClients(allClients)
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("cluster '%s' not found in region '%s'", clusterName, regionName)
+}
+
+func dedupDiscoveredClients(discoveredClients []DiscoveredClient) []DiscoveredClient {
+	// Deduplicate by composite key, keeping the client with the most recent timestamp
+	clientsByCompositeKey := make(map[string]DiscoveredClient)
+
+	for _, currentClient := range discoveredClients {
+		existingClient, exists := clientsByCompositeKey[currentClient.CompositeKey]
+
+		if !exists || currentClient.Timestamp.After(existingClient.Timestamp) {
+			clientsByCompositeKey[currentClient.CompositeKey] = currentClient
+		}
+	}
+
+	dedupedClients := make([]DiscoveredClient, 0, len(clientsByCompositeKey))
+	for _, client := range clientsByCompositeKey {
+		dedupedClients = append(dedupedClients, client)
+	}
+
+	return dedupedClients
+}
+
+func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
+	for _, region := range s.Regions {
+		for _, cluster := range region.Clusters {
+			if cluster.Arn == clusterArn {
+				return &cluster, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
+}
+
 type DiscoveredRegion struct {
 	Name           string                                      `json:"name"`
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
@@ -161,6 +212,7 @@ type DiscoveredCluster struct {
 	ClusterMetrics              ClusterMetrics              `json:"metrics"`
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
 }
 
 type AWSClientInformation struct {
@@ -341,6 +393,16 @@ func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []Self
 	}
 }
 
+type DiscoveredClient struct {
+	CompositeKey string    `json:"composite_key"`
+	ClientId     string    `json:"client_id"`
+	Role         string    `json:"role"`
+	Topic        string    `json:"topic"`
+	Auth         string    `json:"auth"`
+	Principal    string    `json:"principal"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
 // ----- metrics -----
 type ClusterMetrics struct {
 	MetricMetadata MetricMetadata                     `json:"metadata"`
@@ -488,6 +550,7 @@ type ProcessedCluster struct {
 	ClusterMetrics              ProcessedClusterMetrics     `json:"metrics"` // Flattened from raw CloudWatch metrics
 	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
 }
 
 type ProcessedClusterMetrics struct {
