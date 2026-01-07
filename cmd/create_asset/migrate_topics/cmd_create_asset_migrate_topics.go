@@ -40,8 +40,8 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration scripts for.")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
-	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-cluster-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
-	requiredFlags.StringVar(&clusterLinkName, "target-cluster-link-name", "", "The name of the cluster link (e.g., msk-to-cc-migration-link).")
+	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
+	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link (e.g., msk-to-cc-migration-link).")
 	migrationCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
