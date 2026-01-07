@@ -18,6 +18,8 @@ var (
 	clusterArn      string
 	outputDir       string
 	skipAuditReport bool
+	targetClusterId           string
+	targetClusterRestEndpoint string
 )
 
 func NewMigrateIamAclsCmd() *cobra.Command {
@@ -38,9 +40,10 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	requiredFlags.StringVar(&userArn, "user-arn", "", "IAM User ARN to convert ACLs from")
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file.")
 	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the cluster to migrate ACLs from.")
-
+	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
+	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	aclsCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags (choose one)"
+	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
@@ -74,6 +77,8 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	aclsCmd.MarkFlagsOneRequired("role-arn", "user-arn", "state-file")
 	aclsCmd.MarkFlagsMutuallyExclusive("role-arn", "user-arn", "state-file")
 	aclsCmd.MarkFlagsRequiredTogether("state-file", "cluster-arn")
+	aclsCmd.MarkFlagRequired("target-cluster-id")
+	aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
 	return aclsCmd
 }
@@ -92,8 +97,8 @@ func runMigrateIamAcls(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse migrate IAM ACLs opts: %v", err)
 	}
 
-	iamAclsMigrator := NewIamAclsMigrator(*opts)
-	if err := iamAclsMigrator.Run(); err != nil {
+	iamAclsGenerator := NewIamAclsGenerator(*opts)
+	if err := iamAclsGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to migrate IAM ACLs: %v", err)
 	}
 
@@ -126,9 +131,11 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 	}
 
 	opts := MigrateIamAclsOpts{
-		PrincipalArns:   principalArns,
-		OutputDir:       outputDir,
-		SkipAuditReport: skipAuditReport,
+		PrincipalArns:             principalArns,
+		TargetClusterId:           targetClusterId,
+		TargetClusterRestEndpoint: targetClusterRestEndpoint,
+		OutputDir:                 outputDir,
+		SkipAuditReport:           skipAuditReport,
 	}
 
 	return &opts, nil

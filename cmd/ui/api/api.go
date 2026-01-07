@@ -427,7 +427,65 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
-	return c.JSON(http.StatusCreated, "todo")
+	var req types.MigrateAclsRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	if ui.cachedState == nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": "Please upload state data via POST /upload-state first",
+		})
+	}
+
+	var targetCluster *types.DiscoveredCluster
+	for _, region := range ui.cachedState.Regions {
+		if region.Name != req.MskRegion {
+			continue
+		}
+		for i := range region.Clusters {
+			if region.Clusters[i].Arn == req.MskClusterArn {
+				targetCluster = &region.Clusters[i]
+				break
+			}
+		}
+	}
+
+	if targetCluster == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found",
+			"message": fmt.Sprintf("No cluster found with ARN %s in region %s", req.MskClusterArn, req.MskRegion),
+		})
+	}
+
+	selectedPrincipalsSet := make(map[string]bool)
+	for _, p := range req.SelectedPrincipals {
+		selectedPrincipalsSet[p] = true
+	}
+
+	aclsByPrincipal := make(map[string][]types.Acls)
+	for _, acl := range targetCluster.KafkaAdminClientInformation.Acls {
+		if selectedPrincipalsSet[acl.Principal] {
+			aclsByPrincipal[acl.Principal] = append(aclsByPrincipal[acl.Principal], acl)
+		}
+	}
+
+	// Attach the filtered ACLs to the request
+	req.AclsByPrincipal = aclsByPrincipal
+
+	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMigrateAclsFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Terraform files",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, terraformFiles)
 }
 
 func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {

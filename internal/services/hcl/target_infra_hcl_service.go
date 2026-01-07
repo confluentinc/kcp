@@ -37,7 +37,6 @@ type TargetInfraHCLService struct {
 	ResourceNames TerraformResourceNames
 }
 
-//
 func NewTerraformResourceNames() TerraformResourceNames {
 	return TerraformResourceNames{
 		// Confluent Resources

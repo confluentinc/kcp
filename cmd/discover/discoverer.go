@@ -21,12 +21,14 @@ import (
 
 type DiscovererOpts struct {
 	Regions     []string
+	SkipTopics  bool
 	State       *types.State
 	Credentials *types.Credentials
 }
 
 type Discoverer struct {
 	regions     []string
+	skipTopics  bool
 	state       *types.State
 	credentials *types.Credentials
 }
@@ -34,6 +36,7 @@ type Discoverer struct {
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
 		regions:     opts.Regions,
+		skipTopics:  opts.SkipTopics,
 		state:       opts.State,
 		credentials: opts.Credentials,
 	}
@@ -56,7 +59,9 @@ func (d *Discoverer) discoverRegions() error {
 	credentials := types.NewCredentialsFrom(d.credentials)
 
 	for _, region := range d.regions {
-		mskClient, err := client.NewMSKClient(region)
+		// Using conservative rate limits to avoid AWS 429 Too Many Requests errors
+		// 8 requests per second with burst of 1 -
+		mskClient, err := client.NewMSKClient(region, 8, 1) // At the time of writing 8 requests is safe without rate limits. However, with the failed topics retry logic, we could bump this.
 		if err != nil {
 			slog.Error("failed to create msk client", "region", region, "error", err)
 			continue
@@ -103,7 +108,7 @@ func (d *Discoverer) discoverRegions() error {
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		for _, clusterArn := range discoveredRegion.ClusterArns {
-			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region)
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics)
 			if err != nil {
 				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
@@ -267,7 +272,6 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	return clusterAuth, nil
 }
 
-// TODO: If/when we add the topic discovery to `kcp discover`, we should add topics/partitions count to this table to.
 func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	allClusters := []types.DiscoveredCluster{}
 	for _, region := range state.Regions {
@@ -312,6 +316,32 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	md.AddHeading("Cluster ARNs", 2)
 	arnHeaders := []string{"Cluster Name", "Cluster ARN"}
 	md.AddTable(arnHeaders, arnData)
+
+	md.AddHeading("Discovered Topics", 2)
+	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+
+	topicData := [][]string{}
+	for _, cluster := range allClusters {
+		// Skip clusters without topic information
+		if cluster.KafkaAdminClientInformation.Topics == nil {
+			continue
+		}
+
+		summary := cluster.KafkaAdminClientInformation.Topics.Summary
+		topicData = append(topicData, []string{
+			cluster.Name,
+			strconv.Itoa(summary.Topics),
+			strconv.Itoa(summary.InternalTopics),
+			strconv.Itoa(summary.TotalPartitions),
+			strconv.Itoa(summary.TotalInternalPartitions),
+			strconv.Itoa(summary.CompactTopics),
+			strconv.Itoa(summary.CompactPartitions),
+		})
+	}
+
+	if len(topicData) > 0 {
+		md.AddTable(topicHeaders, topicData)
+	}
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
