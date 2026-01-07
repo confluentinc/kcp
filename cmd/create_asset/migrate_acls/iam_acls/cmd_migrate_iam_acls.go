@@ -113,7 +113,7 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
-		principals, err := parseClientDiscoveryFile(state)
+		principals, err := parseClientDiscoveryFile(clusterArn, state)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse client discovery file: %v", err)
 		}
@@ -134,7 +134,7 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 	return &opts, nil
 }
 
-func parseClientDiscoveryFile(state *types.State) ([]string, error) {
+func parseClientDiscoveryFile(clusterArn string, state *types.State) ([]string, error) {
 	cluster, err := state.GetClusterByArn(clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
