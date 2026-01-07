@@ -37,6 +37,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 				ClusterMetrics:              processedMetrics,
 				AWSClientInformation:        cluster.AWSClientInformation,
 				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+				DiscoveredClients:           cluster.DiscoveredClients,
 			})
 		}
 
