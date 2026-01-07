@@ -90,7 +90,7 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
   const handleConfirmation = async () => {
     try {
       const files = await generateTerraform(flattenedData)
-
+      
       // Store files in zustand if cluster info is provided
       if (clusterKey && wizardType && files) {
         setTerraformFiles(clusterKey, wizardType, files)

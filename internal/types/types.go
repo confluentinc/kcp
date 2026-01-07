@@ -208,6 +208,18 @@ type ExtOutboundClusterKafkaEndpoint struct {
 	IP   string `json:"ip"`
 }
 
+type MigrateAclsRequest struct {
+	SelectedPrincipals        []string          `json:"selected_principals"`
+	TargetClusterId           string            `json:"target_cluster_id"`
+	TargetClusterRestEndpoint string            `json:"target_cluster_rest_endpoint"`
+	
+	MskRegion                 string            `json:"msk_region"`
+	MskClusterArn             string            `json:"msk_cluster_arn"`
+
+	// This is not sent by the UI payload but instead built by the API service before being passed on to the HCL service.
+	AclsByPrincipal           map[string][]Acls `json:"-"`
+}
+
 type MirrorTopicsRequest struct {
 	SelectedTopics            []string `json:"selected_topics"`
 	ClusterLinkName           string   `json:"cluster_link_name"`
@@ -216,9 +228,9 @@ type MirrorTopicsRequest struct {
 }
 
 type ReverseProxyRequest struct {
-	Region                              string `json:"region"`
-	VPCId                               string `json:"vpc_id"`
-	PublicSubnetCidr                     string `json:"public_subnet_cidr"`
+	Region                                 string `json:"region"`
+	VPCId                                  string `json:"vpc_id"`
+	PublicSubnetCidr                       string `json:"public_subnet_cidr"`
 	ConfluentCloudClusterBootstrapEndpoint string `json:"confluent_cloud_cluster_bootstrap_endpoint"`
 }
 
