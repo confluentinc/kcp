@@ -170,7 +170,7 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 	md.AddHeading("Scan Summary", 1)
 	md.AddParagraph("This report shows a summary of scanned Kafka resources across all clusters. More detailed information can be found in the `kcp ui`.")
 
-	headers := []string{"Cluster Name", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+	headers := []string{"Cluster Name", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions", "Tiered Storage Topics"}
 	data := [][]string{}
 	for _, cluster := range allClusters {
 		if cluster.KafkaAdminClientInformation.Topics != nil {
@@ -183,6 +183,7 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 				strconv.Itoa(summary.TotalInternalPartitions),
 				strconv.Itoa(summary.CompactTopics),
 				strconv.Itoa(summary.CompactPartitions),
+				strconv.Itoa(summary.RemoteStorageTopics),
 			})
 		}
 	}

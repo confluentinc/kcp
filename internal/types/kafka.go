@@ -1,6 +1,8 @@
 package types
 
-import "strings"
+import (
+	"strings"
+)
 
 type TopicSummary struct {
 	Topics                    int `json:"topics"`
@@ -11,6 +13,7 @@ type TopicSummary struct {
 	CompactInternalTopics     int `json:"compact_internal_topics"`
 	CompactPartitions         int `json:"compact_partitions"`
 	CompactInternalPartitions int `json:"compact_internal_partitions"`
+	RemoteStorageTopics       int `json:"remote_storage_topics"`
 }
 
 type TopicDetails struct {
@@ -149,6 +152,11 @@ func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary 
 			isCompact = strings.Contains(*cleanupPolicy, "compact")
 		}
 
+		var isRemoteStorage bool
+		if remoteStorage, exists := topic.Configurations["remote.storage.enable"]; exists && remoteStorage != nil {
+			isRemoteStorage = strings.Contains(*remoteStorage, "true")
+		}
+
 		if isInternal {
 			summary.InternalTopics++
 			summary.TotalInternalPartitions += topic.Partitions
@@ -156,12 +164,20 @@ func CalculateTopicSummaryFromDetails(topicDetails []TopicDetails) TopicSummary 
 				summary.CompactInternalTopics++
 				summary.CompactInternalPartitions += topic.Partitions
 			}
+
+			if isRemoteStorage {
+				summary.RemoteStorageTopics++
+			}
 		} else {
 			summary.Topics++
 			summary.TotalPartitions += topic.Partitions
 			if isCompact {
 				summary.CompactTopics++
 				summary.CompactPartitions += topic.Partitions
+			}
+
+			if isRemoteStorage {
+				summary.RemoteStorageTopics++
 			}
 		}
 	}
