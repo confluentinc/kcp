@@ -42,7 +42,7 @@ func (cs *ClustersScanner) Run() error {
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {
 			if err := cs.scanCluster(regionAuth.Name, clusterAuth); err != nil {
-				slog.Error("failed to scan cluster", "cluster", clusterAuth.Arn, "error", err)
+				slog.Info("⏭️ skipping cluster", "cluster", clusterAuth.Name, "error", err)
 				continue
 			}
 		}
@@ -186,11 +186,12 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 			})
 		}
 	}
-
 	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster availabe to prove this.
 	if len(data) > 0 {
 		md.AddHeading("Topics", 2)
 		md.AddTable(headers, data)
+
+		md.AddParagraph("Note: Missing topics may indicate insufficient user permissions to describe the cluster or topics.")
 	}
 
 	aclsByPrincipal := cs.getACLsByPrincipal(allClusters)
