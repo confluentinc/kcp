@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -275,6 +276,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	allClusters := []types.DiscoveredCluster{}
 	for _, region := range state.Regions {
+		if !slices.Contains(d.regions, region.Name) {
+			// only include regions that are part of the current discovery run
+			continue
+		}
 		allClusters = append(allClusters, region.Clusters...)
 	}
 
