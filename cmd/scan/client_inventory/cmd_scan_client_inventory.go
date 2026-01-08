@@ -5,14 +5,15 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/s3"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 var (
-	s3Uri  string
-	region string
+	s3Uri     string
+	stateFile string
 )
 
 func NewScanClientInventoryCmd() *cobra.Command {
@@ -30,8 +31,8 @@ func NewScanClientInventoryCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&region, "region", "", "The AWS region")
 	requiredFlags.StringVar(&s3Uri, "s3-uri", "", "The S3 URI to the broker logs folder (e.g., s3://my-bucket/kafka-logs/2025-08-04-06/)")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the client inventory reports will be written to.")
 
 	clientInventoryCmd.Flags().AddFlagSet(requiredFlags)
 
@@ -55,8 +56,8 @@ func NewScanClientInventoryCmd() *cobra.Command {
 		return nil
 	})
 
-	clientInventoryCmd.MarkFlagRequired("region")
 	clientInventoryCmd.MarkFlagRequired("s3-uri")
+	clientInventoryCmd.MarkFlagRequired("state-file")
 
 	return clientInventoryCmd
 }
@@ -75,6 +76,11 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse scan client inventory opts: %v", err)
 	}
 
+	state, err := types.NewStateFromFile(stateFile)
+	if err != nil {
+		return fmt.Errorf("failed to load existing state file: %v", err)
+	}
+
 	s3Client, err := client.NewS3Client(opts.Region)
 	if err != nil {
 		return fmt.Errorf("failed to create S3 client: %w", err)
@@ -82,7 +88,7 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 
 	s3Service := s3.NewS3Service(s3Client)
 
-	clientInventoryScanner, err := NewClientInventoryScanner(s3Service, *opts)
+	clientInventoryScanner, err := NewClientInventoryScanner(s3Service, *state, *opts)
 	if err != nil {
 		return fmt.Errorf("failed to create client inventory scanner: %v", err)
 	}
@@ -95,9 +101,21 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 }
 
 func parseScanClientInventoryOpts() (*ClientInventoryScannerOpts, error) {
+	region, err := utils.ExtractRegionFromS3Uri(s3Uri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract region from S3 URI: %w", err)
+	}
+
+	clusterName, err := utils.ExtractClusterNameFromS3Uri(s3Uri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract cluster name from S3 URI: %w", err)
+	}
+
 	opts := ClientInventoryScannerOpts{
-		S3Uri:  s3Uri,
-		Region: region,
+		S3Uri:       s3Uri,
+		Region:      region,
+		ClusterName: clusterName,
+		StateFile:   stateFile,
 	}
 
 	return &opts, nil

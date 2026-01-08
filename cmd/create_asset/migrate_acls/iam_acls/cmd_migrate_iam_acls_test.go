@@ -1,12 +1,11 @@
 package iam_acls
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestEvaluatePrincipal(t *testing.T) {
@@ -116,18 +115,56 @@ func TestEvaluatePrincipal(t *testing.T) {
 }
 
 func TestParseClientDiscoveryFile(t *testing.T) {
+	testClusterArn := "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abcd1234-5678-90ef-ghij-klmnopqrstuv-1"
+
 	tests := []struct {
 		name               string
-		csvContent         string
+		state              *types.State
 		expectedPrincipals []string
 		expectedError      bool
 	}{
 		{
-			name: "valid CSV with IAM principals should parse correctly",
-			csvContent: `Client ID,Role,Topic,Auth,Principal,Timestamp
-TESTING_PRODUCER-1,Producer,customers1,IAM,arn:aws:sts::000123456789:assumed-role/kcp-testing-role/testing-sts,2025-07-25 14:45:53
-producer_with_sasl_scram-9,Producer,test-topic-1,SASL_SCRAM,User:kafka-user-2,2025-08-07 14:34:27
-kafka-client-1,Consumer,orders,IAM,arn:aws:sts::000123456789:assumed-role/kcp-iam-role/i-0ab123456cdef7890,2025-07-26 10:15:30`,
+			name: "valid state with IAM principals should parse correctly",
+			state: &types.State{
+				Regions: []types.DiscoveredRegion{
+					{
+						Name: "us-east-1",
+						Clusters: []types.DiscoveredCluster{
+							{
+								Arn:    testClusterArn,
+								Name:   "test-cluster",
+								Region: "us-east-1",
+								DiscoveredClients: []types.DiscoveredClient{
+									{
+										ClientId:  "TESTING_PRODUCER-1",
+										Role:      "Producer",
+										Topic:     "customers1",
+										Auth:      "IAM",
+										Principal: "arn:aws:sts::000123456789:assumed-role/kcp-testing-role/testing-sts",
+										Timestamp: time.Now(),
+									},
+									{
+										ClientId:  "producer_with_sasl_scram-9",
+										Role:      "Producer",
+										Topic:     "test-topic-1",
+										Auth:      "SASL_SCRAM",
+										Principal: "User:kafka-user-2",
+										Timestamp: time.Now(),
+									},
+									{
+										ClientId:  "kafka-client-1",
+										Role:      "Consumer",
+										Topic:     "orders",
+										Auth:      "IAM",
+										Principal: "arn:aws:sts::000123456789:assumed-role/kcp-iam-role/i-0ab123456cdef7890",
+										Timestamp: time.Now(),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 			expectedPrincipals: []string{
 				"arn:aws:iam::000123456789:role/kcp-testing-role",
 				"arn:aws:iam::000123456789:role/kcp-iam-role",
@@ -135,20 +172,92 @@ kafka-client-1,Consumer,orders,IAM,arn:aws:sts::000123456789:assumed-role/kcp-ia
 			expectedError: false,
 		},
 		{
-			name: "CSV with only SASL_SCRAM principals should return empty list",
-			csvContent: `Client ID,Role,Topic,Auth,Principal,Timestamp
-producer_with_sasl_scram-1,Producer,test-topic-1,SASL_SCRAM,User:kafka-user-1,2025-08-07 14:34:27
-producer_with_sasl_scram-2,Producer,test-topic-2,SASL_SCRAM,User:kafka-user-2,2025-08-07 14:35:27`,
+			name: "state with only SASL_SCRAM principals should return empty list",
+			state: &types.State{
+				Regions: []types.DiscoveredRegion{
+					{
+						Name: "us-east-1",
+						Clusters: []types.DiscoveredCluster{
+							{
+								Arn:    testClusterArn,
+								Name:   "test-cluster",
+								Region: "us-east-1",
+								DiscoveredClients: []types.DiscoveredClient{
+									{
+										ClientId:  "producer_with_sasl_scram-1",
+										Role:      "Producer",
+										Topic:     "test-topic-1",
+										Auth:      "SASL_SCRAM",
+										Principal: "User:kafka-user-1",
+										Timestamp: time.Now(),
+									},
+									{
+										ClientId:  "producer_with_sasl_scram-2",
+										Role:      "Producer",
+										Topic:     "test-topic-2",
+										Auth:      "SASL_SCRAM",
+										Principal: "User:kafka-user-2",
+										Timestamp: time.Now(),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 			expectedPrincipals: nil,
 			expectedError:      false,
 		},
 		{
-			name: "CSV with mixed auth types should only return IAM principals",
-			csvContent: `Client ID,Role,Topic,Auth,Principal,Timestamp
-client-1,Producer,topic-1,IAM,arn:aws:sts::111222333444:assumed-role/role-1/session-1,2025-07-25 14:45:53
-client-2,Consumer,topic-2,SASL_SCRAM,User:scram-user,2025-07-25 14:46:53
-client-3,Producer,topic-3,TLS,CN=client3,2025-07-25 14:47:53
-client-4,Consumer,topic-4,IAM,arn:aws:iam::555666777888:user/direct-user,2025-07-25 14:48:53`,
+			name: "state with mixed auth types should only return IAM principals",
+			state: &types.State{
+				Regions: []types.DiscoveredRegion{
+					{
+						Name: "us-east-1",
+						Clusters: []types.DiscoveredCluster{
+							{
+								Arn:    testClusterArn,
+								Name:   "test-cluster",
+								Region: "us-east-1",
+								DiscoveredClients: []types.DiscoveredClient{
+									{
+										ClientId:  "client-1",
+										Role:      "Producer",
+										Topic:     "topic-1",
+										Auth:      "IAM",
+										Principal: "arn:aws:sts::111222333444:assumed-role/role-1/session-1",
+										Timestamp: time.Now(),
+									},
+									{
+										ClientId:  "client-2",
+										Role:      "Consumer",
+										Topic:     "topic-2",
+										Auth:      "SASL_SCRAM",
+										Principal: "User:scram-user",
+										Timestamp: time.Now(),
+									},
+									{
+										ClientId:  "client-3",
+										Role:      "Producer",
+										Topic:     "topic-3",
+										Auth:      "TLS",
+										Principal: "CN=client3",
+										Timestamp: time.Now(),
+									},
+									{
+										ClientId:  "client-4",
+										Role:      "Consumer",
+										Topic:     "topic-4",
+										Auth:      "IAM",
+										Principal: "arn:aws:iam::555666777888:user/direct-user",
+										Timestamp: time.Now(),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 			expectedPrincipals: []string{
 				"arn:aws:iam::111222333444:role/role-1",
 				"arn:aws:iam::555666777888:user/direct-user",
@@ -156,8 +265,22 @@ client-4,Consumer,topic-4,IAM,arn:aws:iam::555666777888:user/direct-user,2025-07
 			expectedError: false,
 		},
 		{
-			name:               "empty CSV file (only header) should return empty list",
-			csvContent:         `Client ID,Role,Topic,Auth,Principal,Timestamp`,
+			name: "state with empty discovered clients should return empty list",
+			state: &types.State{
+				Regions: []types.DiscoveredRegion{
+					{
+						Name: "us-east-1",
+						Clusters: []types.DiscoveredCluster{
+							{
+								Arn:               testClusterArn,
+								Name:              "test-cluster",
+								Region:            "us-east-1",
+								DiscoveredClients: []types.DiscoveredClient{},
+							},
+						},
+					},
+				},
+			},
 			expectedPrincipals: nil,
 			expectedError:      false,
 		},
@@ -165,15 +288,8 @@ client-4,Consumer,topic-4,IAM,arn:aws:iam::555666777888:user/direct-user,2025-07
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a temporary CSV file
-			tmpDir := t.TempDir()
-			csvFile := filepath.Join(tmpDir, "test-client-discovery.csv")
-
-			err := os.WriteFile(csvFile, []byte(tt.csvContent), 0644)
-			require.NoError(t, err, "Failed to create test CSV file")
-
 			// Test the function
-			result, err := parseClientDiscoveryFile(csvFile)
+			result, err := parseClientDiscoveryFile(testClusterArn, tt.state)
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -181,70 +297,6 @@ client-4,Consumer,topic-4,IAM,arn:aws:iam::555666777888:user/direct-user,2025-07
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedPrincipals, result)
 			}
-		})
-	}
-}
-
-func TestParseClientDiscoveryFile_FileErrors(t *testing.T) {
-	tests := []struct {
-		name          string
-		fileName      string
-		expectedError string
-	}{
-		{
-			name:          "non-existent file should return error",
-			fileName:      "/path/to/non-existent-file.csv",
-			expectedError: "failed to read client discovery file",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseClientDiscoveryFile(tt.fileName)
-
-			assert.Error(t, err)
-			assert.Nil(t, result)
-			assert.Contains(t, err.Error(), tt.expectedError)
-		})
-	}
-}
-
-func TestParseClientDiscoveryFile_MalformedCSV(t *testing.T) {
-	tests := []struct {
-		name          string
-		csvContent    string
-		expectedError string
-	}{
-		{
-			name: "malformed CSV with unmatched quotes should return error",
-			csvContent: `Client ID,Role,Topic,Auth,Principal,Timestamp
-"client-1,Producer,topic-1,IAM,arn:aws:sts::111222333444:assumed-role/role-1/session-1,2025-07-25 14:45:53`,
-			expectedError: "failed to read all records from client discovery file",
-		},
-		{
-			name: "CSV with inconsistent number of columns should return error",
-			csvContent: `Client ID,Role,Topic,Auth,Principal,Timestamp
-client-1,Producer,topic-1,IAM
-client-2,Consumer,topic-2,SASL_SCRAM,User:scram-user,2025-07-25 14:46:53`,
-			expectedError: "failed to read all records from client discovery file",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a temporary CSV file
-			tmpDir := t.TempDir()
-			csvFile := filepath.Join(tmpDir, "test-malformed.csv")
-
-			err := os.WriteFile(csvFile, []byte(tt.csvContent), 0644)
-			require.NoError(t, err, "Failed to create test CSV file")
-
-			// Test the function
-			result, err := parseClientDiscoveryFile(csvFile)
-
-			assert.Error(t, err)
-			assert.Nil(t, result)
-			assert.Contains(t, err.Error(), tt.expectedError)
 		})
 	}
 }

@@ -3,6 +3,7 @@ import { ClusterMetrics } from '../clusters/ClusterMetrics'
 import { ClusterTopics } from '../clusters/ClusterTopics'
 import { ClusterConnectors } from '../clusters/ClusterConnectors'
 import { ClusterACLs } from '../clusters/ClusterACLs'
+import { ClusterClients } from '../clusters/ClusterClients'
 import { formatDate } from '@/lib/formatters'
 import { Tabs } from '@/components/common/Tabs'
 import { ClusterConfigurationSection } from '../clusters/ClusterConfigurationSection'
@@ -18,6 +19,7 @@ interface ClusterReportProps {
 }
 
 export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReportProps) => {
+  console.log('cluster123', cluster)
   const [activeTab, setActiveTab] = useState<ClusterReportTab>(CLUSTER_REPORT_TABS.CLUSTER)
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
@@ -91,6 +93,7 @@ export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReport
             { id: CLUSTER_REPORT_TABS.TOPICS, label: 'Topics' },
             { id: CLUSTER_REPORT_TABS.CONNECTORS, label: 'Connectors' },
             { id: CLUSTER_REPORT_TABS.ACLS, label: 'ACLs' },
+            { id: CLUSTER_REPORT_TABS.CLIENTS, label: 'Clients' },
           ]}
           activeId={activeTab}
           onChange={(id) => {
@@ -144,6 +147,13 @@ export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReport
           {activeTab === CLUSTER_REPORT_TABS.ACLS && (
             <div className="min-w-0 max-w-full">
               <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
+            </div>
+          )}
+
+          {/* Clients Tab */}
+          {activeTab === CLUSTER_REPORT_TABS.CLIENTS && (
+            <div className="min-w-0 max-w-full">
+              <ClusterClients clients={cluster.discovered_clients || []} />
             </div>
           )}
 
