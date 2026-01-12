@@ -194,15 +194,24 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 		md.AddParagraph("Note: Missing topics may indicate insufficient user permissions to describe the cluster or topics.")
 	}
 
-	aclsByPrincipal := cs.getACLsByPrincipal(allClusters)
-	if len(aclsByPrincipal) > 0 {
-		md.AddHeading("ACLs", 2)
-		headers := []string{"Principal", "Total ACLs"}
-		data := [][]string{}
-		for principal, count := range aclsByPrincipal {
-			data = append(data, []string{principal, strconv.Itoa(count)})
+	for _, cluster := range allClusters {
+		md.AddHeading("Principals & ACLs - " + cluster.Name, 3)
+		headers = []string{"Principal", "Total ACLs"}
+		aclsByPrincipal := make(map[string]int)
+
+		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
+			aclsByPrincipal[acl.Principal]++
 		}
-		md.AddTable(headers, data)
+		
+		if len(aclsByPrincipal) > 0 {
+			data = [][]string{}
+		
+			for principal, count := range aclsByPrincipal {
+				data = append(data, []string{principal, strconv.Itoa(count)})
+			}
+		
+			md.AddTable(headers, data)
+		}
 	}
 
 	connectorsByState := cs.getConnectorsByState(allClusters)
