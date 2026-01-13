@@ -600,5 +600,6 @@ type Migration struct {
 	ClusterRestEndpoint string    `json:"cluster_rest_endpoint"`
 	ClusterLinkName     string    `json:"cluster_link_name"`
 	Topics              []string  `json:"topics"`
+	AuthMode            string    `json:"auth_mode"`
 	CreatedAt           time.Time `json:"created_at"`
 }

@@ -2,6 +2,7 @@ package migration
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -24,6 +25,7 @@ var (
 	clusterApiKey       string
 	clusterApiSecret    string
 	topics              []string
+	authMode            string
 )
 
 func NewMigrationCmd() *cobra.Command {
@@ -56,6 +58,7 @@ func NewMigrationCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
+	optionalFlags.StringVar(&authMode, "auth-mode", "dest_swap", "The authentication mode to use for the migration. ('source_swap', 'dest_swap')")
 	migrationCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -113,8 +116,14 @@ func runMigration(cmd *cobra.Command, args []string) error {
 
 func parseMigrationOpts() (*MigrationOpts, error) {
 	if kubeConfigPath == "" {
-		kubeConfigPath = filepath.Join(os.Getenv("HOME"), ".kube", "config") // Is `HOME` reliable?
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user home directory: %v", err)
+		}
+
+		kubeConfigPath = filepath.Join(homeDir, ".kube", "config")
 	}
+	slog.Info("using kube config path", "path", kubeConfigPath)
 
 	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
@@ -123,7 +132,7 @@ func parseMigrationOpts() (*MigrationOpts, error) {
 
 	return &MigrationOpts{
 		stateFile: stateFile,
-		state: *state,
+		state:     *state,
 
 		gatewayNamespace:    gatewayNamespace,
 		kubeConfigPath:      kubeConfigPath,
@@ -134,5 +143,6 @@ func parseMigrationOpts() (*MigrationOpts, error) {
 		clusterApiKey:       clusterApiKey,
 		clusterApiSecret:    clusterApiSecret,
 		topics:              topics,
+		authMode:            authMode,
 	}, nil
 }

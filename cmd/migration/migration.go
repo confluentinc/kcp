@@ -36,6 +36,7 @@ type MigrationOpts struct {
 	clusterApiKey       string
 	clusterApiSecret    string
 	topics              []string
+	authMode            string
 }
 
 type Migration struct {
@@ -52,6 +53,7 @@ type Migration struct {
 	clusterApiKey       string
 	clusterApiSecret    string
 	topics              []string
+	authMode            string
 }
 
 func NewMigration(opts MigrationOpts) *Migration {
@@ -67,6 +69,7 @@ func NewMigration(opts MigrationOpts) *Migration {
 		clusterApiKey:       opts.clusterApiKey,
 		clusterApiSecret:    opts.clusterApiSecret,
 		topics:              opts.topics,
+		authMode:            opts.authMode,
 	}
 }
 
@@ -100,8 +103,13 @@ func (m *Migration) Run() error {
 		return err
 	}
 
-	if err := validateTopicsInClusterLink(m.topics, clusterLinkTopics); err != nil {
-		return err
+	if len(m.topics) > 0 {
+		slog.Info("validating topics in cluster link", "topic count", len(m.topics))
+		if err := validateTopicsInClusterLink(m.topics, clusterLinkTopics); err != nil {
+			return err
+		}
+	} else {
+		m.topics = clusterLinkTopics
 	}
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
@@ -113,6 +121,7 @@ func (m *Migration) Run() error {
 		ClusterRestEndpoint: m.clusterRestEndpoint,
 		ClusterLinkName:     m.clusterLinkName,
 		Topics:              m.topics,
+		AuthMode:            m.authMode,
 		CreatedAt:           time.Now(),
 	})
 
@@ -233,14 +242,7 @@ func validateTopicsInClusterLink(topics []string, clusterLinkTopics []string) er
 		if !slices.Contains(clusterLinkTopics, topic) {
 			return fmt.Errorf("topic %s not found in cluster link", topic)
 		}
-
-		fmt.Println("topic found in cluster link", topic)
 	}
-
-	return nil
-}
-
-func persistMigrationToStateFile(migrationId, gatewayNamespace, gatewayCrdName, clusterId, clusterRestEndpoint, clusterLinkName string, topics []string) error {
 
 	return nil
 }
