@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/goccy/go-yaml"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -22,9 +23,12 @@ import (
 )
 
 type MigrationOpts struct {
-	gatewayName    string
-	gatewayCrdName string
-	kubeConfigPath string
+	stateFile string
+	state     types.State
+
+	gatewayNamespace string
+	gatewayCrdName   string
+	kubeConfigPath   string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -35,9 +39,12 @@ type MigrationOpts struct {
 }
 
 type Migration struct {
-	gatewayName    string
-	gatewayCrdName string
-	kubeConfigPath string
+	stateFile string
+	state     types.State
+
+	gatewayNamespace string
+	gatewayCrdName   string
+	kubeConfigPath   string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -49,7 +56,9 @@ type Migration struct {
 
 func NewMigration(opts MigrationOpts) *Migration {
 	return &Migration{
-		gatewayName:         opts.gatewayName,
+		stateFile:           opts.stateFile,
+		state:               opts.state,
+		gatewayNamespace:    opts.gatewayNamespace,
 		gatewayCrdName:      opts.gatewayCrdName,
 		kubeConfigPath:      opts.kubeConfigPath,
 		clusterId:           opts.clusterId,
@@ -62,7 +71,7 @@ func NewMigration(opts MigrationOpts) *Migration {
 }
 
 func (m *Migration) Run() error {
-	slog.Info("parsing gateway resource", "gatewayName", m.gatewayName, "kubeConfigPath", m.kubeConfigPath)
+	slog.Info("parsing gateway resource", "gatewayName", m.gatewayNamespace, "kubeConfigPath", m.kubeConfigPath)
 
 	config, err := clientcmd.BuildConfigFromFlags("", m.kubeConfigPath)
 	if err != nil {
@@ -82,20 +91,32 @@ func (m *Migration) Run() error {
 		os.Exit(1)
 	}
 
-	listPods(clientset, m.gatewayName)
+	listPods(clientset, m.gatewayNamespace)
 	getGatewayAsYAML(dynamicClient, "confluent", m.gatewayCrdName)
 
 	slog.Info("describing cluster link", "clusterId", m.clusterId, "clusterLinkName", m.clusterLinkName)
-	respBody, err := describeClusterLink(m.clusterId, m.clusterRestEndpoint, m.clusterLinkName, m.clusterApiKey, m.clusterApiSecret)
+	clusterLinkTopics, err := describeClusterLink(m.clusterId, m.clusterRestEndpoint, m.clusterLinkName, m.clusterApiKey, m.clusterApiSecret)
 	if err != nil {
 		return err
 	}
 
-	if err := validateTopicsInClusterLink(m.topics, respBody); err != nil {
+	if err := validateTopicsInClusterLink(m.topics, clusterLinkTopics); err != nil {
 		return err
 	}
 
-	return nil
+	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
+	m.state.Migrations = append(m.state.Migrations, types.Migration{
+		MigrationId:         migrationId,
+		GatewayNamespace:    m.gatewayNamespace,
+		GatewayCrdName:      m.gatewayCrdName,
+		ClusterId:           m.clusterId,
+		ClusterRestEndpoint: m.clusterRestEndpoint,
+		ClusterLinkName:     m.clusterLinkName,
+		Topics:              m.topics,
+		CreatedAt:           time.Now(),
+	})
+
+	return m.state.PersistStateFile(m.stateFile)
 }
 
 func listPods(clientset *kubernetes.Clientset, namespace string) {
@@ -176,7 +197,7 @@ func getGatewayAsYAML(dynamicClient dynamic.Interface, namespace, gatewayName st
 	fmt.Println(string(yamlBytes))
 }
 
-func describeClusterLink(clusterId, clusterRestEndpoint, clusterLinkName, clusterApiKey, clusterApiSecret string) (string, error) {
+func describeClusterLink(clusterId, clusterRestEndpoint, clusterLinkName, clusterApiKey, clusterApiSecret string) ([]string, error) {
 	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s", clusterRestEndpoint, clusterId, clusterLinkName)
 	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", clusterApiKey, clusterApiSecret)))
 
@@ -184,31 +205,30 @@ func describeClusterLink(clusterId, clusterRestEndpoint, clusterLinkName, cluste
 	req.Header.Add("Authorization", "Basic "+auth)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to describe cluster link: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster link: %v", err)
 	}
 
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %v", err)
+		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to describe cluster link: %v", res.Status)
+		return nil, fmt.Errorf("failed to describe cluster link: %v", res.Status)
 	}
-	return string(body), nil
-}
 
-func validateTopicsInClusterLink(topics []string, clusterLinkBody string) error {
 	var response struct {
 		TopicNames []string `json:"topic_names"`
 	}
-	
-	if err := json.Unmarshal([]byte(clusterLinkBody), &response); err != nil {
-		return fmt.Errorf("failed to unmarshal cluster link body: %v", err)
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster link response: %v", err)
 	}
-	clusterLinkTopics := response.TopicNames
 
+	return response.TopicNames, nil
+}
+
+func validateTopicsInClusterLink(topics []string, clusterLinkTopics []string) error {
 	for _, topic := range topics {
 		if !slices.Contains(clusterLinkTopics, topic) {
 			return fmt.Errorf("topic %s not found in cluster link", topic)
@@ -216,6 +236,11 @@ func validateTopicsInClusterLink(topics []string, clusterLinkBody string) error 
 
 		fmt.Println("topic found in cluster link", topic)
 	}
+
+	return nil
+}
+
+func persistMigrationToStateFile(migrationId, gatewayNamespace, gatewayCrdName, clusterId, clusterRestEndpoint, clusterLinkName string, topics []string) error {
 
 	return nil
 }

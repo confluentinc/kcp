@@ -23,6 +23,7 @@ import (
 type State struct {
 	Regions          []DiscoveredRegion          `json:"regions"`
 	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	Migrations       []Migration                 `json:"migrations"`
 	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
 	Timestamp        time.Time                   `json:"timestamp"`
 }
@@ -589,4 +590,15 @@ type ServiceCostAggregates struct {
 	AmortizedCost    map[string]any `json:"amortized_cost"`
 	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
 	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
+}
+
+type Migration struct {
+	MigrationId         string    `json:"migration_id"`
+	GatewayNamespace    string    `json:"gateway_namespace"`
+	GatewayCrdName      string    `json:"gateway_crd_name"`
+	ClusterId           string    `json:"cluster_id"`
+	ClusterRestEndpoint string    `json:"cluster_rest_endpoint"`
+	ClusterLinkName     string    `json:"cluster_link_name"`
+	Topics              []string  `json:"topics"`
+	CreatedAt           time.Time `json:"created_at"`
 }

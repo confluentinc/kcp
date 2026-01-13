@@ -5,15 +5,18 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 var (
-	gatewayName    string
-	gatewayCrdName string
-	kubeConfigPath string
+	stateFile string
+
+	gatewayNamespace string
+	gatewayCrdName   string
+	kubeConfigPath   string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -38,7 +41,8 @@ func NewMigrationCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&gatewayName, "gateway-namespace", "", "The Kubernetes namespace under which the gateway has been deployed to.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the state file to use for the migration.")
+	requiredFlags.StringVar(&gatewayNamespace, "gateway-namespace", "", "The Kubernetes namespace under which the gateway has been deployed to.")
 	requiredFlags.StringVar(&gatewayCrdName, "gateway-crd-name", "", "The name of the gateway CRD to use by the migration.")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ID of the cluster to use by the migration.")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "The REST endpoint of the cluster to use by the migration.")
@@ -73,9 +77,11 @@ func NewMigrationCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationCmd.MarkFlagRequired("gateway-name")
+	migrationCmd.MarkFlagRequired("state-file")
+	migrationCmd.MarkFlagRequired("gateway-namespace")
 	migrationCmd.MarkFlagRequired("gateway-crd-name")
 	migrationCmd.MarkFlagRequired("cluster-id")
+	migrationCmd.MarkFlagRequired("cluster-rest-endpoint")
 	migrationCmd.MarkFlagRequired("cluster-link-name")
 	migrationCmd.MarkFlagRequired("cluster-api-key")
 	migrationCmd.MarkFlagRequired("cluster-api-secret")
@@ -110,8 +116,16 @@ func parseMigrationOpts() (*MigrationOpts, error) {
 		kubeConfigPath = filepath.Join(os.Getenv("HOME"), ".kube", "config") // Is `HOME` reliable?
 	}
 
+	state, err := types.NewStateFromFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load existing state file: %v", err)
+	}
+
 	return &MigrationOpts{
-		gatewayName:         gatewayName,
+		stateFile: stateFile,
+		state: *state,
+
+		gatewayNamespace:    gatewayNamespace,
 		kubeConfigPath:      kubeConfigPath,
 		gatewayCrdName:      gatewayCrdName,
 		clusterLinkName:     clusterLinkName,
