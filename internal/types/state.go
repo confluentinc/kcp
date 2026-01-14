@@ -601,5 +601,6 @@ type Migration struct {
 	ClusterLinkName     string    `json:"cluster_link_name"`
 	Topics              []string  `json:"topics"`
 	AuthMode            string    `json:"auth_mode"`
+	ClusterLinkConfigs  map[string]string  `json:"cluster_link_configs"`
 	CreatedAt           time.Time `json:"created_at"`
 }

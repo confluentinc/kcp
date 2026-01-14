@@ -1,4 +1,4 @@
-package migration
+package migration_init
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/goccy/go-yaml"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -22,7 +23,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type MigrationOpts struct {
+type MigrationInitOpts struct {
 	stateFile string
 	state     types.State
 
@@ -39,7 +40,7 @@ type MigrationOpts struct {
 	authMode            string
 }
 
-type Migration struct {
+type MigrationInit struct {
 	stateFile string
 	state     types.State
 
@@ -56,8 +57,8 @@ type Migration struct {
 	authMode            string
 }
 
-func NewMigration(opts MigrationOpts) *Migration {
-	return &Migration{
+func NewMigrationInit(opts MigrationInitOpts) *MigrationInit {
+	return &MigrationInit{
 		stateFile:           opts.stateFile,
 		state:               opts.state,
 		gatewayNamespace:    opts.gatewayNamespace,
@@ -73,7 +74,7 @@ func NewMigration(opts MigrationOpts) *Migration {
 	}
 }
 
-func (m *Migration) Run() error {
+func (m *MigrationInit) Run() error {
 	slog.Info("parsing gateway resource", "gatewayName", m.gatewayNamespace, "kubeConfigPath", m.kubeConfigPath)
 
 	config, err := clientcmd.BuildConfigFromFlags("", m.kubeConfigPath)
@@ -87,6 +88,15 @@ func (m *Migration) Run() error {
 		return fmt.Errorf("failed to create clientset: %v", err)
 	}
 
+	allowed, err := checkPermission(clientset, "update", "gateways", "platform.confluent.io", "confluent")
+	if err != nil {
+		return fmt.Errorf("permission check failed: %v", err)
+	}
+
+	if !allowed {
+		return fmt.Errorf("you don't have permission to update gateway resources")
+	}
+
 	// create dynamic client for custom resources
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
@@ -98,7 +108,7 @@ func (m *Migration) Run() error {
 	getGatewayAsYAML(dynamicClient, "confluent", m.gatewayCrdName)
 
 	slog.Info("describing cluster link", "clusterId", m.clusterId, "clusterLinkName", m.clusterLinkName)
-	clusterLinkTopics, err := describeClusterLink(m.clusterId, m.clusterRestEndpoint, m.clusterLinkName, m.clusterApiKey, m.clusterApiSecret)
+	clusterLinkTopics, err := listMirrorTopics(m.clusterRestEndpoint, m.clusterId, m.clusterLinkName, m.clusterApiKey, m.clusterApiSecret)
 	if err != nil {
 		return err
 	}
@@ -112,6 +122,11 @@ func (m *Migration) Run() error {
 		m.topics = clusterLinkTopics
 	}
 
+	clusterLinkConfigs, err := listClusterLinkConfigs(m.clusterRestEndpoint, m.clusterId, m.clusterLinkName, m.clusterApiKey, m.clusterApiSecret)
+	if err != nil {
+		return err
+	}
+
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
 	m.state.Migrations = append(m.state.Migrations, types.Migration{
 		MigrationId:         migrationId,
@@ -122,10 +137,38 @@ func (m *Migration) Run() error {
 		ClusterLinkName:     m.clusterLinkName,
 		Topics:              m.topics,
 		AuthMode:            m.authMode,
+		ClusterLinkConfigs:  clusterLinkConfigs,
 		CreatedAt:           time.Now(),
 	})
 
 	return m.state.PersistStateFile(m.stateFile)
+}
+
+func checkPermission(clientset *kubernetes.Clientset, verb, resource, group, namespace string) (bool, error) {
+	sar := &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: namespace,
+				Verb:      verb,
+				Group:     group,
+				Resource:  resource,
+			},
+		},
+	}
+
+	response, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(
+		context.Background(),
+		sar,
+		metav1.CreateOptions{},
+	)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check permissions: %w", err)
+	}
+
+	slog.Info("permission check response", "verb", verb, "allowed", response.Status.Allowed)
+
+	return response.Status.Allowed, nil
 }
 
 func listPods(clientset *kubernetes.Clientset, namespace string) {
@@ -203,18 +246,57 @@ func getGatewayAsYAML(dynamicClient dynamic.Interface, namespace, gatewayName st
 	}
 
 	// Print formatted YAML
-	fmt.Println(string(yamlBytes))
+	// fmt.Println(string(yamlBytes))
+	_ = yamlBytes
 }
 
-func describeClusterLink(clusterId, clusterRestEndpoint, clusterLinkName, clusterApiKey, clusterApiSecret string) ([]string, error) {
-	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s", clusterRestEndpoint, clusterId, clusterLinkName)
+func describeClusterLink(clusterRestEndpoint, clusterId, clusterLinkName, clusterApiKey, clusterApiSecret string) error {
+	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/mirrors", clusterRestEndpoint, clusterId, clusterLinkName)
 	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", clusterApiKey, clusterApiSecret)))
 
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", "Basic "+auth)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster link: %v", err)
+		return fmt.Errorf("failed to describe cluster link: %v", err)
+	}
+
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to describe cluster link: %v", res.Status)
+	}
+
+	var response struct {
+		LinkError        string `json:"link_error"`
+		LinkErrorMessage string `json:"link_error_message"`
+		LinkState        string `json:"link_state"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("failed to unmarshal cluster link response: %v", err)
+	}
+
+	if response.LinkState != "ACTIVE" || response.LinkError != "NO_ERROR" {
+		return fmt.Errorf("there is a problem with the cluster link", "link_state", response.LinkState, "link_error", response.LinkError, "link_error_message", response.LinkErrorMessage)
+	}
+
+	return nil
+}
+
+func listMirrorTopics(clusterRestEndpoint, clusterId, clusterLinkName, clusterApiKey, clusterApiSecret string) ([]string, error) {
+	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/mirrors", clusterRestEndpoint, clusterId, clusterLinkName)
+	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", clusterApiKey, clusterApiSecret)))
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Add("Authorization", "Basic "+auth)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list cluster link mirror topics: %v", err)
 	}
 
 	defer res.Body.Close()
@@ -224,17 +306,38 @@ func describeClusterLink(clusterId, clusterRestEndpoint, clusterLinkName, cluste
 	}
 
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to describe cluster link: %v", res.Status)
+		return nil, fmt.Errorf("failed to list cluster link mirror topics: %v", res.Status)
 	}
 
 	var response struct {
-		TopicNames []string `json:"topic_names"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cluster link response: %v", err)
+		Data []struct {
+			MirrorTopicName string `json:"mirror_topic_name"`
+			MirrorStatus    string `json:"mirror_status"`
+		} `json:"data"`
 	}
 
-	return response.TopicNames, nil
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster link mirror topics response: %v", err)
+	}
+
+	if len(response.Data) == 0 {
+		return nil, fmt.Errorf("no mirror topics found in cluster link")
+	}
+
+	var topicNames []string
+	var inactiveTopics []string
+	for _, mirror := range response.Data {
+		topicNames = append(topicNames, mirror.MirrorTopicName)
+		if mirror.MirrorStatus != "ACTIVE" {
+			inactiveTopics = append(inactiveTopics, fmt.Sprintf("%s (status: %s)", mirror.MirrorTopicName, mirror.MirrorStatus))
+		}
+	}
+
+	if len(inactiveTopics) > 0 {
+		return nil, fmt.Errorf("%d mirror topics are not active: %s", len(inactiveTopics), strings.Join(inactiveTopics, ", "))
+	}
+
+	return topicNames, nil
 }
 
 func validateTopicsInClusterLink(topics []string, clusterLinkTopics []string) error {
@@ -245,4 +348,44 @@ func validateTopicsInClusterLink(topics []string, clusterLinkTopics []string) er
 	}
 
 	return nil
+}
+
+func listClusterLinkConfigs(clusterRestEndpoint, clusterId, clusterLinkName, clusterApiKey, clusterApiSecret string) (map[string]string, error) {
+	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/configs", clusterRestEndpoint, clusterId, clusterLinkName)
+	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", clusterApiKey, clusterApiSecret)))
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Add("Authorization", "Basic "+auth)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list cluster link configs: %v", err)
+	}
+
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to list cluster link configs: %v", res.Status)
+	}
+
+	var response struct {
+		Data []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster link configs response: %v", err)
+	}
+
+	configs := make(map[string]string)
+	for _, config := range response.Data {
+		configs[config.Name] = config.Value
+	}
+
+	return configs, nil
 }
