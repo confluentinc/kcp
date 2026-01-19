@@ -1640,12 +1640,17 @@ kcp update --check-only
 **Behavior**:
 
 - Automatically detects the current version and compares with the latest GitHub release
-- Creates a backup of the current binary before updating
+- With `--check-only`, reports available updates without installing
 - Prompts for confirmation unless `--force` is used
-- Automatically rolls back on update failure
 - Skips update check for development versions unless `--force` is specified
 
 > [!NOTE]
-> This command may require sudo permissions to update the binary, depending on the installation location.
+> **Permission Requirements**: If kcp is installed in a system directory (e.g., `/usr/local/bin`), the update command will check permissions early and exit with an error if sudo is required. In this case, re-run the command with sudo:
+> 
+> ```shell
+> sudo kcp update
+> ```
+> 
+> The error message will include the exact command to run, preserving any flags you used (e.g., `sudo kcp update --force`).
 
 ---
