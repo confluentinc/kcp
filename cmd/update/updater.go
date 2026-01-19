@@ -36,22 +36,24 @@ func NewUpdater(opts UpdaterOpts) *Updater {
 }
 
 func (u *Updater) Run() error {
-	// Step 1: Verify current user has write permissions to the installation directory
+	currentVersion := build_info.Version
+	
+	// Step 1: Skip update check for dev versions unless --force is set
+	if (currentVersion == "" || currentVersion == build_info.DefaultDevVersion) && !u.opts.Force {
+		slog.Info("🤖 Development version detected, skipping update check. Use `--force` to install latest version.")
+		return nil
+	}
+
+	// Step 2: Verify current user has write permissions to the installation directory
 	exePath, err := selfupdate.ExecutablePath()
 	if err != nil {
 		return fmt.Errorf("could not locate executable path: %w", err)
 	}
 
 	if err := u.verifyWritePermissions(exePath); err != nil {
-		return fmt.Errorf("kcp is installed at a location that requires sudo privileges\nPlease try - %s", color.GreenString("sudo kcp update"))
-	}
-
-	currentVersion := build_info.Version
-
-	// Step 2: Skip update check for dev versions unless --force is set
-	if (currentVersion == "" || currentVersion == build_info.DefaultDevVersion) && !u.opts.Force {
-		slog.Info("🤖 Development version detected, skipping update check. Use `--force` to install latest version.")
-		return nil
+		args := os.Args[1:]
+		commandStr := "sudo kcp " + strings.Join(args, " ")
+		return fmt.Errorf("kcp is installed at a location that requires sudo privileges\nPlease try - %s", color.GreenString(commandStr))
 	}
 
 	// Step 3: Check for latest version from GitHub releases
@@ -94,6 +96,7 @@ func (u *Updater) Run() error {
 }
 
 func (u *Updater) verifyWritePermissions(path string) error {
+	// linux/macOS only at the moment - will need to add Windows support later
 	dir := filepath.Dir(path)
 	if err := unix.Access(dir, unix.W_OK); err != nil {
 		return fmt.Errorf("insufficient permissions: directory %s is not writable", dir)
