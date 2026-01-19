@@ -37,7 +37,7 @@ func NewUpdater(opts UpdaterOpts) *Updater {
 
 func (u *Updater) Run() error {
 	currentVersion := build_info.Version
-	
+
 	// Step 1: Skip update check for dev versions unless --force is set
 	if (currentVersion == "" || currentVersion == build_info.DefaultDevVersion) && !u.opts.Force {
 		slog.Info("🤖 Development version detected, skipping update check. Use `--force` to install latest version.")
@@ -91,6 +91,8 @@ func (u *Updater) Run() error {
 	if err := selfupdate.UpdateTo(context.Background(), latest.AssetURL, latest.AssetName, exePath); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+
+	slog.Info(fmt.Sprintf("✅ Successfully updated kcp to %s", latest.Version()))
 
 	return nil
 }
