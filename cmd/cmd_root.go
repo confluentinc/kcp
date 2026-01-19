@@ -15,7 +15,6 @@ import (
 	"github.com/confluentinc/kcp/cmd/scan"
 	"github.com/confluentinc/kcp/cmd/ui"
 	"github.com/confluentinc/kcp/cmd/update"
-	"github.com/confluentinc/kcp/cmd/update2"
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/fatih/color"
@@ -75,7 +74,6 @@ func init() {
 		discover.NewDiscoverCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
-		update2.NewUpdateCmd(),
 	)
 }
 
