@@ -13,7 +13,6 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/creativeprojects/go-selfupdate"
 	"github.com/fatih/color"
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -52,8 +51,17 @@ func (u *Updater) Run() error {
 
 	if err := u.verifyWritePermissions(exePath); err != nil {
 		args := os.Args[1:]
-		commandStr := "sudo kcp " + strings.Join(args, " ")
-		return fmt.Errorf("kcp is installed at a location that requires sudo privileges\nPlease try - %s", color.GreenString(commandStr))
+		// if linux or mac
+		switch runtime.GOOS {
+		case "linux", "darwin":
+			commandStr := "sudo kcp " + strings.Join(args, " ")
+			return fmt.Errorf("%w\nPlease try - %s", err, color.GreenString(commandStr))
+		case "windows":
+			// temp error message for windows - will revisit
+			return fmt.Errorf("%w\nPlease run as administrator", err)
+		default:
+			return fmt.Errorf("%w", err)
+		}
 	}
 
 	// Step 3: Check for latest version from GitHub releases
@@ -98,11 +106,16 @@ func (u *Updater) Run() error {
 }
 
 func (u *Updater) verifyWritePermissions(path string) error {
-	// linux/macOS only at the moment - will need to add Windows support later
 	dir := filepath.Dir(path)
-	if err := unix.Access(dir, unix.W_OK); err != nil {
+
+	// cross-platform: can we write to the directory?
+	testFile := filepath.Join(dir, ".kcp_write_test")
+	f, err := os.Create(testFile)
+	if err != nil {
 		return fmt.Errorf("insufficient permissions: directory %s is not writable", dir)
 	}
+	defer f.Close()
+	defer os.Remove(testFile)
 	return nil
 }
 
