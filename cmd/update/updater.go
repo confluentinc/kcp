@@ -114,8 +114,8 @@ func (u *Updater) verifyWritePermissions(path string) error {
 	if err != nil {
 		return fmt.Errorf("insufficient permissions: directory %s is not writable", dir)
 	}
-	f.Close()
-	os.Remove(testFile)
+	defer f.Close()
+	defer os.Remove(testFile)
 	return nil
 }
 
