@@ -111,6 +111,16 @@ func (s *State) PersistStateFile(stateFile string) error {
 	return s.WriteToFile(stateFile)
 }
 
+func (s *State) UpsertMigration(migration Migration) {
+	for i, existingMigration := range s.Migrations {
+		if existingMigration.MigrationId == migration.MigrationId {
+			s.Migrations[i] = migration
+			return
+		}
+	}
+	s.Migrations = append(s.Migrations, migration)
+}
+
 // UpsertRegion inserts a new region or updates an existing one by name
 // Automatically preserves KafkaAdminClientInformation from existing clusters
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
@@ -590,17 +600,4 @@ type ServiceCostAggregates struct {
 	AmortizedCost    map[string]any `json:"amortized_cost"`
 	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
 	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
-}
-
-type Migration struct {
-	MigrationId         string    `json:"migration_id"`
-	GatewayNamespace    string    `json:"gateway_namespace"`
-	GatewayCrdName      string    `json:"gateway_crd_name"`
-	ClusterId           string    `json:"cluster_id"`
-	ClusterRestEndpoint string    `json:"cluster_rest_endpoint"`
-	ClusterLinkName     string    `json:"cluster_link_name"`
-	Topics              []string  `json:"topics"`
-	AuthMode            string    `json:"auth_mode"`
-	ClusterLinkConfigs  map[string]string  `json:"cluster_link_configs"`
-	CreatedAt           time.Time `json:"created_at"`
 }
