@@ -252,6 +252,7 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
               vpc_id: {
                 type: 'string',
                 title: 'VPC ID',
+                default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.',
               },
               subnet_cidr_ranges: {
                 type: 'array',

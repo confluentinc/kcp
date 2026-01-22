@@ -317,8 +317,26 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	arnHeaders := []string{"Cluster Name", "Cluster ARN"}
 	md.AddTable(arnHeaders, arnData)
 
+	md.AddHeading("Cluster Storage", 2)
+	storageHeaders := []string{"Cluster Name", "Storage Mode", "Volume Size (GB)", "Provisioned Throughput"}
+
+	storageData := [][]string{}
+	for _, cluster := range allClusters {
+		storageMode, volumeSize, provisionedThroughput := getClusterStorageInfo(cluster)
+		storageData = append(storageData, []string{
+			cluster.Name,
+			storageMode,
+			volumeSize,
+			provisionedThroughput,
+		})
+	}
+
+	if len(storageData) > 0 {
+		md.AddTable(storageHeaders, storageData)
+	}
+
 	md.AddHeading("Discovered Topics", 2)
-	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions", "Tiered Storage Topics"}
 
 	topicData := [][]string{}
 	for _, cluster := range allClusters {
@@ -336,11 +354,47 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 			strconv.Itoa(summary.TotalInternalPartitions),
 			strconv.Itoa(summary.CompactTopics),
 			strconv.Itoa(summary.CompactPartitions),
+			strconv.Itoa(summary.RemoteStorageTopics),
 		})
 	}
 
 	if len(topicData) > 0 {
 		md.AddTable(topicHeaders, topicData)
+	}
+
+	// Display tiered storage topics with retention settings per cluster
+	for _, cluster := range allClusters {
+		if cluster.KafkaAdminClientInformation.Topics == nil {
+			continue
+		}
+
+		tieredStorageTopics := [][]string{}
+		for _, topic := range cluster.KafkaAdminClientInformation.Topics.Details {
+			// Check if remote.storage.enable is true
+			if remoteStorage, exists := topic.Configurations["remote.storage.enable"]; exists && remoteStorage != nil && *remoteStorage == "true" {
+				localRetentionMs := "N/A"
+				retentionMs := "N/A"
+
+				if val, exists := topic.Configurations["local.retention.ms"]; exists && val != nil {
+					localRetentionMs = *val
+				}
+				if val, exists := topic.Configurations["retention.ms"]; exists && val != nil {
+					retentionMs = *val
+				}
+
+				tieredStorageTopics = append(tieredStorageTopics, []string{
+					topic.Name,
+					localRetentionMs,
+					retentionMs,
+				})
+			}
+		}
+
+		if len(tieredStorageTopics) > 0 {
+			md.AddHeading(fmt.Sprintf("Tiered Storage Topics - %s", cluster.Name), 3)
+			tieredStorageHeaders := []string{"Topic Name", "Local Retention (ms)", "Retention (ms)"}
+			md.AddTable(tieredStorageHeaders, tieredStorageTopics)
+		}
 	}
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
@@ -362,4 +416,55 @@ func getPublicAccess(cluster types.DiscoveredCluster) string {
 	}
 
 	return "false"
+}
+
+func getClusterStorageInfo(cluster types.DiscoveredCluster) (storageMode, volumeSize, provisionedThroughput string) {
+	clusterType := cluster.AWSClientInformation.MskClusterConfig.ClusterType
+
+	if clusterType == kafkatypes.ClusterTypeServerless {
+		return "N/A (Serverless)", "N/A", "N/A"
+	}
+
+	if clusterType == kafkatypes.ClusterTypeProvisioned && cluster.AWSClientInformation.MskClusterConfig.Provisioned != nil {
+		provisioned := cluster.AWSClientInformation.MskClusterConfig.Provisioned
+
+		// Get storage mode
+		storageMode = string(provisioned.StorageMode)
+		if storageMode == "" {
+			storageMode = "LOCAL"
+		}
+
+		// Get volume size
+		if provisioned.BrokerNodeGroupInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize != nil {
+			volumeSize = strconv.Itoa(int(*provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize))
+		} else {
+			volumeSize = "N/A"
+		}
+
+		// Get provisioned throughput
+		if provisioned.BrokerNodeGroupInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.ProvisionedThroughput != nil {
+			pt := provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.ProvisionedThroughput
+			if pt.Enabled != nil && *pt.Enabled {
+				if pt.VolumeThroughput != nil {
+					provisionedThroughput = strconv.Itoa(int(*pt.VolumeThroughput)) + " MiB/s"
+				} else {
+					provisionedThroughput = "Enabled"
+				}
+			} else {
+				provisionedThroughput = "Disabled"
+			}
+		} else {
+			provisionedThroughput = "N/A"
+		}
+
+		return storageMode, volumeSize, provisionedThroughput
+	}
+
+	return "N/A", "N/A", "N/A"
 }

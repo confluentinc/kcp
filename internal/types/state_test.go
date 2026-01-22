@@ -206,6 +206,32 @@ func TestRefreshClusters(t *testing.T) {
 				{Name: "cluster-3", Arn: "arn:cluster-3"}, // no admin info to preserve
 			},
 		},
+		{
+			name: "new discovery takes precedence over old empty values",
+			initialClusters: []DiscoveredCluster{
+				{
+					Name: "cluster-1",
+					Arn:  "arn:cluster-1",
+					// Old state had no ClusterID (failed first run)
+					KafkaAdminClientInformation: KafkaAdminClientInformation{ClusterID: ""},
+				},
+			},
+			newClusters: []DiscoveredCluster{
+				{
+					Name: "cluster-1",
+					Arn:  "arn:cluster-1",
+					// New discovery has ClusterID (successful second run)
+					KafkaAdminClientInformation: KafkaAdminClientInformation{ClusterID: "new-cluster-id"},
+				},
+			},
+			wantClusters: []DiscoveredCluster{
+				{
+					Name:                        "cluster-1",
+					Arn:                         "arn:cluster-1",
+					KafkaAdminClientInformation: KafkaAdminClientInformation{ClusterID: "new-cluster-id"}, // new discovery wins
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -437,5 +463,243 @@ func TestWriteReportCommands_FileError(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "failed to write commands to file") {
 		t.Errorf("WriteReportCommands() error message should mention file write failure, got: %v", err)
+	}
+}
+
+func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  KafkaAdminClientInformation
+		other    KafkaAdminClientInformation
+		expected KafkaAdminClientInformation
+	}{
+		{
+			name: "new discovery with topics takes precedence over old empty",
+			current: KafkaAdminClientInformation{
+				ClusterID: "new-cluster-id",
+				Topics: &Topics{
+					Details: []TopicDetails{{Name: "new-topic", Partitions: 3}},
+				},
+			},
+			other: KafkaAdminClientInformation{
+				ClusterID: "old-cluster-id",
+				Topics:    nil, // old run had no topics (permission error)
+			},
+			expected: KafkaAdminClientInformation{
+				ClusterID: "new-cluster-id", // new takes precedence
+				Topics: &Topics{
+					Details: []TopicDetails{{Name: "new-topic", Partitions: 3}}, // new takes precedence
+				},
+			},
+		},
+		{
+			name: "old values used when new is empty",
+			current: KafkaAdminClientInformation{
+				ClusterID: "",
+				Topics:    nil,
+				Acls:      nil,
+			},
+			other: KafkaAdminClientInformation{
+				ClusterID: "old-cluster-id",
+				Topics:    &Topics{Details: []TopicDetails{{Name: "old-topic"}}},
+				Acls:      []Acls{{ResourceName: "old-acl"}},
+			},
+			expected: KafkaAdminClientInformation{
+				ClusterID: "old-cluster-id",
+				Topics:    &Topics{Details: []TopicDetails{{Name: "old-topic"}}},
+				Acls:      []Acls{{ResourceName: "old-acl"}},
+			},
+		},
+		{
+			name: "old topics preserved when new has empty details (failed third run)",
+			current: KafkaAdminClientInformation{
+				// Third run failed - Topics struct exists but Details is empty
+				Topics: &Topics{
+					Details: []TopicDetails{}, // empty slice, NOT nil
+					Summary: TopicSummary{},
+				},
+			},
+			other: KafkaAdminClientInformation{
+				// Second run succeeded - has actual topics
+				Topics: &Topics{
+					Details: []TopicDetails{{Name: "topic-from-successful-run", Partitions: 5}},
+					Summary: TopicSummary{Topics: 1, TotalPartitions: 5},
+				},
+			},
+			expected: KafkaAdminClientInformation{
+				// Should preserve old topics from successful run
+				Topics: &Topics{
+					Details: []TopicDetails{{Name: "topic-from-successful-run", Partitions: 5}},
+				},
+			},
+		},
+		{
+			name: "old connectors preserved when new has empty connectors",
+			current: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{}, // empty slice
+				},
+			},
+			other: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{{Name: "old-connector"}},
+				},
+			},
+			expected: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{{Name: "old-connector"}}, // old preserved
+				},
+			},
+		},
+		{
+			name: "topics are merged - new added, old preserved, duplicates use new",
+			current: KafkaAdminClientInformation{
+				Topics: &Topics{
+					Details: []TopicDetails{
+						{Name: "topic-a", Partitions: 5}, // updated partition count
+						{Name: "topic-c", Partitions: 2}, // new topic
+					},
+				},
+			},
+			other: KafkaAdminClientInformation{
+				Topics: &Topics{
+					Details: []TopicDetails{
+						{Name: "topic-a", Partitions: 3}, // old partition count
+						{Name: "topic-b", Partitions: 4}, // will be preserved
+					},
+				},
+			},
+			expected: KafkaAdminClientInformation{
+				Topics: &Topics{
+					Details: []TopicDetails{
+						{Name: "topic-a", Partitions: 5}, // new takes precedence
+						{Name: "topic-b", Partitions: 4}, // preserved from old
+						{Name: "topic-c", Partitions: 2}, // added from new
+					},
+				},
+			},
+		},
+		{
+			name: "acls are merged - no duplicates",
+			current: KafkaAdminClientInformation{
+				Acls: []Acls{
+					{ResourceName: "new-acl", ResourceType: "Topic", Operation: "Read"},
+					{ResourceName: "shared-acl", ResourceType: "Topic", Operation: "Write"}, // duplicate
+				},
+			},
+			other: KafkaAdminClientInformation{
+				Acls: []Acls{
+					{ResourceName: "old-acl", ResourceType: "Topic", Operation: "Read"},
+					{ResourceName: "shared-acl", ResourceType: "Topic", Operation: "Write"}, // duplicate
+				},
+			},
+			expected: KafkaAdminClientInformation{
+				Acls: []Acls{
+					{ResourceName: "new-acl", ResourceType: "Topic", Operation: "Read"},
+					{ResourceName: "old-acl", ResourceType: "Topic", Operation: "Read"},
+					{ResourceName: "shared-acl", ResourceType: "Topic", Operation: "Write"}, // deduplicated
+				},
+			},
+		},
+		{
+			name: "connectors are merged by name",
+			current: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{
+						{Name: "connector-a", State: "RUNNING"},
+						{Name: "connector-c", State: "PAUSED"},
+					},
+				},
+			},
+			other: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{
+						{Name: "connector-a", State: "PAUSED"},  // old state
+						{Name: "connector-b", State: "RUNNING"}, // preserved
+					},
+				},
+			},
+			expected: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{
+						{Name: "connector-a", State: "RUNNING"}, // new takes precedence
+						{Name: "connector-b", State: "RUNNING"}, // preserved from old
+						{Name: "connector-c", State: "PAUSED"},  // added from new
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := tt.current
+			current.MergeFrom(tt.other)
+
+			if current.ClusterID != tt.expected.ClusterID {
+				t.Errorf("MergeFrom() ClusterID = %q, want %q", current.ClusterID, tt.expected.ClusterID)
+			}
+
+			// Check Topics (order-independent)
+			if (current.Topics == nil) != (tt.expected.Topics == nil) {
+				t.Errorf("MergeFrom() Topics nil mismatch: got nil=%v, want nil=%v", current.Topics == nil, tt.expected.Topics == nil)
+			} else if current.Topics != nil && tt.expected.Topics != nil {
+				if len(current.Topics.Details) != len(tt.expected.Topics.Details) {
+					t.Errorf("MergeFrom() Topics.Details length = %d, want %d", len(current.Topics.Details), len(tt.expected.Topics.Details))
+				} else {
+					// Check all expected topics are present with correct values
+					topicsByName := make(map[string]TopicDetails)
+					for _, topic := range current.Topics.Details {
+						topicsByName[topic.Name] = topic
+					}
+					for _, expectedTopic := range tt.expected.Topics.Details {
+						if actualTopic, exists := topicsByName[expectedTopic.Name]; !exists {
+							t.Errorf("MergeFrom() missing expected topic %q", expectedTopic.Name)
+						} else if actualTopic.Partitions != expectedTopic.Partitions {
+							t.Errorf("MergeFrom() topic %q partitions = %d, want %d", expectedTopic.Name, actualTopic.Partitions, expectedTopic.Partitions)
+						}
+					}
+				}
+			}
+
+			// Check Acls (order-independent)
+			if len(current.Acls) != len(tt.expected.Acls) {
+				t.Errorf("MergeFrom() Acls length = %d, want %d", len(current.Acls), len(tt.expected.Acls))
+			} else if len(tt.expected.Acls) > 0 {
+				// Check all expected ACLs are present
+				aclsByName := make(map[string]bool)
+				for _, acl := range current.Acls {
+					aclsByName[acl.ResourceName] = true
+				}
+				for _, expectedAcl := range tt.expected.Acls {
+					if !aclsByName[expectedAcl.ResourceName] {
+						t.Errorf("MergeFrom() missing expected ACL with ResourceName %q", expectedAcl.ResourceName)
+					}
+				}
+			}
+
+			// Check SelfManagedConnectors (order-independent)
+			if (current.SelfManagedConnectors == nil) != (tt.expected.SelfManagedConnectors == nil) {
+				t.Errorf("MergeFrom() SelfManagedConnectors nil mismatch")
+			} else if current.SelfManagedConnectors != nil && tt.expected.SelfManagedConnectors != nil {
+				if len(current.SelfManagedConnectors.Connectors) != len(tt.expected.SelfManagedConnectors.Connectors) {
+					t.Errorf("MergeFrom() SelfManagedConnectors.Connectors length = %d, want %d",
+						len(current.SelfManagedConnectors.Connectors), len(tt.expected.SelfManagedConnectors.Connectors))
+				} else {
+					// Check all expected connectors are present with correct state
+					connectorsByName := make(map[string]SelfManagedConnector)
+					for _, c := range current.SelfManagedConnectors.Connectors {
+						connectorsByName[c.Name] = c
+					}
+					for _, expectedConn := range tt.expected.SelfManagedConnectors.Connectors {
+						if actualConn, exists := connectorsByName[expectedConn.Name]; !exists {
+							t.Errorf("MergeFrom() missing expected connector %q", expectedConn.Name)
+						} else if actualConn.State != expectedConn.State {
+							t.Errorf("MergeFrom() connector %q state = %q, want %q", expectedConn.Name, actualConn.State, expectedConn.State)
+						}
+					}
+				}
+			}
+		})
 	}
 }
