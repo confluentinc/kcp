@@ -197,6 +197,10 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 	topicsDetailsMap := make(map[string]sarama.TopicDetail)
 	var describeConfigsResources []*sarama.ConfigResource
 
+	if len(metadataResp.Topics) == 0 && len(metadataResp.Brokers) > 0 {
+		slog.Warn("⚠️ no topics found in metadata response, this")
+	}
+
 	for _, topic := range metadataResp.Topics {
 		topicDetails := sarama.TopicDetail{
 			NumPartitions: int32(len(topic.Partitions)),

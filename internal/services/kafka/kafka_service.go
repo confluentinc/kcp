@@ -77,6 +77,8 @@ func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 		return nil, fmt.Errorf("❌ Failed to list topics with configs: %v", err)
 	}
 
+	slog.Info("🔍 found topics", "count", len(topics))
+
 	var topicDetails []types.TopicDetails
 	for topicName, topic := range topics {
 		configurations := make(map[string]*string)

@@ -127,6 +127,10 @@ export const createAclMigrationScriptsWizardConfig = (clusterArn: string): Wizar
             target: 'confirmation',
             actions: 'save_step_data',
           },
+          BACK: {
+            target: 'target_cluster_inputs',
+            actions: 'undo_save_step_data',
+          }
         },
       },
       confirmation: {
