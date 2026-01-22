@@ -109,6 +109,8 @@ func NewMigration(migrationId string, opts MigrationOpts) *Migration {
 		ClusterLinkName:     opts.ClusterLinkName,
 		Topics:              opts.Topics,
 		AuthMode:            opts.AuthMode,
+		ClusterApiKey:       opts.ClusterApiKey,
+		ClusterApiSecret:    opts.ClusterApiSecret,
 	}
 
 	m.initializeFSM(StateUninitialized)

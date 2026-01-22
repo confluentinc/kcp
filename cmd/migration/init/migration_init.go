@@ -71,6 +71,8 @@ func (m *MigrationInit) Run() error {
 		ClusterLinkName:     m.clusterLinkName,
 		Topics:              m.topics,
 		AuthMode:            m.authMode,
+		ClusterApiKey:       m.clusterApiKey,
+		ClusterApiSecret:    m.clusterApiSecret,
 	}
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
