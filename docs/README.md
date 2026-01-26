@@ -273,7 +273,6 @@ This command requires the following permissions:
 > - If using `--skip-costs`, the `ce:GetCostAndUsage` permission is not required
 > - If using `--skip-metrics`, the CloudWatch permissions (`cloudwatch:GetMetricData`, `cloudwatch:GetMetricStatistics`, `cloudwatch:ListMetrics`) are not required
 >
-> Additionally, some permissions like 'MSKClusterConnect' or 'MSKTopicActions' can be fine-grained to specifically the cluster or topics by  
 
 ### `kcp scan`
 
