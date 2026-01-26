@@ -13,9 +13,13 @@ type MigrationInitOpts struct {
 	stateFile string
 	state     types.State
 
-	gatewayNamespace string
-	gatewayCrdName   string
-	kubeConfigPath   string
+	gatewayNamespace     string
+	gatewayCrdName       string
+	sourceName           string
+	destinationName      string
+	sourceRouteName      string
+	destinationRouteName string
+	kubeConfigPath       string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -30,9 +34,13 @@ type MigrationInit struct {
 	stateFile string
 	state     types.State
 
-	gatewayNamespace string
-	gatewayCrdName   string
-	kubeConfigPath   string
+	gatewayNamespace     string
+	gatewayCrdName       string
+	sourceName           string
+	destinationName      string
+	sourceRouteName      string
+	destinationRouteName string
+	kubeConfigPath       string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -45,34 +53,42 @@ type MigrationInit struct {
 
 func NewMigrationInit(opts MigrationInitOpts) *MigrationInit {
 	return &MigrationInit{
-		stateFile:           opts.stateFile,
-		state:               opts.state,
-		gatewayNamespace:    opts.gatewayNamespace,
-		gatewayCrdName:      opts.gatewayCrdName,
-		kubeConfigPath:      opts.kubeConfigPath,
-		clusterId:           opts.clusterId,
-		clusterRestEndpoint: opts.clusterRestEndpoint,
-		clusterLinkName:     opts.clusterLinkName,
-		clusterApiKey:       opts.clusterApiKey,
-		clusterApiSecret:    opts.clusterApiSecret,
-		topics:              opts.topics,
-		authMode:            opts.authMode,
+		stateFile:            opts.stateFile,
+		state:                opts.state,
+		gatewayNamespace:     opts.gatewayNamespace,
+		gatewayCrdName:       opts.gatewayCrdName,
+		sourceName:           opts.sourceName,
+		destinationName:      opts.destinationName,
+		sourceRouteName:      opts.sourceRouteName,
+		destinationRouteName: opts.destinationRouteName,
+		kubeConfigPath:       opts.kubeConfigPath,
+		clusterId:            opts.clusterId,
+		clusterRestEndpoint:  opts.clusterRestEndpoint,
+		clusterLinkName:      opts.clusterLinkName,
+		clusterApiKey:        opts.clusterApiKey,
+		clusterApiSecret:     opts.clusterApiSecret,
+		topics:               opts.topics,
+		authMode:             opts.authMode,
 	}
 }
 
 func (m *MigrationInit) Run() error {
 
 	migrationOpts := types.MigrationOpts{
-		GatewayNamespace:    m.gatewayNamespace,
-		GatewayCrdName:      m.gatewayCrdName,
-		KubeConfigPath:      m.kubeConfigPath,
-		ClusterId:           m.clusterId,
-		ClusterRestEndpoint: m.clusterRestEndpoint,
-		ClusterLinkName:     m.clusterLinkName,
-		Topics:              m.topics,
-		AuthMode:            m.authMode,
-		ClusterApiKey:       m.clusterApiKey,
-		ClusterApiSecret:    m.clusterApiSecret,
+		GatewayNamespace:     m.gatewayNamespace,
+		GatewayCrdName:       m.gatewayCrdName,
+		SourceName:           m.sourceName,
+		DestinationName:      m.destinationName,
+		SourceRouteName:      m.sourceRouteName,
+		DestinationRouteName: m.destinationRouteName,
+		KubeConfigPath:       m.kubeConfigPath,
+		ClusterId:            m.clusterId,
+		ClusterRestEndpoint:  m.clusterRestEndpoint,
+		ClusterLinkName:      m.clusterLinkName,
+		Topics:               m.topics,
+		AuthMode:             m.authMode,
+		ClusterApiKey:        m.clusterApiKey,
+		ClusterApiSecret:     m.clusterApiSecret,
 	}
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))

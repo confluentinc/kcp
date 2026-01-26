@@ -15,9 +15,13 @@ import (
 var (
 	stateFile string
 
-	gatewayNamespace string
-	gatewayCrdName   string
-	kubeConfigPath   string
+	gatewayNamespace     string
+	gatewayCrdName       string
+	sourceName           string
+	destinationName      string
+	sourceRouteName      string
+	destinationRouteName string
+	kubeConfigPath       string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -51,6 +55,11 @@ func NewMigrationInitCmd() *cobra.Command {
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link to use by the migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use by the migration.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use by the migration.")
+	requiredFlags.StringVar(&sourceName, "source-name", "", "The name of the streaming domain for the source (MSK) cluster.")
+	requiredFlags.StringVar(&destinationName, "dest-name", "", "The name of the streaming domain for the destination (CC) cluster.")
+	requiredFlags.StringVar(&sourceRouteName, "source-route-name", "", "The name of the source route that is currently in use.")
+	requiredFlags.StringVar(&destinationRouteName, "dest-route-name", "", "The name of the destination route that will be used for the migration.")
+
 	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -88,6 +97,10 @@ func NewMigrationInitCmd() *cobra.Command {
 	migrationInitCmd.MarkFlagRequired("cluster-link-name")
 	migrationInitCmd.MarkFlagRequired("cluster-api-key")
 	migrationInitCmd.MarkFlagRequired("cluster-api-secret")
+	migrationInitCmd.MarkFlagRequired("source-name")
+	migrationInitCmd.MarkFlagRequired("dest-name")
+	migrationInitCmd.MarkFlagRequired("source-route-name")
+	migrationInitCmd.MarkFlagRequired("dest-route-name")
 
 	return migrationInitCmd
 }
@@ -108,7 +121,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	migrationInit := NewMigrationInit(*opts)
 	if err := migrationInit.Run(); err != nil {
-		return fmt.Errorf("failed to initialise migration: %v", err)
+		return err
 	}
 
 	return nil
@@ -134,15 +147,19 @@ func parseMigrationInitOpts() (*MigrationInitOpts, error) {
 		stateFile: stateFile,
 		state:     *state,
 
-		gatewayNamespace:    gatewayNamespace,
-		kubeConfigPath:      kubeConfigPath,
-		gatewayCrdName:      gatewayCrdName,
-		clusterLinkName:     clusterLinkName,
-		clusterRestEndpoint: clusterRestEndpoint,
-		clusterId:           clusterId,
-		clusterApiKey:       clusterApiKey,
-		clusterApiSecret:    clusterApiSecret,
-		topics:              topics,
-		authMode:            authMode,
+		gatewayNamespace:     gatewayNamespace,
+		gatewayCrdName:       gatewayCrdName,
+		sourceName:           sourceName,
+		destinationName:      destinationName,
+		sourceRouteName:      sourceRouteName,
+		destinationRouteName: destinationRouteName,
+		kubeConfigPath:       kubeConfigPath,
+		clusterLinkName:      clusterLinkName,
+		clusterRestEndpoint:  clusterRestEndpoint,
+		clusterId:            clusterId,
+		clusterApiKey:        clusterApiKey,
+		clusterApiSecret:     clusterApiSecret,
+		topics:               topics,
+		authMode:             authMode,
 	}, nil
 }

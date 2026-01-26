@@ -11,7 +11,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/looplab/fsm"
@@ -40,16 +39,20 @@ const (
 )
 
 type MigrationOpts struct {
-	GatewayNamespace    string
-	GatewayCrdName      string
-	KubeConfigPath      string
-	ClusterId           string
-	ClusterRestEndpoint string
-	ClusterLinkName     string
-	Topics              []string
-	AuthMode            string
-	ClusterApiKey       string
-	ClusterApiSecret    string
+	GatewayNamespace     string
+	GatewayCrdName       string
+	SourceName           string
+	DestinationName      string
+	SourceRouteName      string
+	DestinationRouteName string
+	KubeConfigPath       string
+	ClusterId            string
+	ClusterRestEndpoint  string
+	ClusterLinkName      string
+	Topics               []string
+	AuthMode             string
+	ClusterApiKey        string
+	ClusterApiSecret     string
 }
 
 // Migration represents a gateway migration with a finite state machine
@@ -59,9 +62,13 @@ type Migration struct {
 	CurrentState string   `json:"current_state"`
 	FSM          *fsm.FSM `json:"-"`
 
-	GatewayNamespace string `json:"gateway_namespace"`
-	GatewayCrdName   string `json:"gateway_crd_name"`
-	KubeConfigPath   string `json:"kube_config_path"`
+	GatewayNamespace     string `json:"gateway_namespace"`
+	GatewayCrdName       string `json:"gateway_crd_name"`
+	SourceName           string `json:"source_name"`
+	DestinationName      string `json:"destination_name"`
+	SourceRouteName      string `json:"source_route_name"`
+	DestinationRouteName string `json:"destination_route_name"`
+	KubeConfigPath       string `json:"kube_config_path"`
 
 	ClusterId           string            `json:"cluster_id"`
 	ClusterRestEndpoint string            `json:"cluster_rest_endpoint"`
@@ -85,7 +92,7 @@ func (m *Migration) initializeFSM(initialState string) {
 		},
 		fsm.Callbacks{
 			"leave_" + StateUninitialized: func(_ context.Context, e *fsm.Event) {
-				fmt.Println("leaving uninitialized state")
+				slog.Info("leaving uninitialized state")
 				m.leaveInitialized(e)
 			},
 			"after_event": func(_ context.Context, e *fsm.Event) {
@@ -99,18 +106,22 @@ func (m *Migration) initializeFSM(initialState string) {
 // This is a constructor function for Migration.
 func NewMigration(migrationId string, opts MigrationOpts) *Migration {
 	m := &Migration{
-		MigrationId:         migrationId,
-		CurrentState:        StateUninitialized,
-		GatewayNamespace:    opts.GatewayNamespace,
-		GatewayCrdName:      opts.GatewayCrdName,
-		KubeConfigPath:      opts.KubeConfigPath,
-		ClusterId:           opts.ClusterId,
-		ClusterRestEndpoint: opts.ClusterRestEndpoint,
-		ClusterLinkName:     opts.ClusterLinkName,
-		Topics:              opts.Topics,
-		AuthMode:            opts.AuthMode,
-		ClusterApiKey:       opts.ClusterApiKey,
-		ClusterApiSecret:    opts.ClusterApiSecret,
+		MigrationId:          migrationId,
+		CurrentState:         StateUninitialized,
+		GatewayNamespace:     opts.GatewayNamespace,
+		GatewayCrdName:       opts.GatewayCrdName,
+		SourceName:           opts.SourceName,
+		DestinationName:      opts.DestinationName,
+		SourceRouteName:      opts.SourceRouteName,
+		DestinationRouteName: opts.DestinationRouteName,
+		KubeConfigPath:       opts.KubeConfigPath,
+		ClusterId:            opts.ClusterId,
+		ClusterRestEndpoint:  opts.ClusterRestEndpoint,
+		ClusterLinkName:      opts.ClusterLinkName,
+		Topics:               opts.Topics,
+		AuthMode:             opts.AuthMode,
+		ClusterApiKey:        opts.ClusterApiKey,
+		ClusterApiSecret:     opts.ClusterApiSecret,
 	}
 
 	m.initializeFSM(StateUninitialized)
@@ -140,7 +151,7 @@ func LoadMigration(migrationId string) (*Migration, error) {
 	// Initialize the FSM with the loaded current state
 	m.initializeFSM(m.CurrentState)
 
-	fmt.Printf("Migration loaded from %s (state: %s)\n", filename, m.CurrentState)
+	slog.Info("migration loaded from file", "filename", filename, "state", m.CurrentState)
 
 	return &m, nil
 }
@@ -175,15 +186,21 @@ func (m *Migration) leaveInitialized(e *fsm.Event) {
 		e.Cancel(fmt.Errorf("failed to create dynamic client: %v", err))
 	}
 
-	err = listPods(clientset, m.GatewayNamespace)
-	if err != nil {
-		e.Cancel(fmt.Errorf("failed to list pods: %v", err))
-	}
+	// err = listPods(clientset, m.GatewayNamespace)
+	// if err != nil {
+	// 	e.Cancel(fmt.Errorf("failed to list pods: %v", err))
+	// }
+
 	gatewayYAML, err := getGatewayAsYAML(dynamicClient, "confluent", m.GatewayCrdName)
 	if err != nil {
 		e.Cancel(fmt.Errorf("failed to get gateway as YAML: %v", err))
 	}
 	m.GatewayOriginalYAML = gatewayYAML
+
+	// Validate gateway YAML contains expected source, destination, and route
+	if err := ValidateGatewayYAML(gatewayYAML, m.SourceName, m.DestinationName, m.SourceRouteName, m.AuthMode); err != nil {
+		e.Cancel(fmt.Errorf("gateway validation failed: %v", err))
+	}
 
 	slog.Info("describing cluster link", "clusterId", m.ClusterId, "clusterLinkName", m.ClusterLinkName)
 	clusterLinkTopics, err := listMirrorTopics(m.ClusterRestEndpoint, m.ClusterId, m.ClusterLinkName, m.ClusterApiKey, m.ClusterApiSecret)
@@ -234,37 +251,6 @@ func checkPermission(clientset *kubernetes.Clientset, verb, resource, group, nam
 	return response.Status.Allowed, nil
 }
 
-func listPods(clientset *kubernetes.Clientset, namespace string) error {
-	fmt.Printf("📋 Pods in namespace '%s':\n\n", namespace)
-
-	pods, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list pods: %v", err)
-	}
-
-	if len(pods.Items) == 0 {
-		fmt.Println("No pods found.")
-		return nil
-	}
-
-	fmt.Printf("%-50s %-10s %-10s %-10s\n", "NAME", "STATUS", "RESTARTS", "AGE")
-	fmt.Println(strings.Repeat("-", 80))
-
-	for _, pod := range pods.Items {
-		restarts := int32(0)
-		if len(pod.Status.ContainerStatuses) > 0 {
-			restarts = pod.Status.ContainerStatuses[0].RestartCount
-		}
-		age := time.Since(pod.CreationTimestamp.Time).Round(time.Second)
-		fmt.Printf("%-50s %-10s %-10d %-10s\n",
-			pod.Name,
-			string(pod.Status.Phase),
-			restarts,
-			age.String())
-	}
-	return nil
-}
-
 func getGatewayAsYAML(dynamicClient dynamic.Interface, namespace, gatewayName string) ([]byte, error) {
 	// Define the GVR (GroupVersionResource) for Gateway
 	// This matches: kubectl get gateway -n confluent
@@ -287,8 +273,6 @@ func getGatewayAsYAML(dynamicClient dynamic.Interface, namespace, gatewayName st
 		return nil, fmt.Errorf("failed to marshal to YAML: %v", err)
 	}
 
-	// Print formatted YAML
-	fmt.Println(string(yamlBytes))
 	return yamlBytes, nil
 }
 
@@ -354,6 +338,57 @@ func validateTopicsInClusterLink(topics []string, clusterLinkTopics []string) er
 	return nil
 }
 
+func ValidateGatewayYAML(gatewayYAML []byte, sourceName, destinationName, sourceRouteName, authMode string) error {
+	var gateway GatewayResource
+	if err := yaml.Unmarshal(gatewayYAML, &gateway); err != nil {
+		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	}
+
+	streamingDomainNames := make([]string, len(gateway.Spec.StreamingDomains))
+	for i, domain := range gateway.Spec.StreamingDomains {
+		streamingDomainNames[i] = domain.Name
+	}
+
+	if !slices.Contains(streamingDomainNames, sourceName) {
+		return fmt.Errorf("source streaming domain '%s' not found in gateway streamingDomains. Available domains: %v", sourceName, streamingDomainNames)
+	}
+	if !slices.Contains(streamingDomainNames, destinationName) {
+		return fmt.Errorf("destination streaming domain '%s' not found in gateway streamingDomains. Available domains: %v", destinationName, streamingDomainNames)
+	}
+
+	routeNames := make([]string, len(gateway.Spec.Routes))
+	for i, route := range gateway.Spec.Routes {
+		routeNames[i] = route.Name
+
+		/*
+			- If the `auth_mode` is passed as/defaulted to 'dest_swap', we would expect the user's route to be 'passthrough'. 
+				Then the future route would be 'swap' so that the clients do not need to update their credentials.
+			- If the `auth_mode` is passed as 'source_swap', we would expect the user's route to be a 'swap'. 
+				Then the future route would be 'passthrough' as the clients already use the CC credentials.
+		*/
+		if authMode == "dest_swap" && route.Security.Auth == "passthrough" {
+			return fmt.Errorf("source route '%s' expected to be 'passthrough', found '%s'. Available routes: %v", sourceRouteName, route.Security.Auth, routeNames)
+		}
+		if authMode == "source_swap" && route.Security.Auth == "swap" {
+			return fmt.Errorf("source route '%s' expected to be 'swap', found '%s'. Available routes: %v", sourceRouteName, route.Security.Auth, routeNames)
+		}
+	}
+
+	if !slices.Contains(routeNames, sourceRouteName) {
+		return fmt.Errorf("source route '%s' not found in gateway routes. Available routes: %v", sourceRouteName, routeNames)
+	}
+
+
+
+	slog.Info("gateway validation successful",
+		"source", sourceName,
+		"destination", destinationName,
+		"route", sourceRouteName,
+	)
+
+	return nil
+}
+
 func listClusterLinkConfigs(clusterRestEndpoint, clusterId, clusterLinkName, clusterApiKey, clusterApiSecret string) (map[string]string, error) {
 	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/configs", clusterRestEndpoint, clusterId, clusterLinkName)
 	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", clusterApiKey, clusterApiSecret)))
@@ -393,24 +428,6 @@ func listClusterLinkConfigs(clusterRestEndpoint, clusterId, clusterLinkName, clu
 
 	return configs, nil
 }
-
-// func printDeploymentYAML(clientset *kubernetes.Clientset, namespace, deployName string) error {
-// 	// Get deployment from cluster
-// 	deploy, err := clientset.AppsV1().Deployments(namespace).Get(context.TODO(), deployName, metav1.GetOptions{})
-// 	if err != nil {
-// 		return fmt.Errorf("failed to get deployment: %v", err)
-// 	}
-
-// 	// Convert to YAML
-// 	yamlBytes, err := yaml.Marshal(deploy)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to marshal to YAML: %v", err)
-// 	}
-
-// 	// Print formatted YAML
-// 	fmt.Println(string(yamlBytes))
-// 	return nil
-// }
 
 // func describeClusterLink(clusterRestEndpoint, clusterId, clusterLinkName, clusterApiKey, clusterApiSecret string) error {
 // 	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/mirrors", clusterRestEndpoint, clusterId, clusterLinkName)
