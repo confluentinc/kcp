@@ -242,7 +242,8 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 		expressionParts = append(expressionParts, fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
 	}
 
-	expression := strings.Join(expressionParts, " + ")
+	metrics := strings.Join(expressionParts, ",")
+	expression := fmt.Sprintf("SUM([%s])", metrics)
 
 	queries = append(queries, cloudwatchtypes.MetricDataQuery{
 		Id:         aws.String("e_total_local_storage_usage_gb"),
@@ -292,10 +293,12 @@ func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName s
 	// Formula: (m_remote_log_size_bytes_1 / 1024 / 1024 / 1024) + (m_remote_log_size_bytes_2 / 1024 / 1024 / 1024) + (m_remote_log_size_bytes_3 / 1024 / 1024 / 1024)
 	var expressionParts []string
 	for _, metricID := range metricIDs {
-		expressionParts = append(expressionParts, fmt.Sprintf("(%s / 1024 / 1024 / 1024)", metricID))
+		expressionParts = append(expressionParts, fmt.Sprintf("%s", metricID))
 	}
 
-	expression := strings.Join(expressionParts, " + ")
+	listOfMetrics:= strings.Join(expressionParts, ",")
+
+	expression := fmt.Sprintf("SUM([%s])/ 1073741824", listOfMetrics)
 
 	queries = append(queries, cloudwatchtypes.MetricDataQuery{
 		Id:         aws.String("e_total_remote_storage_usage_gb"),
