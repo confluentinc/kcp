@@ -18,7 +18,8 @@ const (
 )
 
 var (
-	regions []string
+	regions    []string
+	skipCosts  bool
 	skipTopics bool
 )
 
@@ -44,6 +45,7 @@ func NewDiscoverCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skips the topic discovery through the AWS MSK API")
+	optionalFlags.BoolVar(&skipCosts, "skip-costs", false, "Skips the cost discovery through the AWS Cost Explorer API")
 	discoverCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -132,6 +134,7 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 
 	return &DiscovererOpts{
 		Regions:     regions,
+		SkipCosts:   skipCosts,
 		SkipTopics:  skipTopics,
 		State:       state,
 		Credentials: credentials,
