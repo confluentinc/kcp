@@ -61,15 +61,21 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool) (*types.DiscoveredCluster, error) {
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool) (*types.DiscoveredCluster, error) {
 	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
 	if err != nil {
 		return nil, err
 	}
 
-	clusterMetric, err := cd.discoverMetrics(ctx, clusterArn)
-	if err != nil {
-		return nil, err
+	var clusterMetric *types.ClusterMetrics
+	if skipMetrics {
+		slog.Info("⏭️ skipping metrics discovery")
+		clusterMetric = &types.ClusterMetrics{}
+	} else {
+		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &types.DiscoveredCluster{
