@@ -6,7 +6,7 @@ interface ClusterTopicsProps {
 }
 
 export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
-  if (!kafkaAdminInfo?.topics) {
+  if (!kafkaAdminInfo?.topics?.details) {
     return (
       <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
