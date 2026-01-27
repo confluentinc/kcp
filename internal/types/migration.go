@@ -198,7 +198,7 @@ func (m *Migration) leaveInitialized(e *fsm.Event) {
 	m.GatewayOriginalYAML = gatewayYAML
 
 	// Validate gateway YAML contains expected source, destination, and route
-	if err := ValidateGatewayYAML(gatewayYAML, m.SourceName, m.DestinationName, m.SourceRouteName, m.AuthMode); err != nil {
+	if err := ValidateGatewayYAML(gatewayYAML, m.SourceName, m.DestinationName, m.SourceRouteName, m.DestinationRouteName, m.AuthMode); err != nil {
 		e.Cancel(fmt.Errorf("gateway validation failed: %v", err))
 	}
 
@@ -338,7 +338,7 @@ func validateTopicsInClusterLink(topics []string, clusterLinkTopics []string) er
 	return nil
 }
 
-func ValidateGatewayYAML(gatewayYAML []byte, sourceName, destinationName, sourceRouteName, authMode string) error {
+func ValidateGatewayYAML(gatewayYAML []byte, sourceName, destinationName, sourceRoute, destinationRoute, authMode string) error {
 	var gateway GatewayResource
 	if err := yaml.Unmarshal(gatewayYAML, &gateway); err != nil {
 		return fmt.Errorf("failed to parse gateway YAML: %w", err)
@@ -371,23 +371,41 @@ func ValidateGatewayYAML(gatewayYAML []byte, sourceName, destinationName, source
 				Then the future route would be 'passthrough' as the clients already use the CC credentials.
 		*/
 		if authMode == "dest_swap" && route.Security.Auth != "passthrough" {
-			return fmt.Errorf("source route '%s' expected to be 'passthrough', found '%s'. Available routes: %v", sourceRouteName, route.Security.Auth, routeNames)
+			return fmt.Errorf("source route '%s' expected to be 'passthrough', found '%s'. Available routes: %v", sourceRoute, route.Security.Auth, routeNames)
 		}
 		if authMode == "source_swap" && route.Security.Auth != "swap" {
-			return fmt.Errorf("source route '%s' expected to be 'swap', found '%s'. Available routes: %v", sourceRouteName, route.Security.Auth, routeNames)
+			return fmt.Errorf("source route '%s' expected to be 'swap', found '%s'. Available routes: %v", sourceRoute, route.Security.Auth, routeNames)
+		}
+
+		// Validate destination route
+		if route.Name == destinationRoute {
+			// Validate streaming domain matches destination
+			if route.StreamingDomain.Name != destinationName {
+				return fmt.Errorf("destination route '%s' streaming domain '%s' does not match expected destination streaming domain '%s'", destinationRoute, route.StreamingDomain.Name, destinationName)
+			}
+
+			// Validate client and cluster objects exist
+			if route.Security.Client.Authentication.Type == "" {
+				return fmt.Errorf("destination route '%s' is missing client authentication configuration", destinationRoute)
+			}
+			if route.Security.Cluster.Authentication.Type == "" {
+				return fmt.Errorf("destination route '%s' is missing cluster authentication configuration", destinationRoute)
+			}
 		}
 	}
 
-	if !slices.Contains(routeNames, sourceRouteName) {
-		return fmt.Errorf("source route '%s' not found in gateway routes. Available routes: %v", sourceRouteName, routeNames)
+	if !slices.Contains(routeNames, sourceRoute) {
+		return fmt.Errorf("source route '%s' not found in gateway routes. Available routes: %v", sourceRoute, routeNames)
 	}
 
-
+	if !slices.Contains(routeNames, destinationRoute) {
+		return fmt.Errorf("destination route '%s' not found in gateway routes. Available routes: %v", destinationRoute, routeNames)
+	}
 
 	slog.Info("gateway validation successful",
 		"source", sourceName,
 		"destination", destinationName,
-		"route", sourceRouteName,
+		"route", sourceRoute,
 	)
 
 	return nil
