@@ -360,21 +360,25 @@ func ValidateGatewayYAML(gatewayYAML []byte, sourceName, destinationName, source
 	for i, route := range gateway.Spec.Routes {
 		routeNames[i] = route.Name
 
-		if sourceName != route.StreamingDomain.Name {
-			return fmt.Errorf("source route '%s' streaming domain '%s' does not match expected source streaming domain '%s'", route.Name, route.StreamingDomain.Name, sourceName)
-		}
+		// Validate source route
+		if route.Name == sourceRoute {
+			// Validate streaming domain matches source
+			if route.StreamingDomain.Name != sourceName {
+				return fmt.Errorf("source route '%s' streaming domain '%s' does not match expected source streaming domain '%s'", route.Name, route.StreamingDomain.Name, sourceName)
+			}
 
-		/*
-			- If the `auth_mode` is passed as/defaulted to 'dest_swap', we would expect the user's route to be 'passthrough'. 
-				Then the future route would be 'swap' so that the clients do not need to update their credentials.
-			- If the `auth_mode` is passed as 'source_swap', we would expect the user's route to be a 'swap'. 
-				Then the future route would be 'passthrough' as the clients already use the CC credentials.
-		*/
-		if authMode == "dest_swap" && route.Security.Auth != "passthrough" {
-			return fmt.Errorf("source route '%s' expected to be 'passthrough', found '%s'. Available routes: %v", sourceRoute, route.Security.Auth, routeNames)
-		}
-		if authMode == "source_swap" && route.Security.Auth != "swap" {
-			return fmt.Errorf("source route '%s' expected to be 'swap', found '%s'. Available routes: %v", sourceRoute, route.Security.Auth, routeNames)
+			/*
+				- If the `auth_mode` is passed as/defaulted to 'dest_swap', we would expect the user's route to be 'passthrough'.
+					Then the future route would be 'swap' so that the clients do not need to update their credentials.
+				- If the `auth_mode` is passed as 'source_swap', we would expect the user's route to be a 'swap'.
+					Then the future route would be 'passthrough' as the clients already use the CC credentials.
+			*/
+			if authMode == "dest_swap" && route.Security.Auth != "passthrough" {
+				return fmt.Errorf("source route '%s' expected to be 'passthrough', found '%s'", sourceRoute, route.Security.Auth)
+			}
+			if authMode == "source_swap" && route.Security.Auth != "swap" {
+				return fmt.Errorf("source route '%s' expected to be 'swap', found '%s'", sourceRoute, route.Security.Auth)
+			}
 		}
 
 		// Validate destination route
