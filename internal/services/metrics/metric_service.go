@@ -203,6 +203,7 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 	var metricIDs []string
+	var expressionIDs []string
 
 	// Create individual queries for KafkaDataLogsDiskUsed for each broker
 	for brokerID := 1; brokerID <= brokers; brokerID++ {
@@ -233,21 +234,23 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 			},
 			ReturnData: aws.Bool(false),
 		})
+
+
+		expressionID := fmt.Sprintf("l%d", brokerID)
+		expressionIDs = append(expressionIDs, expressionID)
+
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id:         aws.String(expressionID),
+			Expression: aws.String(fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB)),
+			Label:      aws.String("Broker Aggregate - TotalLocalStorageUsage(GB)"),
+			ReturnData: aws.Bool(true),
+		})
 	}
 
-	// Create expression to calculate total local storage usage in GB
-	// Formula: (m_kafka_data_logs_disk_used_1 / 100) * volumeSizeGB) + (m_kafka_data_logs_disk_used_2 / 100) * volumeSizeGB) + (m_kafka_data_logs_disk_used_3 / 100) * volumeSizeGB)
-	var expressionParts []string
-	for _, metricID := range metricIDs {
-		expressionParts = append(expressionParts, fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB))
-	}
-
-	metrics := strings.Join(expressionParts, ",")
-	expression := fmt.Sprintf("SUM([%s])", metrics)
-
+	// Create expression to calculate total local storage usage for cluster in GB
 	queries = append(queries, cloudwatchtypes.MetricDataQuery{
 		Id:         aws.String("e_total_local_storage_usage_gb"),
-		Expression: aws.String(expression),
+		Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(expressionIDs, ","))),
 		Label:      aws.String("Cluster Aggregate - TotalLocalStorageUsage(GB)"),
 		ReturnData: aws.Bool(true),
 	})
@@ -258,6 +261,7 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 	var metricIDs []string
+	var expressionIDs []string
 
 	// Create individual queries for RemoteLogSizeBytes for each broker
 	for brokerID := 1; brokerID <= brokers; brokerID++ {
@@ -287,22 +291,22 @@ func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName s
 			},
 			ReturnData: aws.Bool(false),
 		})
+
+		expressionID := fmt.Sprintf("r%d", brokerID)
+		expressionIDs = append(expressionIDs, expressionID)
+
+		queries = append(queries, cloudwatchtypes.MetricDataQuery{
+			Id:         aws.String(expressionID),
+			Expression: aws.String(fmt.Sprintf("(%s / 1073741824)", metricID)),
+			Label:      aws.String("Broker Aggregate - TotalRemoteStorageUsage(GB)"),
+			ReturnData: aws.Bool(true),
+		})
 	}
 
-	// Create expression to calculate total remote storage usage in GB
-	// Formula: (m_remote_log_size_bytes_1 / 1024 / 1024 / 1024) + (m_remote_log_size_bytes_2 / 1024 / 1024 / 1024) + (m_remote_log_size_bytes_3 / 1024 / 1024 / 1024)
-	var expressionParts []string
-	for _, metricID := range metricIDs {
-		expressionParts = append(expressionParts, fmt.Sprintf("%s", metricID))
-	}
-
-	listOfMetrics:= strings.Join(expressionParts, ",")
-
-	expression := fmt.Sprintf("SUM([%s])/ 1073741824", listOfMetrics)
-
+	// Create expression to calculate total remote storage usage for clusterin GB
 	queries = append(queries, cloudwatchtypes.MetricDataQuery{
 		Id:         aws.String("e_total_remote_storage_usage_gb"),
-		Expression: aws.String(expression),
+		Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(expressionIDs, ","))),
 		Label:      aws.String("Cluster Aggregate - TotalRemoteStorageUsage(GB)"),
 		ReturnData: aws.Bool(true),
 	})
