@@ -2,6 +2,7 @@ package migration
 
 import (
 	migration_init "github.com/confluentinc/kcp/cmd/migration/init"
+	migration_execute "github.com/confluentinc/kcp/cmd/migration/execute"
 
 	"github.com/spf13/cobra"
 )
@@ -17,6 +18,7 @@ func NewMigrationCmd() *cobra.Command {
 
 	migraitonCmd.AddCommand(
 		migration_init.NewMigrationInitCmd(),
+		migration_execute.NewMigrationExecuteCmd(),
 	)
 
 	return migraitonCmd
