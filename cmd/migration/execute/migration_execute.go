@@ -1,6 +1,10 @@
 package migration_execute
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -26,31 +30,29 @@ func NewMigrationExecute(opts MigrationExecuteOpts) *MigrationExecute {
 
 func (m *MigrationExecute) Run() error {
 
-	// migrationOpts := types.MigrationOpts{
-	// 	GatewayNamespace:     m.gatewayNamespace,
-	// 	GatewayCrdName:       m.gatewayCrdName,
-	// 	SourceName:           m.sourceName,
-	// 	DestinationName:      m.destinationName,
-	// 	SourceRouteName:      m.sourceRouteName,
-	// 	DestinationRouteName: m.destinationRouteName,
-	// 	KubeConfigPath:       m.kubeConfigPath,
-	// 	ClusterId:            m.clusterId,
-	// 	ClusterRestEndpoint:  m.clusterRestEndpoint,
-	// 	ClusterLinkName:      m.clusterLinkName,
-	// 	Topics:               m.topics,
-	// 	AuthMode:             m.authMode,
-	// 	ClusterApiKey:        m.clusterApiKey,
-	// 	ClusterApiSecret:     m.clusterApiSecret,
-	// }
+	migration, err := types.LoadMigration(m.state, m.migrationId)
+	if err != nil {
+		return fmt.Errorf("failed to load migration: %v", err)
+	}
 
-	// migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
-	// migration := types.NewMigration(migrationId, migrationOpts)
-	// err := migration.FSM.Event(context.Background(), types.EventKcpExecute)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to initialize migration: %v", err)
-	// }
-	// slog.Info("migration initialized", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
-	// m.state.UpsertMigration(*migration)
-	// return m.state.PersistStateFile(m.stateFile)
-	return nil
+	// Execute the migration
+	err = migration.FSM.Event(context.Background(), types.EventKcpExecute)
+	if err != nil {
+		return fmt.Errorf("failed to execute migration: %v", err)
+	}
+	slog.Info("migration executed", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
+	m.state.UpsertMigration(*migration)
+	err = m.state.PersistStateFile(m.stateFile)
+	if err != nil {
+		return fmt.Errorf("failed to persist state file: %v", err)
+	}
+
+	// Promote topics
+	err = migration.FSM.Event(context.Background(), types.EventTopicsPromoted)
+	if err != nil {
+		return fmt.Errorf("failed to promote topics: %v", err)
+	}
+	slog.Info("topics promoted", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
+	m.state.UpsertMigration(*migration)
+	return m.state.PersistStateFile(m.stateFile)
 }

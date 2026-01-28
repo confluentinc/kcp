@@ -121,6 +121,15 @@ func (s *State) UpsertMigration(migration Migration) {
 	s.Migrations = append(s.Migrations, migration)
 }
 
+func (s *State) GetMigrationById(migrationId string) (*Migration, error) {
+	for _, migration := range s.Migrations {
+		if migration.MigrationId == migrationId {
+			return &migration, nil
+		}
+	}
+	return nil, fmt.Errorf("migration not found with id: %s", migrationId)
+}
+
 // UpsertRegion inserts a new region or updates an existing one by name
 // Automatically preserves KafkaAdminClientInformation from existing clusters
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {

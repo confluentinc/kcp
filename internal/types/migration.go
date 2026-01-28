@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 
@@ -87,8 +86,9 @@ func (m *Migration) initializeFSM(initialState string) {
 		initialState,
 		fsm.Events{
 			//  transitions from uninitialized state
-			// {Name: EventKcpInit, Src: []string{StateUninitialized}, Dst: StateUninitialized},
 			{Name: EventKcpInit, Src: []string{StateUninitialized}, Dst: StateInitialized},
+			{Name: EventKcpExecute, Src: []string{StateInitialized}, Dst: StateMigrating},
+			{Name: EventTopicsPromoted, Src: []string{StateMigrating}, Dst: StateMigrated},
 		},
 		fsm.Callbacks{
 			"leave_" + StateUninitialized: func(_ context.Context, e *fsm.Event) {
@@ -132,28 +132,17 @@ func NewMigration(migrationId string, opts MigrationOpts) *Migration {
 // LoadMigration loads a Migration object from a JSON file by its ID.
 // This is a static constructor-like function for Migration that reconstructs
 // a previously saved migration from disk with its state intact.
-func LoadMigration(migrationId string) (*Migration, error) {
-	filename := fmt.Sprintf("migration_%s.json", migrationId)
+func LoadMigration(state State, migrationId string) (*Migration, error) {
 
-	// Read the JSON file
-	data, err := os.ReadFile(filename)
+	m, err := state.GetMigrationById(migrationId)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read migration file: %w", err)
-	}
-
-	// Unmarshal into Migration struct
-	var m Migration
-	err = json.Unmarshal(data, &m)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal migration: %w", err)
+		return nil, fmt.Errorf("failed to get migration: %v", err)
 	}
 
 	// Initialize the FSM with the loaded current state
 	m.initializeFSM(m.CurrentState)
 
-	slog.Info("migration loaded from file", "filename", filename, "state", m.CurrentState)
-
-	return &m, nil
+	return m, nil
 }
 
 func (m *Migration) leaveInitialized(e *fsm.Event) {
