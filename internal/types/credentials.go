@@ -154,11 +154,11 @@ func (ce ClusterAuth) GetAuthMethods() []AuthType {
 }
 
 type AuthMethodConfig struct {
+	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
+	SASLScram                *SASLScramConfig                `yaml:"sasl_scram,omitempty"`
+	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
 	UnauthenticatedTLS       *UnauthenticatedTLSConfig       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *UnauthenticatedPlaintextConfig `yaml:"unauthenticated_plaintext,omitempty"`
-	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
-	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
-	SASLScram                *SASLScramConfig                `yaml:"sasl_scram,omitempty"`
 }
 
 // MergeWith preserves existing auth configurations only for auth methods that still exist in the new config

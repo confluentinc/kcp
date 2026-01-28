@@ -195,8 +195,8 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		Arn:  aws.ToString(cluster.ClusterArn),
 	}
 
-	// Check which authentication methods are enabled on the cluster
-	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedTLSEnabled, isUnauthenticatedPlaintextEnabled bool
+	// Check which authentication methods are available as options on the cluster
+	var isSaslIamAvailable, isSaslScramAvailable, isTlsAvailable, isUnauthenticatedTLSAvailable, isUnauthenticatedPlaintextAvailable bool
 
 	switch cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
@@ -204,16 +204,16 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		if cluster.Provisioned != nil && cluster.Provisioned.ClientAuthentication != nil {
 			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
 				cluster.Provisioned.ClientAuthentication.Sasl.Iam != nil {
-				isSaslIamEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Iam.Enabled)
+				isSaslIamAvailable = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Iam.Enabled)
 			}
 
 			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
 				cluster.Provisioned.ClientAuthentication.Sasl.Scram != nil {
-				isSaslScramEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Scram.Enabled)
+				isSaslScramAvailable = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Scram.Enabled)
 			}
 
 			if cluster.Provisioned.ClientAuthentication.Tls != nil {
-				isTlsEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
+				isTlsAvailable = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
 			}
 
 			if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil &&
@@ -222,10 +222,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 
 				encryptionInTransit := cluster.Provisioned.EncryptionInfo.EncryptionInTransit.ClientBroker
 				if encryptionInTransit == kafkatypes.ClientBrokerTls || encryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext {
-					isUnauthenticatedTLSEnabled = true
+					isUnauthenticatedTLSAvailable = true
 				}
 				if encryptionInTransit == kafkatypes.ClientBrokerPlaintext || encryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext {
-					isUnauthenticatedPlaintextEnabled = true
+					isUnauthenticatedPlaintextAvailable = true
 				}
 
 			}
@@ -233,31 +233,25 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 
 	case kafkatypes.ClusterTypeServerless:
 		// Serverless clusters only support IAM authentication
-		isSaslIamEnabled = true
+		isSaslIamAvailable = true
 	}
 
-	// Configure auth methods with priority: unauthenticated_tls > unauthenticated_plaintext > iam > sasl_scram > tls
+	// Configure auth methods with priority: unauthenticated_plaintext > iam > sasl_scram > unauthenticated_tls > tls
 	// Only one method is set as default to avoid conflicts
 	defaultAuthSelected := false
-	if isUnauthenticatedTLSEnabled {
-		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
-			Use: !defaultAuthSelected,
-		}
-		defaultAuthSelected = true
-	}
-	if isUnauthenticatedPlaintextEnabled {
+	if isUnauthenticatedPlaintextAvailable {
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
-	if isSaslIamEnabled {
+	if isSaslIamAvailable {
 		clusterAuth.AuthMethod.IAM = &types.IAMConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
-	if isSaslScramEnabled {
+	if isSaslScramAvailable {
 		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
 			Use:      !defaultAuthSelected,
 			Username: "",
@@ -265,7 +259,13 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		}
 		defaultAuthSelected = true
 	}
-	if isTlsEnabled {
+	if isUnauthenticatedTLSAvailable {
+		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
+			Use: !defaultAuthSelected,
+		}
+		defaultAuthSelected = true
+	}
+	if isTlsAvailable {
 		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
 			Use:        !defaultAuthSelected,
 			CACert:     "",
