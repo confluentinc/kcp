@@ -54,9 +54,9 @@ type MigrationOpts struct {
 
 // Migration represents a gateway migration with a finite state machine
 type Migration struct {
-	MigrationId     string `json:"migration_id"`
-	CurrentState    string `json:"current_state"`
-	FSM             *fsm.FSM `json:"-"`
+	MigrationId     string   `json:"migration_id"`
+	CurrentState    string   `json:"current_state"`
+	fsm             *fsm.FSM `json:"-"` // ✅ Made private
 	
 	// Internal state (not serialized)
 	state              *State              `json:"-"`
@@ -92,7 +92,7 @@ type Migration struct {
 
 // initializeFSM sets up the FSM for the migration with the given initial state
 func (m *Migration) initializeFSM(initialState string) {
-	m.FSM = fsm.NewFSM(
+	m.fsm = fsm.NewFSM(
 		initialState,
 		fsm.Events{
 			{Name: EventInitialize, Src: []string{StateUninitialized}, Dst: StateInitialized},
@@ -120,61 +120,61 @@ func (m *Migration) initializeFSM(initialState string) {
 // FSM Callbacks
 
 func (m *Migration) beforeEventCallback(_ context.Context, e *fsm.Event) {
-	slog.Info("FSM: Before event", "event", e.Event, "currentState", m.FSM.Current(), "nextState", e.Dst)
+	slog.Info("FSM: Before event", "event", e.Event, "currentState", m.fsm.Current(), "nextState", e.Dst)
 }
 
 func (m *Migration) leaveUninitializedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 	if err := m.initializeMigration(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 	if err := m.checkLags(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 	if err := m.fenceGateway(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 	if err := m.startTopicPromotion(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leavePromotingCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 	if err := m.checkPromotionCompletion(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 	if err := m.switchOverGatewayConfig(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveStateCallback(_ context.Context, e *fsm.Event) {
-	slog.Info("FSM: Left state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Left state", "state", m.fsm.Current(), "triggered by event", e.Event)
 }
 
 func (m *Migration) enterStateCallback(_ context.Context, e *fsm.Event) {
-	slog.Info("FSM: Entered state", "state", m.FSM.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Entered state", "state", m.fsm.Current(), "triggered by event", e.Event)
 }
 
 func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
-	m.CurrentState = m.FSM.Current()
+	m.CurrentState = m.fsm.Current()
 	m.state.UpsertMigration(*m)
 	
 	// Use retry logic for persistence since we can't rollback the FSM transition
@@ -183,13 +183,13 @@ func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 		// Log critical error and terminate to avoid inconsistent state
 		slog.Error("FATAL: Failed to persist state after transition - system is in inconsistent state",
 			"event", e.Event,
-			"currentState", m.FSM.Current(),
+			"currentState", m.fsm.Current(),
 			"error", err,
 		)
-		panic(fmt.Sprintf("failed to persist state file after transition to %s: %v", m.FSM.Current(), err))
+		panic(fmt.Sprintf("failed to persist state file after transition to %s: %v", m.fsm.Current(), err))
 	}
 	
-	slog.Info("FSM: After event", "event", e.Event, "currentState", m.FSM.Current())
+	slog.Info("FSM: After event", "event", e.Event, "currentState", m.fsm.Current())
 }
 
 // NewMigration creates a new Migration with the given ID, starting in the uninitialized state
@@ -262,7 +262,54 @@ func LoadMigration(stateFilePath string, migrationId string) (*Migration, error)
 	return m, nil
 }
 
-// Migration workflow methods
+// Public API for migration execution (hides FSM implementation)
+
+// Initialize executes the initialization step of the migration
+func (m *Migration) Initialize(ctx context.Context) error {
+	return m.fsm.Event(ctx, EventInitialize)
+}
+
+// Execute runs the complete migration workflow from current state to completion
+func (m *Migration) Execute(ctx context.Context) error {
+	// Execute remaining steps based on current state
+	steps := []struct {
+		event       string
+		description string
+	}{
+		{EventWaitForLags, "checking lags"},
+		{EventFence, "fencing gateway"},
+		{EventPromote, "promoting topics"},
+		{EventWaitForPromotionCompletion, "waiting for promotion completion"},
+		{EventSwitch, "switching gateway config"},
+	}
+
+	for _, step := range steps {
+		// Check if this transition is valid from current state
+		if !m.canTransition(step.event) {
+			continue // Skip if already past this state
+		}
+
+		if err := m.fsm.Event(ctx, step.event); err != nil {
+			return fmt.Errorf("failed during %s: %w", step.description, err)
+		}
+	}
+
+	return nil
+}
+
+// Utility methods
+
+// GetCurrentState returns the current state of the migration
+func (m *Migration) GetCurrentState() string {
+	return m.CurrentState
+}
+
+// canTransition checks if a given event is valid from the current state
+func (m *Migration) canTransition(event string) bool {
+	return m.fsm.Can(event)
+}
+
+// Private migration workflow methods (used by FSM callbacks)
 
 func (m *Migration) initializeMigration(ctx context.Context) error {
 	slog.Info("parsing gateway resource", "gatewayName", m.GatewayNamespace, "kubeConfigPath", m.KubeConfigPath)

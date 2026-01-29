@@ -89,10 +89,13 @@ func (m *MigrationInit) Run() error {
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
 	migration := types.NewMigration(migrationId, m.stateFile, migrationOpts)
-	err := migration.FSM.Event(context.Background(), types.EventInitialize)
-	if err != nil {
-		return fmt.Errorf("failed to initialize migration: %v", err)
+	
+	if err := migration.Initialize(context.Background()); err != nil {
+		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
-	slog.Info("migration initialized", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
+	
+	slog.Info("migration initialized", 
+		"migrationId", migration.MigrationId, 
+		"currentState", migration.GetCurrentState())
 	return nil
 }
