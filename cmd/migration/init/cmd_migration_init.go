@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -138,14 +137,8 @@ func parseMigrationInitOpts() (*MigrationInitOpts, error) {
 	}
 	slog.Info("using kube config path", "path", kubeConfigPath)
 
-	state, err := types.NewStateFromFile(stateFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load existing state file: %v", err)
-	}
-
 	return &MigrationInitOpts{
 		stateFile: stateFile,
-		state:     *state,
 
 		gatewayNamespace:     gatewayNamespace,
 		gatewayCrdName:       gatewayCrdName,

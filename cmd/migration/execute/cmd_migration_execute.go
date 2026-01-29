@@ -3,7 +3,6 @@ package migration_execute
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -84,14 +83,8 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrationOpts() (*MigrationExecuteOpts, error) {
-	state, err := types.NewStateFromFile(stateFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load existing state file: %v", err)
-	}
-
 	return &MigrationExecuteOpts{
-		stateFile: stateFile,
-		state:     *state,
+		stateFile:   stateFile,
 		migrationId: migrationId,
 	}, nil
 }

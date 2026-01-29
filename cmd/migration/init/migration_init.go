@@ -11,7 +11,6 @@ import (
 
 type MigrationInitOpts struct {
 	stateFile string
-	state     types.State
 
 	gatewayNamespace     string
 	gatewayCrdName       string
@@ -32,7 +31,6 @@ type MigrationInitOpts struct {
 
 type MigrationInit struct {
 	stateFile string
-	state     types.State
 
 	gatewayNamespace     string
 	gatewayCrdName       string
@@ -54,7 +52,6 @@ type MigrationInit struct {
 func NewMigrationInit(opts MigrationInitOpts) *MigrationInit {
 	return &MigrationInit{
 		stateFile:            opts.stateFile,
-		state:                opts.state,
 		gatewayNamespace:     opts.gatewayNamespace,
 		gatewayCrdName:       opts.gatewayCrdName,
 		sourceName:           opts.sourceName,
@@ -73,11 +70,7 @@ func NewMigrationInit(opts MigrationInitOpts) *MigrationInit {
 }
 
 func (m *MigrationInit) Run() error {
-
 	migrationOpts := types.MigrationOpts{
-		StateFile:            m.stateFile,
-		State:                m.state,
-
 		GatewayNamespace:     m.gatewayNamespace,
 		GatewayCrdName:       m.gatewayCrdName,
 		SourceName:           m.sourceName,
@@ -95,7 +88,7 @@ func (m *MigrationInit) Run() error {
 	}
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
-	migration := types.NewMigration(migrationId, migrationOpts)
+	migration := types.NewMigration(migrationId, m.stateFile, migrationOpts)
 	err := migration.FSM.Event(context.Background(), types.EventInitialize)
 	if err != nil {
 		return fmt.Errorf("failed to initialize migration: %v", err)
