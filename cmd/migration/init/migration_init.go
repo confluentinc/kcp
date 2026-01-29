@@ -75,6 +75,9 @@ func NewMigrationInit(opts MigrationInitOpts) *MigrationInit {
 func (m *MigrationInit) Run() error {
 
 	migrationOpts := types.MigrationOpts{
+		StateFile:            m.stateFile,
+		State:                m.state,
+
 		GatewayNamespace:     m.gatewayNamespace,
 		GatewayCrdName:       m.gatewayCrdName,
 		SourceName:           m.sourceName,
@@ -93,11 +96,10 @@ func (m *MigrationInit) Run() error {
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
 	migration := types.NewMigration(migrationId, migrationOpts)
-	err := migration.FSM.Event(context.Background(), types.EventKcpInit)
+	err := migration.FSM.Event(context.Background(), types.EventInitialize)
 	if err != nil {
 		return fmt.Errorf("failed to initialize migration: %v", err)
 	}
 	slog.Info("migration initialized", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
-	m.state.UpsertMigration(*migration)
-	return m.state.PersistStateFile(m.stateFile)
+	return nil
 }

@@ -30,29 +30,29 @@ func NewMigrationExecute(opts MigrationExecuteOpts) *MigrationExecute {
 
 func (m *MigrationExecute) Run() error {
 
-	migration, err := types.LoadMigration(m.state, m.migrationId)
+	migration, err := types.LoadMigration(m.stateFile, m.state, m.migrationId)
 	if err != nil {
 		return fmt.Errorf("failed to load migration: %v", err)
 	}
 
-	// Execute the migration
-	err = migration.FSM.Event(context.Background(), types.EventKcpExecute)
+	// fence the gateway
+	err = migration.FSM.Event(context.Background(), types.EventFence)
 	if err != nil {
-		return fmt.Errorf("failed to execute migration: %v", err)
+		return fmt.Errorf("failed to start migration: %v", err)
 	}
-	slog.Info("migration executed", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
-	m.state.UpsertMigration(*migration)
-	err = m.state.PersistStateFile(m.stateFile)
+	
+	// Promote topics
+	err = migration.FSM.Event(context.Background(), types.EventPromote)
 	if err != nil {
-		return fmt.Errorf("failed to persist state file: %v", err)
+		return fmt.Errorf("failed to comlete migration: %v", err)
 	}
 
-	// Promote topics
-	err = migration.FSM.Event(context.Background(), types.EventTopicsPromoted)
+	// Switch over to the new gateway config
+	err = migration.FSM.Event(context.Background(), types.EventSwitch)
 	if err != nil {
-		return fmt.Errorf("failed to promote topics: %v", err)
+		return fmt.Errorf("failed to switch over to the new gateway config: %v", err)
 	}
-	slog.Info("topics promoted", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
-	m.state.UpsertMigration(*migration)
-	return m.state.PersistStateFile(m.stateFile)
+
+	slog.Info("migration completed", "migrationId", migration.MigrationId, "currentState", migration.CurrentState, "fsm", migration.FSM.Current())
+	return nil
 }
