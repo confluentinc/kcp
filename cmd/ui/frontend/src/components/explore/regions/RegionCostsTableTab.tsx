@@ -90,13 +90,13 @@ export const RegionCostsTableTab = ({
             <Table className="min-w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="sticky left-0 bg-white dark:bg-card z-10 w-[150px] max-w-[150px] border-r border-gray-200 dark:border-border">
+                  <TableHead className="sticky left-0 bg-white dark:bg-card z-10 w-[150px] min-w-[150px] max-w-[150px] border-r border-gray-200 dark:border-border overflow-hidden">
                     Service
                   </TableHead>
-                  <TableHead className="sticky left-[150px] bg-white dark:bg-card z-10 w-[250px] max-w-[250px] border-r border-gray-200 dark:border-border">
+                  <TableHead className="sticky left-[150px] bg-white dark:bg-card z-10 w-[250px] min-w-[250px] max-w-[250px] border-r border-gray-200 dark:border-border overflow-hidden">
                     Usage Type
                   </TableHead>
-                  <TableHead className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-border">
+                  <TableHead className="text-center w-[120px] min-w-[120px] max-w-[250px] border-r border-gray-200 dark:border-border">
                     <div className="text-green-600 dark:text-green-400 font-semibold">
                       Total ({formatCostTypeLabel(selectedCostType)})
                     </div>
@@ -117,18 +117,18 @@ export const RegionCostsTableTab = ({
                     key={rowIndex}
                     className="hover:bg-gray-50 dark:hover:bg-gray-700"
                   >
-                    <TableCell className="sticky left-0 bg-white dark:bg-card z-10 font-medium border-r border-gray-200 dark:border-border w-[150px] max-w-[150px]">
+                    <TableCell className="sticky left-0 bg-white dark:bg-card z-10 font-medium border-r border-gray-200 dark:border-border w-[150px] min-w-[150px] max-w-[150px] overflow-hidden">
                       <div
-                        className="truncate pr-2"
+                        className="truncate pr-2 min-w-0"
                         title={row.service}
                       >
                         {row.service}
                       </div>
                     </TableCell>
 
-                    <TableCell className="sticky left-[150px] bg-white dark:bg-card z-10 border-r border-gray-200 dark:border-border w-[250px] max-w-[250px]">
+                    <TableCell className="sticky left-[150px] bg-white dark:bg-card z-10 border-r border-gray-200 dark:border-border w-[250px] min-w-[250px] max-w-[250px] overflow-hidden">
                       <div
-                        className="truncate pr-2 text-sm"
+                        className="truncate pr-2 text-sm min-w-0"
                         title={row.usageType}
                       >
                         {row.usageType}
