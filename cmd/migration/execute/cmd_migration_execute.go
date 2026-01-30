@@ -9,8 +9,10 @@ import (
 )
 
 var (
-	stateFile string
+	stateFile   string
 	migrationId string
+	maxLag      int64
+	maxWaitTime int64 // in seconds
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -31,6 +33,10 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the state file to use for the migration.")
 
 	requiredFlags.StringVar(&migrationId, "migration-id", "", "The ID of the migration to execute.")
+
+	requiredFlags.Int64Var(&maxLag, "max-lag", 0, "Maximum replication lag in milliseconds before proceeding with migration.")
+	
+	requiredFlags.Int64Var(&maxWaitTime, "max-wait-time", 0, "Maximum time in seconds to wait for lags to decrease below threshold.")
 
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -55,6 +61,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 
 	migrationExecuteCmd.MarkFlagRequired("state-file")
 	migrationExecuteCmd.MarkFlagRequired("migration-id")
+	migrationExecuteCmd.MarkFlagRequired("max-lag")
+	migrationExecuteCmd.MarkFlagRequired("max-wait-time")
 
 
 	return migrationExecuteCmd
@@ -86,5 +94,7 @@ func parseMigrationOpts() (*MigrationExecuteOpts, error) {
 	return &MigrationExecuteOpts{
 		stateFile:   stateFile,
 		migrationId: migrationId,
+		maxLag:      maxLag,
+		maxWaitTime: maxWaitTime,
 	}, nil
 }

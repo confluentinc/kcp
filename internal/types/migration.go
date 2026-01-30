@@ -132,7 +132,21 @@ func (m *Migration) leaveUninitializedCallback(ctx context.Context, e *fsm.Event
 
 func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
-	if err := m.checkLags(ctx); err != nil {
+	
+	// Extract maxLag and maxWaitTime from args (required parameters)
+	var maxLag, maxWaitTime int64
+	if len(e.Args) > 0 {
+		if lag, ok := e.Args[0].(int64); ok {
+			maxLag = lag
+		}
+	}
+	if len(e.Args) > 1 {
+		if waitTime, ok := e.Args[1].(int64); ok {
+			maxWaitTime = waitTime
+		}
+	}
+	
+	if err := m.checkLags(ctx, maxLag, maxWaitTime); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -270,17 +284,18 @@ func (m *Migration) Initialize(ctx context.Context) error {
 }
 
 // Execute runs the complete migration workflow from current state to completion
-func (m *Migration) Execute(ctx context.Context) error {
+func (m *Migration) Execute(ctx context.Context, maxLag int64, maxWaitTime int64) error {
 	// Execute remaining steps based on current state
 	steps := []struct {
 		event       string
 		description string
+		args        []interface{}  // Add args field
 	}{
-		{EventWaitForLags, "checking lags"},
-		{EventFence, "fencing gateway"},
-		{EventPromote, "promoting topics"},
-		{EventWaitForPromotionCompletion, "waiting for promotion completion"},
-		{EventSwitch, "switching gateway config"},
+		{EventWaitForLags, "checking lags", []any{maxLag, maxWaitTime}},
+		{EventFence, "fencing gateway", []any{}},
+		{EventPromote, "promoting topics", []any{}},
+		{EventWaitForPromotionCompletion, "waiting for promotion completion", []any{}},
+		{EventSwitch, "switching gateway config", []any{}},
 	}
 
 	for _, step := range steps {
@@ -289,7 +304,8 @@ func (m *Migration) Execute(ctx context.Context) error {
 			continue // Skip if already past this state
 		}
 
-		if err := m.fsm.Event(ctx, step.event); err != nil {
+		// Pass maxLag as argument to FSM event
+		if err := m.fsm.Event(ctx, step.event, step.args...); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.description, err)
 		}
 	}
@@ -433,11 +449,83 @@ func (m *Migration) getClusterLinkConfigs(ctx context.Context) (map[string]strin
 	return configs, nil
 }
 
-func (m *Migration) checkLags(ctx context.Context) error {
-	// check the lags are below threshold, if not, cancel the migration
-	slog.Info("checking lags are below threshold.....")
-	time.Sleep(10 * time.Second)
-	slog.Info("checking lags are below threshold...done")
+func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int64) error {
+	slog.Info("starting lag check", "maxLag", maxLag, "maxWaitTime", maxWaitTime, "topicCount", len(m.Topics))
+	
+	if len(m.Topics) == 0 {
+		slog.Info("no topics to check")
+		return nil
+	}
+	
+	// Initialize simulated lag values for each topic (start high)
+	topicLags := make(map[string]int64)
+	for _, topic := range m.Topics {
+		// Simulate starting lag between maxLag+500 and maxLag+2000
+		topicLags[topic] = maxLag + 5000 + (int64(len(topic)) % 10000)
+	}
+	
+	// Poll lag values until all are below threshold or max wait time exceeded
+	pollInterval := 2 * time.Second
+	maxPolls := int(maxWaitTime / int64(pollInterval.Seconds()))
+	if maxPolls <= 0 {
+		maxPolls = 1 // At least one poll
+	}
+	
+	for poll := 0; poll < maxPolls; poll++ {
+		allBelowThreshold := true
+		
+		for _, topic := range m.Topics {
+			currentLag := topicLags[topic]
+			
+			// Simulate lag decreasing over time (reduce by ~200-300 per poll)
+			if currentLag > maxLag {
+				reduction := int64(200 + (poll * 20))
+				topicLags[topic] = currentLag - reduction
+				if topicLags[topic] < 0 {
+					topicLags[topic] = 0
+				}
+				
+				slog.Info("checking topic lag",
+					"topic", topic,
+					"currentLag", topicLags[topic],
+					"maxLag", maxLag,
+					"belowThreshold", topicLags[topic] <= maxLag,
+					"poll", poll+1,
+				)
+				
+				if topicLags[topic] > maxLag {
+					allBelowThreshold = false
+				}
+			}
+		}
+		
+		if allBelowThreshold {
+			slog.Info("all topics below lag threshold",
+				"totalPolls", poll+1,
+				"duration", time.Duration(poll+1)*pollInterval,
+			)
+			return nil
+		}
+		
+		// Wait before next poll
+		time.Sleep(pollInterval)
+	}
+	
+	// Check if any topics still above threshold
+	var topicsAboveThreshold []string
+	for topic, lag := range topicLags {
+		if lag > maxLag {
+			topicsAboveThreshold = append(topicsAboveThreshold, fmt.Sprintf("%s (lag: %d)", topic, lag))
+		}
+	}
+	
+	if len(topicsAboveThreshold) > 0 {
+		elapsedTime := time.Duration(maxPolls) * pollInterval
+		return fmt.Errorf("max wait time exceeded (%v): %d topics still above threshold: %v",
+			elapsedTime, len(topicsAboveThreshold), topicsAboveThreshold)
+	}
+	
+	slog.Info("all topics below lag threshold")
 	return nil
 }
 

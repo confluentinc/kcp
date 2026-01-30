@@ -11,17 +11,23 @@ import (
 type MigrationExecuteOpts struct {
 	stateFile   string
 	migrationId string
+	maxLag      int64
+	maxWaitTime int64 // in seconds
 }
 
 type MigrationExecute struct {
 	stateFile   string
 	migrationId string
+	maxLag      int64
+	maxWaitTime int64 // in seconds
 }
 
 func NewMigrationExecute(opts MigrationExecuteOpts) *MigrationExecute {
 	return &MigrationExecute{
 		stateFile:   opts.stateFile,
 		migrationId: opts.migrationId,
+		maxLag:      opts.maxLag,
+		maxWaitTime: opts.maxWaitTime,
 	}
 }
 
@@ -35,7 +41,7 @@ func (m *MigrationExecute) Run() error {
 	ctx := context.Background()
 	
 	// Execute the complete migration workflow
-	if err := migration.Execute(ctx); err != nil {
+	if err := migration.Execute(ctx, m.maxLag, m.maxWaitTime); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
