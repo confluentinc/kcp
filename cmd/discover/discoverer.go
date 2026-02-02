@@ -21,6 +21,8 @@ import (
 
 type DiscovererOpts struct {
 	Regions     []string
+	SkipCosts   bool
+	SkipMetrics bool
 	SkipTopics  bool
 	State       *types.State
 	Credentials *types.Credentials
@@ -28,6 +30,8 @@ type DiscovererOpts struct {
 
 type Discoverer struct {
 	regions     []string
+	skipCosts   bool
+	skipMetrics bool
 	skipTopics  bool
 	state       *types.State
 	credentials *types.Credentials
@@ -36,6 +40,8 @@ type Discoverer struct {
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
 		regions:     opts.Regions,
+		skipCosts:   opts.SkipCosts,
+		skipMetrics: opts.SkipMetrics,
 		skipTopics:  opts.SkipTopics,
 		state:       opts.State,
 		credentials: opts.Credentials,
@@ -97,7 +103,7 @@ func (d *Discoverer) discoverRegions() error {
 
 		// discover region-level resources (costs, configurations, cluster ARNs)
 		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
-		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region)
+		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region, d.skipCosts)
 		if err != nil {
 			slog.Error("failed to discover region", "region", region, "error", err)
 			continue
@@ -108,7 +114,7 @@ func (d *Discoverer) discoverRegions() error {
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		for _, clusterArn := range discoveredRegion.ClusterArns {
-			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics)
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics)
 			if err != nil {
 				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
@@ -189,8 +195,8 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		Arn:  aws.ToString(cluster.ClusterArn),
 	}
 
-	// Check which authentication methods are enabled on the cluster
-	var isSaslIamEnabled, isSaslScramEnabled, isTlsEnabled, isUnauthenticatedTLSEnabled, isUnauthenticatedPlaintextEnabled bool
+	// Check which authentication methods are available as options on the cluster
+	var isSaslIamAvailable, isSaslScramAvailable, isTlsAvailable, isUnauthenticatedTLSAvailable, isUnauthenticatedPlaintextAvailable bool
 
 	switch cluster.ClusterType {
 	case kafkatypes.ClusterTypeProvisioned:
@@ -198,16 +204,16 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		if cluster.Provisioned != nil && cluster.Provisioned.ClientAuthentication != nil {
 			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
 				cluster.Provisioned.ClientAuthentication.Sasl.Iam != nil {
-				isSaslIamEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Iam.Enabled)
+				isSaslIamAvailable = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Iam.Enabled)
 			}
 
 			if cluster.Provisioned.ClientAuthentication.Sasl != nil &&
 				cluster.Provisioned.ClientAuthentication.Sasl.Scram != nil {
-				isSaslScramEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Scram.Enabled)
+				isSaslScramAvailable = aws.ToBool(cluster.Provisioned.ClientAuthentication.Sasl.Scram.Enabled)
 			}
 
 			if cluster.Provisioned.ClientAuthentication.Tls != nil {
-				isTlsEnabled = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
+				isTlsAvailable = aws.ToBool(cluster.Provisioned.ClientAuthentication.Tls.Enabled)
 			}
 
 			if cluster.Provisioned.ClientAuthentication.Unauthenticated != nil &&
@@ -216,10 +222,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 
 				encryptionInTransit := cluster.Provisioned.EncryptionInfo.EncryptionInTransit.ClientBroker
 				if encryptionInTransit == kafkatypes.ClientBrokerTls || encryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext {
-					isUnauthenticatedTLSEnabled = true
+					isUnauthenticatedTLSAvailable = true
 				}
 				if encryptionInTransit == kafkatypes.ClientBrokerPlaintext || encryptionInTransit == kafkatypes.ClientBrokerTlsPlaintext {
-					isUnauthenticatedPlaintextEnabled = true
+					isUnauthenticatedPlaintextAvailable = true
 				}
 
 			}
@@ -227,31 +233,25 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 
 	case kafkatypes.ClusterTypeServerless:
 		// Serverless clusters only support IAM authentication
-		isSaslIamEnabled = true
+		isSaslIamAvailable = true
 	}
 
-	// Configure auth methods with priority: unauthenticated_tls > unauthenticated_plaintext > iam > sasl_scram > tls
+	// Configure auth methods with priority: unauthenticated_plaintext > iam > sasl_scram > unauthenticated_tls > tls
 	// Only one method is set as default to avoid conflicts
 	defaultAuthSelected := false
-	if isUnauthenticatedTLSEnabled {
-		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
-			Use: !defaultAuthSelected,
-		}
-		defaultAuthSelected = true
-	}
-	if isUnauthenticatedPlaintextEnabled {
+	if isUnauthenticatedPlaintextAvailable {
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
-	if isSaslIamEnabled {
+	if isSaslIamAvailable {
 		clusterAuth.AuthMethod.IAM = &types.IAMConfig{
 			Use: !defaultAuthSelected,
 		}
 		defaultAuthSelected = true
 	}
-	if isSaslScramEnabled {
+	if isSaslScramAvailable {
 		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
 			Use:      !defaultAuthSelected,
 			Username: "",
@@ -259,7 +259,13 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 		}
 		defaultAuthSelected = true
 	}
-	if isTlsEnabled {
+	if isUnauthenticatedTLSAvailable {
+		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{
+			Use: !defaultAuthSelected,
+		}
+		defaultAuthSelected = true
+	}
+	if isTlsAvailable {
 		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
 			Use:        !defaultAuthSelected,
 			CACert:     "",
@@ -317,8 +323,26 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	arnHeaders := []string{"Cluster Name", "Cluster ARN"}
 	md.AddTable(arnHeaders, arnData)
 
+	md.AddHeading("Cluster Storage", 2)
+	storageHeaders := []string{"Cluster Name", "Storage Mode", "Volume Size (GB)", "Provisioned Throughput"}
+
+	storageData := [][]string{}
+	for _, cluster := range allClusters {
+		storageMode, volumeSize, provisionedThroughput := getClusterStorageInfo(cluster)
+		storageData = append(storageData, []string{
+			cluster.Name,
+			storageMode,
+			volumeSize,
+			provisionedThroughput,
+		})
+	}
+
+	if len(storageData) > 0 {
+		md.AddTable(storageHeaders, storageData)
+	}
+
 	md.AddHeading("Discovered Topics", 2)
-	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+	topicHeaders := []string{"Cluster", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions", "Tiered Storage Topics"}
 
 	topicData := [][]string{}
 	for _, cluster := range allClusters {
@@ -336,11 +360,47 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 			strconv.Itoa(summary.TotalInternalPartitions),
 			strconv.Itoa(summary.CompactTopics),
 			strconv.Itoa(summary.CompactPartitions),
+			strconv.Itoa(summary.RemoteStorageTopics),
 		})
 	}
 
 	if len(topicData) > 0 {
 		md.AddTable(topicHeaders, topicData)
+	}
+
+	// Display tiered storage topics with retention settings per cluster
+	for _, cluster := range allClusters {
+		if cluster.KafkaAdminClientInformation.Topics == nil {
+			continue
+		}
+
+		tieredStorageTopics := [][]string{}
+		for _, topic := range cluster.KafkaAdminClientInformation.Topics.Details {
+			// Check if remote.storage.enable is true
+			if remoteStorage, exists := topic.Configurations["remote.storage.enable"]; exists && remoteStorage != nil && *remoteStorage == "true" {
+				localRetentionMs := "N/A"
+				retentionMs := "N/A"
+
+				if val, exists := topic.Configurations["local.retention.ms"]; exists && val != nil {
+					localRetentionMs = *val
+				}
+				if val, exists := topic.Configurations["retention.ms"]; exists && val != nil {
+					retentionMs = *val
+				}
+
+				tieredStorageTopics = append(tieredStorageTopics, []string{
+					topic.Name,
+					localRetentionMs,
+					retentionMs,
+				})
+			}
+		}
+
+		if len(tieredStorageTopics) > 0 {
+			md.AddHeading(fmt.Sprintf("Tiered Storage Topics - %s", cluster.Name), 3)
+			tieredStorageHeaders := []string{"Topic Name", "Local Retention (ms)", "Retention (ms)"}
+			md.AddTable(tieredStorageHeaders, tieredStorageTopics)
+		}
 	}
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
@@ -362,4 +422,55 @@ func getPublicAccess(cluster types.DiscoveredCluster) string {
 	}
 
 	return "false"
+}
+
+func getClusterStorageInfo(cluster types.DiscoveredCluster) (storageMode, volumeSize, provisionedThroughput string) {
+	clusterType := cluster.AWSClientInformation.MskClusterConfig.ClusterType
+
+	if clusterType == kafkatypes.ClusterTypeServerless {
+		return "N/A (Serverless)", "N/A", "N/A"
+	}
+
+	if clusterType == kafkatypes.ClusterTypeProvisioned && cluster.AWSClientInformation.MskClusterConfig.Provisioned != nil {
+		provisioned := cluster.AWSClientInformation.MskClusterConfig.Provisioned
+
+		// Get storage mode
+		storageMode = string(provisioned.StorageMode)
+		if storageMode == "" {
+			storageMode = "LOCAL"
+		}
+
+		// Get volume size
+		if provisioned.BrokerNodeGroupInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize != nil {
+			volumeSize = strconv.Itoa(int(*provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize))
+		} else {
+			volumeSize = "N/A"
+		}
+
+		// Get provisioned throughput
+		if provisioned.BrokerNodeGroupInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo != nil &&
+			provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.ProvisionedThroughput != nil {
+			pt := provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.ProvisionedThroughput
+			if pt.Enabled != nil && *pt.Enabled {
+				if pt.VolumeThroughput != nil {
+					provisionedThroughput = strconv.Itoa(int(*pt.VolumeThroughput)) + " MiB/s"
+				} else {
+					provisionedThroughput = "Enabled"
+				}
+			} else {
+				provisionedThroughput = "Disabled"
+			}
+		} else {
+			provisionedThroughput = "N/A"
+		}
+
+		return storageMode, volumeSize, provisionedThroughput
+	}
+
+	return "N/A", "N/A", "N/A"
 }

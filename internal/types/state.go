@@ -219,7 +219,8 @@ type DiscoveredRegion struct {
 	ClusterArns []string `json:"-"`
 }
 
-// RefreshClusters replaces the cluster list but preserves KafkaAdminClientInformation from existing clusters
+// RefreshClusters replaces the cluster list but merges KafkaAdminClientInformation from existing clusters
+// New discoveries take precedence over old values (only uses old values when new values are empty/nil)
 func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
 	// build map of ARN -> KafkaAdminClientInformation from existing clusters
 	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
@@ -230,12 +231,120 @@ func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
 	// replace cluster list with new discoveries
 	dr.Clusters = newClusters
 
-	// restore admin info for clusters that still exist
+	// merge admin info: new discoveries take precedence, only use old values when new is empty/nil
 	for i := range dr.Clusters {
-		if adminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
-			dr.Clusters[i].KafkaAdminClientInformation = adminInfo
+		if oldAdminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
+			newAdminInfo := &dr.Clusters[i].KafkaAdminClientInformation
+			newAdminInfo.MergeFrom(oldAdminInfo)
 		}
 	}
+}
+
+// MergeFrom merges values from another KafkaAdminClientInformation
+// New discoveries are added, old data is preserved, duplicates are merged (new takes precedence)
+func (c *KafkaAdminClientInformation) MergeFrom(other KafkaAdminClientInformation) {
+	// Only use old ClusterID if new one is empty
+	if c.ClusterID == "" {
+		c.ClusterID = other.ClusterID
+	}
+
+	// Merge Topics: new topics take precedence, old topics preserved if not re-discovered
+	c.Topics = mergeTopics(c.Topics, other.Topics)
+
+	// Merge ACLs: combine both, deduplicate
+	c.Acls = mergeAcls(c.Acls, other.Acls)
+
+	// Merge SelfManagedConnectors: new connectors take precedence, old preserved if not re-discovered
+	c.SelfManagedConnectors = mergeSelfManagedConnectors(c.SelfManagedConnectors, other.SelfManagedConnectors)
+}
+
+// mergeTopics merges two Topics, with newTopics taking precedence for duplicates (by name)
+func mergeTopics(newTopics, oldTopics *Topics) *Topics {
+	// If no old topics, just return new (even if empty)
+	if oldTopics == nil || len(oldTopics.Details) == 0 {
+		return newTopics
+	}
+
+	// If no new topics, preserve old
+	if newTopics == nil || len(newTopics.Details) == 0 {
+		return oldTopics
+	}
+
+	// Merge: start with old, update/add with new
+	topicsByName := make(map[string]TopicDetails)
+	for _, topic := range oldTopics.Details {
+		topicsByName[topic.Name] = topic
+	}
+	for _, topic := range newTopics.Details {
+		topicsByName[topic.Name] = topic // new takes precedence
+	}
+
+	// Convert back to slice
+	mergedDetails := make([]TopicDetails, 0, len(topicsByName))
+	for _, topic := range topicsByName {
+		mergedDetails = append(mergedDetails, topic)
+	}
+
+	return &Topics{
+		Details: mergedDetails,
+		Summary: CalculateTopicSummaryFromDetails(mergedDetails),
+	}
+}
+
+// mergeAcls merges two ACL slices, deduplicating by all fields
+func mergeAcls(newAcls, oldAcls []Acls) []Acls {
+	if len(oldAcls) == 0 {
+		return newAcls
+	}
+	if len(newAcls) == 0 {
+		return oldAcls
+	}
+
+	// Use composite key for deduplication
+	aclKey := func(a Acls) string {
+		return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+			a.ResourceType, a.ResourceName, a.ResourcePatternType,
+			a.Principal, a.Host, a.Operation, a.PermissionType)
+	}
+
+	aclsByKey := make(map[string]Acls)
+	for _, acl := range oldAcls {
+		aclsByKey[aclKey(acl)] = acl
+	}
+	for _, acl := range newAcls {
+		aclsByKey[aclKey(acl)] = acl // new takes precedence
+	}
+
+	merged := make([]Acls, 0, len(aclsByKey))
+	for _, acl := range aclsByKey {
+		merged = append(merged, acl)
+	}
+	return merged
+}
+
+// mergeSelfManagedConnectors merges connectors, with new taking precedence for duplicates (by name)
+func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnectors) *SelfManagedConnectors {
+	if oldConnectors == nil || len(oldConnectors.Connectors) == 0 {
+		return newConnectors
+	}
+	if newConnectors == nil || len(newConnectors.Connectors) == 0 {
+		return oldConnectors
+	}
+
+	connectorsByName := make(map[string]SelfManagedConnector)
+	for _, c := range oldConnectors.Connectors {
+		connectorsByName[c.Name] = c
+	}
+	for _, c := range newConnectors.Connectors {
+		connectorsByName[c.Name] = c // new takes precedence
+	}
+
+	merged := make([]SelfManagedConnector, 0, len(connectorsByName))
+	for _, c := range connectorsByName {
+		merged = append(merged, c)
+	}
+
+	return &SelfManagedConnectors{Connectors: merged}
 }
 
 type DiscoveredCluster struct {

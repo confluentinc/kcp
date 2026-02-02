@@ -168,8 +168,13 @@ Before starting the migration process, you need to make some key decisions about
 
 The kcp discover command performs a full discovery of all MSK clusters in an AWS account across multiple regions, together with their associated resources including topics as well as costs and metrics.
 
->[!NOTE]
-> Clusters with a large topic count may take a considerable amount of time to complete the discovery due to limits on the MSK API. If you wish to skip the topic discovery, you can use the `--skip-topics` flag and later use the `kcp scan clusters` command to perform topic discovery through the Kafka Admin API that does not have the same request limits. However, this will require the cluster to be either publicly accessible or within the same network as kcp to complete.
+**Optional Flags**
+
+You can skip certain discovery operations using the following flags:
+
+- `--skip-topics`: Skips the topic discovery through the AWS MSK API. Clusters with a large topic count may take a considerable amount of time to complete the discovery due to limits on the MSK API. If you wish to skip the topic discovery, you can use this flag and later use the `kcp scan clusters` command to perform topic discovery through the Kafka Admin API that does not have the same request limits. However, this will require the cluster to be either publicly accessible or within the same network as kcp to complete.
+- `--skip-costs`: Skips the cost discovery through the AWS Cost Explorer API. Useful when you don't have Cost Explorer permissions or want faster discovery runs.
+- `--skip-metrics`: Skips the metrics discovery through the AWS CloudWatch API. Useful when you don't have CloudWatch permissions or want faster discovery runs.
 
 **Example Usage**
 
@@ -178,6 +183,10 @@ The kcp discover command performs a full discovery of all MSK clusters in an AWS
 or
 
 `kcp discover --region us-east-1,eu-west-3`
+
+or with skip flags:
+
+`kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics`
 
 The command will produce a cluster-credentials.yaml and a kcp-state.json file. An overview will be output to the terminal and a more in-depth breakdown can be seen in the [UI](#kcp-ui).
 
@@ -259,7 +268,11 @@ This command requires the following permissions:
 ```
 
 >[!NOTE]
-> Some permissions like 'MSKClusterConnect' or 'MSKTopicActions' can be fine-grained to specifically the cluster or topics by  
+> Some permissions are optional depending on which skip flags you use:
+> - If using `--skip-topics`, the `MSKTopicActions` permissions are not required
+> - If using `--skip-costs`, the `ce:GetCostAndUsage` permission is not required
+> - If using `--skip-metrics`, the CloudWatch permissions (`cloudwatch:GetMetricData`, `cloudwatch:GetMetricStatistics`, `cloudwatch:ListMetrics`) are not required
+>
 
 ### `kcp scan`
 
@@ -1640,12 +1653,17 @@ kcp update --check-only
 **Behavior**:
 
 - Automatically detects the current version and compares with the latest GitHub release
-- Creates a backup of the current binary before updating
+- With `--check-only`, reports available updates without installing
 - Prompts for confirmation unless `--force` is used
-- Automatically rolls back on update failure
 - Skips update check for development versions unless `--force` is specified
 
 > [!NOTE]
-> This command may require sudo permissions to update the binary, depending on the installation location.
+> **Permission Requirements**: If kcp is installed in a system directory (e.g., `/usr/local/bin`), the update command will check permissions early and exit with an error if sudo is required. In this case, re-run the command with sudo:
+> 
+> ```shell
+> sudo kcp update
+> ```
+> 
+> The error message will include the exact command to run, preserving any flags you used (e.g., `sudo kcp update --force`).
 
 ---

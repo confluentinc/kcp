@@ -42,7 +42,7 @@ func (cs *ClustersScanner) Run() error {
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {
 			if err := cs.scanCluster(regionAuth.Name, clusterAuth); err != nil {
-				slog.Error("failed to scan cluster", "cluster", clusterAuth.Arn, "error", err)
+				slog.Info("⏭️ skipping cluster", "cluster", clusterAuth.Name, "error", err)
 				continue
 			}
 		}
@@ -170,7 +170,7 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 	md.AddHeading("Scan Summary", 1)
 	md.AddParagraph("This report shows a summary of scanned Kafka resources across all clusters. More detailed information can be found in the `kcp ui`.")
 
-	headers := []string{"Cluster Name", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions"}
+	headers := []string{"Cluster Name", "Topics", "Internal Topics", "Total Partitions", "Total Internal Partitions", "Compact Topics", "Compact Partitions", "Tiered Storage Topics"}
 	data := [][]string{}
 	for _, cluster := range allClusters {
 		if cluster.KafkaAdminClientInformation.Topics != nil {
@@ -183,25 +183,36 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 				strconv.Itoa(summary.TotalInternalPartitions),
 				strconv.Itoa(summary.CompactTopics),
 				strconv.Itoa(summary.CompactPartitions),
+				strconv.Itoa(summary.RemoteStorageTopics),
 			})
 		}
 	}
-
 	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster availabe to prove this.
 	if len(data) > 0 {
 		md.AddHeading("Topics", 2)
 		md.AddTable(headers, data)
+
+		md.AddParagraph("Note: Missing topics may indicate insufficient user permissions to describe the cluster or topics.")
 	}
 
-	aclsByPrincipal := cs.getACLsByPrincipal(allClusters)
-	if len(aclsByPrincipal) > 0 {
-		md.AddHeading("ACLs", 2)
-		headers := []string{"Principal", "Total ACLs"}
-		data := [][]string{}
-		for principal, count := range aclsByPrincipal {
-			data = append(data, []string{principal, strconv.Itoa(count)})
+	for _, cluster := range allClusters {
+		md.AddHeading("Principals & ACLs - " + cluster.Name, 3)
+		headers = []string{"Principal", "Total ACLs"}
+		aclsByPrincipal := make(map[string]int)
+
+		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
+			aclsByPrincipal[acl.Principal]++
 		}
-		md.AddTable(headers, data)
+		
+		if len(aclsByPrincipal) > 0 {
+			data = [][]string{}
+		
+			for principal, count := range aclsByPrincipal {
+				data = append(data, []string{principal, strconv.Itoa(count)})
+			}
+		
+			md.AddTable(headers, data)
+		}
 	}
 
 	connectorsByState := cs.getConnectorsByState(allClusters)

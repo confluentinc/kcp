@@ -278,6 +278,10 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	// Recurring statefile values.
 	vpcId := aws.ToString(&cluster.AWSClientInformation.ClusterNetworking.VpcId)
 	region := aws.ToString(&cluster.Region)
+
+	if aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID) == "" {
+		return nil, fmt.Errorf("cluster %s has no cluster ID. This could be because the cluster has not had the `kcp scan cluster` command run against it.", cluster.Name)
+	}
 	mskClusterId := aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID)
 
 	opts := &MigrationInfraOpts{
@@ -338,6 +342,8 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 				return nil, fmt.Errorf("no security groups found in cluster networking information")
 			}
 		}
+
+		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
 
 		opts.MigrationWizardRequest.ExtOutboundBrokers = buildExtOutboundBrokers(cluster)
 
