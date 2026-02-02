@@ -16,7 +16,7 @@ import (
 
 // Kubernetes resource constants
 const (
-	ConfluentNamespace     = "confluent"
+	// ConfluentNamespace     = "kcp"
 	GatewayGroup           = "platform.confluent.io"
 	GatewayVersion         = "v1beta1"
 	GatewayResourcePlural  = "gateways"
@@ -151,10 +151,10 @@ func validateStreamingDomains(gateway GatewayResource, config GatewayConfig) err
 			config.SourceName, streamingDomainNames)
 	}
 
-	if !slices.Contains(streamingDomainNames, config.DestinationName) {
-		return fmt.Errorf("destination streaming domain '%s' not found in gateway streamingDomains. Available domains: %v",
-			config.DestinationName, streamingDomainNames)
-	}
+	// if !slices.Contains(streamingDomainNames, config.DestinationName) {
+	// 	return fmt.Errorf("destination streaming domain '%s' not found in gateway streamingDomains. Available domains: %v",
+	// 		config.DestinationName, streamingDomainNames)
+	// }
 
 	return nil
 }
@@ -179,10 +179,10 @@ func validateRoutes(gateway GatewayResource, config GatewayConfig) error {
 			config.SourceRouteName, routeNames)
 	}
 
-	if !slices.Contains(routeNames, config.DestinationRouteName) {
-		return fmt.Errorf("destination route '%s' not found in gateway routes. Available routes: %v",
-			config.DestinationRouteName, routeNames)
-	}
+	// if !slices.Contains(routeNames, config.DestinationRouteName) {
+	// 	return fmt.Errorf("destination route '%s' not found in gateway routes. Available routes: %v",
+	// 		config.DestinationRouteName, routeNames)
+	// }
 
 	return nil
 }

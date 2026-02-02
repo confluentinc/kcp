@@ -14,13 +14,13 @@ import (
 var (
 	stateFile string
 
-	gatewayNamespace     string
-	gatewayCrdName       string
-	sourceName           string
-	destinationName      string
-	sourceRouteName      string
-	destinationRouteName string
-	kubeConfigPath       string
+	gatewayNamespace string
+	gatewayCrdName   string
+	sourceName       string
+	// destinationName      string
+	sourceRouteName string
+	// destinationRouteName string
+	kubeConfigPath string
 
 	clusterId           string
 	clusterRestEndpoint string
@@ -55,9 +55,9 @@ func NewMigrationInitCmd() *cobra.Command {
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use by the migration.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use by the migration.")
 	requiredFlags.StringVar(&sourceName, "source-name", "", "The name of the streaming domain for the source (MSK) cluster.")
-	requiredFlags.StringVar(&destinationName, "dest-name", "", "The name of the streaming domain for the destination (CC) cluster.")
+	// requiredFlags.StringVar(&destinationName, "dest-name", "", "The name of the streaming domain for the destination (CC) cluster.")
 	requiredFlags.StringVar(&sourceRouteName, "source-route-name", "", "The name of the source route that is currently in use.")
-	requiredFlags.StringVar(&destinationRouteName, "dest-route-name", "", "The name of the destination route that will be used for the migration.")
+	// requiredFlags.StringVar(&destinationRouteName, "dest-route-name", "", "The name of the destination route that will be used for the migration.")
 
 	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -97,9 +97,9 @@ func NewMigrationInitCmd() *cobra.Command {
 	migrationInitCmd.MarkFlagRequired("cluster-api-key")
 	migrationInitCmd.MarkFlagRequired("cluster-api-secret")
 	migrationInitCmd.MarkFlagRequired("source-name")
-	migrationInitCmd.MarkFlagRequired("dest-name")
+	// migrationInitCmd.MarkFlagRequired("dest-name")
 	migrationInitCmd.MarkFlagRequired("source-route-name")
-	migrationInitCmd.MarkFlagRequired("dest-route-name")
+	// migrationInitCmd.MarkFlagRequired("dest-route-name")
 
 	return migrationInitCmd
 }
@@ -143,9 +143,9 @@ func parseMigrationInitializerOpts() (*MigrationInitializerOpts, error) {
 		gatewayNamespace:     gatewayNamespace,
 		gatewayCrdName:       gatewayCrdName,
 		sourceName:           sourceName,
-		destinationName:      destinationName,
+		// destinationName:      destinationName,
 		sourceRouteName:      sourceRouteName,
-		destinationRouteName: destinationRouteName,
+		// destinationRouteName: destinationRouteName,
 		kubeConfigPath:       kubeConfigPath,
 		clusterLinkName:      clusterLinkName,
 		clusterRestEndpoint:  clusterRestEndpoint,

@@ -360,7 +360,7 @@ func (m *Migration) initializeMigration(ctx context.Context) error {
 }
 
 func (m *Migration) checkK8sPermissions(ctx context.Context) error {
-	allowed, err := m.gatewayService.CheckPermissions(ctx, "update", gateway.GatewayResourcePlural, gateway.GatewayGroup, gateway.ConfluentNamespace)
+	allowed, err := m.gatewayService.CheckPermissions(ctx, "update", gateway.GatewayResourcePlural, gateway.GatewayGroup, m.GatewayNamespace)
 	if err != nil {
 		return fmt.Errorf("permission check failed: %w", err)
 	}
@@ -374,7 +374,7 @@ func (m *Migration) checkK8sPermissions(ctx context.Context) error {
 }
 
 func (m *Migration) validateGatewayResources(ctx context.Context) ([]byte, error) {
-	gatewayYAML, err := m.gatewayService.GetGatewayYAML(ctx, gateway.ConfluentNamespace, m.GatewayCrdName)
+	gatewayYAML, err := m.gatewayService.GetGatewayYAML(ctx, m.GatewayNamespace, m.GatewayCrdName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get gateway as YAML: %w", err)
 	}
