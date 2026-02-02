@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,9 +64,17 @@ func (ms *MSKService) IsFetchFromFollowerEnabled(ctx context.Context, cluster ka
 	// First try to use it directly as plain text
 	propertiesText := string(serverProperties)
 
-	if strings.Contains(propertiesText, "replica.selector.class=org.apache.kafka.common.replica.RackAwareReplicaSelector") {
+	// Match replica.selector.class with optional spaces around the equals sign
+	// This handles variations like:
+	// - replica.selector.class=org.apache.kafka.common.replica.RackAwareReplicaSelector
+	// - replica.selector.class = org.apache.kafka.common.replica.RackAwareReplicaSelector
+	// - replica.selector.class= org.apache.kafka.common.replica.RackAwareReplicaSelector
+	// - replica.selector.class =org.apache.kafka.common.replica.RackAwareReplicaSelector
+	pattern := regexp.MustCompile(`replica\.selector\.class\s*=\s*org\.apache\.kafka\.common\.replica\.RackAwareReplicaSelector`)
+	if pattern.MatchString(propertiesText) {
 		return true, nil
 	}
+
 	return false, nil
 }
 
@@ -360,11 +369,11 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 			if err != nil {
 				// Capture failure (typically 429 - rate limiting) for retry.
 				slog.Warn("failed to describe topic, queuing for retry", "topicName", name, "error", err)
-				
+
 				failedTopicsMu.Lock()
 				defer failedTopicsMu.Unlock()
 				failedTopics = append(failedTopics, name)
-				
+
 				return
 			}
 
