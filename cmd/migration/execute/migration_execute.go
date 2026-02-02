@@ -1,4 +1,4 @@
-package migration_execute
+package execute
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package migration_init
+package init
 
 import (
 	"context"
