@@ -113,20 +113,20 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationInitOpts()
+	opts, err := parseMigrationInitializerOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse migration opts: %v", err)
 	}
 
-	migrationInit := NewMigrationInit(*opts)
-	if err := migrationInit.Run(); err != nil {
+	migrationInitializer := NewMigrationInitializer(*opts)
+	if err := migrationInitializer.Run(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func parseMigrationInitOpts() (*MigrationInitOpts, error) {
+func parseMigrationInitializerOpts() (*MigrationInitializerOpts, error) {
 	if kubeConfigPath == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
@@ -137,7 +137,7 @@ func parseMigrationInitOpts() (*MigrationInitOpts, error) {
 	}
 	slog.Info("using kube config path", "path", kubeConfigPath)
 
-	return &MigrationInitOpts{
+	return &MigrationInitializerOpts{
 		stateFile: stateFile,
 
 		gatewayNamespace:     gatewayNamespace,

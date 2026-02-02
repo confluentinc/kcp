@@ -77,21 +77,21 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationOpts()
+	opts, err := parseMigrationExecutorOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse migration opts: %v", err)
+		return fmt.Errorf("failed to parse migration execute opts: %v", err)
 	}
 
-	migrationExecute := NewMigrationExecute(*opts)
-	if err := migrationExecute.Run(); err != nil {
+	migrationExecutor := NewMigrationExecutor(*opts)
+	if err := migrationExecutor.Run(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func parseMigrationOpts() (*MigrationExecuteOpts, error) {
-	return &MigrationExecuteOpts{
+func parseMigrationExecutorOpts() (*MigrationExecutorOpts, error) {
+	return &MigrationExecutorOpts{
 		stateFile:   stateFile,
 		migrationId: migrationId,
 		maxLag:      maxLag,

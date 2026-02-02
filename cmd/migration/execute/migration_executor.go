@@ -8,22 +8,22 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type MigrationExecuteOpts struct {
+type MigrationExecutorOpts struct {
 	stateFile   string
 	migrationId string
 	maxLag      int64
 	maxWaitTime int64 // in seconds
 }
 
-type MigrationExecute struct {
+type MigrationExecutor struct {
 	stateFile   string
 	migrationId string
 	maxLag      int64
 	maxWaitTime int64 // in seconds
 }
 
-func NewMigrationExecute(opts MigrationExecuteOpts) *MigrationExecute {
-	return &MigrationExecute{
+func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
+	return &MigrationExecutor{
 		stateFile:   opts.stateFile,
 		migrationId: opts.migrationId,
 		maxLag:      opts.maxLag,
@@ -31,7 +31,7 @@ func NewMigrationExecute(opts MigrationExecuteOpts) *MigrationExecute {
 	}
 }
 
-func (m *MigrationExecute) Run() error {
+func (m *MigrationExecutor) Run() error {
 	// load the migration from the state file
 	migration, err := types.LoadMigration(m.stateFile, m.migrationId)
 	if err != nil {

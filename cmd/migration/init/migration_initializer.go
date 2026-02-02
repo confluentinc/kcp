@@ -9,7 +9,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type MigrationInitOpts struct {
+type MigrationInitializerOpts struct {
 	stateFile string
 
 	gatewayNamespace     string
@@ -29,17 +29,17 @@ type MigrationInitOpts struct {
 	authMode            string
 }
 
-type MigrationInit struct {
-	opts MigrationInitOpts
+type MigrationInitializer struct {
+	opts MigrationInitializerOpts
 }
 
-func NewMigrationInit(opts MigrationInitOpts) *MigrationInit {
-	return &MigrationInit{
+func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitializer {
+	return &MigrationInitializer{
 		opts: opts,
 	}
 }
 
-func (m *MigrationInit) Run() error {
+func (m *MigrationInitializer) Run() error {
 	migrationOpts := types.MigrationOpts{
 		GatewayNamespace:     m.opts.gatewayNamespace,
 		GatewayCrdName:       m.opts.gatewayCrdName,
