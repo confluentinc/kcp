@@ -135,10 +135,10 @@ func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) 
 	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
 
 	// Extract maxLag and maxWaitTime from args (required parameters)
-	var maxLag, maxWaitTime int64
+	var threshold, maxWaitTime int64
 	if len(e.Args) > 0 {
 		if lag, ok := e.Args[0].(int64); ok {
-			maxLag = lag
+			threshold = lag
 		}
 	}
 	if len(e.Args) > 1 {
@@ -147,7 +147,19 @@ func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) 
 		}
 	}
 
-	if err := m.checkLags(ctx, maxLag, maxWaitTime); err != nil {
+	var clusterApiKey, clusterApiSecret string
+	if len(e.Args) > 2 {
+		if key, ok := e.Args[2].(string); ok {
+			clusterApiKey = key
+		}
+	}
+	if len(e.Args) > 3 {
+		if secret, ok := e.Args[3].(string); ok {
+			clusterApiSecret = secret
+		}
+	}
+
+	if err := m.checkLags(ctx, threshold, maxWaitTime, clusterApiKey, clusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -285,14 +297,14 @@ func (m *Migration) Initialize(ctx context.Context) error {
 }
 
 // Execute runs the complete migration workflow from current state to completion
-func (m *Migration) Execute(ctx context.Context, maxLag int64, maxWaitTime int64) error {
+func (m *Migration) Execute(ctx context.Context, threshold int64, maxWaitTime int64, clusterApiKey string, clusterApiSecret string) error {
 	// Execute remaining steps based on current state
 	steps := []struct {
 		event       string
 		description string
 		args        []interface{} // Add args field
 	}{
-		{EventWaitForLags, "checking lags", []any{maxLag, maxWaitTime}},
+		{EventWaitForLags, "checking lags", []any{threshold, maxWaitTime, clusterApiKey, clusterApiSecret}},
 		{EventFence, "fencing gateway", []any{}},
 		{EventPromote, "promoting topics", []any{}},
 		{EventWaitForPromotionCompletion, "waiting for promotion completion", []any{}},
@@ -305,7 +317,7 @@ func (m *Migration) Execute(ctx context.Context, maxLag int64, maxWaitTime int64
 			continue // Skip if already past this state
 		}
 
-		// Pass maxLag as argument to FSM event
+		// Pass threshold as argument to FSM event
 		if err := m.fsm.Event(ctx, step.event, step.args...); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.description, err)
 		}
@@ -422,7 +434,7 @@ func (m *Migration) validateClusterLink(ctx context.Context) error {
 
 	clusterLinkTopics, inactiveTopics := clusterlink.ClassifyMirrorTopics(mirrorTopics)
 	if len(inactiveTopics) > 0 {
-		return fmt.Errorf("%d mirror topics are not active: %s",len(inactiveTopics), strings.Join(inactiveTopics, ", "))
+		return fmt.Errorf("%d mirror topics are not active: %s", len(inactiveTopics), strings.Join(inactiveTopics, ", "))
 	}
 
 	if len(m.Topics) > 0 {
@@ -455,84 +467,106 @@ func (m *Migration) getClusterLinkConfigs(ctx context.Context) (map[string]strin
 	return configs, nil
 }
 
-func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int64) error {
-	slog.Info("starting lag check", "maxLag", maxLag, "maxWaitTime", maxWaitTime, "topicCount", len(m.Topics))
+// checkLags polls mirror topics via the cluster link service until all partition lags are below threshold.
+// It runs until either all lags are below threshold (success), maxWaitTime is exceeded (error), or context is cancelled.
+func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime int64, clusterApiKey string, clusterApiSecret string) error {
+	slog.Info("starting lag check", "threshold", threshold, "maxWaitTime", maxWaitTime, "topicCount", len(m.Topics))
 
+	slog.Info("clusterApiKey", "clusterApiKey", clusterApiKey)
+	slog.Info("clusterApiSecret", "clusterApiSecret", clusterApiSecret)
+
+	// Early exit if no topics to check
 	if len(m.Topics) == 0 {
 		slog.Info("no topics to check")
 		return nil
 	}
 
-	// Initialize simulated lag values for each topic (start high)
-	topicLags := make(map[string]int64)
-	for _, topic := range m.Topics {
-		// Simulate starting lag between maxLag+500 and maxLag+2000
-		topicLags[topic] = maxLag + 5000 + (int64(len(topic)) % 10000)
+	// Build cluster link configuration for API calls
+	config := clusterlink.Config{
+		RestEndpoint: m.ClusterRestEndpoint,
+		ClusterID:    m.ClusterId,
+		LinkName:     m.ClusterLinkName,
+		APIKey:       clusterApiKey,
+		APISecret:    clusterApiSecret,
 	}
 
-	// Poll lag values until all are below threshold or max wait time exceeded
+	// Set up polling interval (check every 2 seconds)
 	pollInterval := 2 * time.Second
-	maxPolls := int(maxWaitTime / int64(pollInterval.Seconds()))
-	if maxPolls <= 0 {
-		maxPolls = 1 // At least one poll
-	}
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
 
-	for poll := 0; poll < maxPolls; poll++ {
-		allBelowThreshold := true
+	// Record start time for timeout tracking
+	startTime := time.Now()
+	maxWaitDuration := time.Duration(maxWaitTime) * time.Second
 
+	// Main polling loop - continues until all lags are below threshold, timeout, or context cancelled
+	for {
+		// Check for context cancellation before each iteration
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Check if maxWaitTime has been exceeded
+		elapsed := time.Since(startTime)
+		if elapsed >= maxWaitDuration {
+			return fmt.Errorf("max wait time exceeded (%v): lag threshold (%d) not met within %v", elapsed, threshold, maxWaitDuration)
+		}
+
+		// Fetch current mirror topic status from cluster link API
+		mirrorTopics, err := m.clusterLinkService.ListMirrorTopics(ctx, config)
+		if err != nil {
+			return fmt.Errorf("failed to list mirror topics: %w", err)
+		}
+
+		// Build a map of topics we care about (filter out unrelated topics)
+		topicMap := make(map[string]bool)
 		for _, topic := range m.Topics {
-			currentLag := topicLags[topic]
+			topicMap[topic] = true
+		}
 
-			// Simulate lag decreasing over time (reduce by ~200-300 per poll)
-			if currentLag > maxLag {
-				reduction := int64(200 + (poll * 20))
-				topicLags[topic] = currentLag - reduction
-				if topicLags[topic] < 0 {
-					topicLags[topic] = 0
-				}
+		// Check lag for all partitions of all relevant mirror topics
+		allLagsBelowThreshold := true
+		var topicsWithLag []string
 
-				slog.Info("checking topic lag",
-					"topic", topic,
-					"currentLag", topicLags[topic],
-					"maxLag", maxLag,
-					"belowThreshold", topicLags[topic] <= maxLag,
-					"poll", poll+1,
-				)
+		for _, mirrorTopic := range mirrorTopics {
+			// Skip topics not in our migration list
+			if !topicMap[mirrorTopic.MirrorTopicName] {
+				continue
+			}
 
-				if topicLags[topic] > maxLag {
-					allBelowThreshold = false
+			// Check each partition's lag
+			for _, lag := range mirrorTopic.MirrorLags {
+				if lag.Lag >= int(threshold) {
+					allLagsBelowThreshold = false
+					topicsWithLag = append(topicsWithLag, fmt.Sprintf("%s[partition:%d](lag:%d)",
+						mirrorTopic.MirrorTopicName, lag.Partition, lag.Lag))
 				}
 			}
 		}
 
-		if allBelowThreshold {
-			slog.Info("all topics below lag threshold",
-				"totalPolls", poll+1,
-				"duration", time.Duration(poll+1)*pollInterval,
-			)
+		// Success: all partition lags are below threshold
+		if allLagsBelowThreshold {
+			slog.Info("all mirror topic lags are below threshold", "threshold", threshold)
 			return nil
 		}
 
-		// Wait before next poll
-		time.Sleep(pollInterval)
-	}
+		// Log progress: show sample of topics/partitions still with lag
+		sampleSize := len(topicsWithLag)
+		if sampleSize > 5 {
+			sampleSize = 5
+		}
+		elapsed = time.Since(startTime)
+		slog.Info("mirror topic lags still present", "totalTopicsWithLag", len(topicsWithLag), "sample", topicsWithLag[:sampleSize], "elapsed", elapsed, "remaining", maxWaitDuration-elapsed)
 
-	// Check if any topics still above threshold
-	var topicsAboveThreshold []string
-	for topic, lag := range topicLags {
-		if lag > maxLag {
-			topicsAboveThreshold = append(topicsAboveThreshold, fmt.Sprintf("%s (lag: %d)", topic, lag))
+		// Wait for next poll interval or context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C: // Continue polling
 		}
 	}
-
-	if len(topicsAboveThreshold) > 0 {
-		elapsedTime := time.Duration(maxPolls) * pollInterval
-		return fmt.Errorf("max wait time exceeded (%v): %d topics still above threshold: %v",
-			elapsedTime, len(topicsAboveThreshold), topicsAboveThreshold)
-	}
-
-	slog.Info("all topics below lag threshold")
-	return nil
 }
 
 func (m *Migration) fenceGateway(ctx context.Context) error {

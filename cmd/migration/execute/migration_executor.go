@@ -9,10 +9,12 @@ import (
 )
 
 type MigrationExecutorOpts struct {
-	stateFile   string
-	migrationId string
-	maxLag      int64
-	maxWaitTime int64 // in seconds
+	stateFile        string
+	migrationId      string
+	threshold        int64
+	maxWaitTime      int64 // in seconds
+	clusterApiKey    string
+	clusterApiSecret string
 }
 
 type MigrationExecutor struct {
@@ -34,8 +36,7 @@ func (m *MigrationExecutor) Run() error {
 
 	ctx := context.Background()
 
-	// Execute the complete migration workflow
-	if err := migration.Execute(ctx, m.opts.maxLag, m.opts.maxWaitTime); err != nil {
+	if err := migration.Execute(ctx, m.opts.threshold, m.opts.maxWaitTime, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
