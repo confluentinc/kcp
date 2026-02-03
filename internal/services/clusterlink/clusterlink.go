@@ -8,8 +8,19 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strings"
 )
+
+type MirrorLag struct {
+	Partition             int `json:"partition"`
+	Lag                   int `json:"lag"`
+	LastSourceFetchOffset int `json:"last_source_fetch_offset"`
+}
+
+type MirrorTopic struct {
+	MirrorTopicName string      `json:"mirror_topic_name"`
+	MirrorStatus    string      `json:"mirror_status"`
+	MirrorLags      []MirrorLag `json:"mirror_lags"`
+}
 
 const (
 	// Mirror topic status constants
@@ -27,7 +38,7 @@ type Config struct {
 
 // Service defines cluster link operations
 type Service interface {
-	ListMirrorTopics(ctx context.Context, config Config) ([]string, error)
+	ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error)
 	ListConfigs(ctx context.Context, config Config) (map[string]string, error)
 	ValidateTopics(topics []string, clusterLinkTopics []string) error
 }
@@ -53,14 +64,11 @@ func NewConfluentCloudService(httpClient HTTPClient) *ConfluentCloudService {
 }
 
 // ListMirrorTopics retrieves all mirror topics from a cluster link
-func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]string, error) {
+func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error) {
 	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/mirrors", config.ClusterID, config.LinkName)
-	
+
 	var response struct {
-		Data []struct {
-			MirrorTopicName string `json:"mirror_topic_name"`
-			MirrorStatus    string `json:"mirror_status"`
-		} `json:"data"`
+		Data []MirrorTopic `json:"data"`
 	}
 
 	if err := s.doRequest(ctx, config, path, &response); err != nil {
@@ -71,20 +79,13 @@ func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Con
 		return nil, fmt.Errorf("no mirror topics found in cluster link")
 	}
 
-	topicNames, inactiveTopics := extractTopicInfo(response.Data)
-
-	if len(inactiveTopics) > 0 {
-		return nil, fmt.Errorf("%d mirror topics are not active: %s",
-			len(inactiveTopics), strings.Join(inactiveTopics, ", "))
-	}
-
-	return topicNames, nil
+	return response.Data, nil
 }
 
 // ListConfigs retrieves cluster link configurations
 func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (map[string]string, error) {
 	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/configs", config.ClusterID, config.LinkName)
-	
+
 	var response struct {
 		Data []struct {
 			Name  string `json:"name"`
@@ -149,11 +150,7 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 	return nil
 }
 
-// extractTopicInfo extracts topic names and identifies inactive topics
-func extractTopicInfo(mirrors []struct {
-	MirrorTopicName string `json:"mirror_topic_name"`
-	MirrorStatus    string `json:"mirror_status"`
-}) (topicNames []string, inactiveTopics []string) {
+func ClassifyMirrorTopics(mirrors []MirrorTopic) (topicNames []string, inactiveTopics []string) {
 	for _, mirror := range mirrors {
 		topicNames = append(topicNames, mirror.MirrorTopicName)
 		if mirror.MirrorStatus != MirrorStatusActive {

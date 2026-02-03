@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -54,14 +55,14 @@ type MigrationOpts struct {
 
 // Migration represents a gateway migration with a finite state machine
 type Migration struct {
-	MigrationId     string   `json:"migration_id"`
-	CurrentState    string   `json:"current_state"`
-	fsm             *fsm.FSM `json:"-"` // ✅ Made private
-	
+	MigrationId  string   `json:"migration_id"`
+	CurrentState string   `json:"current_state"`
+	fsm          *fsm.FSM `json:"-"` // ✅ Made private
+
 	// Internal state (not serialized)
 	state              *State              `json:"-"`
 	persistenceService persistence.Service `json:"-"`
-	
+
 	// Gateway configuration
 	GatewayNamespace     string `json:"gateway_namespace"`
 	GatewayCrdName       string `json:"gateway_crd_name"`
@@ -70,7 +71,7 @@ type Migration struct {
 	SourceRouteName      string `json:"source_route_name"`
 	DestinationRouteName string `json:"destination_route_name"`
 	KubeConfigPath       string `json:"kube_config_path"`
-	
+
 	// Cluster link configuration
 	ClusterId           string   `json:"cluster_id"`
 	ClusterRestEndpoint string   `json:"cluster_rest_endpoint"`
@@ -79,12 +80,12 @@ type Migration struct {
 	ClusterApiSecret    string   `json:"-"`
 	Topics              []string `json:"topics"`
 	AuthMode            string   `json:"auth_mode"`
-	
+
 	// Migration data
 	ClusterLinkTopics   []string          `json:"cluster_link_topics"`
 	ClusterLinkConfigs  map[string]string `json:"cluster_link_configs"`
 	GatewayOriginalYAML []byte            `json:"gateway_original_yaml"`
-	
+
 	// Services (injected dependencies)
 	gatewayService     gateway.Service     `json:"-"`
 	clusterLinkService clusterlink.Service `json:"-"`
@@ -103,7 +104,7 @@ func (m *Migration) initializeFSM(initialState string) {
 			{Name: EventSwitch, Src: []string{StatePromoted}, Dst: StateSwitched},
 		},
 		fsm.Callbacks{
-			"before_event": m.beforeEventCallback,
+			"before_event":                m.beforeEventCallback,
 			"leave_" + StateUninitialized: m.leaveUninitializedCallback,
 			"leave_" + StateInitialized:   m.leaveInitializedCallback,
 			"leave_" + StateLagsOk:        m.leaveLagsOkCallback,
@@ -132,7 +133,7 @@ func (m *Migration) leaveUninitializedCallback(ctx context.Context, e *fsm.Event
 
 func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
-	
+
 	// Extract maxLag and maxWaitTime from args (required parameters)
 	var maxLag, maxWaitTime int64
 	if len(e.Args) > 0 {
@@ -145,7 +146,7 @@ func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) 
 			maxWaitTime = waitTime
 		}
 	}
-	
+
 	if err := m.checkLags(ctx, maxLag, maxWaitTime); err != nil {
 		e.Cancel(err)
 	}
@@ -190,7 +191,7 @@ func (m *Migration) enterStateCallback(_ context.Context, e *fsm.Event) {
 func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 	m.CurrentState = m.fsm.Current()
 	m.state.UpsertMigration(*m)
-	
+
 	// Use retry logic for persistence since we can't rollback the FSM transition
 	if err := m.persistenceService.SaveWithRetry(m.state); err != nil {
 		// Can't cancel or rollback the FSM transition at this point
@@ -202,7 +203,7 @@ func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 		)
 		panic(fmt.Sprintf("failed to persist state file after transition to %s: %v", m.fsm.Current(), err))
 	}
-	
+
 	slog.Info("FSM: After event", "event", e.Event, "currentState", m.fsm.Current())
 }
 
@@ -210,13 +211,13 @@ func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 func NewMigration(migrationId string, stateFilePath string, opts MigrationOpts) *Migration {
 	// Initialize persistence service and load state
 	persistenceService := persistence.NewFileService(stateFilePath)
-	
+
 	var state State
 	if err := persistenceService.Load(&state); err != nil {
 		// If state file doesn't exist, create a new empty state
 		state = State{Migrations: []Migration{}}
 	}
-	
+
 	m := &Migration{
 		MigrationId:          migrationId,
 		CurrentState:         StateUninitialized,
@@ -251,12 +252,12 @@ func NewMigration(migrationId string, stateFilePath string, opts MigrationOpts) 
 func LoadMigration(stateFilePath string, migrationId string) (*Migration, error) {
 	// Initialize persistence service and load state
 	persistenceService := persistence.NewFileService(stateFilePath)
-	
+
 	var state State
 	if err := persistenceService.Load(&state); err != nil {
 		return nil, fmt.Errorf("failed to load state from file: %w", err)
 	}
-	
+
 	m, err := state.GetMigrationById(migrationId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get migration: %w", err)
@@ -289,7 +290,7 @@ func (m *Migration) Execute(ctx context.Context, maxLag int64, maxWaitTime int64
 	steps := []struct {
 		event       string
 		description string
-		args        []interface{}  // Add args field
+		args        []interface{} // Add args field
 	}{
 		{EventWaitForLags, "checking lags", []any{maxLag, maxWaitTime}},
 		{EventFence, "fencing gateway", []any{}},
@@ -414,9 +415,14 @@ func (m *Migration) validateClusterLink(ctx context.Context) error {
 		APISecret:    m.ClusterApiSecret,
 	}
 
-	clusterLinkTopics, err := m.clusterLinkService.ListMirrorTopics(ctx, config)
+	mirrorTopics, err := m.clusterLinkService.ListMirrorTopics(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to list mirror topics: %w", err)
+	}
+
+	clusterLinkTopics, inactiveTopics := clusterlink.ClassifyMirrorTopics(mirrorTopics)
+	if len(inactiveTopics) > 0 {
+		return fmt.Errorf("%d mirror topics are not active: %s",len(inactiveTopics), strings.Join(inactiveTopics, ", "))
 	}
 
 	if len(m.Topics) > 0 {
@@ -451,32 +457,32 @@ func (m *Migration) getClusterLinkConfigs(ctx context.Context) (map[string]strin
 
 func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int64) error {
 	slog.Info("starting lag check", "maxLag", maxLag, "maxWaitTime", maxWaitTime, "topicCount", len(m.Topics))
-	
+
 	if len(m.Topics) == 0 {
 		slog.Info("no topics to check")
 		return nil
 	}
-	
+
 	// Initialize simulated lag values for each topic (start high)
 	topicLags := make(map[string]int64)
 	for _, topic := range m.Topics {
 		// Simulate starting lag between maxLag+500 and maxLag+2000
 		topicLags[topic] = maxLag + 5000 + (int64(len(topic)) % 10000)
 	}
-	
+
 	// Poll lag values until all are below threshold or max wait time exceeded
 	pollInterval := 2 * time.Second
 	maxPolls := int(maxWaitTime / int64(pollInterval.Seconds()))
 	if maxPolls <= 0 {
 		maxPolls = 1 // At least one poll
 	}
-	
+
 	for poll := 0; poll < maxPolls; poll++ {
 		allBelowThreshold := true
-		
+
 		for _, topic := range m.Topics {
 			currentLag := topicLags[topic]
-			
+
 			// Simulate lag decreasing over time (reduce by ~200-300 per poll)
 			if currentLag > maxLag {
 				reduction := int64(200 + (poll * 20))
@@ -484,7 +490,7 @@ func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int
 				if topicLags[topic] < 0 {
 					topicLags[topic] = 0
 				}
-				
+
 				slog.Info("checking topic lag",
 					"topic", topic,
 					"currentLag", topicLags[topic],
@@ -492,13 +498,13 @@ func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int
 					"belowThreshold", topicLags[topic] <= maxLag,
 					"poll", poll+1,
 				)
-				
+
 				if topicLags[topic] > maxLag {
 					allBelowThreshold = false
 				}
 			}
 		}
-		
+
 		if allBelowThreshold {
 			slog.Info("all topics below lag threshold",
 				"totalPolls", poll+1,
@@ -506,11 +512,11 @@ func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int
 			)
 			return nil
 		}
-		
+
 		// Wait before next poll
 		time.Sleep(pollInterval)
 	}
-	
+
 	// Check if any topics still above threshold
 	var topicsAboveThreshold []string
 	for topic, lag := range topicLags {
@@ -518,13 +524,13 @@ func (m *Migration) checkLags(ctx context.Context, maxLag int64, maxWaitTime int
 			topicsAboveThreshold = append(topicsAboveThreshold, fmt.Sprintf("%s (lag: %d)", topic, lag))
 		}
 	}
-	
+
 	if len(topicsAboveThreshold) > 0 {
 		elapsedTime := time.Duration(maxPolls) * pollInterval
 		return fmt.Errorf("max wait time exceeded (%v): %d topics still above threshold: %v",
 			elapsedTime, len(topicsAboveThreshold), topicsAboveThreshold)
 	}
-	
+
 	slog.Info("all topics below lag threshold")
 	return nil
 }
