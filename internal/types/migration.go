@@ -302,7 +302,7 @@ func (m *Migration) Execute(ctx context.Context, threshold int64, maxWaitTime in
 	steps := []struct {
 		event       string
 		description string
-		args        []interface{} // Add args field
+		args        []any
 	}{
 		{EventWaitForLags, "checking lags", []any{threshold, maxWaitTime, clusterApiKey, clusterApiSecret}},
 		{EventFence, "fencing gateway", []any{}},
