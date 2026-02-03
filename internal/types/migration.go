@@ -472,9 +472,6 @@ func (m *Migration) getClusterLinkConfigs(ctx context.Context) (map[string]strin
 func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime int64, clusterApiKey string, clusterApiSecret string) error {
 	slog.Info("starting lag check", "threshold", threshold, "maxWaitTime", maxWaitTime, "topicCount", len(m.Topics))
 
-	slog.Info("clusterApiKey", "clusterApiKey", clusterApiKey)
-	slog.Info("clusterApiSecret", "clusterApiSecret", clusterApiSecret)
-
 	// Early exit if no topics to check
 	if len(m.Topics) == 0 {
 		slog.Info("no topics to check")
