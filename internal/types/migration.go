@@ -173,7 +173,19 @@ func (m *Migration) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
 
 func (m *Migration) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
-	if err := m.startTopicPromotion(ctx); err != nil {
+	var clusterApiKey, clusterApiSecret string
+	if len(e.Args) > 0 {
+		if key, ok := e.Args[0].(string); ok {
+			clusterApiKey = key
+		}
+	}
+	if len(e.Args) > 1 {
+		if secret, ok := e.Args[1].(string); ok {
+			clusterApiSecret = secret
+		}
+	}
+
+	if err := m.startTopicPromotion(ctx, clusterApiKey, clusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -306,7 +318,7 @@ func (m *Migration) Execute(ctx context.Context, threshold int64, maxWaitTime in
 	}{
 		{EventWaitForLags, "checking lags", []any{threshold, maxWaitTime, clusterApiKey, clusterApiSecret}},
 		{EventFence, "fencing gateway", []any{}},
-		{EventPromote, "promoting topics", []any{}},
+		{EventPromote, "promoting topics", []any{clusterApiKey, clusterApiSecret}},
 		{EventWaitForPromotionCompletion, "waiting for promotion completion", []any{}},
 		{EventSwitch, "switching gateway config", []any{}},
 	}
@@ -425,6 +437,7 @@ func (m *Migration) validateClusterLink(ctx context.Context) error {
 		LinkName:     m.ClusterLinkName,
 		APIKey:       m.ClusterApiKey,
 		APISecret:    m.ClusterApiSecret,
+		Topics:       m.Topics,
 	}
 
 	mirrorTopics, err := m.clusterLinkService.ListMirrorTopics(ctx, config)
@@ -572,10 +585,97 @@ func (m *Migration) fenceGateway(ctx context.Context) error {
 	return nil
 }
 
-func (m *Migration) startTopicPromotion(ctx context.Context) error {
-	// start topic promotion process
+func (m *Migration) startTopicPromotion(ctx context.Context, clusterApiKey string, clusterApiSecret string) error {
 	slog.Info("topic promotion process started")
-	return nil
+
+	config := clusterlink.Config{
+		RestEndpoint: m.ClusterRestEndpoint,
+		ClusterID:    m.ClusterId,
+		LinkName:     m.ClusterLinkName,
+		APIKey:       clusterApiKey,
+		APISecret:    clusterApiSecret,
+		Topics:       m.Topics,
+	}
+
+	pollInterval := 5 * time.Second
+
+	for {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Step 1: List all mirror topics
+		mirrorTopics, err := m.clusterLinkService.ListMirrorTopics(ctx, config)
+		if err != nil {
+			return fmt.Errorf("failed to list mirror topics: %w", err)
+		}
+
+		// no mirror topics found, promotion is complete
+		if len(mirrorTopics) == 0 {
+			slog.Info("no mirror topics found, promotion complete")
+			return nil
+		}
+
+		// Step 2: Get active mirror topics with zero lag
+		topicsToPromote := clusterlink.GetActiveTopicsWithZeroLag(mirrorTopics)
+
+		// Check completion condition: no active topics found
+		activeCount := clusterlink.CountActiveMirrorTopics(mirrorTopics)
+		if activeCount == 0 {
+			slog.Info("no active mirror topics remaining, promotion complete")
+			return nil
+		}
+
+		// If no topics ready to promote (all have non-zero lag), wait and retry
+		if len(topicsToPromote) == 0 {
+			if clusterlink.HasActiveTopicsWithNonZeroLag(mirrorTopics) {
+				slog.Info("active topics found but lag is not zero, waiting before retry",
+					"activeTopics", activeCount,
+					"pollInterval", pollInterval)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(pollInterval):
+					continue
+				}
+			}
+			// No active topics with any lag status - we're done
+			slog.Info("promotion complete, no more topics to promote")
+			return nil
+		}
+
+		// Step 3: Promote topics that are active and have zero lag
+		slog.Info("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
+
+		promoteResponse, err := m.clusterLinkService.PromoteMirrorTopics(ctx, config, topicsToPromote)
+		if err != nil {
+			return fmt.Errorf("failed to promote mirror topics: %w", err)
+		}
+
+		// Log any promotion errors
+		for _, topic := range promoteResponse.Data {
+			if topic.ErrorCode != 0 {
+				slog.Warn("topic promotion error",
+					"topic", topic.MirrorTopicName,
+					"errorCode", topic.ErrorCode,
+					"errorMessage", topic.ErrorMessage)
+			} else {
+				slog.Info("topic promotion initiated", "topic", topic.MirrorTopicName)
+			}
+		}
+
+		// Wait before checking again
+		slog.Info("waiting for promotion to complete before next check", "pollInterval", pollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+			// Continue to next iteration
+		}
+	}
 }
 
 func (m *Migration) checkPromotionCompletion(ctx context.Context) error {
