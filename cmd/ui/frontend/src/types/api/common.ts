@@ -16,6 +16,7 @@ export interface ApiMetadata {
   kafka_version?: string
   enhanced_monitoring?: string
   period?: number // Period in seconds
+  broker_type?: 'express' | 'standard'
 }
 
 /**
