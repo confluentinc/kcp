@@ -513,6 +513,13 @@ type DiscoveredClient struct {
 }
 
 // ----- metrics -----
+type BrokerType string
+
+const (
+	BrokerTypeExpress  BrokerType = "express"
+	BrokerTypeStandard BrokerType = "standard"
+)
+
 type ClusterMetrics struct {
 	MetricMetadata MetricMetadata                     `json:"metadata"`
 	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
@@ -528,9 +535,10 @@ type MetricMetadata struct {
 	EndDate              time.Time `json:"end_date"`
 	Period               int32     `json:"period"`
 
-	FollowerFetching bool   `json:"follower_fetching"`
-	InstanceType     string `json:"instance_type"`
-	TieredStorage    bool   `json:"tiered_storage"`
+	FollowerFetching bool       `json:"follower_fetching"`
+	InstanceType     string     `json:"instance_type"`
+	TieredStorage    bool       `json:"tiered_storage"`
+	BrokerType       BrokerType `json:"broker_type"`
 }
 
 type CloudWatchTimeWindow struct {

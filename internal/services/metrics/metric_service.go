@@ -38,6 +38,8 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	instanceType := aws.ToString(cluster.Provisioned.BrokerNodeGroupInfo.InstanceType)
 	tieredStorage := cluster.Provisioned.StorageMode == kafkatypes.StorageModeTiered
 
+	brokerType := getBrokerType(instanceType)
+
 	metricsMetadata := types.MetricMetadata{
 		ClusterType:          string(cluster.ClusterType),
 		BrokerAzDistribution: *brokerAZDistribution,
@@ -51,6 +53,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		FollowerFetching: followerFetching,
 		InstanceType:     instanceType,
 		TieredStorage:    tieredStorage,
+		BrokerType:       brokerType,
 	}
 
 	brokerQueries := ms.buildBrokerMetricQueries(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
@@ -63,6 +66,14 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	clusterQueryResult, err := ms.executeMetricQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
+	}
+
+	// for express brokers there is no storage info
+	if brokerType == types.BrokerTypeExpress {
+		return &types.ClusterMetrics{
+			MetricMetadata: metricsMetadata,
+			Results:        append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...),
+		}, nil
 	}
 
 	clusterVolumeSizeGB := int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
@@ -140,7 +151,6 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 // Private Helper Functions - Query Building
 
 func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
-
 	metricStatMap := map[string]string{
 		"BytesInPerSec":         "Average",
 		"BytesOutPerSec":        "Average",
@@ -234,7 +244,6 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 			},
 			ReturnData: aws.Bool(false),
 		})
-
 
 		expressionID := fmt.Sprintf("l%d", brokerID)
 		expressionIDs = append(expressionIDs, expressionID)
@@ -478,4 +487,11 @@ func (ms *MetricService) getTopicsForCluster(ctx context.Context, clusterName st
 		topicList = append(topicList, topic)
 	}
 	return topicList, nil
+}
+
+func getBrokerType(instanceType string) types.BrokerType {
+	if strings.HasPrefix(instanceType, "express.") {
+		return types.BrokerTypeExpress
+	}
+	return types.BrokerTypeStandard
 }
