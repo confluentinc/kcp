@@ -65,7 +65,7 @@ export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReport
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                {`${mskConfig.ClusterType} (${cluster.metrics?.metadata?.broker_type})` || 'Unknown'}
+                {`${mskConfig.ClusterType} (${cluster.metrics?.metadata?.broker_type})`}
               </div>
               <div className="text-sm text-gray-600 dark:text-gray-400">Cluster Type</div>
             </div>
