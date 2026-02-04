@@ -68,7 +68,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		return nil, err
 	}
 
-	// if express brokers we dont have storage info
+	// for express brokers there is no storage info
 	if brokerType == types.BrokerTypeExpress {
 		return &types.ClusterMetrics{
 			MetricMetadata: metricsMetadata,
