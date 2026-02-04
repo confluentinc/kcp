@@ -19,6 +19,7 @@ export const TOP_LEVEL_TABS = {
   EXPLORE: 'explore',
   TCO_INPUTS: 'tco-inputs',
   MIGRATION_ASSETS: 'migration-assets',
+  LAG_MONITOR: 'lag-monitor',
 } as const
 
 /**
@@ -80,6 +81,7 @@ export const API_ENDPOINTS = {
   METRICS: '/metrics',
   COSTS: '/costs',
   UPLOAD_STATE: '/upload-state',
+  LAG_MONITOR: '/lag-monitor',
 } as const
 
 /**

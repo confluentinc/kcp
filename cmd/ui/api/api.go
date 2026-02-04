@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -20,7 +21,12 @@ type ReportService interface {
 }
 
 type UICmdOpts struct {
-	Port string
+	Port                    string
+	ClusterLinkRestEndpoint string
+	ClusterLinkClusterID    string
+	ClusterLinkName         string
+	ClusterLinkAPIKey       string
+	ClusterLinkAPISecret    string
 }
 
 type UI struct {
@@ -28,20 +34,38 @@ type UI struct {
 	targetInfraHCLService      hcl.TargetInfraHCLService
 	migrationInfraHCLService   hcl.MigrationInfraHCLService
 	migrationScriptsHCLService hcl.MigrationScriptsHCLService
+	clusterLinkService         clusterlink.Service
 
-	port        string
-	cachedState *types.State // Cache the uploaded state for metrics filtering
+	port              string
+	cachedState       *types.State        // Cache the uploaded state for metrics filtering
+	clusterLinkConfig *clusterlink.Config // Cluster link configuration for lag monitoring (optional)
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, clusterLinkService clusterlink.Service, opts UICmdOpts) *UI {
+	var clusterLinkConfig *clusterlink.Config
+
+	// Initialize cluster link config if all required fields are provided
+	if opts.ClusterLinkRestEndpoint != "" && opts.ClusterLinkClusterID != "" && opts.ClusterLinkName != "" && opts.ClusterLinkAPIKey != "" && opts.ClusterLinkAPISecret != "" {
+		clusterLinkConfig = &clusterlink.Config{
+			RestEndpoint: opts.ClusterLinkRestEndpoint,
+			ClusterID:    opts.ClusterLinkClusterID,
+			LinkName:     opts.ClusterLinkName,
+			APIKey:       opts.ClusterLinkAPIKey,
+			APISecret:    opts.ClusterLinkAPISecret,
+			Topics:       []string{}, // Return all topics
+		}
+	}
+
 	return &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
 		migrationInfraHCLService:   migrationInfraHCLService,
 		migrationScriptsHCLService: migrationScriptsHCLService,
+		clusterLinkService:         clusterLinkService,
 
-		port:        opts.Port,
-		cachedState: nil,
+		port:              opts.Port,
+		cachedState:       nil,
+		clusterLinkConfig: clusterLinkConfig,
 	}
 }
 
@@ -63,6 +87,8 @@ func (ui *UI) Run() error {
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
+	e.GET("/lag-monitor", ui.handleLagMonitor)
+	e.GET("/lag-monitor/config", ui.handleLagMonitorConfig)
 
 	e.POST("/upload-state", ui.handleUploadState)
 	e.POST("/assets/migration", ui.handleMigrationAssets)
@@ -530,4 +556,42 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, migrationScriptsProject)
+}
+
+func (ui *UI) handleLagMonitor(c echo.Context) error {
+	// Check if cluster link credentials are configured
+	if ui.clusterLinkConfig == nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Cluster link credentials not configured",
+			"message": "Please restart the UI with cluster link flags to enable lag monitoring: --rest-endpoint, --cluster-id, --cluster-link-name, --cluster-api-key, --cluster-api-secret",
+		})
+	}
+
+	// Call the cluster link service to get mirror topics
+	mirrorTopics, err := ui.clusterLinkService.ListMirrorTopics(c.Request().Context(), *ui.clusterLinkConfig)
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]any{
+			"error":   "Failed to fetch mirror topics",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, mirrorTopics)
+}
+
+func (ui *UI) handleLagMonitorConfig(c echo.Context) error {
+	// Check if cluster link credentials are configured
+	if ui.clusterLinkConfig == nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Cluster link credentials not configured",
+			"message": "Please restart the UI with cluster link flags to enable lag monitoring",
+		})
+	}
+
+	// Return only non-sensitive configuration
+	return c.JSON(http.StatusOK, map[string]any{
+		"rest_endpoint":     ui.clusterLinkConfig.RestEndpoint,
+		"cluster_id":        ui.clusterLinkConfig.ClusterID,
+		"cluster_link_name": ui.clusterLinkConfig.LinkName,
+	})
 }
