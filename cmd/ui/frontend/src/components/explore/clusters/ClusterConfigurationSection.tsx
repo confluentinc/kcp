@@ -25,6 +25,9 @@ export const ClusterConfigurationSection = ({
   brokerInfo,
   regionData,
 }: ClusterConfigurationSectionProps) => {
+
+  const brokerType = cluster.metrics?.metadata?.broker_type
+
   return (
     <div className="space-y-8">
       {/* Basic Cluster Configuration */}
@@ -40,7 +43,7 @@ export const ClusterConfigurationSection = ({
             },
             {
               label: 'Storage per Broker (GB):',
-              value: brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0,
+              value: brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 'N/A',
             },
             {
               label: 'AZ Distribution:',
@@ -50,7 +53,7 @@ export const ClusterConfigurationSection = ({
               label: 'Total Storage (GB):',
               value:
                 (brokerInfo.StorageInfo?.EbsStorageInfo?.VolumeSize || 0) *
-                (provisioned.NumberOfBrokerNodes || 0),
+                (provisioned.NumberOfBrokerNodes || 0) || 'N/A',
             },
             {
               label: 'Availability Zones:',
@@ -72,7 +75,7 @@ export const ClusterConfigurationSection = ({
             },
             {
               label: 'Tiered Storage:',
-              value: <BooleanStatus value={cluster.metrics?.metadata?.tiered_storage} />,
+              value: brokerType === 'express' ? 'N/A' : <BooleanStatus value={cluster.metrics?.metadata?.tiered_storage} />
             },
           ]}
         />
