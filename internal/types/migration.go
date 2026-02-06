@@ -11,6 +11,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/persistence"
+	"github.com/goccy/go-yaml"
 	"github.com/looplab/fsm"
 )
 
@@ -121,18 +122,26 @@ func (m *Migration) initializeFSM(initialState string) {
 // FSM Callbacks
 
 func (m *Migration) beforeEventCallback(_ context.Context, e *fsm.Event) {
+	slog.Info("═══════════════════════════════════════════════════════════════")
 	slog.Info("FSM: Before event", "event", e.Event, "currentState", m.fsm.Current(), "nextState", e.Dst)
+	slog.Info("═══════════════════════════════════════════════════════════════")
 }
 
 func (m *Migration) leaveUninitializedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: LEAVING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	if err := m.initializeMigration(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: LEAVING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 	// Extract maxLag and maxWaitTime from args (required parameters)
 	var threshold, maxWaitTime int64
@@ -165,14 +174,20 @@ func (m *Migration) leaveInitializedCallback(ctx context.Context, e *fsm.Event) 
 }
 
 func (m *Migration) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: LEAVING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	if err := m.fenceGateway(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: LEAVING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	var clusterApiKey, clusterApiSecret string
 	if len(e.Args) > 0 {
 		if key, ok := e.Args[0].(string); ok {
@@ -191,25 +206,35 @@ func (m *Migration) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
 }
 
 func (m *Migration) leavePromotingCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: LEAVING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	if err := m.checkPromotionCompletion(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: Leaving state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: LEAVING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	if err := m.switchOverGatewayConfig(ctx); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (m *Migration) leaveStateCallback(_ context.Context, e *fsm.Event) {
-	slog.Info("FSM: Left state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("FSM: Left state", "state", m.fsm.Current(), "triggeredBy", e.Event)
 }
 
 func (m *Migration) enterStateCallback(_ context.Context, e *fsm.Event) {
-	slog.Info("FSM: Entered state", "state", m.fsm.Current(), "triggered by event", e.Event)
+	slog.Info("")
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("FSM: ENTERING STATE", "state", m.fsm.Current(), "triggeredBy", e.Event)
+	slog.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	slog.Info("")
 }
 
 func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
@@ -228,7 +253,11 @@ func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 		panic(fmt.Sprintf("failed to persist state file after transition to %s: %v", m.fsm.Current(), err))
 	}
 
+	slog.Info("")
+	slog.Info("═══════════════════════════════════════════════════════════════")
 	slog.Info("FSM: After event", "event", e.Event, "currentState", m.fsm.Current())
+	slog.Info("═══════════════════════════════════════════════════════════════")
+	slog.Info("")
 }
 
 // NewMigration creates a new Migration with the given ID, starting in the uninitialized state
@@ -687,7 +716,104 @@ func (m *Migration) checkPromotionCompletion(ctx context.Context) error {
 }
 
 func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
-	// switch over to the new gateway
+	slog.Info("switching over to the new gateway config", "destination", m.DestinationName)
+
+	// Step 1: Get the current gateway to find the source route index
+	gatewayYAML, err := m.gatewayService.GetGatewayYAML(ctx, m.GatewayNamespace, m.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to get gateway: %w", err)
+	}
+
+	var gw gateway.GatewayResource
+	if err := yaml.Unmarshal(gatewayYAML, &gw); err != nil {
+		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	}
+
+	// Find the source route index so we can replace it in-place
+	routeIndex := -1
+	for i, route := range gw.Spec.Routes {
+		if route.Name == m.SourceRouteName {
+			routeIndex = i
+			break
+		}
+	}
+	if routeIndex == -1 {
+		return fmt.Errorf("source route '%s' not found in gateway routes", m.SourceRouteName)
+	}
+
+	slog.Info("found source route to update", "route", m.SourceRouteName, "index", routeIndex)
+
+	// Step 2: Build a single JSON patch with both operations:
+	//   1) Add the new streaming domain
+	//   2) Replace the route to point to the new streaming domain
+	patchOps := []map[string]any{
+		// Op 1: Add the new streaming domain
+		{
+			"op":   "add",
+			"path": "/spec/streamingDomains/-",
+			"value": map[string]any{
+				"name": "confluent-cloud-plain",
+				"type": "kafka",
+				"kafkaCluster": map[string]any{
+					"bootstrapServers": []map[string]any{
+						{
+							"id":       "SASL_PLAIN",
+							"endpoint": "SASL_SSL:<BOOTSTRAP_ENDPOINT>",
+							"tls": map[string]any{
+								"secretRef": "confluent-tls",
+							},
+						},
+					},
+					"nodeIdRanges": []map[string]any{
+						{
+							"name":  "pool-1",
+							"start": 0,
+							"end":   2,
+						},
+					},
+				},
+			},
+		},
+		// Op 2: Replace the source route to point to the new streaming domain
+		{
+			"op":   "replace",
+			"path": fmt.Sprintf("/spec/routes/%d", routeIndex),
+			"value": map[string]any{
+				"name":     "swap-msk-unauth-to-cc-route",
+				"endpoint": "<ELB_ENDPOINT>:<PORT>",
+				"brokerIdentificationStrategy": map[string]any{
+					"type": "port",
+				},
+				"streamingDomain": map[string]any{
+					"name":              "confluent-cloud-plain",
+					"bootstrapServerId": "SASL_PLAIN",
+				},
+				"security": map[string]any{
+					"auth":        "swap",
+					"secretStore": "file-store",
+					"client": map[string]any{
+						"authentication": map[string]any{
+							"type": "none",
+						},
+					},
+					"cluster": map[string]any{
+						"authentication": map[string]any{
+							"type": "plain",
+							"jaasConfigPassThrough": map[string]any{
+								"secretRef": "plain-jaas",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Step 3: Apply both operations in a single atomic patch
+	if err := m.gatewayService.PatchGateway(ctx, m.GatewayNamespace, m.GatewayCrdName, patchOps); err != nil {
+		return fmt.Errorf("failed to patch gateway: %w", err)
+	}
+
 	slog.Info("switching over to the new gateway config...done")
 	return nil
 }

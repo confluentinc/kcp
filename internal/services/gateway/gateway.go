@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -9,6 +10,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -17,9 +19,9 @@ import (
 // Kubernetes resource constants
 const (
 	// ConfluentNamespace     = "kcp"
-	GatewayGroup           = "platform.confluent.io"
-	GatewayVersion         = "v1beta1"
-	GatewayResourcePlural  = "gateways"
+	GatewayGroup          = "platform.confluent.io"
+	GatewayVersion        = "v1beta1"
+	GatewayResourcePlural = "gateways"
 )
 
 // GatewayConfig holds gateway configuration
@@ -39,6 +41,7 @@ type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
 	ValidateGateway(ctx context.Context, yaml []byte, config GatewayConfig) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]interface{}) error
 }
 
 // K8sService implements gateway operations using Kubernetes clients
@@ -137,6 +140,40 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 	}
 
 	return response.Status.Allowed, nil
+}
+
+// PatchGateway patches the gateway resource using JSON patch format
+func (s *K8sService) PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]any) error {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build config: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	gatewayGVR := schema.GroupVersionResource{
+		Group:    GatewayGroup,
+		Version:  GatewayVersion,
+		Resource: GatewayResourcePlural,
+	}
+
+	// Marshal patch operations to JSON
+	patchBytes, err := json.Marshal(patchOps)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch operations: %w", err)
+	}
+
+	// Apply JSON patch
+	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Patch(ctx, gatewayName, types.JSONPatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to patch Gateway: %w", err)
+	}
+
+	return nil
 }
 
 // validateStreamingDomains validates streaming domains exist in gateway
@@ -256,9 +293,9 @@ type StreamingDomain struct {
 }
 
 type Route struct {
-	Name             string           `yaml:"name"`
-	StreamingDomain  StreamingDomain  `yaml:"streamingDomain"`
-	Security         Security         `yaml:"security"`
+	Name            string          `yaml:"name"`
+	StreamingDomain StreamingDomain `yaml:"streamingDomain"`
+	Security        Security        `yaml:"security"`
 }
 
 type Security struct {
