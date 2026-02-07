@@ -153,63 +153,78 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // --- View ---
 
+// Confluent brand-inspired color palette
+const (
+	confluentNavy    = "#172B4D" // dark navy – title bar background
+	confluentBlue    = "#1993D1" // medium blue – primary accent
+	confluentLtBlue  = "#6CB4EE" // light blue – config labels
+	confluentTeal    = "#17B8A6" // teal – sparklines, data-streaming accent
+	confluentSlate   = "#8B9CB6" // blue-grey – table headers, help text
+	confluentMutedFg = "#7B8CA5" // muted blue-grey – partition details
+	confluentGreen   = "#2ECC71" // green – success, ACTIVE, zero lag
+	confluentAmber   = "#F5A623" // amber – positive lag, warnings
+	confluentRed     = "#E74C3C" // red – errors, FAILED
+	confluentYellow  = "#F1C40F" // yellow – PAUSED status
+	confluentWhite   = "#FFFFFF" // white – title text, config values
+)
+
 // Styles
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("62")).
+			Foreground(lipgloss.Color(confluentWhite)).
+			Background(lipgloss.Color(confluentNavy)).
 			Padding(0, 1)
 
 	configLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("10")).
+				Foreground(lipgloss.Color(confluentLtBlue)).
 				Bold(true)
 
 	configValueStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("7"))
+				Foreground(lipgloss.Color(confluentWhite))
 
 	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
+			Foreground(lipgloss.Color(confluentSlate)).
 			Bold(true)
 
 	statusActiveStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("10"))
+				Foreground(lipgloss.Color(confluentGreen))
 
 	statusPausedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("11"))
+				Foreground(lipgloss.Color(confluentYellow))
 
 	statusFailedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("9"))
+				Foreground(lipgloss.Color(confluentRed))
 
 	statusOtherStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("8"))
+				Foreground(lipgloss.Color(confluentSlate))
 
 	lagZeroStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("10"))
+			Foreground(lipgloss.Color(confluentGreen))
 
 	lagPositiveStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("208"))
+				Foreground(lipgloss.Color(confluentAmber))
 
 	sparkStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("75"))
+			Foreground(lipgloss.Color(confluentBlue))
 
 	indicatorRunning = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("10")).
+				Foreground(lipgloss.Color(confluentBlue)).
 				Render("●")
 
 	indicatorError = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("9")).
+			Foreground(lipgloss.Color(confluentRed)).
 			Render("●")
 
 	partitionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+			Foreground(lipgloss.Color(confluentMutedFg))
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("9")).
+			Foreground(lipgloss.Color(confluentRed)).
 			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+			Foreground(lipgloss.Color(confluentSlate))
 )
 
 func (m model) View() string {
