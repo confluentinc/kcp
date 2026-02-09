@@ -60,3 +60,6 @@ local/
 tmp
 *.log
 *.log.gz
+
+# local work not to be committed :)
+scratch/
