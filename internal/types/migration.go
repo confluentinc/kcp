@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/persistence"
+	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
 	"github.com/looplab/fsm"
 )
@@ -528,11 +530,15 @@ func (m *Migration) getClusterLinkConfigs(ctx context.Context) (map[string]strin
 // checkLags polls mirror topics via the cluster link service until all partition lags are below threshold.
 // It runs until either all lags are below threshold (success), maxWaitTime is exceeded (error), or context is cancelled.
 func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime int64, clusterApiKey string, clusterApiSecret string) error {
-	slog.Info("starting lag check", "threshold", threshold, "maxWaitTime", maxWaitTime, "topicCount", len(m.Topics))
+	fmt.Printf("\n%s Checking mirror lag across %s (threshold: %s, timeout: %s)\n\n",
+		color.CyanString("⏳"),
+		color.CyanString("%d topics", len(m.Topics)),
+		color.YellowString("%d", threshold),
+		color.YellowString("%ds", maxWaitTime))
 
 	// Early exit if no topics to check
 	if len(m.Topics) == 0 {
-		slog.Info("no topics to check")
+		fmt.Printf("%s No topics to check\n", color.GreenString("✔"))
 		return nil
 	}
 
@@ -581,9 +587,10 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 			topicMap[topic] = true
 		}
 
-		// Check lag for all partitions of all relevant mirror topics
-		allLagsBelowThreshold := true
-		var topicsWithLag []string
+		// Check lag for all partitions of all relevant mirror topics, grouped by topic
+		allBelowThreshold := true
+		// topicLags maps topic name -> list of "p<partition>: <lag>" strings
+		topicLags := make(map[string][]string)
 
 		for _, mirrorTopic := range mirrorTopics {
 			// Skip topics not in our migration list
@@ -594,26 +601,46 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 			// Check each partition's lag
 			for _, lag := range mirrorTopic.MirrorLags {
 				if lag.Lag >= int(threshold) {
-					allLagsBelowThreshold = false
-					topicsWithLag = append(topicsWithLag, fmt.Sprintf("%s[partition:%d](lag:%d)",
-						mirrorTopic.MirrorTopicName, lag.Partition, lag.Lag))
+					allBelowThreshold = false
+					topicLags[mirrorTopic.MirrorTopicName] = append(
+						topicLags[mirrorTopic.MirrorTopicName],
+						fmt.Sprintf("p%d:%d", lag.Partition, lag.Lag))
 				}
 			}
 		}
 
 		// Success: all partition lags are below threshold
-		if allLagsBelowThreshold {
-			slog.Info("all mirror topic lags are below threshold", "threshold", threshold)
+		if allBelowThreshold {
+			fmt.Printf("\n%s All mirror topic lags below threshold (%d)\n",
+				color.GreenString("✔"),
+				threshold)
 			return nil
 		}
 
-		// Log progress: show sample of topics/partitions still with lag
-		sampleSize := len(topicsWithLag)
-		if sampleSize > 5 {
-			sampleSize = 5
+		// Build sorted list of topic names with lag
+		lagTopics := make([]string, 0, len(topicLags))
+		for topic := range topicLags {
+			lagTopics = append(lagTopics, topic)
 		}
+		sort.Strings(lagTopics)
+
 		elapsed = time.Since(startTime)
-		slog.Info("mirror topic lags still present", "totalTopicsWithLag", len(topicsWithLag), "sample", topicsWithLag[:sampleSize], "elapsed", elapsed, "remaining", maxWaitDuration-elapsed)
+		remaining := maxWaitDuration - elapsed
+
+		fmt.Printf("%s Waiting for lag to clear  %s  %s  %s\n",
+			color.YellowString("⏳"),
+			color.YellowString("%d/%d topics behind", len(topicLags), len(m.Topics)),
+			color.CyanString("elapsed %s", elapsed.Round(time.Second)),
+			color.CyanString("remaining %s", remaining.Round(time.Second)))
+
+		for _, topic := range lagTopics {
+			parts := topicLags[topic]
+			fmt.Printf("   %s %s  %s\n",
+				color.YellowString("↳"),
+				color.WhiteString(topic),
+				color.HiBlackString("(%d partitions: %s)", len(parts), strings.Join(parts, ", ")))
+		}
+		fmt.Println()
 
 		// Wait for next poll interval or context cancellation
 		select {
