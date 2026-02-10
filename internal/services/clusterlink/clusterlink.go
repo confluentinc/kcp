@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 )
@@ -277,9 +278,11 @@ func HasActiveTopicsWithNonZeroLag(mirrors []MirrorTopic) bool {
 			continue
 		}
 		for _, lag := range mirror.MirrorLags {
+			slog.Info("mirror topic", "topic", mirror.MirrorTopicName, "lag", lag.Lag, "partition", lag.Partition)
 			if lag.Lag != 0 {
 				return true
 			}
+			
 		}
 	}
 	return false

@@ -52,6 +52,8 @@ type MigrationOpts struct {
 	AuthMode             string
 	ClusterApiKey        string
 	ClusterApiSecret     string
+	CCBootstrapEndpoint  string
+	LoadBalancerEndpoint string
 }
 
 // Migration represents a gateway migration with a finite state machine
@@ -90,6 +92,9 @@ type Migration struct {
 	// Services (injected dependencies)
 	gatewayService     gateway.Service     `json:"-"`
 	clusterLinkService clusterlink.Service `json:"-"`
+
+	CCBootstrapEndpoint  string `json:"cc_bootstrap_endpoint"`
+	LoadBalancerEndpoint string `json:"load_balancer_endpoint"`
 }
 
 // initializeFSM sets up the FSM for the migration with the given initial state
@@ -223,6 +228,15 @@ func (m *Migration) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
 	if err := m.switchOverGatewayConfig(ctx); err != nil {
 		e.Cancel(err)
 	}
+
+	slog.Info("gateway patched with new route and streaming domain")
+
+	// wait for recycled gateway pods
+	if err := m.waitForRecycledGatewayPods(ctx); err != nil {
+		e.Cancel(err)
+	}
+
+	slog.Info("recycled gateway pods ready")
 }
 
 func (m *Migration) leaveStateCallback(_ context.Context, e *fsm.Event) {
@@ -290,6 +304,8 @@ func NewMigration(migrationId string, stateFilePath string, opts MigrationOpts) 
 		AuthMode:             opts.AuthMode,
 		ClusterApiKey:        opts.ClusterApiKey,
 		ClusterApiSecret:     opts.ClusterApiSecret,
+		CCBootstrapEndpoint:  opts.CCBootstrapEndpoint,
+		LoadBalancerEndpoint: opts.LoadBalancerEndpoint,
 	}
 
 	// Initialize services
@@ -746,6 +762,9 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 	// Step 2: Build a single JSON patch with both operations:
 	//   1) Add the new streaming domain
 	//   2) Replace the route to point to the new streaming domain
+
+	slog.Info("adding new streaming domain", "bootstrapEndpoint", m.CCBootstrapEndpoint, "loadBalancerEndpoint", m.LoadBalancerEndpoint)
+
 	patchOps := []map[string]any{
 		// Op 1: Add the new streaming domain
 		{
@@ -758,7 +777,7 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 					"bootstrapServers": []map[string]any{
 						{
 							"id":       "SASL_PLAIN",
-							"endpoint": "SASL_SSL:<BOOTSTRAP_ENDPOINT>",
+							"endpoint": "SASL_SSL://" + m.CCBootstrapEndpoint,
 							"tls": map[string]any{
 								"secretRef": "confluent-tls",
 							},
@@ -780,7 +799,7 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 			"path": fmt.Sprintf("/spec/routes/%d", routeIndex),
 			"value": map[string]any{
 				"name":     "swap-msk-unauth-to-cc-route",
-				"endpoint": "<ELB_ENDPOINT>:<PORT>",
+				"endpoint": m.LoadBalancerEndpoint,
 				"brokerIdentificationStrategy": map[string]any{
 					"type": "port",
 				},
@@ -814,6 +833,25 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 		return fmt.Errorf("failed to patch gateway: %w", err)
 	}
 
-	slog.Info("switching over to the new gateway config...done")
+	return nil
+}
+
+func (m *Migration) waitForRecycledGatewayPods(ctx context.Context) error {
+	const (
+		pollInterval = 5 * time.Second
+		timeout      = 5 * time.Minute
+	)
+
+	slog.Info("waiting for recycled gateway pods to be ready",
+		"namespace", m.GatewayNamespace,
+		"gateway", m.GatewayCrdName,
+		"pollInterval", pollInterval,
+		"timeout", timeout)
+
+	if err := m.gatewayService.WaitForGatewayPods(ctx, m.GatewayNamespace, m.GatewayCrdName, pollInterval, timeout); err != nil {
+		return fmt.Errorf("failed waiting for gateway pods: %w", err)
+	}
+
+	slog.Info("waiting for recycled gateway pods to be ready...done")
 	return nil
 }

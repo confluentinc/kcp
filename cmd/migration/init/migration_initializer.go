@@ -20,13 +20,15 @@ type MigrationInitializerOpts struct {
 	destinationRouteName string
 	kubeConfigPath       string
 
-	clusterId           string
-	clusterRestEndpoint string
-	clusterLinkName     string
-	clusterApiKey       string
-	clusterApiSecret    string
-	topics              []string
-	authMode            string
+	clusterId            string
+	clusterRestEndpoint  string
+	clusterLinkName      string
+	clusterApiKey        string
+	clusterApiSecret     string
+	topics               []string
+	authMode             string
+	ccBootstrapEndpoint  string
+	loadBalancerEndpoint string
 }
 
 type MigrationInitializer struct {
@@ -55,6 +57,8 @@ func (m *MigrationInitializer) Run() error {
 		AuthMode:             m.opts.authMode,
 		ClusterApiKey:        m.opts.clusterApiKey,
 		ClusterApiSecret:     m.opts.clusterApiSecret,
+		CCBootstrapEndpoint:  m.opts.ccBootstrapEndpoint,
+		LoadBalancerEndpoint: m.opts.loadBalancerEndpoint,
 	}
 
 	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))

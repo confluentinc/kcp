@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -42,6 +45,7 @@ type Service interface {
 	ValidateGateway(ctx context.Context, yaml []byte, config GatewayConfig) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]interface{}) error
+	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 }
 
 // K8sService implements gateway operations using Kubernetes clients
@@ -174,6 +178,171 @@ func (s *K8sService) PatchGateway(ctx context.Context, namespace, gatewayName st
 	}
 
 	return nil
+}
+
+// WaitForGatewayPods waits for all gateway pods to be running and ready after a config change.
+//
+// After patching the Gateway CRD, the Confluent operator triggers a rolling restart of gateway pods.
+// This method polls until all pods matching the gateway are in a Ready state, indicating the
+// rollout is complete and the gateway is healthy with the new configuration.
+//
+// The method works in two phases:
+//  1. Detect rollout started: waits for at least one pod to be in a non-Ready state (being recycled)
+//  2. Detect rollout complete: waits for ALL pods to be Ready
+//
+// This ensures we don't return prematurely if the operator hasn't started the rollout yet.
+func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build config: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	// Confluent CFK labels gateway pods with app=<gateway-crd-name>
+	labelSelector := fmt.Sprintf("app=%s", gatewayName)
+
+	deadline := time.Now().Add(timeout)
+
+	// Phase 1: Wait for rollout to start (at least one pod not Ready, or pod restart detected)
+	slog.Info("waiting for gateway rollout to start", "namespace", namespace, "gateway", gatewayName, "labelSelector", labelSelector)
+
+	initialPodUIDs, err := s.getGatewayPodUIDs(ctx, clientset, namespace, labelSelector)
+	if err != nil {
+		return fmt.Errorf("failed to get initial pod UIDs: %w", err)
+	}
+	slog.Info("recorded initial pod state", "podCount", len(initialPodUIDs))
+
+	rolloutStarted := false
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list gateway pods: %w", err)
+		}
+
+		// Check if any new pods appeared (new UIDs) or any pod is not Ready
+		for _, pod := range pods.Items {
+			if _, existed := initialPodUIDs[pod.UID]; !existed {
+				slog.Info("new pod detected, rollout has started", "pod", pod.Name)
+				rolloutStarted = true
+				break
+			}
+			if !isPodReady(&pod) {
+				slog.Info("pod not ready, rollout has started", "pod", pod.Name, "phase", pod.Status.Phase)
+				rolloutStarted = true
+				break
+			}
+		}
+
+		if rolloutStarted {
+			break
+		}
+
+		slog.Debug("rollout not yet started, waiting...", "pollInterval", pollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+
+	if !rolloutStarted {
+		slog.Warn("rollout did not start within timeout, proceeding anyway (operator may have applied config without restart)")
+		return nil
+	}
+
+	// Phase 2: Wait for all pods to be Ready
+	slog.Info("rollout started, waiting for all gateway pods to become ready")
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list gateway pods: %w", err)
+		}
+
+		if len(pods.Items) == 0 {
+			slog.Info("no gateway pods found yet, waiting...")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(pollInterval):
+			}
+			continue
+		}
+
+		allReady := true
+		readyCount := 0
+		for _, pod := range pods.Items {
+			if isPodReady(&pod) {
+				readyCount++
+			} else {
+				allReady = false
+			}
+		}
+
+		if allReady {
+			slog.Info("all gateway pods are ready", "podCount", len(pods.Items))
+			return nil
+		}
+
+		slog.Info("rollout in progress...", "ready", fmt.Sprintf("%d/%d", readyCount, len(pods.Items)))
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+
+	return fmt.Errorf("timed out waiting for gateway pods to become ready (timeout: %s)", timeout)
+}
+
+// getGatewayPodUIDs returns a set of UIDs for the current gateway pods
+func (s *K8sService) getGatewayPodUIDs(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string) (map[types.UID]struct{}, error) {
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	uids := make(map[types.UID]struct{}, len(pods.Items))
+	for _, pod := range pods.Items {
+		uids[pod.UID] = struct{}{}
+	}
+	return uids, nil
+}
+
+// isPodReady checks if a pod has the Ready condition set to True
+func isPodReady(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // validateStreamingDomains validates streaming domains exist in gateway

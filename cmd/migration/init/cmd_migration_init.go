@@ -22,13 +22,15 @@ var (
 	// destinationRouteName string
 	kubeConfigPath string
 
-	clusterId           string
-	clusterRestEndpoint string
-	clusterLinkName     string
-	clusterApiKey       string
-	clusterApiSecret    string
-	topics              []string
-	authMode            string
+	clusterId            string
+	clusterRestEndpoint  string
+	clusterLinkName      string
+	clusterApiKey        string
+	clusterApiSecret     string
+	topics               []string
+	authMode             string
+	ccBootstrapEndpoint  string
+	loadBalancerEndpoint string
 )
 
 func NewMigrationInitCmd() *cobra.Command {
@@ -58,6 +60,8 @@ func NewMigrationInitCmd() *cobra.Command {
 	// requiredFlags.StringVar(&destinationName, "dest-name", "", "The name of the streaming domain for the destination (CC) cluster.")
 	requiredFlags.StringVar(&sourceRouteName, "source-route-name", "", "The name of the source route that is currently in use.")
 	// requiredFlags.StringVar(&destinationRouteName, "dest-route-name", "", "The name of the destination route that will be used for the migration.")
+	requiredFlags.StringVar(&ccBootstrapEndpoint, "cc-bootstrap-endpoint", "", "The bootstrap endpoint of the Confluent Cloud cluster.")
+	requiredFlags.StringVar(&loadBalancerEndpoint, "load-balancer-endpoint", "", "The load balancer endpoint of the Confluent Cloud cluster.")
 
 	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -99,6 +103,8 @@ func NewMigrationInitCmd() *cobra.Command {
 	migrationInitCmd.MarkFlagRequired("source-name")
 	// migrationInitCmd.MarkFlagRequired("dest-name")
 	migrationInitCmd.MarkFlagRequired("source-route-name")
+	migrationInitCmd.MarkFlagRequired("cc-bootstrap-endpoint")
+	migrationInitCmd.MarkFlagRequired("load-balancer-endpoint")
 	// migrationInitCmd.MarkFlagRequired("dest-route-name")
 
 	return migrationInitCmd
@@ -140,19 +146,21 @@ func parseMigrationInitializerOpts() (*MigrationInitializerOpts, error) {
 	return &MigrationInitializerOpts{
 		stateFile: stateFile,
 
-		gatewayNamespace:     gatewayNamespace,
-		gatewayCrdName:       gatewayCrdName,
-		sourceName:           sourceName,
+		gatewayNamespace: gatewayNamespace,
+		gatewayCrdName:   gatewayCrdName,
+		sourceName:       sourceName,
 		// destinationName:      destinationName,
-		sourceRouteName:      sourceRouteName,
+		sourceRouteName: sourceRouteName,
 		// destinationRouteName: destinationRouteName,
-		kubeConfigPath:       kubeConfigPath,
-		clusterLinkName:      clusterLinkName,
-		clusterRestEndpoint:  clusterRestEndpoint,
-		clusterId:            clusterId,
-		clusterApiKey:        clusterApiKey,
-		clusterApiSecret:     clusterApiSecret,
-		topics:               topics,
-		authMode:             authMode,
+		kubeConfigPath:      kubeConfigPath,
+		clusterLinkName:     clusterLinkName,
+		clusterRestEndpoint: clusterRestEndpoint,
+		clusterId:           clusterId,
+		clusterApiKey:       clusterApiKey,
+		clusterApiSecret:    clusterApiSecret,
+		topics:              topics,
+		authMode:            authMode,
+		ccBootstrapEndpoint: ccBootstrapEndpoint,
+		loadBalancerEndpoint: loadBalancerEndpoint,
 	}, nil
 }
