@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-all build-frontend
+.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend
 
 # Build the frontend
 build-frontend:
@@ -36,13 +36,17 @@ build-darwin: build-frontend
 build-darwin-arm64: build-frontend
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
 
+build-windows: build-frontend
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
+
 # Build for all platforms and architectures
 build-all: build-frontend
 	@echo "🔨 Building for all platforms..."
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH); \
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-arm64 $(MAIN_PATH); \
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-amd64 $(MAIN_PATH); \
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN_PATH); \
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
 	@echo "✅ All platform builds complete!"
 
 # Clean build artifacts
@@ -60,6 +64,7 @@ help:
 	@echo "📦 build-linux-arm64  - Build for Linux arm64"
 	@echo "📦 build-darwin       - Build for macOS amd64 (Intel)"
 	@echo "📦 build-darwin-arm64 - Build for macOS arm64 (Apple Silicon)"
+	@echo "📦 build-windows      - Build for Windows amd64"
 	@echo "📦 build-all          - Build for all platforms and architectures"
 	@echo "🧹 clean              - Clean build artifacts"
 	@echo "🚀 install            - Build and install to /usr/local/bin"

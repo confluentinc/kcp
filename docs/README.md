@@ -34,9 +34,9 @@
 
 ## Installation
 
-You can download kcp from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). We provide support for Linux and Darwin arm64/amd64 systems respectively.
+You can download kcp from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). We provide support for Linux, Darwin, and Windows amd64 systems.
 
-The following reference workflow should work on most linux and darwin systems:
+### Linux/macOS
 
 Set a variable for the latest release:
 
@@ -47,10 +47,10 @@ LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/late
 Set a variable for your platform (comment and uncomment as appropriate):
 
 ```
-PLATFORM=$(echo darwin_amd64)
-# PLATFORM=$(echo darwin_arm64)
-# PLATFORM=$(echo linux_amd64)
-# PLATFORM=$(echo linux_arm64)
+PLATFORM=darwin_amd64
+# PLATFORM=darwin_arm64
+# PLATFORM=linux_amd64
+# PLATFORM=linux_arm64
 ```
 
 Download the binary:
@@ -106,6 +106,19 @@ Version: 0.4.5
 Commit:  a8ef9fd2b4f1d000a00717b2f5f46fa30ad74e08
 Date:    2025-11-13T12:56:00Z
 ```
+
+### Windows
+
+Download the latest Windows artifact from the [releases page](https://github.com/confluentinc/kcp/releases/latest), using either:
+
+- `kcp_windows_amd64.exe` for a single executable
+- `kcp_windows_amd64.zip` for a packaged archive
+
+If you download the zip, extract it and run `kcp.exe`.
+
+Optionally, move `kcp.exe` to a folder on your `PATH` so you can run `kcp` from any terminal.
+
+Verify the installation by running `kcp version`.
 
 ## Authentication
 
