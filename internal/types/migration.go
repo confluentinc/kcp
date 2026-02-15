@@ -11,7 +11,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/services/persistence"
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
 	"github.com/looplab/fsm"
@@ -62,11 +61,10 @@ type MigrationOpts struct {
 type Migration struct {
 	MigrationId  string   `json:"migration_id"`
 	CurrentState string   `json:"current_state"`
-	fsm          *fsm.FSM `json:"-"` // ✅ Made private
+	fsm          *fsm.FSM `json:"-"`
 
-	// Internal state (not serialized)
-	state              *State              `json:"-"`
-	persistenceService persistence.Service `json:"-"`
+	// Save function provided by caller for FSM callbacks
+	saveState func() error `json:"-"`
 
 	// Gateway configuration
 	GatewayNamespace     string `json:"gateway_namespace"`
@@ -255,18 +253,19 @@ func (m *Migration) enterStateCallback(_ context.Context, e *fsm.Event) {
 
 func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 	m.CurrentState = m.fsm.Current()
-	m.state.UpsertMigration(*m)
 
-	// Use retry logic for persistence since we can't rollback the FSM transition
-	if err := m.persistenceService.SaveWithRetry(m.state); err != nil {
-		// Can't cancel or rollback the FSM transition at this point
-		// Log critical error and terminate to avoid inconsistent state
-		slog.Error("FATAL: Failed to persist state after transition - system is in inconsistent state",
-			"event", e.Event,
-			"currentState", m.fsm.Current(),
-			"error", err,
-		)
-		panic(fmt.Sprintf("failed to persist state file after transition to %s: %v", m.fsm.Current(), err))
+	// Call the save function provided by caller (if set)
+	if m.saveState != nil {
+		if err := m.saveState(); err != nil {
+			// Can't cancel or rollback the FSM transition at this point
+			// Log critical error and terminate to avoid inconsistent state
+			slog.Error("FATAL: Failed to persist state after transition - system is in inconsistent state",
+				"event", e.Event,
+				"currentState", m.fsm.Current(),
+				"error", err,
+			)
+			panic(fmt.Sprintf("failed to persist state file after transition to %s: %v", m.fsm.Current(), err))
+		}
 	}
 
 	slog.Info("")
@@ -277,21 +276,10 @@ func (m *Migration) afterEventCallback(_ context.Context, e *fsm.Event) {
 }
 
 // NewMigration creates a new Migration with the given ID, starting in the uninitialized state
-func NewMigration(migrationId string, stateFilePath string, opts MigrationOpts) *Migration {
-	// Initialize persistence service and load state
-	persistenceService := persistence.NewFileService(stateFilePath)
-
-	var state State
-	if err := persistenceService.Load(&state); err != nil {
-		// If state file doesn't exist, create a new empty state
-		state = State{Migrations: []Migration{}}
-	}
-
+func NewMigration(migrationId string, opts MigrationOpts) *Migration {
 	m := &Migration{
 		MigrationId:          migrationId,
 		CurrentState:         StateUninitialized,
-		state:                &state,
-		persistenceService:   persistenceService,
 		GatewayNamespace:     opts.GatewayNamespace,
 		GatewayCrdName:       opts.GatewayCrdName,
 		SourceName:           opts.SourceName,
@@ -319,26 +307,13 @@ func NewMigration(migrationId string, stateFilePath string, opts MigrationOpts) 
 	return m
 }
 
-// LoadMigration loads a Migration object from state file by its ID
-func LoadMigration(stateFilePath string, migrationId string) (*Migration, error) {
-	// Initialize persistence service and load state
-	persistenceService := persistence.NewFileService(stateFilePath)
-
-	var state State
-	if err := persistenceService.Load(&state); err != nil {
-		return nil, fmt.Errorf("failed to load state from file: %w", err)
-	}
-
-	m, err := state.GetMigrationById(migrationId)
+// LoadMigration loads a Migration object from MigrationState by its ID
+func LoadMigration(migrationState *MigrationState, migrationId string) (*Migration, error) {
+	m, err := migrationState.GetMigrationById(migrationId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get migration: %w", err)
 	}
 
-	// Set internal state and persistence service
-	m.state = &state
-	m.persistenceService = persistenceService
-
-	// Re-initialize services
 	m.gatewayService = gateway.NewK8sService(m.KubeConfigPath)
 	m.clusterLinkService = clusterlink.NewConfluentCloudService(http.DefaultClient)
 
@@ -346,6 +321,12 @@ func LoadMigration(stateFilePath string, migrationId string) (*Migration, error)
 	m.initializeFSM(m.CurrentState)
 
 	return m, nil
+}
+
+// SetSaveStateFunc allows the caller to provide a function for saving state
+// This is called by FSM callbacks after each state transition
+func (m *Migration) SetSaveStateFunc(fn func() error) {
+	m.saveState = fn
 }
 
 // Public API for migration execution (hides FSM implementation)

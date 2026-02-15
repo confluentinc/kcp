@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
+	"os"
 
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/google/uuid"
 )
 
 type MigrationInitializerOpts struct {
-	stateFile string
+	migrationStateFile string
+	skipValidate       bool
 
 	gatewayNamespace     string
 	gatewayCrdName       string
@@ -42,6 +44,19 @@ func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitialize
 }
 
 func (m *MigrationInitializer) Run() error {
+	// Load or create migration state (following KCP pattern)
+	var migrationState *types.MigrationState
+	if _, err := os.Stat(m.opts.migrationStateFile); err == nil {
+		// File exists, load it
+		migrationState, err = types.NewMigrationStateFromFile(m.opts.migrationStateFile)
+		if err != nil {
+			return fmt.Errorf("failed to load migration state: %w", err)
+		}
+	} else {
+		// File doesn't exist, create new state
+		migrationState = types.NewMigrationState()
+	}
+
 	migrationOpts := types.MigrationOpts{
 		GatewayNamespace:     m.opts.gatewayNamespace,
 		GatewayCrdName:       m.opts.gatewayCrdName,
@@ -61,15 +76,38 @@ func (m *MigrationInitializer) Run() error {
 		LoadBalancerEndpoint: m.opts.loadBalancerEndpoint,
 	}
 
-	migrationId := fmt.Sprintf("migration-%s", time.Now().Format("20060102-150405"))
-	migration := types.NewMigration(migrationId, m.opts.stateFile, migrationOpts)
+	// Generate UUID-based migration ID
+	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
+	migration := types.NewMigration(migrationId, migrationOpts)
 
+	// Provide save function for FSM callbacks
+	migration.SetSaveStateFunc(func() error {
+		migrationState.UpsertMigration(*migration)
+		return migrationState.WriteToFile(m.opts.migrationStateFile)
+	})
+
+	// Skip validation if flag is set (useful for testing without infrastructure)
+	if m.opts.skipValidate {
+		// Save migration metadata without calling Initialize()
+		migrationState.UpsertMigration(*migration)
+		if err := migrationState.WriteToFile(m.opts.migrationStateFile); err != nil {
+			return fmt.Errorf("failed to save migration state: %w", err)
+		}
+		slog.Info("migration created (validation skipped)",
+			"migrationId", migration.MigrationId,
+			"currentState", migration.GetCurrentState(),
+			"stateFile", m.opts.migrationStateFile)
+		return nil
+	}
+
+	// Normal path: validate infrastructure and initialize
 	if err := migration.Initialize(context.Background()); err != nil {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 
 	slog.Info("migration initialized",
 		"migrationId", migration.MigrationId,
-		"currentState", migration.GetCurrentState())
+		"currentState", migration.GetCurrentState(),
+		"stateFile", m.opts.migrationStateFile)
 	return nil
 }

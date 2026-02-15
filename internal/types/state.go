@@ -23,7 +23,6 @@ import (
 type State struct {
 	Regions          []DiscoveredRegion          `json:"regions"`
 	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
-	Migrations       []Migration                 `json:"migrations"`
 	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
 	Timestamp        time.Time                   `json:"timestamp"`
 }
@@ -124,27 +123,6 @@ func (s *State) PersistStateFile(stateFile string) error {
 	return s.WriteToFile(stateFile)
 }
 
-func (s *State) UpsertMigration(migration Migration) {
-	for i, existingMigration := range s.Migrations {
-		if existingMigration.MigrationId == migration.MigrationId {
-			s.Migrations[i] = migration
-			return
-		}
-	}
-	s.Migrations = append(s.Migrations, migration)
-}
-
-func (s *State) GetMigrationById(migrationId string) (*Migration, error) {
-	for _, migration := range s.Migrations {
-		if migration.MigrationId == migrationId {
-			return &migration, nil
-		}
-	}
-	return nil, fmt.Errorf("migration not found with id: %s", migrationId)
-}
-
-// UpsertRegion inserts a new region or updates an existing one by name
-// Automatically preserves KafkaAdminClientInformation from existing clusters
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 	for i, existingRegion := range s.Regions {
 		if existingRegion.Name == newRegion.Name {

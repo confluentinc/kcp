@@ -12,7 +12,8 @@ import (
 )
 
 var (
-	stateFile string
+	migrationStateFile string
+	skipValidate       bool
 
 	gatewayNamespace string
 	gatewayCrdName   string
@@ -48,7 +49,6 @@ func NewMigrationInitCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the state file to use for the migration.")
 	requiredFlags.StringVar(&gatewayNamespace, "gateway-namespace", "", "The Kubernetes namespace under which the gateway has been deployed to.")
 	requiredFlags.StringVar(&gatewayCrdName, "gateway-crd-name", "", "The name of the gateway CRD to use by the migration.")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ID of the cluster to use by the migration.")
@@ -68,6 +68,8 @@ func NewMigrationInitCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
+	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
 	optionalFlags.StringVar(&authMode, "auth-mode", "dest_swap", "The authentication mode to use for the migration. ('source_swap', 'dest_swap')")
@@ -92,7 +94,6 @@ func NewMigrationInitCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationInitCmd.MarkFlagRequired("state-file")
 	migrationInitCmd.MarkFlagRequired("gateway-namespace")
 	migrationInitCmd.MarkFlagRequired("gateway-crd-name")
 	migrationInitCmd.MarkFlagRequired("cluster-id")
@@ -144,7 +145,8 @@ func parseMigrationInitializerOpts() (*MigrationInitializerOpts, error) {
 	slog.Info("using kube config path", "path", kubeConfigPath)
 
 	return &MigrationInitializerOpts{
-		stateFile: stateFile,
+		migrationStateFile: migrationStateFile,
+		skipValidate:       skipValidate,
 
 		gatewayNamespace: gatewayNamespace,
 		gatewayCrdName:   gatewayCrdName,
@@ -152,15 +154,15 @@ func parseMigrationInitializerOpts() (*MigrationInitializerOpts, error) {
 		// destinationName:      destinationName,
 		sourceRouteName: sourceRouteName,
 		// destinationRouteName: destinationRouteName,
-		kubeConfigPath:      kubeConfigPath,
-		clusterLinkName:     clusterLinkName,
-		clusterRestEndpoint: clusterRestEndpoint,
-		clusterId:           clusterId,
-		clusterApiKey:       clusterApiKey,
-		clusterApiSecret:    clusterApiSecret,
-		topics:              topics,
-		authMode:            authMode,
-		ccBootstrapEndpoint: ccBootstrapEndpoint,
+		kubeConfigPath:       kubeConfigPath,
+		clusterLinkName:      clusterLinkName,
+		clusterRestEndpoint:  clusterRestEndpoint,
+		clusterId:            clusterId,
+		clusterApiKey:        clusterApiKey,
+		clusterApiSecret:     clusterApiSecret,
+		topics:               topics,
+		authMode:             authMode,
+		ccBootstrapEndpoint:  ccBootstrapEndpoint,
 		loadBalancerEndpoint: loadBalancerEndpoint,
 	}, nil
 }

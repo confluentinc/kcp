@@ -9,12 +9,12 @@ import (
 )
 
 var (
-	stateFile        string
-	migrationId      string
-	threshold        int64
-	maxWaitTime      int64 // in seconds
-	clusterApiKey    string
-	clusterApiSecret string
+	migrationStateFile string
+	migrationId        string
+	threshold          int64
+	maxWaitTime        int64 // in seconds
+	clusterApiKey      string
+	clusterApiSecret   string
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -32,7 +32,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the state file to use for the migration.")
+	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file to use for the migration.")
 	requiredFlags.StringVar(&migrationId, "migration-id", "", "The ID of the migration to execute.")
 	requiredFlags.Int64Var(&threshold, "threshold", 0, "Replication lag threshold in milliseconds before proceeding with migration.")
 	requiredFlags.Int64Var(&maxWaitTime, "max-wait-time", 0, "Maximum time in seconds to wait for lags to decrease below threshold.")
@@ -59,7 +59,6 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationExecuteCmd.MarkFlagRequired("state-file")
 	migrationExecuteCmd.MarkFlagRequired("migration-id")
 	migrationExecuteCmd.MarkFlagRequired("max-lag")
 	migrationExecuteCmd.MarkFlagRequired("max-wait-time")
@@ -93,11 +92,11 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 func parseMigrationExecutorOpts() (*MigrationExecutorOpts, error) {
 	return &MigrationExecutorOpts{
-		stateFile:        stateFile,
-		migrationId:      migrationId,
-		threshold:        threshold,
-		maxWaitTime:      maxWaitTime,
-		clusterApiKey:    clusterApiKey,
-		clusterApiSecret: clusterApiSecret,
+		migrationStateFile: migrationStateFile,
+		migrationId:        migrationId,
+		threshold:          threshold,
+		maxWaitTime:        maxWaitTime,
+		clusterApiKey:      clusterApiKey,
+		clusterApiSecret:   clusterApiSecret,
 	}, nil
 }
