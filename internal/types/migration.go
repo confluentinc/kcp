@@ -508,7 +508,7 @@ func (m *Migration) getClusterLinkConfigs(ctx context.Context) (map[string]strin
 	return configs, nil
 }
 
-// checkLags polls mirror topics via the cluster link service until all partition lags are below threshold.
+// checkLags polls mirror topics via the cluster link service until total lag across all partitions is below threshold for each topic.
 // It runs until either all lags are below threshold (success), maxWaitTime is exceeded (error), or context is cancelled.
 func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime int64, clusterApiKey string, clusterApiSecret string) error {
 	fmt.Printf("\n%s Checking mirror lag across %s (threshold: %s, timeout: %s)\n\n",
@@ -570,8 +570,10 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 
 		// Check lag for all partitions of all relevant mirror topics, grouped by topic
 		allBelowThreshold := true
-		// topicLags maps topic name -> list of "p<partition>: <lag>" strings
+		// topicLags maps topic name -> list of "p<partition>: <lag>" strings for display
 		topicLags := make(map[string][]string)
+		// topicTotalLags maps topic name -> total combined lag across all partitions
+		topicTotalLags := make(map[string]int)
 
 		for _, mirrorTopic := range mirrorTopics {
 			// Skip topics not in our migration list
@@ -579,14 +581,25 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 				continue
 			}
 
-			// Check each partition's lag
+			// Calculate total lag across all partitions for this topic
+			totalLag := 0
+			partitionLags := make([]string, 0, len(mirrorTopic.MirrorLags))
+
 			for _, lag := range mirrorTopic.MirrorLags {
-				if lag.Lag >= int(threshold) {
-					allBelowThreshold = false
-					topicLags[mirrorTopic.MirrorTopicName] = append(
-						topicLags[mirrorTopic.MirrorTopicName],
-						fmt.Sprintf("p%d:%d", lag.Partition, lag.Lag))
-				}
+				totalLag += lag.Lag
+				// Collect partition lag info for reporting (always include all partitions)
+				partitionLags = append(partitionLags,
+					fmt.Sprintf("p%d:%d", lag.Partition, lag.Lag))
+			}
+
+			// Store total lag for this topic
+			topicTotalLags[mirrorTopic.MirrorTopicName] = totalLag
+
+			// Check if topic's TOTAL lag exceeds threshold
+			if totalLag >= int(threshold) {
+				allBelowThreshold = false
+				// Store partition details for this lagging topic
+				topicLags[mirrorTopic.MirrorTopicName] = partitionLags
 			}
 		}
 
@@ -616,10 +629,12 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 
 		for _, topic := range lagTopics {
 			parts := topicLags[topic]
+			totalLag := topicTotalLags[topic]
 			fmt.Printf("   %s %s  %s\n",
 				color.YellowString("↳"),
 				color.WhiteString(topic),
-				color.HiBlackString("(%d partitions: %s)", len(parts), strings.Join(parts, ", ")))
+				color.HiBlackString("(total lag: %d, %d partitions: %s)",
+					totalLag, len(parts), strings.Join(parts, ", ")))
 		}
 		fmt.Println()
 

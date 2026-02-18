@@ -34,7 +34,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file to use for the migration.")
 	requiredFlags.StringVar(&migrationId, "migration-id", "", "The ID of the migration to execute.")
-	requiredFlags.Int64Var(&threshold, "threshold", 0, "Replication lag threshold in milliseconds before proceeding with migration.")
+	requiredFlags.Int64Var(&threshold, "threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.Int64Var(&maxWaitTime, "max-wait-time", 0, "Maximum time in seconds to wait for lags to decrease below threshold.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use for the migration.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use for the migration.")
