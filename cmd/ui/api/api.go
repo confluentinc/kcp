@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
@@ -30,7 +31,8 @@ type UI struct {
 	migrationScriptsHCLService hcl.MigrationScriptsHCLService
 
 	port        string
-	cachedState *types.State // Cache the uploaded state for metrics filtering
+	states      map[string]*types.State // Session-based state storage (key: sessionId)
+	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
 func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
@@ -40,9 +42,27 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCL
 		migrationInfraHCLService:   migrationInfraHCLService,
 		migrationScriptsHCLService: migrationScriptsHCLService,
 
-		port:        opts.Port,
-		cachedState: nil,
+		port:   opts.Port,
+		states: make(map[string]*types.State),
 	}
+}
+
+// getStateBySession extracts the sessionId from the request and retrieves the corresponding state
+func (ui *UI) getStateBySession(c echo.Context) (*types.State, error) {
+	sessionId := c.QueryParam("sessionId")
+	if sessionId == "" {
+		return nil, fmt.Errorf("sessionId is required")
+	}
+
+	ui.statesMutex.RLock()
+	state, exists := ui.states[sessionId]
+	ui.statesMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("no state found for session %s. Please upload state data first", sessionId)
+	}
+
+	return state, nil
 }
 
 func (ui *UI) Run() error {
@@ -88,11 +108,12 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 	startDate := c.QueryParam("startDate")
 	endDate := c.QueryParam("endDate")
 
-	// Check if we have cached state data
-	if ui.cachedState == nil {
+	// Get state by session ID
+	state, err := ui.getStateBySession(c)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "No state data available",
-			"message": "Please upload state data via POST /state first",
+			"message": err.Error(),
 		})
 	}
 
@@ -120,7 +141,7 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 	}
 
 	// Process the full state to get structured data
-	processedState := ui.reportService.ProcessState(*ui.cachedState)
+	processedState := ui.reportService.ProcessState(*state)
 
 	// Filter by region and cluster
 	filteredMetrics, err := ui.reportService.FilterMetrics(processedState, region, cluster, startTime, endTime)
@@ -140,11 +161,12 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	startDate := c.QueryParam("startDate")
 	endDate := c.QueryParam("endDate")
 
-	// Check if we have cached state data
-	if ui.cachedState == nil {
+	// Get state by session ID
+	state, err := ui.getStateBySession(c)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "No state data available",
-			"message": "Please upload state data via POST /upload-state first",
+			"message": err.Error(),
 		})
 	}
 
@@ -172,7 +194,7 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 	}
 
 	// Process the full state to get structured data
-	processedState := ui.reportService.ProcessState(*ui.cachedState)
+	processedState := ui.reportService.ProcessState(*state)
 
 	// Filter costs by region
 	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, startTime, endTime)
@@ -187,8 +209,15 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 }
 
 func (ui *UI) handleUploadState(c echo.Context) error {
-	var state types.State
+	sessionId := c.QueryParam("sessionId")
+	if sessionId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "sessionId is required",
+			"message": "Please provide a sessionId query parameter",
+		})
+	}
 
+	var state types.State
 	if err := c.Bind(&state); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -196,8 +225,10 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
-	// Cache the state for metrics filtering
-	ui.cachedState = &state
+	// Store state in map using session ID as key
+	ui.statesMutex.Lock()
+	ui.states[sessionId] = &state
+	ui.statesMutex.Unlock()
 
 	processedState := ui.reportService.ProcessState(state)
 
@@ -435,15 +466,17 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 		})
 	}
 
-	if ui.cachedState == nil {
+	// Get state by session ID
+	state, err := ui.getStateBySession(c)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "No state data available",
-			"message": "Please upload state data via POST /upload-state first",
+			"message": err.Error(),
 		})
 	}
 
 	var targetCluster *types.DiscoveredCluster
-	for _, region := range ui.cachedState.Regions {
+	for _, region := range state.Regions {
 		if region.Name != req.MskRegion {
 			continue
 		}
