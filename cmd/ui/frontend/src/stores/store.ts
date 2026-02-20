@@ -76,6 +76,9 @@ function updateDateFilter(current: DateFilters, update: Partial<DateFilters>): D
 type ViewType = 'summary' | 'region' | 'cluster' | 'tco-inputs' | 'schema-registries'
 
 interface AppState {
+  // Session ID - Generated once per page load for multi-session support
+  sessionId: string
+
   // Data state - Single root object from backend
   kcpState: ProcessedState | null
 
@@ -108,6 +111,7 @@ interface AppState {
   preselectedMetric: string | null
 
   // Actions
+  getSessionId: () => string
   setKcpState: (state: ProcessedState) => void
   selectSummary: () => void
   selectRegion: (regionName: string) => void
@@ -160,6 +164,7 @@ export const useAppStore = create<AppState>()(
   devtools(
     (set, get) => ({
       // Initial state
+      sessionId: crypto.randomUUID(),
       kcpState: null,
       selectedView: null,
       selectedRegionName: null,
@@ -177,6 +182,8 @@ export const useAppStore = create<AppState>()(
       preselectedMetric: null,
 
       // Actions
+      getSessionId: () => get().sessionId,
+
       setKcpState: (kcpState) => set({ kcpState }, false, 'setKcpState'),
 
       selectSummary: () =>
@@ -515,6 +522,11 @@ const DEFAULT_REGION_STATE: RegionState = {
   endDate: undefined,
   activeCostsTab: DEFAULT_TABS.COSTS,
 }
+
+/**
+ * Get the session ID for this browser session
+ */
+export const useSessionId = () => useAppStore((state) => state.sessionId)
 
 /**
  * Get the full KCP state

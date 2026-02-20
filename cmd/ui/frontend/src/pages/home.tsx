@@ -5,7 +5,7 @@ import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/M
 import { Explore } from '@/components/explore/Explore'
 import { AppHeader } from '@/components/common/AppHeader'
 import { Tabs } from '@/components/common/Tabs'
-import { useAppStore } from '@/stores/store'
+import { useAppStore, useSessionId } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
 import {
@@ -22,6 +22,7 @@ export const Home = () => {
   const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
 
   // Global state from Zustand
+  const sessionId = useSessionId()
   const kcpState = useAppStore((state) => state.kcpState)
   const isProcessing = useAppStore((state) => state.isProcessing)
   const error = useAppStore((state) => state.error)
@@ -48,7 +49,7 @@ export const Home = () => {
         // Validate that we have a Discovery object with regions
         if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
           // Call the /upload-state endpoint to process the discovery data
-          const result = await apiClient.state.uploadState(parsed)
+          const result = await apiClient.state.uploadState(parsed, sessionId)
 
           // Set the entire processed state in one action
           if (result && result.regions) {

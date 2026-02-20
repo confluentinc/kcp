@@ -7,7 +7,7 @@ import {
   SelectValue,
 } from '@/components/common/ui/select'
 import { generateCostsFilename } from '@/lib/utils'
-import { useRegionCostFilters } from '@/stores/store'
+import { useRegionCostFilters, useSessionId } from '@/stores/store'
 import { useChartZoom } from '@/hooks/useChartZoom'
 import { useRegionCostsData } from '@/hooks/useRegionCostsData'
 import { useDateFilters } from '@/hooks/useDateFilters'
@@ -30,6 +30,7 @@ interface RegionCostsProps {
 }
 
 export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
+  const sessionId = useSessionId()
   const [isLoading, setIsLoading] = useState(false)
   const [costsResponse, setCostsResponse] = useState<CostsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -135,7 +136,7 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
       setError(null)
 
       try {
-        const data = await apiClient.costs.getCosts(region.name, {
+        const data = await apiClient.costs.getCosts(region.name, sessionId, {
           startDate,
           endDate,
         })
@@ -149,7 +150,7 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
     }
 
     fetchCosts()
-  }, [isActive, region.name, startDate, endDate, selectedCostType])
+  }, [isActive, region.name, startDate, endDate, selectedCostType, sessionId])
 
   // Show error state
   if (error) {

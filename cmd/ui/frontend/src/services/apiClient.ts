@@ -163,10 +163,13 @@ const metrics = {
   async getMetrics(
     region: string,
     cluster: string,
+    sessionId: string,
     params?: MetricsQueryParams,
     config?: RequestConfig
   ): Promise<MetricsApiResponse> {
-    const queryParams: Record<string, string | Date | undefined> = {}
+    const queryParams: Record<string, string | Date | undefined> = {
+      sessionId, // Include session ID
+    }
     if (params?.startDate) {
       queryParams.startDate =
         params.startDate instanceof Date ? params.startDate : new Date(params.startDate)
@@ -193,10 +196,13 @@ const costs = {
    */
   async getCosts(
     region: string,
+    sessionId: string,
     params?: CostsQueryParams,
     config?: RequestConfig
   ): Promise<CostsApiResponse> {
-    const queryParams: Record<string, string | Date | undefined> = {}
+    const queryParams: Record<string, string | Date | undefined> = {
+      sessionId, // Include session ID
+    }
     if (params?.startDate) {
       queryParams.startDate =
         params.startDate instanceof Date ? params.startDate : new Date(params.startDate)
@@ -223,9 +229,13 @@ const state = {
    */
   async uploadState(
     data: StateUploadRequest,
+    sessionId: string,
     config?: RequestConfig
   ): Promise<StateUploadResponse> {
-    return post<StateUploadResponse>(API_ENDPOINTS.UPLOAD_STATE, data, config)
+    // Add sessionId as query parameter for POST request
+    const queryString = buildQueryString({ sessionId })
+    const endpoint = queryString ? `${API_ENDPOINTS.UPLOAD_STATE}?${queryString}` : API_ENDPOINTS.UPLOAD_STATE
+    return post<StateUploadResponse>(endpoint, data, config)
   },
 }
 
@@ -239,9 +249,13 @@ const wizard = {
   async generateTerraform<T = unknown>(
     endpoint: string,
     wizardData: Record<string, unknown>,
+    sessionId: string,
     config?: RequestConfig
   ): Promise<T> {
-    return post<T>(endpoint, wizardData, config)
+    // Add sessionId as query parameter for POST request
+    const queryString = buildQueryString({ sessionId })
+    const fullEndpoint = queryString ? `${endpoint}?${queryString}` : endpoint
+    return post<T>(fullEndpoint, wizardData, config)
   },
 }
 
