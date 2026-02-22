@@ -1,6 +1,6 @@
 name: kcp
 lang: go
-lang_version: "1.24.12"
+lang_version: "1.25.7"
 git:
   enable: true
 codeowners:
@@ -12,3 +12,8 @@ renovatebot:
 semaphore:
   enable: true
   pipeline_enable: false
+  managed_sections:
+    - version
+    - name
+    - agent
+    - global_job_config
