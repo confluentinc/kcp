@@ -61,6 +61,11 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	if err != nil {
 		return nil, err
 	}
+	clientConnectionQueries := ms.buildClientConnectionQueries(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
+	clientConnectionQueryResult, err := ms.executeMetricQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime)
+	if err != nil {
+		return nil, err
+	}
 
 	clusterQueries := ms.buildClusterMetricQueries(*cluster.ClusterName, timeWindow.Period)
 	clusterQueryResult, err := ms.executeMetricQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime)
@@ -91,6 +96,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 
 	// Combine broker and cluster metric results
 	combinedResults := append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...)
+	combinedResults = append(combinedResults, clientConnectionQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, storageQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, remoteStorageQueryResult.MetricDataResults...)
 
@@ -148,6 +154,8 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	return &clusterMetrics, nil
 }
 
+
+
 // Private Helper Functions - Query Building
 
 func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
@@ -157,7 +165,6 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 		"MessagesInPerSec":      "Average",
 		"RemoteLogSizeBytes":    "Maximum",
 		"PartitionCount":        "Maximum",
-		"ClientConnectionCount": "Maximum",
 	}
 
 	var queries []cloudwatchtypes.MetricDataQuery
@@ -210,6 +217,44 @@ func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName strin
 	return queries
 }
 
+func (ms *MetricService) buildClientConnectionQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+
+	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Broker ID\",\"Client Authentication\"} MetricName=\"ClientConnectionCount\" \"Cluster Name\"=\"%s\"', '%s', %d)"
+
+	searchExprMax := fmt.Sprintf(
+		searchTemplate,
+		clusterName, "Maximum", period,
+	)
+	searchExprAvg := fmt.Sprintf(
+		searchTemplate,
+		clusterName, "Average", period,
+	)
+	return []cloudwatchtypes.MetricDataQuery{
+		{
+			Id:         aws.String("max_all"),
+			Expression: aws.String(searchExprMax),
+			ReturnData: aws.Bool(false),
+		},
+		{
+			Id:         aws.String("sum_max"),
+			Expression: aws.String("SUM(max_all)"),
+			Label:      aws.String("ClientConnectionCount (Maximum)"),
+			ReturnData: aws.Bool(true),
+		},
+		{
+			Id:         aws.String("avg_all"),
+			Expression: aws.String(searchExprAvg),
+			ReturnData: aws.Bool(false),
+		},
+		{
+			Id:         aws.String("sum_avg"),
+			Expression: aws.String("SUM(avg_all)"),
+			Label:      aws.String("ClientConnectionCount (Average)"),
+			ReturnData: aws.Bool(true),
+		},
+	}
+}
+
 func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
 	var queries []cloudwatchtypes.MetricDataQuery
 	var metricIDs []string
@@ -252,7 +297,7 @@ func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName st
 			Id:         aws.String(expressionID),
 			Expression: aws.String(fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB)),
 			Label:      aws.String("Broker Aggregate - TotalLocalStorageUsage(GB)"),
-			ReturnData: aws.Bool(true),
+			ReturnData: aws.Bool(false),
 		})
 	}
 
