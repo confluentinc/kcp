@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,8 +55,13 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 		BrokerType:       brokerType,
 	}
 
-	brokerQueries := ms.buildBrokerMetricQueries(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
+	brokerQueries := ms.buildBrokerMetricQueries(*cluster.ClusterName, timeWindow.Period)
 	brokerQueryResult, err := ms.executeMetricQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	clientConnectionQueries := ms.buildClientConnectionQueries(*cluster.ClusterName, timeWindow.Period)
+	clientConnectionQueryResult, err := ms.executeMetricQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
@@ -77,13 +81,13 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	}
 
 	clusterVolumeSizeGB := int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
-	localStorageQuery := ms.buildLocalStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
+	localStorageQuery := ms.buildLocalStorageUsageQuery(*cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
 	storageQueryResult, err := ms.executeMetricQuery(ctx, localStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
 
-	remoteStorageQuery := ms.buildRemoteStorageUsageQuery(numberOfBrokerNodes, *cluster.ClusterName, timeWindow.Period)
+	remoteStorageQuery := ms.buildRemoteStorageUsageQuery(*cluster.ClusterName, timeWindow.Period)
 	remoteStorageQueryResult, err := ms.executeMetricQuery(ctx, remoteStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
@@ -91,6 +95,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 
 	// Combine broker and cluster metric results
 	combinedResults := append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...)
+	combinedResults = append(combinedResults, clientConnectionQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, storageQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, remoteStorageQueryResult.MetricDataResults...)
 
@@ -117,22 +122,9 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 		Period:      timeWindow.Period,
 	}
 
-	// Get all topics for this cluster
-	topics, err := ms.getTopicsForCluster(ctx, *cluster.ClusterName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get topics for cluster: %w", err)
-	}
-
-	if len(topics) == 0 {
-		slog.Info("No topics found for serverless cluster", "cluster", *cluster.ClusterName)
-		return &types.ClusterMetrics{
-			MetricMetadata: metricsMetadata,
-			Results:        []cloudwatchtypes.MetricDataResult{},
-		}, nil
-	}
 
 	// Build metric queries for all topics with aggregation
-	queries := ms.buildServerlessMetricQueries(topics, *cluster.ClusterName, timeWindow.Period)
+	queries := ms.buildServerlessMetricQueries(*cluster.ClusterName, timeWindow.Period)
 
 	// Execute the metric query
 	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
@@ -148,264 +140,184 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	return &clusterMetrics, nil
 }
 
+
+
 // Private Helper Functions - Query Building
 
-func (ms *MetricService) buildBrokerMetricQueries(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+func (ms *MetricService) buildBrokerMetricQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	metricStatMap := map[string]string{
-		"BytesInPerSec":         "Average",
-		"BytesOutPerSec":        "Average",
-		"MessagesInPerSec":      "Average",
-		"RemoteLogSizeBytes":    "Maximum",
-		"PartitionCount":        "Maximum",
-		"ClientConnectionCount": "Maximum",
+		"BytesInPerSec":      "Average",
+		"BytesOutPerSec":     "Average",
+		"MessagesInPerSec":   "Average",
+		"PartitionCount":     "Maximum",
 	}
 
+	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Broker ID\"} MetricName=\"%s\" \"Cluster Name\"=\"%s\"', '%s', %d)"
+
 	var queries []cloudwatchtypes.MetricDataQuery
-
-	metricIndex := 0
-
 	for metricName, metricStat := range metricStatMap {
-		var metricIDs []string
-
-		// brokerIDs are 1-indexed
-		for brokerID := 1; brokerID <= brokers; brokerID++ {
-			metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
-			metricIDs = append(metricIDs, metricID)
-
-			queries = append(queries, cloudwatchtypes.MetricDataQuery{
-				Id: aws.String(metricID),
-				MetricStat: &cloudwatchtypes.MetricStat{
-					Metric: &cloudwatchtypes.Metric{
-						Namespace:  aws.String("AWS/Kafka"),
-						MetricName: aws.String(metricName),
-						Dimensions: []cloudwatchtypes.Dimension{
-							{
-								Name:  aws.String("Cluster Name"),
-								Value: aws.String(clusterName),
-							},
-							{
-								Name:  aws.String("Broker ID"),
-								Value: aws.String(strconv.Itoa(brokerID)),
-							},
-						},
-					},
-					Period: aws.Int32(period),
-					Stat:   aws.String(metricStat),
-				},
+		searchID := fmt.Sprintf("m_%s", strings.ToLower(metricName))
+		sumID := fmt.Sprintf("sum_%s", strings.ToLower(metricName))
+		searchExpr := fmt.Sprintf(searchTemplate, metricName, clusterName, metricStat, period)
+		queries = append(queries,
+			cloudwatchtypes.MetricDataQuery{
+				Id:         aws.String(searchID),
+				Expression: aws.String(searchExpr),
 				ReturnData: aws.Bool(false),
-			})
-		}
-
-		expressionID := fmt.Sprintf("e%d", metricIndex+1)
-
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id:         aws.String(expressionID),
-			Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(metricIDs, ", "))),
-			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
-			ReturnData: aws.Bool(true),
-		})
-		metricIndex++
+			},
+			cloudwatchtypes.MetricDataQuery{
+				Id:         aws.String(sumID),
+				Expression: aws.String(fmt.Sprintf("SUM(%s)", searchID)),
+				Label:      aws.String(fmt.Sprintf("%s", metricName)),
+				ReturnData: aws.Bool(true),
+			},
+		)
 	}
-
 	return queries
 }
 
-func (ms *MetricService) buildLocalStorageUsageQuery(brokers int, clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
-	var queries []cloudwatchtypes.MetricDataQuery
-	var metricIDs []string
-	var expressionIDs []string
+func (ms *MetricService) buildClientConnectionQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 
-	// Create individual queries for KafkaDataLogsDiskUsed for each broker
-	for brokerID := 1; brokerID <= brokers; brokerID++ {
-		// metricID := fmt.Sprintf("m_%d", brokerID)
-		metricName := "KafkaDataLogsDiskUsed"
-		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
-		metricIDs = append(metricIDs, metricID)
+	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Broker ID\",\"Client Authentication\"} MetricName=\"ClientConnectionCount\" \"Cluster Name\"=\"%s\"', '%s', %d)"
 
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id: aws.String(metricID),
-			MetricStat: &cloudwatchtypes.MetricStat{
-				Metric: &cloudwatchtypes.Metric{
-					Namespace:  aws.String("AWS/Kafka"),
-					MetricName: aws.String(metricName),
-					Dimensions: []cloudwatchtypes.Dimension{
-						{
-							Name:  aws.String("Cluster Name"),
-							Value: aws.String(clusterName),
-						},
-						{
-							Name:  aws.String("Broker ID"),
-							Value: aws.String(strconv.Itoa(brokerID)),
-						},
-					},
-				},
-				Period: aws.Int32(period),
-				Stat:   aws.String("Maximum"),
-			},
+	searchExprMax := fmt.Sprintf(
+		searchTemplate,
+		clusterName, "Maximum", period,
+	)
+	searchExprAvg := fmt.Sprintf(
+		searchTemplate,
+		clusterName, "Average", period,
+	)
+	return []cloudwatchtypes.MetricDataQuery{
+		{
+			Id:         aws.String("max_all"),
+			Expression: aws.String(searchExprMax),
 			ReturnData: aws.Bool(false),
-		})
-
-		expressionID := fmt.Sprintf("l%d", brokerID)
-		expressionIDs = append(expressionIDs, expressionID)
-
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id:         aws.String(expressionID),
-			Expression: aws.String(fmt.Sprintf("((%s / 100) * %d)", metricID, volumeSizeGB)),
-			Label:      aws.String("Broker Aggregate - TotalLocalStorageUsage(GB)"),
+		},
+		{
+			Id:         aws.String("sum_max"),
+			Expression: aws.String("SUM(max_all)"),
+			Label:      aws.String("ClientConnectionCount (Maximum)"),
 			ReturnData: aws.Bool(true),
-		})
+		},
+		{
+			Id:         aws.String("avg_all"),
+			Expression: aws.String(searchExprAvg),
+			ReturnData: aws.Bool(false),
+		},
+		{
+			Id:         aws.String("sum_avg"),
+			Expression: aws.String("SUM(avg_all)"),
+			Label:      aws.String("ClientConnectionCount (Average)"),
+			ReturnData: aws.Bool(true),
+		},
 	}
-
-	// Create expression to calculate total local storage usage for cluster in GB
-	queries = append(queries, cloudwatchtypes.MetricDataQuery{
-		Id:         aws.String("e_total_local_storage_usage_gb"),
-		Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(expressionIDs, ","))),
-		Label:      aws.String("Cluster Aggregate - TotalLocalStorageUsage(GB)"),
-		ReturnData: aws.Bool(true),
-	})
-
-	return queries
 }
 
-func (ms *MetricService) buildRemoteStorageUsageQuery(brokers int, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
-	var queries []cloudwatchtypes.MetricDataQuery
-	var metricIDs []string
-	var expressionIDs []string
-
-	// Create individual queries for RemoteLogSizeBytes for each broker
-	for brokerID := 1; brokerID <= brokers; brokerID++ {
-		metricName := "RemoteLogSizeBytes"
-		metricID := fmt.Sprintf("m_%s_%d", strings.ToLower(metricName), brokerID)
-		metricIDs = append(metricIDs, metricID)
-
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id: aws.String(metricID),
-			MetricStat: &cloudwatchtypes.MetricStat{
-				Metric: &cloudwatchtypes.Metric{
-					Namespace:  aws.String("AWS/Kafka"),
-					MetricName: aws.String("RemoteLogSizeBytes"),
-					Dimensions: []cloudwatchtypes.Dimension{
-						{
-							Name:  aws.String("Cluster Name"),
-							Value: aws.String(clusterName),
-						},
-						{
-							Name:  aws.String("Broker ID"),
-							Value: aws.String(strconv.Itoa(brokerID)),
-						},
-					},
-				},
-				Period: aws.Int32(period),
-				Stat:   aws.String("Maximum"),
-			},
+func (ms *MetricService) buildLocalStorageUsageQuery(clusterName string, period int32, volumeSizeGB int) []cloudwatchtypes.MetricDataQuery {
+	metricName := "KafkaDataLogsDiskUsed"
+	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Broker ID\"} MetricName=\"%s\" \"Cluster Name\"=\"%s\"', 'Maximum', %d)"
+	searchExpr := fmt.Sprintf(searchTemplate, metricName, clusterName, period)
+	return []cloudwatchtypes.MetricDataQuery{
+		{
+			Id:         aws.String("m_local_disk"),
+			Expression: aws.String(searchExpr),
 			ReturnData: aws.Bool(false),
-		})
-
-		expressionID := fmt.Sprintf("r%d", brokerID)
-		expressionIDs = append(expressionIDs, expressionID)
-
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id:         aws.String(expressionID),
-			Expression: aws.String(fmt.Sprintf("(%s / 1073741824)", metricID)),
-			Label:      aws.String("Broker Aggregate - TotalRemoteStorageUsage(GB)"),
+		},
+		{
+			Id:         aws.String("e_local_gb"),
+			Expression: aws.String(fmt.Sprintf("((m_local_disk / 100) * %d)", volumeSizeGB)),
+			ReturnData: aws.Bool(false),
+		},
+		{
+			Id:         aws.String("e_total_local_storage_usage_gb"),
+			Expression: aws.String("SUM(e_local_gb)"),
+			Label:      aws.String("TotalLocalStorageUsage(GB)"),
 			ReturnData: aws.Bool(true),
-		})
+		},
 	}
+}
 
-	// Create expression to calculate total remote storage usage for clusterin GB
-	queries = append(queries, cloudwatchtypes.MetricDataQuery{
-		Id:         aws.String("e_total_remote_storage_usage_gb"),
-		Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(expressionIDs, ","))),
-		Label:      aws.String("Cluster Aggregate - TotalRemoteStorageUsage(GB)"),
-		ReturnData: aws.Bool(true),
-	})
-
-	return queries
+func (ms *MetricService) buildRemoteStorageUsageQuery(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+	metricName := "RemoteLogSizeBytes"
+	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Broker ID\"} MetricName=\"%s\" \"Cluster Name\"=\"%s\"', 'Maximum', %d)"
+	searchExpr := fmt.Sprintf(searchTemplate, metricName, clusterName, period)
+	const bytesPerGB = 1073741824
+	return []cloudwatchtypes.MetricDataQuery{
+		{
+			Id:         aws.String("m_remote"),
+			Expression: aws.String(searchExpr),
+			ReturnData: aws.Bool(false),
+		},
+		{
+			Id:         aws.String("e_remote_gb"),
+			Expression: aws.String(fmt.Sprintf("(m_remote / %d)", bytesPerGB)),
+			ReturnData: aws.Bool(false),
+		},
+		{
+			Id:         aws.String("e_total_remote_storage_usage_gb"),
+			Expression: aws.String("SUM(e_remote_gb)"),
+			Label:      aws.String("TotalRemoteStorageUsage(GB)"),
+			ReturnData: aws.Bool(true),
+		},
+	}
 }
 
 func (ms *MetricService) buildClusterMetricQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
-	var metrics = []string{
-		"GlobalPartitionCount",
-	}
+
+	metricName := "GlobalPartitionCount"
 
 	var queries []cloudwatchtypes.MetricDataQuery
-
-	for _, metricName := range metrics {
-		metricID := fmt.Sprintf("m_%s", strings.ToLower(metricName))
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id: aws.String(metricID),
-			MetricStat: &cloudwatchtypes.MetricStat{
-				Metric: &cloudwatchtypes.Metric{
-					Namespace:  aws.String("AWS/Kafka"),
-					MetricName: aws.String(metricName),
-					Dimensions: []cloudwatchtypes.Dimension{
-						{
-							Name:  aws.String("Cluster Name"),
-							Value: aws.String(clusterName),
-						},
+	metricID := fmt.Sprintf("m_%s", strings.ToLower(metricName))
+	queries = append(queries, cloudwatchtypes.MetricDataQuery{
+		Id: aws.String(metricID),
+		MetricStat: &cloudwatchtypes.MetricStat{
+			Metric: &cloudwatchtypes.Metric{
+				Namespace:  aws.String("AWS/Kafka"),
+				MetricName: aws.String(metricName),
+				Dimensions: []cloudwatchtypes.Dimension{
+					{
+						Name:  aws.String("Cluster Name"),
+						Value: aws.String(clusterName),
 					},
 				},
-				Period: aws.Int32(period),
-				Stat:   aws.String("Maximum"),
 			},
-			ReturnData: aws.Bool(true),
-		})
-	}
-
+			Period: aws.Int32(period),
+			Stat:   aws.String("Maximum"),
+		},
+		ReturnData: aws.Bool(true),
+	})
 	return queries
 }
 
-func (ms *MetricService) buildServerlessMetricQueries(topics []string, clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
-	var metrics = []string{
+func (ms *MetricService) buildServerlessMetricQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
+	metrics := []string{
 		"BytesInPerSec",
 		"BytesOutPerSec",
 		"MessagesInPerSec",
 	}
 
+	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Topic\"} MetricName=\"%s\" \"Cluster Name\"=\"%s\"', 'Average', %d)"
+
 	var queries []cloudwatchtypes.MetricDataQuery
-
-	for metricIndex, metricName := range metrics {
-		var metricIDs []string
-
-		// Create individual queries for each topic
-		for topicIndex, topic := range topics {
-			metricID := fmt.Sprintf("m_%s_topic_%d", strings.ToLower(metricName), topicIndex)
-			metricIDs = append(metricIDs, metricID)
-
-			queries = append(queries, cloudwatchtypes.MetricDataQuery{
-				Id: aws.String(metricID),
-				MetricStat: &cloudwatchtypes.MetricStat{
-					Metric: &cloudwatchtypes.Metric{
-						Namespace:  aws.String("AWS/Kafka"),
-						MetricName: aws.String(metricName),
-						Dimensions: []cloudwatchtypes.Dimension{
-							{
-								Name:  aws.String("Cluster Name"),
-								Value: aws.String(clusterName),
-							},
-							{
-								Name:  aws.String("Topic"),
-								Value: aws.String(topic),
-							},
-						},
-					},
-					Period: aws.Int32(period),
-					Stat:   aws.String("Average"),
-				},
+	for _, metricName := range metrics {
+		searchID := fmt.Sprintf("m_%s", strings.ToLower(metricName))
+		sumID := fmt.Sprintf("sum_%s", strings.ToLower(metricName))
+		searchExpr := fmt.Sprintf(searchTemplate, metricName, clusterName, period)
+		queries = append(queries,
+			cloudwatchtypes.MetricDataQuery{
+				Id:         aws.String(searchID),
+				Expression: aws.String(searchExpr),
 				ReturnData: aws.Bool(false),
-			})
-		}
-
-		// Create aggregation expression that sums all topic metrics for this metric type
-		expressionID := fmt.Sprintf("e%d", metricIndex+1)
-		queries = append(queries, cloudwatchtypes.MetricDataQuery{
-			Id:         aws.String(expressionID),
-			Expression: aws.String(fmt.Sprintf("SUM([%s])", strings.Join(metricIDs, ", "))),
-			Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
-			ReturnData: aws.Bool(true),
-		})
+			},
+			cloudwatchtypes.MetricDataQuery{
+				Id:         aws.String(sumID),
+				Expression: aws.String(fmt.Sprintf("SUM(%s)", searchID)),
+				Label:      aws.String(fmt.Sprintf("%s", metricName)),
+				ReturnData: aws.Bool(true),
+			},
+		)
 	}
-
 	return queries
 }
 
@@ -440,53 +352,6 @@ func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloud
 	return &cloudwatch.GetMetricDataOutput{
 		MetricDataResults: allResults,
 	}, nil
-}
-
-// Private Helper Functions - Topic Discovery
-
-func (ms *MetricService) getTopicsForCluster(ctx context.Context, clusterName string) ([]string, error) {
-	topics := make(map[string]struct{})
-
-	// Use BytesInPerSec as a representative metric to find all topics
-	listMetricsInput := &cloudwatch.ListMetricsInput{
-		Namespace:  aws.String("AWS/Kafka"),
-		MetricName: aws.String("BytesInPerSec"),
-		Dimensions: []cloudwatchtypes.DimensionFilter{
-			{
-				Name:  aws.String("Cluster Name"),
-				Value: aws.String(clusterName),
-			},
-		},
-	}
-
-	var nextToken *string
-	for {
-		listMetricsInput.NextToken = nextToken
-		output, err := ms.client.ListMetrics(ctx, listMetricsInput)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list metrics: %w", err)
-		}
-
-		for _, metric := range output.Metrics {
-			for _, dim := range metric.Dimensions {
-				if *dim.Name == "Topic" {
-					topics[*dim.Value] = struct{}{}
-					break
-				}
-			}
-		}
-
-		if output.NextToken == nil {
-			break
-		}
-		nextToken = output.NextToken
-	}
-
-	topicList := make([]string, 0, len(topics))
-	for topic := range topics {
-		topicList = append(topicList, topic)
-	}
-	return topicList, nil
 }
 
 func getBrokerType(instanceType string) types.BrokerType {
