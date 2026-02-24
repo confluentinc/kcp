@@ -168,7 +168,7 @@ func (ms *MetricService) buildBrokerMetricQueries(clusterName string, period int
 			cloudwatchtypes.MetricDataQuery{
 				Id:         aws.String(sumID),
 				Expression: aws.String(fmt.Sprintf("SUM(%s)", searchID)),
-				Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
+				Label:      aws.String(fmt.Sprintf("%s", metricName)),
 				ReturnData: aws.Bool(true),
 			},
 		)
@@ -232,7 +232,7 @@ func (ms *MetricService) buildLocalStorageUsageQuery(clusterName string, period 
 		{
 			Id:         aws.String("e_total_local_storage_usage_gb"),
 			Expression: aws.String("SUM(e_local_gb)"),
-			Label:      aws.String("Cluster Aggregate - TotalLocalStorageUsage(GB)"),
+			Label:      aws.String("TotalLocalStorageUsage(GB)"),
 			ReturnData: aws.Bool(true),
 		},
 	}
@@ -257,7 +257,7 @@ func (ms *MetricService) buildRemoteStorageUsageQuery(clusterName string, period
 		{
 			Id:         aws.String("e_total_remote_storage_usage_gb"),
 			Expression: aws.String("SUM(e_remote_gb)"),
-			Label:      aws.String("Cluster Aggregate - TotalRemoteStorageUsage(GB)"),
+			Label:      aws.String("TotalRemoteStorageUsage(GB)"),
 			ReturnData: aws.Bool(true),
 		},
 	}
@@ -313,7 +313,7 @@ func (ms *MetricService) buildServerlessMetricQueries(clusterName string, period
 			cloudwatchtypes.MetricDataQuery{
 				Id:         aws.String(sumID),
 				Expression: aws.String(fmt.Sprintf("SUM(%s)", searchID)),
-				Label:      aws.String(fmt.Sprintf("Cluster Aggregate - %s", metricName)),
+				Label:      aws.String(fmt.Sprintf("%s", metricName)),
 				ReturnData: aws.Bool(true),
 			},
 		)
