@@ -122,7 +122,6 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 		Period:      timeWindow.Period,
 	}
 
-
 	// Build metric queries for all topics with aggregation
 	queries := ms.buildServerlessMetricQueries(*cluster.ClusterName, timeWindow.Period)
 
@@ -143,10 +142,10 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 // Private Helper Functions - Query Building
 func (ms *MetricService) buildBrokerMetricQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	metricStatMap := map[string]string{
-		"BytesInPerSec":      "Average",
-		"BytesOutPerSec":     "Average",
-		"MessagesInPerSec":   "Average",
-		"PartitionCount":     "Maximum",
+		"BytesInPerSec":    "Average",
+		"BytesOutPerSec":   "Average",
+		"MessagesInPerSec": "Average",
+		"PartitionCount":   "Maximum",
 	}
 
 	searchTemplate := "SEARCH('{AWS/Kafka,\"Cluster Name\",\"Broker ID\"} MetricName=\"%s\" \"Cluster Name\"=\"%s\"', '%s', %d)"
