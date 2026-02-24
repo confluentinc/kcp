@@ -140,10 +140,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	return &clusterMetrics, nil
 }
 
-
-
 // Private Helper Functions - Query Building
-
 func (ms *MetricService) buildBrokerMetricQueries(clusterName string, period int32) []cloudwatchtypes.MetricDataQuery {
 	metricStatMap := map[string]string{
 		"BytesInPerSec":      "Average",
