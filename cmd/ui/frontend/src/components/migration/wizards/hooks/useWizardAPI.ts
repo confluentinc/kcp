@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react'
 import { apiClient } from '@/services/apiClient'
 import type { TerraformFiles, WizardFormData } from '../types'
+import { useSessionId } from '@/stores/store'
 
 export const useWizardAPI = (apiEndpoint: string) => {
+  const sessionId = useSessionId()
   const [isLoading, setIsLoading] = useState(false)
   const [terraformFiles, setTerraformFiles] = useState<TerraformFiles | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -15,7 +17,8 @@ export const useWizardAPI = (apiEndpoint: string) => {
 
         const files = await apiClient.wizard.generateTerraform<TerraformFiles>(
           apiEndpoint,
-          wizardData
+          wizardData,
+          sessionId
         )
 
         setTerraformFiles(files)
@@ -30,7 +33,7 @@ export const useWizardAPI = (apiEndpoint: string) => {
         setIsLoading(false)
       }
     },
-    [apiEndpoint]
+    [apiEndpoint, sessionId]
   )
 
   const reset = useCallback(() => {
