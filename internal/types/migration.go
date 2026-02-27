@@ -186,6 +186,11 @@ func (m *Migration) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
 	if err := m.fenceGateway(ctx); err != nil {
 		e.Cancel(err)
 	}
+
+	// wait for recycled gateway pods
+	if err := m.waitForRecycledGatewayPods(ctx); err != nil {
+		e.Cancel(err)
+	}
 }
 
 func (m *Migration) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
@@ -648,8 +653,69 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 }
 
 func (m *Migration) fenceGateway(ctx context.Context) error {
-	// fence the gateway
-	slog.Info("fencing the gateway...done")
+	slog.Info("fencing gateway route",
+		"namespace", m.GatewayNamespace,
+		"gateway", m.GatewayCrdName,
+		"route", m.SourceRouteName)
+
+	// Step 1: Get the current gateway YAML to find the source route index
+	gatewayYAML, err := m.gatewayService.GetGatewayYAML(ctx, m.GatewayNamespace, m.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to get gateway: %w", err)
+	}
+
+	var gw GatewayResource
+	if err := yaml.Unmarshal(gatewayYAML, &gw); err != nil {
+		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	}
+
+	// Step 2: Find the source route index by iterating through routes
+	routeIndex := -1
+	for i, route := range gw.Spec.Routes {
+		if route.Name == m.SourceRouteName {
+			routeIndex = i
+			break
+		}
+	}
+	if routeIndex == -1 {
+		return fmt.Errorf("source route '%s' not found in gateway routes", m.SourceRouteName)
+	}
+
+	// Log warning if route is already fenced (we'll replace it)
+	if gw.Spec.Routes[routeIndex].Fence != nil {
+		slog.Warn("source route is already fenced, will replace with new fence configuration",
+			"route", m.SourceRouteName,
+			"existingScope", gw.Spec.Routes[routeIndex].Fence.Scope)
+	}
+
+	// Step 3: Build JSON patch to add fence configuration to the route
+	const (
+		FenceScope        = "ALL"
+		FenceErrorCode    = "BROKER_NOT_AVAILABLE"
+		FenceErrorMessage = "This route is currently unavailable - all requests are blocked by me!?"
+	)
+	patchOps := []map[string]any{
+		{
+			"op":   "add",
+			"path": fmt.Sprintf("/spec/routes/%d/fence", routeIndex),
+			"value": map[string]any{
+				"scope":        FenceScope,
+				"errorCode":    FenceErrorCode,
+				"errorMessage": FenceErrorMessage,
+			},
+		},
+	}
+
+	// Step 4: Apply the patch via the gateway service
+	if err := m.gatewayService.PatchGateway(ctx, m.GatewayNamespace, m.GatewayCrdName, patchOps); err != nil {
+		return fmt.Errorf("failed to fence gateway route '%s': %w", m.SourceRouteName, err)
+	}
+
+	slog.Info("gateway route fenced successfully",
+		"route", m.SourceRouteName,
+		"scope", FenceScope,
+		"errorCode", FenceErrorCode)
+
 	return nil
 }
 
@@ -780,14 +846,9 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 		return fmt.Errorf("source route '%s' not found in gateway routes", m.SourceRouteName)
 	}
 
-	slog.Info("found source route to update", "route", m.SourceRouteName, "index", routeIndex)
-
 	// Step 2: Build a single JSON patch with both operations:
 	//   1) Add the new streaming domain
 	//   2) Replace the route to point to the new streaming domain
-
-	slog.Info("adding new streaming domain", "bootstrapEndpoint", m.CCBootstrapEndpoint, "loadBalancerEndpoint", m.LoadBalancerEndpoint)
-
 	patchOps := []map[string]any{
 		// Op 1: Add the new streaming domain
 		{
@@ -806,13 +867,6 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 							},
 						},
 					},
-					"nodeIdRanges": []map[string]any{
-						{
-							"name":  "pool-1",
-							"start": 0,
-							"end":   2,
-						},
-					},
 				},
 			},
 		},
@@ -824,7 +878,8 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 				"name":     "swap-msk-unauth-to-cc-route",
 				"endpoint": m.LoadBalancerEndpoint,
 				"brokerIdentificationStrategy": map[string]any{
-					"type": "port",
+					"type":    "host",
+					"pattern": fmt.Sprintf("broker$(nodeId).%s", m.LoadBalancerEndpoint),
 				},
 				"streamingDomain": map[string]any{
 					"name":              "confluent-cloud-plain",
@@ -836,6 +891,9 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 					"client": map[string]any{
 						"authentication": map[string]any{
 							"type": "none",
+						},
+						"tls": map[string]any{
+							"secretRef": "gateway-tls",
 						},
 					},
 					"cluster": map[string]any{
@@ -855,6 +913,8 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 	if err := m.gatewayService.PatchGateway(ctx, m.GatewayNamespace, m.GatewayCrdName, patchOps); err != nil {
 		return fmt.Errorf("failed to patch gateway: %w", err)
 	}
+
+	fmt.Println("🤔 leaving switchOverGatewayConfig()")
 
 	return nil
 }

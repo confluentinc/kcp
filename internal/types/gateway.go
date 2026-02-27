@@ -17,6 +17,7 @@ type Route struct {
 	Name            string               `yaml:"name"`
 	StreamingDomain RouteStreamingDomain `yaml:"streamingDomain"`
 	Security        RouteSecurity        `yaml:"security"`
+	Fence           *RouteFence          `yaml:"fence,omitempty"`
 }
 
 type RouteStreamingDomain struct {
@@ -36,4 +37,10 @@ type RouteSecurityConfig struct {
 
 type RouteSecurityAuthentication struct {
 	Type string `yaml:"type"`
+}
+
+type RouteFence struct {
+	Scope        string `yaml:"scope"`
+	ErrorCode    string `yaml:"errorCode"`
+	ErrorMessage string `yaml:"errorMessage"`
 }
