@@ -44,7 +44,7 @@ type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
 	ValidateGateway(ctx context.Context, yaml []byte, config GatewayConfig) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]interface{}) error
+	PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]any) error
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 }
 
