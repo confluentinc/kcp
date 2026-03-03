@@ -1,10 +1,18 @@
 #!/bin/bash
+set -euo pipefail
 
-sudo su - ec2-user
-cd /home/ec2-user
-sudo dnf install -y ansible
+# Install Ansible with retries (handles dnf lock contention from cloud-init, dnf-makecache, etc.)
+for i in $(seq 1 30); do
+  echo "Attempting to install Ansible (attempt $i/30)..."
+  if dnf install -y ansible 2>&1; then
+    echo "Ansible installed successfully"
+    break
+  fi
+  echo "dnf install failed (likely lock contention), retrying in 10s..."
+  sleep 10
+done
 echo 'export ANSIBLE_COLLECTIONS_PATH=/home/ec2-user' >> /home/ec2-user/.bashrc
-source /home/ec2-user/.bashrc
+export ANSIBLE_COLLECTIONS_PATH=/home/ec2-user
 ansible-galaxy collection install confluent.platform:7.9.1 -p /home/ec2-user
 echo "${private_key}" > /home/ec2-user/broker_key_rsa
 chown ec2-user:ec2-user /home/ec2-user/broker_key_rsa
@@ -39,90 +47,59 @@ EOF
 
 cat << 'EOF' > /home/ec2-user/wait-for-hosts-ready.yml
 ---
-- name: Wait for jump cluster instances to be SSH accessible and ready
+- name: Wait for SSH and install Python 3.11 on jump cluster instances
   hosts: all
   gather_facts: no
   vars:
     ansible_python_interpreter: /usr/bin/python3.11
-  
+
   tasks:
     - name: Wait for SSH connection to be available
       raw: echo "SSH connection test"
       register: ssh_test
       failed_when: false
       changed_when: false
-      retries: 20
+      retries: 30
       delay: 15
       until: ssh_test.rc == 0
-    
-    - name: Wait for Python 3 to be available
-      raw: python3 --version
-      register: python3_check
-      failed_when: false
-      changed_when: false
-      retries: 20
-      delay: 15
-      until: python3_check.rc == 0
-    
-    - name: Wait for Python 3.11 to be installed
+
+    - name: Install Python 3.11 and pip
+      raw: |
+        for i in $(seq 1 30); do
+          echo "Attempt $i/30: installing Python 3.11..."
+          if dnf install -y python3.11 python3.11-pip 2>&1; then
+            echo "Python 3.11 installed successfully"
+            break
+          fi
+          echo "dnf failed (likely lock contention), retrying in 10s..."
+          sleep 10
+        done
+        python3.11 --version
+      register: python_install
+      changed_when: true
+
+    - name: Install Python modules (packaging, PyYAML, setuptools)
+      raw: python3.11 -m pip install packaging PyYAML setuptools
+      register: pip_install
+      changed_when: true
+
+    - name: Verify Python 3.11
       raw: python3.11 --version
       register: python311_check
-      failed_when: false
       changed_when: false
-      retries: 20
-      delay: 15
-      until: python311_check.rc == 0
-    
-    - name: Fail if Python 3.11 is not available after retries
-      fail:
-        msg: "Python 3.11 is NOT installed on {{ inventory_hostname }} after waiting"
-      when: python311_check.rc != 0
-    
-    - name: Wait for packaging module to be installed
-      raw: python3.11 -c "import packaging; print('packaging version:', packaging.__version__)"
-      register: packaging_check
-      failed_when: false
+
+    - name: Verify all required modules
+      raw: python3.11 -c "import packaging, yaml, pkg_resources; print('All modules OK')"
+      register: modules_check
       changed_when: false
-      retries: 10
-      delay: 15
-      until: packaging_check.rc == 0
-    
-    - name: Fail if packaging module is not installed after retries
-      fail:
-        msg: "packaging module is NOT installed on {{ inventory_hostname }} after waiting"
-      when: packaging_check.rc != 0
-    
-    - name: Wait for PyYAML module to be installed
-      raw: python3.11 -c "import yaml; print('PyYAML version:', yaml.__version__)"
-      register: pyyaml_check
-      failed_when: false
-      changed_when: false
-      retries: 10
-      delay: 15
-      until: pyyaml_check.rc == 0
-    
-    - name: Fail if PyYAML module is not installed after retries
-      fail:
-        msg: "PyYAML module is NOT installed on {{ inventory_hostname }} after waiting"
-      when: pyyaml_check.rc != 0
-    
-    - name: Test Ansible ping module with Python 3.11 (verify Python modules work)
+
+    - name: Test Ansible ping with Python 3.11
       ping:
       register: ansible_ping_test
-      failed_when: false
-      changed_when: false
-      retries: 5
-      delay: 5
-      until: ansible_ping_test.ping is defined
-    
-    - name: Fail if Ansible cannot use Python 3.11
-      fail:
-        msg: "Ansible cannot connect using Python 3.11 on {{ inventory_hostname }}"
-      when: ansible_ping_test.ping is not defined
-    
+
     - name: Display readiness status
       debug:
-        msg: "{{ inventory_hostname }} is ready with Python {{ python311_check.stdout }}, packaging {{ packaging_check.stdout }}, PyYAML {{ pyyaml_check.stdout }}"
+        msg: "{{ inventory_hostname }} is ready: {{ python311_check.stdout | trim }}, modules: {{ modules_check.stdout | trim }}"
 EOF
 
 wget https://github.com/aws/aws-msk-iam-auth/releases/download/v2.3.2/aws-msk-iam-auth-2.3.2-all.jar -P /home/ec2-user/jars
@@ -157,7 +134,7 @@ cat << 'EOF' > /home/ec2-user/cluster-link-setup.yml
 - name: Post-installation cluster link setup for Confluent Platform
   hosts: kafka_broker
   gather_facts: yes
-  
+
   tasks:
     - name: Wait for Confluent Platform services to be ready
       wait_for:
@@ -193,12 +170,12 @@ cat << 'EOF' > /home/ec2-user/cluster-link-setup.yml
         path: /home/ec2-user/create-cluster-links.sh
       register: cluster_link_script
       when: inventory_hostname == groups['kafka_broker'][0]
-      
+
     - name: Execute cluster link creation script
       shell: /home/ec2-user/create-cluster-links.sh 2>/dev/null
       become: yes
       become_user: ec2-user
-      when: 
+      when:
         - inventory_hostname == groups['kafka_broker'][0]
         - cluster_link_script.stat.exists
       register: cluster_link_result
@@ -208,7 +185,7 @@ cat << 'EOF' > /home/ec2-user/cluster-link-setup.yml
     - name: Display cluster link creation result
       debug:
         msg: "{{ cluster_link_result.stdout_lines }}"
-      when: 
+      when:
         - inventory_hostname == groups['kafka_broker'][0]
         - cluster_link_result.stdout_lines is defined
       tags:
@@ -232,6 +209,8 @@ cat << 'EOF' > /home/ec2-user/cluster-link-setup.yml
         - verification
 
 EOF
+
+cd /home/ec2-user
 
 ansible-playbook -i hosts.yml wait-for-hosts-ready.yml
 ansible -i hosts.yml all -m ping

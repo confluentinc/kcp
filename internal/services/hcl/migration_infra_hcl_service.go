@@ -76,13 +76,9 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				VariablesTf: mi.generateJumpClustersVariablesTf(request),
 				OutputsTf:   mi.generateJumpClustersOutputsTf(),
 				VersionsTf:  mi.generateJumpClustersVersionsTf(),
-				AdditionalFiles: func() map[string]string {
-					additionalFiles := make(map[string]string)
-					additionalFiles["jump-cluster-with-cluster-links-user-data.tpl"] = mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType)
-					additionalFiles["jump-cluster-user-data.tpl"] = mi.generateJumpClusterUserDataTpl()
-
-					return additionalFiles
-				}(),
+				AdditionalFiles: map[string]string{
+					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType),
+				},
 			},
 			{
 				Name:        "networking",
@@ -423,7 +419,6 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			securityGroupIdsVarName,
 			jumpClusterSshKeyPairNameVarName,
 			"jump-cluster-with-cluster-links-user-data.tpl",
-			"jump-cluster-user-data.tpl",
 			"",
 			false,
 			map[string]hclwrite.Tokens{
@@ -460,7 +455,6 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			securityGroupIdsVarName,
 			jumpClusterSshKeyPairNameVarName,
 			"jump-cluster-with-cluster-links-user-data.tpl",
-			"jump-cluster-user-data.tpl",
 			jumpClusterIamAuthRoleNameVarName,
 			false,
 			map[string]hclwrite.Tokens{
@@ -496,10 +490,6 @@ func (mi *MigrationInfraHCLService) generateJumpClusterClusterLinksUserDataTpl(a
 	} else {
 		return aws.GenerateJumpClusterWithIamClusterLinksUserDataTpl()
 	}
-}
-
-func (mi *MigrationInfraHCLService) generateJumpClusterUserDataTpl() string {
-	return aws.GenerateJumpClusterUserDataTpl()
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClustersVariablesTf(request types.MigrationWizardRequest) string {
