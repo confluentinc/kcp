@@ -95,15 +95,13 @@ type MigrationType int
 const (
 	PublicMskEndpoints                       MigrationType = 1
 	ExternalOutboundClusterLink              MigrationType = 2
-	JumpClusterReuseExistingSubnetsSaslScram MigrationType = 3
-	JumpClusterReuseExistingSubnetsIam       MigrationType = 4
-	JumpClusterNewSubnetsSaslScram           MigrationType = 5
-	JumpClusterNewSubnetsIam                 MigrationType = 6
+	JumpClusterSaslScram MigrationType = 3
+	JumpClusterIam       MigrationType = 4
 )
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterReuseExistingSubnetsSaslScram, JumpClusterReuseExistingSubnetsIam, JumpClusterNewSubnetsSaslScram, JumpClusterNewSubnetsIam:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
 		return true
 	default:
 		return false
@@ -171,10 +169,7 @@ type MigrationWizardRequest struct {
 	ExtOutboundSubnetId        string                          `json:"ext_outbound_subnet_id"`
 	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"aws_kafka_brokers"`
 
-	HasExistingPrivateLink       bool     `json:"has_existing_private_link"`
-	ReuseExistingSubnets         bool     `json:"reuse_existing_subnets"`
-	PrivateLinkExistingSubnetIds []string `json:"private_link_existing_subnet_ids"`
-	PrivateLinkNewSubnetsCidr    []string `json:"private_link_new_subnets_cidr"`
+	ExistingPrivateLinkVpceId string `json:"existing_private_link_vpce_id"`
 
 	HasExistingInternetGateway bool `json:"has_existing_internet_gateway"`
 
