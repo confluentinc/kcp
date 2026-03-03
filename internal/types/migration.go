@@ -186,11 +186,6 @@ func (m *Migration) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
 	if err := m.fenceGateway(ctx); err != nil {
 		e.Cancel(err)
 	}
-
-	// wait for recycled gateway pods
-	if err := m.waitForRecycledGatewayPods(ctx); err != nil {
-		e.Cancel(err)
-	}
 }
 
 func (m *Migration) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
@@ -233,15 +228,6 @@ func (m *Migration) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
 	if err := m.switchOverGatewayConfig(ctx); err != nil {
 		e.Cancel(err)
 	}
-
-	slog.Info("gateway patched with new route and streaming domain")
-
-	// wait for recycled gateway pods
-	if err := m.waitForRecycledGatewayPods(ctx); err != nil {
-		e.Cancel(err)
-	}
-
-	slog.Info("recycled gateway pods ready")
 }
 
 func (m *Migration) leaveStateCallback(_ context.Context, e *fsm.Event) {
@@ -653,12 +639,16 @@ func (m *Migration) checkLags(ctx context.Context, threshold int64, maxWaitTime 
 }
 
 func (m *Migration) fenceGateway(ctx context.Context) error {
-	slog.Info("fencing gateway route",
-		"namespace", m.GatewayNamespace,
-		"gateway", m.GatewayCrdName,
-		"route", m.SourceRouteName)
+	slog.Info("🚧 Fencing gateway route", "route", m.SourceRouteName, "gateway", m.GatewayCrdName)
 
-	// Step 1: Get the current gateway YAML to find the source route index
+	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
+	// This must be first to avoid race conditions where rollout completes before we capture UIDs
+	initialGatewayPodUIDs, err := m.gatewayService.GetGatewayPodUIDs(ctx, m.GatewayNamespace, m.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
+	}
+
+	// Step 2: Get the current gateway YAML to find the source route index
 	gatewayYAML, err := m.gatewayService.GetGatewayYAML(ctx, m.GatewayNamespace, m.GatewayCrdName)
 	if err != nil {
 		return fmt.Errorf("failed to get gateway: %w", err)
@@ -669,7 +659,7 @@ func (m *Migration) fenceGateway(ctx context.Context) error {
 		return fmt.Errorf("failed to parse gateway YAML: %w", err)
 	}
 
-	// Step 2: Find the source route index by iterating through routes
+	// Step 3: Find the source route index
 	routeIndex := -1
 	for i, route := range gw.Spec.Routes {
 		if route.Name == m.SourceRouteName {
@@ -681,14 +671,11 @@ func (m *Migration) fenceGateway(ctx context.Context) error {
 		return fmt.Errorf("source route '%s' not found in gateway routes", m.SourceRouteName)
 	}
 
-	// Log warning if route is already fenced (we'll replace it)
 	if gw.Spec.Routes[routeIndex].Fence != nil {
-		slog.Warn("source route is already fenced, will replace with new fence configuration",
-			"route", m.SourceRouteName,
-			"existingScope", gw.Spec.Routes[routeIndex].Fence.Scope)
+		slog.Warn("⚠️  Route already fenced, replacing configuration", "route", m.SourceRouteName)
 	}
 
-	// Step 3: Build JSON patch to add fence configuration to the route
+	// Step 4: Build JSON patch to add fence configuration
 	const (
 		FenceScope        = "ALL"
 		FenceErrorCode    = "BROKER_NOT_AVAILABLE"
@@ -706,15 +693,26 @@ func (m *Migration) fenceGateway(ctx context.Context) error {
 		},
 	}
 
-	// Step 4: Apply the patch via the gateway service
+	// Step 5: Apply the patch to fence the route
 	if err := m.gatewayService.PatchGateway(ctx, m.GatewayNamespace, m.GatewayCrdName, patchOps); err != nil {
 		return fmt.Errorf("failed to fence gateway route '%s': %w", m.SourceRouteName, err)
 	}
 
-	slog.Info("gateway route fenced successfully",
-		"route", m.SourceRouteName,
-		"scope", FenceScope,
-		"errorCode", FenceErrorCode)
+	slog.Info("✅ Route fenced", "scope", FenceScope)
+
+	// Step 6: Wait for gateway pods to be recycled with new configuration
+	const (
+		pollInterval = 5 * time.Second
+		timeout      = 5 * time.Minute
+	)
+
+	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
+
+	if err := m.gatewayService.WaitForGatewayPods(ctx, m.GatewayNamespace, m.GatewayCrdName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+		return fmt.Errorf("failed waiting for gateway pods: %w", err)
+	}
+
+	slog.Info("✅ Gateway fenced and ready")
 
 	return nil
 }
@@ -815,15 +813,22 @@ func (m *Migration) startTopicPromotion(ctx context.Context, clusterApiKey strin
 func (m *Migration) checkPromotionCompletion(ctx context.Context) error {
 	//wait for topic promotion to complete
 	slog.Info("waiting for topic promotion to complete.....")
-	time.Sleep(10 * time.Second)
+	slog.Info("this can be removed")
 	slog.Info("waiting for topic promotion to complete...done")
 	return nil
 }
 
 func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
-	slog.Info("switching over to the new gateway config", "destination", m.DestinationName)
+	slog.Info("🔄 Switching gateway to Confluent Cloud", "destination", m.DestinationName)
 
-	// Step 1: Get the current gateway to find the source route index
+	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
+	// This must be first to avoid race conditions where rollout completes before we capture UIDs
+	initialGatewayPodUIDs, err := m.gatewayService.GetGatewayPodUIDs(ctx, m.GatewayNamespace, m.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
+	}
+
+	// Step 2: Get the current gateway to find the source route index
 	gatewayYAML, err := m.gatewayService.GetGatewayYAML(ctx, m.GatewayNamespace, m.GatewayCrdName)
 	if err != nil {
 		return fmt.Errorf("failed to get gateway: %w", err)
@@ -834,7 +839,7 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 		return fmt.Errorf("failed to parse gateway YAML: %w", err)
 	}
 
-	// Find the source route index so we can replace it in-place
+	// Step 3: Find the source route index
 	routeIndex := -1
 	for i, route := range gw.Spec.Routes {
 		if route.Name == m.SourceRouteName {
@@ -846,11 +851,9 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 		return fmt.Errorf("source route '%s' not found in gateway routes", m.SourceRouteName)
 	}
 
-	// Step 2: Build a single JSON patch with both operations:
-	//   1) Add the new streaming domain
-	//   2) Replace the route to point to the new streaming domain
+	// Step 4: Build JSON patch to add streaming domain and replace route
 	patchOps := []map[string]any{
-		// Op 1: Add the new streaming domain
+		// Add the new streaming domain
 		{
 			"op":   "add",
 			"path": "/spec/streamingDomains/-",
@@ -870,7 +873,7 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 				},
 			},
 		},
-		// Op 2: Replace the source route to point to the new streaming domain
+		// Replace the source route to point to the new streaming domain
 		{
 			"op":   "replace",
 			"path": fmt.Sprintf("/spec/routes/%d", routeIndex),
@@ -909,32 +912,26 @@ func (m *Migration) switchOverGatewayConfig(ctx context.Context) error {
 		},
 	}
 
-	// Step 3: Apply both operations in a single atomic patch
+	// Step 5: Apply the patch atomically (both operations together)
 	if err := m.gatewayService.PatchGateway(ctx, m.GatewayNamespace, m.GatewayCrdName, patchOps); err != nil {
 		return fmt.Errorf("failed to patch gateway: %w", err)
 	}
 
-	fmt.Println("🤔 leaving switchOverGatewayConfig()")
+	slog.Info("✅ Gateway config updated")
 
-	return nil
-}
-
-func (m *Migration) waitForRecycledGatewayPods(ctx context.Context) error {
+	// Step 6: Wait for gateway pods to be recycled with new configuration
 	const (
 		pollInterval = 5 * time.Second
 		timeout      = 5 * time.Minute
 	)
 
-	slog.Info("waiting for recycled gateway pods to be ready",
-		"namespace", m.GatewayNamespace,
-		"gateway", m.GatewayCrdName,
-		"pollInterval", pollInterval,
-		"timeout", timeout)
+	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := m.gatewayService.WaitForGatewayPods(ctx, m.GatewayNamespace, m.GatewayCrdName, pollInterval, timeout); err != nil {
+	if err := m.gatewayService.WaitForGatewayPods(ctx, m.GatewayNamespace, m.GatewayCrdName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
-	slog.Info("waiting for recycled gateway pods to be ready...done")
+	slog.Info("✅ Gateway switchover complete")
+
 	return nil
 }
