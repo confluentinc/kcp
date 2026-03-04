@@ -131,8 +131,11 @@ type TargetClusterWizardRequest struct {
 	EnvironmentId    string   `json:"environment_id"`
 	NeedsCluster     bool     `json:"needs_cluster"`
 	ClusterName      string   `json:"cluster_name"`
-	ClusterType      string   `json:"cluster_type"`
-	NeedsPrivateLink bool     `json:"needs_private_link"`
+	ClusterType         string `json:"cluster_type"`
+	ClusterAvailability string `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
+	ClusterCku          int    `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
+	NeedsPrivateLink    bool   `json:"needs_private_link"`
+	PreventDestroy      bool   `json:"prevent_destroy"`
 	VpcId            string   `json:"vpc_id"`
 	SubnetCidrRanges []string `json:"subnet_cidr_ranges"`
 }

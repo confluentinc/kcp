@@ -56,6 +56,58 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 			ValueExtractor: nil,
 			Condition:      nil,
 		},
+		{
+			Name: "network_id",
+			Definition: types.TerraformVariable{
+				Name:        "network_id",
+				Description: "The ID of the Confluent Cloud network (for dedicated cluster private link).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: nil,
+			Condition: func(request types.TargetClusterWizardRequest) bool {
+				return request.ClusterType == "dedicated"
+			},
+		},
+		{
+			Name: "network_dns_domain",
+			Definition: types.TerraformVariable{
+				Name:        "network_dns_domain",
+				Description: "The DNS domain of the Confluent Cloud network (for dedicated cluster private link).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: nil,
+			Condition: func(request types.TargetClusterWizardRequest) bool {
+				return request.ClusterType == "dedicated"
+			},
+		},
+		{
+			Name: "network_private_link_endpoint_service",
+			Definition: types.TerraformVariable{
+				Name:        "network_private_link_endpoint_service",
+				Description: "The AWS VPC endpoint service name for the Confluent Cloud network (for dedicated cluster private link).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: nil,
+			Condition: func(request types.TargetClusterWizardRequest) bool {
+				return request.ClusterType == "dedicated"
+			},
+		},
+		{
+			Name: "network_zones",
+			Definition: types.TerraformVariable{
+				Name:        "network_zones",
+				Description: "Availability zone IDs supported by the Confluent Cloud network (for dedicated cluster private link).",
+				Sensitive:   false,
+				Type:        "list(string)",
+			},
+			ValueExtractor: nil,
+			Condition: func(request types.TargetClusterWizardRequest) bool {
+				return request.ClusterType == "dedicated"
+			},
+		},
 	}
 }
 
