@@ -279,9 +279,32 @@ func NewMigration(migrationId string, opts MigrationOpts) *Migration {
 
 // LoadMigration loads a Migration object from MigrationState by its ID
 func LoadMigration(migrationState *MigrationState, migrationId string) (*Migration, error) {
-	m, err := migrationState.GetMigrationById(migrationId)
+	config, err := migrationState.GetMigrationById(migrationId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get migration: %w", err)
+	}
+
+	// Create Migration from MigrationConfig
+	m := &Migration{
+		MigrationId:          config.MigrationId,
+		CurrentState:         config.CurrentState,
+		GatewayNamespace:     config.GatewayNamespace,
+		GatewayCrdName:       config.GatewayCrdName,
+		SourceName:           config.SourceName,
+		DestinationName:      config.DestinationName,
+		SourceRouteName:      config.SourceRouteName,
+		DestinationRouteName: config.DestinationRouteName,
+		KubeConfigPath:       config.KubeConfigPath,
+		ClusterId:            config.ClusterId,
+		ClusterRestEndpoint:  config.ClusterRestEndpoint,
+		ClusterLinkName:      config.ClusterLinkName,
+		Topics:               config.Topics,
+		AuthMode:             config.AuthMode,
+		ClusterLinkTopics:    config.ClusterLinkTopics,
+		ClusterLinkConfigs:   config.ClusterLinkConfigs,
+		GatewayOriginalYAML:  config.GatewayOriginalYAML,
+		CCBootstrapEndpoint:  config.CCBootstrapEndpoint,
+		LoadBalancerEndpoint: config.LoadBalancerEndpoint,
 	}
 
 	m.gatewayService = gateway.NewK8sService(m.KubeConfigPath)
