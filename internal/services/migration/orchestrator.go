@@ -215,11 +215,8 @@ func (o *Orchestrator) saveState() error {
 		return fmt.Errorf("failed to load state for update: %w", err)
 	}
 
-	// Update the migration config in the state using bridge method
-	// TODO: This will be simplified once MigrationState uses MigrationConfig directly (task 15)
-	if err := state.UpdateFromConfig(o.config); err != nil {
-		return fmt.Errorf("failed to update migration config: %w", err)
-	}
+	// Update the migration config in the state
+	state.UpsertMigration(*o.config)
 
 	// Save the updated state
 	if err := o.persistenceService.SaveMigrationState(o.stateFilePath, state); err != nil {

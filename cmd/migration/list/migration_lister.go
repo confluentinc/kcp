@@ -52,7 +52,7 @@ func (ml *MigrationLister) Run() error {
 
 	// Sort migrations by creation time (newest first)
 	// We'll use the migration ID timestamp if available, otherwise just reverse order
-	sortedMigrations := make([]types.Migration, len(migrations))
+	sortedMigrations := make([]types.MigrationConfig, len(migrations))
 	copy(sortedMigrations, migrations)
 	sort.SliceStable(sortedMigrations, func(i, j int) bool {
 		// Reverse order (newest first)
@@ -67,7 +67,7 @@ func (ml *MigrationLister) Run() error {
 	return nil
 }
 
-func (ml *MigrationLister) displayMigration(index int, migration types.Migration) {
+func (ml *MigrationLister) displayMigration(index int, migration types.MigrationConfig) {
 	// Index and Migration ID
 	fmt.Printf("%s %s %s\n",
 		color.HiBlackString("[%d]", index),
