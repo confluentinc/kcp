@@ -336,29 +336,8 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
 
-	var conditionalErrors []string
-
-	// Conditional validation based on UseExistingSubnets
-	if req.ReuseExistingSubnets {
-		if len(req.PrivateLinkExistingSubnetIds) == 0 {
-			conditionalErrors = append(conditionalErrors, "privateLinkExistingSubnetIds is required when reuseExistingSubnets is true")
-		}
-	} else {
-		if len(req.PrivateLinkNewSubnetsCidr) == 0 {
-			conditionalErrors = append(conditionalErrors, "privateLinkNewSubnetsCidr is required when reuseExistingSubnets is false")
-		}
-	}
-
-	var allErrors []string
 	if len(missingFields) > 0 {
-		allErrors = append(allErrors, fmt.Sprintf("missing required fields: %s", strings.Join(missingFields, ", ")))
-	}
-	if len(conditionalErrors) > 0 {
-		allErrors = append(allErrors, conditionalErrors...)
-	}
-
-	if len(allErrors) > 0 {
-		return fmt.Errorf("invalid configuration: %s", strings.Join(allErrors, "; "))
+		return fmt.Errorf("invalid configuration: missing required fields: %s", strings.Join(missingFields, ", "))
 	}
 
 	return nil
@@ -411,7 +390,12 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 }
 
 func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
-	var req types.TargetClusterWizardRequest
+	// Default PreventDestroy to true before binding. If the JSON request includes
+	// "prevent_destroy": false, the binding will override this. If the field is
+	// omitted from the request, this default of true is preserved.
+	req := types.TargetClusterWizardRequest{
+		PreventDestroy: true,
+	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -449,6 +433,16 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 				"error":   "Missing required fields",
 				"message": "clusterName and clusterType are required when creating a new cluster",
 			})
+		}
+	}
+
+	// Apply defaults for dedicated cluster settings
+	if req.ClusterType == "dedicated" {
+		if req.ClusterAvailability == "" {
+			req.ClusterAvailability = "SINGLE_ZONE"
+		}
+		if req.ClusterCku == 0 {
+			req.ClusterCku = 1
 		}
 	}
 
