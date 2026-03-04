@@ -78,7 +78,7 @@ func (s *FileService) Save(state interface{}) error {
 // SaveWithRetry persists state with exponential backoff retry
 func (s *FileService) SaveWithRetry(state interface{}) error {
 	var err error
-	
+
 	for i := 0; i < maxRetries; i++ {
 		err = s.Save(state)
 		if err == nil {
