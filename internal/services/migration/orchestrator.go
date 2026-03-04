@@ -5,32 +5,28 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/confluentinc/kcp/internal/services/persistence"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/looplab/fsm"
 )
 
 // Orchestrator manages the FSM lifecycle and coordinates workflow execution
 type Orchestrator struct {
-	config             *types.MigrationConfig
-	fsm                *fsm.FSM
-	workflowService    WorkflowService
-	persistenceService persistence.MigrationService
-	stateFilePath      string
+	config          *types.MigrationConfig
+	fsm             *fsm.FSM
+	workflowService WorkflowService
+	stateFilePath   string
 }
 
 // NewOrchestrator creates a new migration orchestrator with injected dependencies
 func NewOrchestrator(
 	config *types.MigrationConfig,
 	workflowService WorkflowService,
-	persistenceService persistence.MigrationService,
 	stateFilePath string,
 ) *Orchestrator {
 	o := &Orchestrator{
-		config:             config,
-		workflowService:    workflowService,
-		persistenceService: persistenceService,
-		stateFilePath:      stateFilePath,
+		config:          config,
+		workflowService: workflowService,
+		stateFilePath:   stateFilePath,
 	}
 	o.initializeFSM()
 	return o
@@ -210,7 +206,7 @@ func (o *Orchestrator) leavePromotedCallback(ctx context.Context, e *fsm.Event) 
 // saveState persists the current migration config to the state file
 func (o *Orchestrator) saveState() error {
 	// Load the current state file
-	state, err := o.persistenceService.LoadMigrationState(o.stateFilePath)
+	state, err := types.NewMigrationStateFromFile(o.stateFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to load state for update: %w", err)
 	}
@@ -219,7 +215,7 @@ func (o *Orchestrator) saveState() error {
 	state.UpsertMigration(*o.config)
 
 	// Save the updated state
-	if err := o.persistenceService.SaveMigrationState(o.stateFilePath, state); err != nil {
+	if err := state.WriteToFile(o.stateFilePath); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
