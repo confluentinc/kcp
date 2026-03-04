@@ -4,7 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/persistence"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -34,26 +39,38 @@ func (m *MigrationExecutor) Run() error {
 		return fmt.Errorf("migration state file not found: %s\nRun 'kcp migration init' to create a new migration first", m.opts.migrationStateFile)
 	}
 
-	// Load the specific migration
-	migration, err := types.LoadMigration(migrationState, m.opts.migrationId)
+	// Get MigrationConfig by ID
+	config, err := migrationState.GetMigrationById(m.opts.migrationId)
 	if err != nil {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", m.opts.migrationId, m.opts.migrationStateFile)
 	}
 
-	// Provide save function for FSM callbacks (will save after each state transition)
-	migration.SetSaveStateFunc(func() error {
-		migrationState.UpsertMigration(*migration)
-		return migrationState.WriteToFile(m.opts.migrationStateFile)
-	})
+	// Create services
+	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
+	clusterLinkService := clusterlink.NewConfluentCloudService(&http.Client{})
 
+	// Create workflow service
+	workflowService := migration.NewDefaultWorkflowService(gatewayService, clusterLinkService)
+
+	// Create persistence service
+	persistenceService := persistence.NewFileSystemService()
+
+	// Create orchestrator
+	orchestrator := migration.NewOrchestrator(
+		config,
+		workflowService,
+		persistenceService,
+		m.opts.migrationStateFile,
+	)
+
+	// Execute migration
 	ctx := context.Background()
-
-	if err := migration.Execute(ctx, m.opts.threshold, m.opts.maxWaitTime, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
+	if err := orchestrator.Execute(ctx, m.opts.threshold, m.opts.maxWaitTime, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
 	slog.Info("migration completed",
-		"migrationId", migration.MigrationId,
-		"currentState", migration.GetCurrentState())
+		"migrationId", config.MigrationId,
+		"currentState", config.CurrentState)
 	return nil
 }
