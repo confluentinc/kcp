@@ -3,6 +3,7 @@ package execute
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -77,12 +78,21 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationExecutorOpts()
+	// Load migration state (following established pattern)
+	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
-		return fmt.Errorf("failed to parse migration execute opts: %v", err)
+		return fmt.Errorf("migration state file not found: %s\nRun 'kcp migration init' to create a new migration first", migrationStateFile)
 	}
 
-	migrationExecutor := NewMigrationExecutor(*opts)
+	// Get MigrationConfig by ID with two-level error handling
+	config, err := migrationState.GetMigrationById(migrationId)
+	if err != nil {
+		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
+	}
+
+	opts := parseMigrationExecutorOpts(*migrationState, *config)
+
+	migrationExecutor := NewMigrationExecutor(opts)
 	if err := migrationExecutor.Run(); err != nil {
 		return err
 	}
@@ -90,13 +100,14 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationExecutorOpts() (*MigrationExecutorOpts, error) {
-	return &MigrationExecutorOpts{
-		migrationStateFile: migrationStateFile,
-		migrationId:        migrationId,
-		threshold:          threshold,
-		maxWaitTime:        maxWaitTime,
-		clusterApiKey:      clusterApiKey,
-		clusterApiSecret:   clusterApiSecret,
-	}, nil
+func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
+	return MigrationExecutorOpts{
+		MigrationStateFile: migrationStateFile,
+		MigrationState:     migrationState,
+		MigrationConfig:    config,
+		Threshold:          threshold,
+		MaxWaitTime:        maxWaitTime,
+		ClusterApiKey:      clusterApiKey,
+		ClusterApiSecret:   clusterApiSecret,
+	}
 }

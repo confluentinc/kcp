@@ -196,21 +196,21 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 	}
 
 	for _, cluster := range allClusters {
-		md.AddHeading("Principals & ACLs - " + cluster.Name, 3)
+		md.AddHeading("Principals & ACLs - "+cluster.Name, 3)
 		headers = []string{"Principal", "Total ACLs"}
 		aclsByPrincipal := make(map[string]int)
 
 		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
 			aclsByPrincipal[acl.Principal]++
 		}
-		
+
 		if len(aclsByPrincipal) > 0 {
 			data = [][]string{}
-		
+
 			for principal, count := range aclsByPrincipal {
 				data = append(data, []string{principal, strconv.Itoa(count)})
 			}
-		
+
 			md.AddTable(headers, data)
 		}
 	}
