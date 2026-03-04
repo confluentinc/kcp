@@ -4,17 +4,22 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type MigrationExecutorOpts struct {
-	migrationStateFile string
-	migrationId        string
-	threshold          int64
-	maxWaitTime        int64 // in seconds
-	clusterApiKey      string
-	clusterApiSecret   string
+	MigrationStateFile string
+	MigrationState     types.MigrationState
+	MigrationConfig    types.MigrationConfig
+	Threshold          int64
+	MaxWaitTime        int64 // in seconds
+	ClusterApiKey      string
+	ClusterApiSecret   string
 }
 
 type MigrationExecutor struct {
@@ -28,32 +33,26 @@ func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
 }
 
 func (m *MigrationExecutor) Run() error {
-	// Load migration state
-	migrationState, err := types.NewMigrationStateFromFile(m.opts.migrationStateFile)
-	if err != nil {
-		return fmt.Errorf("migration state file not found: %s\nRun 'kcp migration init' to create a new migration first", m.opts.migrationStateFile)
-	}
+	// Use pre-loaded config from opts
+	config := m.opts.MigrationConfig
 
-	// Load the specific migration
-	migration, err := types.LoadMigration(migrationState, m.opts.migrationId)
-	if err != nil {
-		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", m.opts.migrationId, m.opts.migrationStateFile)
-	}
+	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
+	clusterLinkService := clusterlink.NewConfluentCloudService(&http.Client{})
+	workflow := migration.NewMigrationWorkflow(gatewayService, clusterLinkService)
 
-	// Provide save function for FSM callbacks (will save after each state transition)
-	migration.SetSaveStateFunc(func() error {
-		migrationState.UpsertMigration(*migration)
-		return migrationState.WriteToFile(m.opts.migrationStateFile)
-	})
+	orchestrator := migration.NewMigrationOrchestrator(
+		&config,
+		workflow,
+		m.opts.MigrationStateFile,
+	)
 
 	ctx := context.Background()
-
-	if err := migration.Execute(ctx, m.opts.threshold, m.opts.maxWaitTime, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
+	if err := orchestrator.Execute(ctx, m.opts.Threshold, m.opts.MaxWaitTime, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
 	slog.Info("migration completed",
-		"migrationId", migration.MigrationId,
-		"currentState", migration.GetCurrentState())
+		"migrationId", config.MigrationId,
+		"currentState", config.CurrentState)
 	return nil
 }

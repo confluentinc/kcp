@@ -702,7 +702,7 @@ func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request 
 		))
 
 		privateLinkSubnetsRef = fmt.Sprintf("aws_subnet.%s[*].id", "private_link_subnets")
-	}  else {
+	} else {
 		privateLinkSubnetsRef = modules.GetModuleVariableName("private_link_connection", "private_link_subnet_ids")
 		privateLinkSubnetsRef = fmt.Sprintf("var.%s", privateLinkSubnetsRef)
 	}

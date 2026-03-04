@@ -91,7 +91,7 @@ func (ig *IamAclsGenerator) Run() error {
 	for principal := range allAclsByPrincipal {
 		principalNames = append(principalNames, principal)
 	}
-	
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           ig.opts.TargetClusterId,
