@@ -13,8 +13,8 @@ import (
 // This is a dedicated state file for migration commands (init, execute, list)
 type MigrationState struct {
 	Migrations   []MigrationConfig `json:"migrations"`
-	KcpBuildInfo KcpBuildInfo `json:"kcp_build_info"`
-	Timestamp    time.Time    `json:"timestamp"`
+	KcpBuildInfo KcpBuildInfo      `json:"kcp_build_info"`
+	Timestamp    time.Time         `json:"timestamp"`
 }
 
 // NewMigrationState creates a new empty MigrationState with metadata
@@ -91,4 +91,3 @@ func (ms *MigrationState) GetMigrationById(migrationId string) (*MigrationConfig
 	}
 	return nil, fmt.Errorf("migration not found: %s", migrationId)
 }
-

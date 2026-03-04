@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
-	"github.com/goccy/go-yaml"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 )
 
 // WorkflowService defines the business operations for migration workflow
