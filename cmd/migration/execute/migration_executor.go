@@ -14,12 +14,13 @@ import (
 )
 
 type MigrationExecutorOpts struct {
-	migrationStateFile string
-	migrationId        string
-	threshold          int64
-	maxWaitTime        int64 // in seconds
-	clusterApiKey      string
-	clusterApiSecret   string
+	MigrationStateFile string
+	MigrationState     types.MigrationState
+	MigrationConfig    types.MigrationConfig
+	Threshold          int64
+	MaxWaitTime        int64 // in seconds
+	ClusterApiKey      string
+	ClusterApiSecret   string
 }
 
 type MigrationExecutor struct {
@@ -33,17 +34,8 @@ func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
 }
 
 func (m *MigrationExecutor) Run() error {
-	// Load migration state
-	migrationState, err := types.NewMigrationStateFromFile(m.opts.migrationStateFile)
-	if err != nil {
-		return fmt.Errorf("migration state file not found: %s\nRun 'kcp migration init' to create a new migration first", m.opts.migrationStateFile)
-	}
-
-	// Get MigrationConfig by ID
-	config, err := migrationState.GetMigrationById(m.opts.migrationId)
-	if err != nil {
-		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", m.opts.migrationId, m.opts.migrationStateFile)
-	}
+	// Use pre-loaded config from opts
+	config := m.opts.MigrationConfig
 
 	// Create services
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
@@ -57,15 +49,15 @@ func (m *MigrationExecutor) Run() error {
 
 	// Create orchestrator
 	orchestrator := migration.NewOrchestrator(
-		config,
+		&config,
 		workflowService,
 		persistenceService,
-		m.opts.migrationStateFile,
+		m.opts.MigrationStateFile,
 	)
 
 	// Execute migration
 	ctx := context.Background()
-	if err := orchestrator.Execute(ctx, m.opts.threshold, m.opts.maxWaitTime, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
+	if err := orchestrator.Execute(ctx, m.opts.Threshold, m.opts.MaxWaitTime, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 

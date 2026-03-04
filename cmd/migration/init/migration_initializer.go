@@ -3,39 +3,21 @@ package init
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"os"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/persistence"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/google/uuid"
 )
 
 type MigrationInitializerOpts struct {
-	migrationStateFile string
-	skipValidate       bool
-
-	gatewayNamespace     string
-	gatewayCrdName       string
-	sourceName           string
-	destinationName      string
-	sourceRouteName      string
-	destinationRouteName string
-	kubeConfigPath       string
-
-	clusterId            string
-	clusterRestEndpoint  string
-	clusterLinkName      string
-	clusterApiKey        string
-	clusterApiSecret     string
-	topics               []string
-	authMode             string
-	ccBootstrapEndpoint  string
-	loadBalancerEndpoint string
+	MigrationStateFile string
+	MigrationState     types.MigrationState
+	MigrationConfig    types.MigrationConfig
+	ClusterApiKey      string
+	ClusterApiSecret   string
 }
 
 type MigrationInitializer struct {
@@ -49,58 +31,11 @@ func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitialize
 }
 
 func (m *MigrationInitializer) Run() error {
-	// Load or create migration state
-	var migrationState *types.MigrationState
-	if _, err := os.Stat(m.opts.migrationStateFile); err == nil {
-		// File exists, load it
-		migrationState, err = types.NewMigrationStateFromFile(m.opts.migrationStateFile)
-		if err != nil {
-			return fmt.Errorf("failed to load migration state: %w", err)
-		}
-	} else {
-		// File doesn't exist, create new state
-		migrationState = types.NewMigrationState()
-	}
-
-	// Create MigrationConfig
-	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
-	config := &types.MigrationConfig{
-		MigrationId:          migrationId,
-		GatewayNamespace:     m.opts.gatewayNamespace,
-		GatewayCrdName:       m.opts.gatewayCrdName,
-		SourceName:           m.opts.sourceName,
-		DestinationName:      m.opts.destinationName,
-		SourceRouteName:      m.opts.sourceRouteName,
-		DestinationRouteName: m.opts.destinationRouteName,
-		KubeConfigPath:       m.opts.kubeConfigPath,
-		ClusterId:            m.opts.clusterId,
-		ClusterRestEndpoint:  m.opts.clusterRestEndpoint,
-		ClusterLinkName:      m.opts.clusterLinkName,
-		Topics:               m.opts.topics,
-		AuthMode:             m.opts.authMode,
-		CCBootstrapEndpoint:  m.opts.ccBootstrapEndpoint,
-		LoadBalancerEndpoint: m.opts.loadBalancerEndpoint,
-		CurrentState:         types.StateUninitialized,
-	}
-
-	// Ensure state file exists with this migration BEFORE any downstream operations
-	// All subsequent code (orchestrator, persistence, etc.) can safely assume file exists
-	migrationState.UpsertMigration(*config)
-	if err := migrationState.WriteToFile(m.opts.migrationStateFile); err != nil {
-		return fmt.Errorf("failed to write migration state file: %w", err)
-	}
-
-	// Skip validation if flag is set
-	if m.opts.skipValidate {
-		slog.Info("migration created (validation skipped)",
-			"migrationId", config.MigrationId,
-			"currentState", config.CurrentState,
-			"stateFile", m.opts.migrationStateFile)
-		return nil
-	}
+	// Use pre-loaded config from opts
+	config := &m.opts.MigrationConfig
 
 	// Create services
-	gatewayService := gateway.NewK8sService(m.opts.kubeConfigPath)
+	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(&http.Client{})
 
 	// Create workflow service with injected services
@@ -114,18 +49,14 @@ func (m *MigrationInitializer) Run() error {
 		config,
 		workflowService,
 		persistenceService,
-		m.opts.migrationStateFile,
+		m.opts.MigrationStateFile,
 	)
 
-	// Initialize migration
+	// Initialize migration (validate infrastructure)
 	ctx := context.Background()
-	if err := orchestrator.Initialize(ctx, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
+	if err := orchestrator.Initialize(ctx, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 
-	slog.Info("migration initialized",
-		"migrationId", config.MigrationId,
-		"currentState", config.CurrentState,
-		"stateFile", m.opts.migrationStateFile)
 	return nil
 }
