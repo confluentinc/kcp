@@ -78,6 +78,20 @@ func (mi *MigrationInfraAssetGenerator) buildTerraformProject(outputDir string, 
 		slog.Info("✅ wrote root variables.tf")
 	}
 
+	if project.OutputsTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "outputs.tf"), []byte(project.OutputsTf), 0644); err != nil {
+			return fmt.Errorf("failed to write outputs.tf: %w", err)
+		}
+		slog.Info("✅ wrote root outputs.tf")
+	}
+
+	if project.ReadmeMd != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte(project.ReadmeMd), 0644); err != nil {
+			return fmt.Errorf("failed to write README.md: %w", err)
+		}
+		slog.Info("✅ wrote README.md")
+	}
+
 	if project.InputsAutoTfvars != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(project.InputsAutoTfvars), 0644); err != nil {
 			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)

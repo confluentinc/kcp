@@ -144,7 +144,7 @@ func (s *MigrationScriptsHCLService) generateMigrateACLsMainTf(request types.Mig
 		serviceAccountResourceName := utils.FormatHclResourceName(principal)
 		rootBody.AppendUnstructuredTokens(utils.TokensForComment("// Migrated principal: " + principal))
 		rootBody.AppendNewline()
-		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal))
+		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal, true))
 		rootBody.AppendNewline()
 
 		for i, acl := range acls {
