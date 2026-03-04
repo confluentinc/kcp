@@ -85,7 +85,7 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
-			Condition: nil,
+			Condition:        nil,
 			FromModuleOutput: "",
 		},
 		{

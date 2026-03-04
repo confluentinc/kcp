@@ -12,12 +12,12 @@ import (
 )
 
 var (
-	roleArn         string
-	userArn         string
-	stateFile       string
-	clusterArn      string
-	outputDir       string
-	skipAuditReport bool
+	roleArn                   string
+	userArn                   string
+	stateFile                 string
+	clusterArn                string
+	outputDir                 string
+	skipAuditReport           bool
 	targetClusterId           string
 	targetClusterRestEndpoint string
 )
