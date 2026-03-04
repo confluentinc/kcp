@@ -59,6 +59,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 		MainTf:           mi.generateRootMainTfForPrivateMigrationInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForPrivateMigrationInfrastructure(),
 		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		ReadmeMd:         mi.generateJumpClusterReadmeMd(request),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
@@ -306,6 +307,74 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateMigrationIn
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
+}
+
+// ============================================================================
+// README Generation (Private - Jump Clusters)
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateJumpClusterReadmeMd(request types.MigrationWizardRequest) string {
+	credentialsSection := `
+You will be prompted for the following credentials during ` + "`terraform apply`" + `:
+
+| Variable | Description |
+|----------|-------------|
+| ` + "`confluent_cloud_api_key`" + ` | Confluent Cloud API key (Cloud Resource Management) |
+| ` + "`confluent_cloud_api_secret`" + ` | Confluent Cloud API secret (Cloud Resource Management) |
+| ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
+| ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
+
+	if request.MskJumpClusterAuthType == "sasl_scram" {
+		credentialsSection += `
+| ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
+| ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
+	}
+
+	return `# Migration Infrastructure - Jump Cluster Setup
+
+## Prerequisites
+
+- [Terraform](https://developer.hashicorp.com/terraform/install) installed
+- AWS credentials configured (via environment variables, AWS CLI profile, or IAM role)
+- Confluent Cloud API key and secret (Cloud Resource Management)
+- Confluent Cloud cluster API key and secret
+- Private Link setup between the AWS VPC (` + request.VpcId + `) and Confluent Cloud
+
+## Required Credentials
+` + credentialsSection + `
+
+## Usage
+
+1. Initialize Terraform:
+
+` + "```bash" + `
+terraform init
+` + "```" + `
+
+2. Review the execution plan:
+
+` + "```bash" + `
+terraform plan
+` + "```" + `
+
+3. Apply the configuration:
+
+` + "```bash" + `
+terraform apply
+` + "```" + `
+
+Terraform will prompt you for the required credentials listed above.
+
+## What Happens
+
+After ` + "`terraform apply`" + ` completes, the following infrastructure is provisioned:
+
+- **Networking**: VPC subnets, security groups, NAT gateway, and SSH key pair
+- **Jump cluster brokers**: Confluent Platform Kafka instances deployed on EC2
+- **Setup host**: An EC2 instance that runs Ansible playbooks to configure the jump cluster and establish cluster links between MSK, the jump cluster, and Confluent Cloud
+
+The setup host automatically orchestrates the full configuration — no manual Ansible execution is required.
+`
 }
 
 // ============================================================================

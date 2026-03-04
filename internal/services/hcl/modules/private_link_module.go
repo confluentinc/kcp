@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"fmt"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -107,6 +109,16 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 			Condition: func(request types.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
+		},
+	}
+}
+
+func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []types.TerraformOutput {
+	return []types.TerraformOutput{
+		{
+			Name:        "vpc_endpoint_id",
+			Description: "ID of the AWS VPC Endpoint for the Private Link connection",
+			Value:       fmt.Sprintf("aws_vpc_endpoint.%s.id", vpcEndpointResourceName),
 		},
 	}
 }

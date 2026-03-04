@@ -260,6 +260,8 @@ type MigrationInfraTerraformProject struct {
 	MainTf           string                          `json:"main.tf"`
 	ProvidersTf      string                          `json:"providers.tf"`
 	VariablesTf      string                          `json:"variables.tf"`
+	OutputsTf        string                          `json:"outputs.tf"`
+	ReadmeMd         string                          `json:"README.md"`
 	InputsAutoTfvars string                          `json:"inputs.auto.tfvars"`
 	Modules          []MigrationInfraTerraformModule `json:"modules"`
 }

@@ -90,6 +90,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 			Name:        "private_link",
 			MainTf:      ti.generatePrivateLinkModuleMainTf(request),
 			VariablesTf: ti.generatePrivateLinkModuleVariablesTf(request),
+			OutputsTf:   ti.generatePrivateLinkModuleOutputsTf(),
 			VersionsTf:  ti.generatePrivateLinkModuleVersionsTf(),
 		})
 	}
@@ -98,6 +99,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 		MainTf:           ti.generateRootMainTf(request),
 		ProvidersTf:      ti.generateRootProvidersTf(),
 		VariablesTf:      ti.generateVariablesTf(modules.GetTargetClusterModuleVariableDefinitions(request)),
+		OutputsTf:        ti.generateRootOutputsTf(request),
 		InputsAutoTfvars: ti.generateInputsAutoTfvars(request),
 		Modules:          requiredModules,
 	}
@@ -178,6 +180,45 @@ func (ti *TargetInfraHCLService) generateRootProvidersTf() string {
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
+}
+
+func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClusterWizardRequest) string {
+	// Root outputs reference module outputs so users can see key values after terraform apply
+	confluentCloudOutputs := modules.GetConfluentCloudModuleOutputDefinitions(request, modules.ConfluentCloudOutputParams{
+		EnvironmentName:    ti.ResourceNames.Environment,
+		NetworkName:        ti.ResourceNames.Network,
+		ClusterName:        ti.ResourceNames.Cluster,
+		ServiceAccountName: ti.ResourceNames.ServiceAccount,
+		KafkaAPIKeyName:    ti.ResourceNames.KafkaAPIKey,
+	})
+
+	var rootOutputs []types.TerraformOutput
+	for _, o := range confluentCloudOutputs {
+		// Skip network-internal outputs that are only used for module-to-module wiring
+		if o.Name == "network_id" || o.Name == "network_dns_domain" || o.Name == "network_private_link_endpoint_service" || o.Name == "network_zones" {
+			continue
+		}
+		rootOutputs = append(rootOutputs, types.TerraformOutput{
+			Name:        o.Name,
+			Description: o.Description,
+			Sensitive:   o.Sensitive,
+			Value:       fmt.Sprintf("module.confluent_cloud.%s", o.Name),
+		})
+	}
+
+	if request.NeedsPrivateLink {
+		privateLinkOutputs := modules.GetPrivateLinkModuleOutputDefinitions(ti.ResourceNames.VpcEndpoint)
+		for _, o := range privateLinkOutputs {
+			rootOutputs = append(rootOutputs, types.TerraformOutput{
+				Name:        o.Name,
+				Description: o.Description,
+				Sensitive:   o.Sensitive,
+				Value:       fmt.Sprintf("module.private_link.%s", o.Name),
+			})
+		}
+	}
+
+	return ti.generateOutputsTf(rootOutputs)
 }
 
 func (ti *TargetInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
@@ -382,7 +423,18 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleVariablesTf(request
 }
 
 func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf(request types.TargetClusterWizardRequest) string {
-	outputs := modules.GetConfluentCloudModuleOutputDefinitions(request, ti.ResourceNames.Environment, ti.ResourceNames.Network)
+	outputs := modules.GetConfluentCloudModuleOutputDefinitions(request, modules.ConfluentCloudOutputParams{
+		EnvironmentName:    ti.ResourceNames.Environment,
+		NetworkName:        ti.ResourceNames.Network,
+		ClusterName:        ti.ResourceNames.Cluster,
+		ServiceAccountName: ti.ResourceNames.ServiceAccount,
+		KafkaAPIKeyName:    ti.ResourceNames.KafkaAPIKey,
+	})
+	return ti.generateOutputsTf(outputs)
+}
+
+func (ti *TargetInfraHCLService) generatePrivateLinkModuleOutputsTf() string {
+	outputs := modules.GetPrivateLinkModuleOutputDefinitions(ti.ResourceNames.VpcEndpoint)
 	return ti.generateOutputsTf(outputs)
 }
 
