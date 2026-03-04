@@ -374,6 +374,8 @@ After ` + "`terraform apply`" + ` completes, the following infrastructure is pro
 - **Setup host**: An EC2 instance that runs Ansible playbooks to configure the jump cluster and establish cluster links between MSK, the jump cluster, and Confluent Cloud
 
 The setup host automatically orchestrates the full configuration — no manual Ansible execution is required.
+
+Note: Due to the nature of how the cluster link is created between the jump cluster and Confluent Cloud, the deletion of the cluster link will need to be manually performed using the Confluent Cloud CLI within the VPC network.
 `
 }
 
