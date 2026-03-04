@@ -59,6 +59,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 		MainTf:           mi.generateRootMainTfForPrivateMigrationInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForPrivateMigrationInfrastructure(),
 		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		ReadmeMd:         mi.generateJumpClusterReadmeMd(request),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
@@ -76,13 +77,9 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				VariablesTf: mi.generateJumpClustersVariablesTf(request),
 				OutputsTf:   mi.generateJumpClustersOutputsTf(),
 				VersionsTf:  mi.generateJumpClustersVersionsTf(),
-				AdditionalFiles: func() map[string]string {
-					additionalFiles := make(map[string]string)
-					additionalFiles["jump-cluster-with-cluster-links-user-data.tpl"] = mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType)
-					additionalFiles["jump-cluster-user-data.tpl"] = mi.generateJumpClusterUserDataTpl()
-
-					return additionalFiles
-				}(),
+				AdditionalFiles: map[string]string{
+					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType),
+				},
 			},
 			{
 				Name:        "networking",
@@ -90,12 +87,6 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				VariablesTf: mi.generateNetworkingVariablesTf(request),
 				OutputsTf:   mi.generateNetworkingOutputsTf(),
 				VersionsTf:  mi.generateNetworkingVersionsTf(),
-			},
-			{
-				Name:        "private_link_connection",
-				MainTf:      mi.generatePrivateLinkConnectionMainTf(request),
-				VariablesTf: mi.generatePrivateLinkConnectionVariablesTf(request),
-				VersionsTf:  mi.generatePrivateLinkConnectionVersionsTf(),
 			},
 		},
 	}
@@ -296,35 +287,6 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	}
 	rootBody.AppendNewline()
 
-	privateLinkModuleBlock := rootBody.AppendNewBlock("module", []string{"private_link_connection"})
-	privateLinkModuleBody := privateLinkModuleBlock.Body()
-	privateLinkModuleBody.SetAttributeValue("source", cty.StringVal("./private_link_connection"))
-	privateLinkModuleBody.AppendNewline()
-
-	privateLinkModuleBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{
-		"aws":       utils.TokensForResourceReference("aws"),
-		"confluent": utils.TokensForResourceReference("confluent"),
-	}))
-	privateLinkModuleBody.AppendNewline()
-
-	privateLinkVars := modules.GetMigrationInfraPrivateLinkVariables()
-	for _, varDef := range privateLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-
-		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
-			// Use FromModuleOutput to determine which module this comes from
-			if varDef.Name == "security_group_id" {
-				privateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput(varDef.FromModuleOutput, "private_link_security_group_id"))
-			} else {
-				privateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput(varDef.FromModuleOutput, varDef.Name))
-			}
-		} else {
-			privateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
-		}
-	}
-
 	return string(f.Bytes())
 }
 
@@ -338,17 +300,81 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateMigrationIn
 	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
-	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
 	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
+}
+
+// ============================================================================
+// README Generation (Private - Jump Clusters)
+// ============================================================================
+
+func (mi *MigrationInfraHCLService) generateJumpClusterReadmeMd(request types.MigrationWizardRequest) string {
+	credentialsSection := `
+You will be prompted for the following credentials during ` + "`terraform apply`" + `:
+
+| Variable | Description |
+|----------|-------------|
+| ` + "`confluent_cloud_api_key`" + ` | Confluent Cloud API key (Cloud Resource Management) |
+| ` + "`confluent_cloud_api_secret`" + ` | Confluent Cloud API secret (Cloud Resource Management) |
+| ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
+| ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
+
+	if request.MskJumpClusterAuthType == "sasl_scram" {
+		credentialsSection += `
+| ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
+| ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
+	}
+
+	return `# Migration Infrastructure - Jump Cluster Setup
+
+## Prerequisites
+
+- [Terraform](https://developer.hashicorp.com/terraform/install) installed
+- AWS credentials configured (via environment variables, AWS CLI profile, or IAM role)
+- Confluent Cloud API key and secret (Cloud Resource Management)
+- Confluent Cloud cluster API key and secret
+- Private Link setup between the AWS VPC (` + request.VpcId + `) and Confluent Cloud
+
+## Required Credentials
+` + credentialsSection + `
+
+## Usage
+
+1. Initialize Terraform:
+
+` + "```bash" + `
+terraform init
+` + "```" + `
+
+2. Review the execution plan:
+
+` + "```bash" + `
+terraform plan
+` + "```" + `
+
+3. Apply the configuration:
+
+` + "```bash" + `
+terraform apply
+` + "```" + `
+
+Terraform will prompt you for the required credentials listed above.
+
+## What Happens
+
+After ` + "`terraform apply`" + ` completes, the following infrastructure is provisioned:
+
+- **Networking**: VPC subnets, security groups, NAT gateway, and SSH key pair
+- **Jump cluster brokers**: Confluent Platform Kafka instances deployed on EC2
+- **Setup host**: An EC2 instance that runs Ansible playbooks to configure the jump cluster and establish cluster links between MSK, the jump cluster, and Confluent Cloud
+
+The setup host automatically orchestrates the full configuration — no manual Ansible execution is required.
+`
 }
 
 // ============================================================================
@@ -462,7 +488,6 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			securityGroupIdsVarName,
 			jumpClusterSshKeyPairNameVarName,
 			"jump-cluster-with-cluster-links-user-data.tpl",
-			"jump-cluster-user-data.tpl",
 			"",
 			false,
 			map[string]hclwrite.Tokens{
@@ -499,7 +524,6 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			securityGroupIdsVarName,
 			jumpClusterSshKeyPairNameVarName,
 			"jump-cluster-with-cluster-links-user-data.tpl",
-			"jump-cluster-user-data.tpl",
 			jumpClusterIamAuthRoleNameVarName,
 			false,
 			map[string]hclwrite.Tokens{
@@ -535,10 +559,6 @@ func (mi *MigrationInfraHCLService) generateJumpClusterClusterLinksUserDataTpl(a
 	} else {
 		return aws.GenerateJumpClusterWithIamClusterLinksUserDataTpl()
 	}
-}
-
-func (mi *MigrationInfraHCLService) generateJumpClusterUserDataTpl() string {
-	return aws.GenerateJumpClusterUserDataTpl()
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClustersVariablesTf(request types.MigrationWizardRequest) string {
@@ -631,8 +651,19 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResourceWithCount("jump_cluster_broker_route_table_assoc", aws.GenerateSubnetResourceReference("jump_cluster_broker_subnets"), "aws_route_table.private_subnet_rt.id"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup("private_link_security_group", []int{80, 443, 9092}, []int{0}, vpcIdVarName))
+	existingVpceIdVarName := modules.GetModuleVariableName("networking", "existing_private_link_vpce_id")
+	rootBody.AppendBlock(aws.GenerateVpcEndpointDataSource("existing_vpce", existingVpceIdVarName))
 	rootBody.AppendNewline()
+
+	for _, port := range []int{80, 443, 9092} {
+		rootBody.AppendBlock(aws.GenerateSecurityGroupIngressRule(
+			fmt.Sprintf("vpce_ingress_from_jump_cluster_%d", port),
+			port,
+			"aws_security_group.security_group.id",
+			"tolist(data.aws_vpc_endpoint.existing_vpce.security_group_ids)[0]",
+		))
+		rootBody.AppendNewline()
+	}
 
 	rootBody.AppendBlock(other.GenerateTLSPrivateKeyResource("jump_cluster_ssh_key", "RSA", 4096))
 	rootBody.AppendNewline()
@@ -670,119 +701,6 @@ func (mi *MigrationInfraHCLService) generateNetworkingVersionsTf() string {
 	requiredProvidersBody := requiredProvidersBlock.Body()
 
 	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-
-	return string(f.Bytes())
-}
-
-// ============================================================================
-// Private Link Connection Module Generation (Private)
-// ============================================================================
-
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionMainTf(request types.MigrationWizardRequest) string {
-	awsRegionVarName := modules.GetModuleVariableName("private_link_connection", "aws_region")
-	targetEnvironmentIdVarName := modules.GetModuleVariableName("private_link_connection", "target_environment_id")
-	vpcIdVarName := modules.GetModuleVariableName("private_link_connection", "vpc_id")
-	securityGroupIdVarName := modules.GetModuleVariableName("private_link_connection", "security_group_id")
-
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	var privateLinkSubnetsRef string
-	if !request.ReuseExistingSubnets {
-		rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("available"))
-		rootBody.AppendNewline()
-
-		privateLinkSubnetsCidrsVarName := modules.GetModuleVariableName("private_link_connection", "private_link_new_subnet_cidrs")
-
-		rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
-			"private_link_subnets",
-			privateLinkSubnetsCidrsVarName,
-			fmt.Sprintf("data.aws_availability_zones.%s", "available"),
-			vpcIdVarName,
-		))
-
-		privateLinkSubnetsRef = fmt.Sprintf("aws_subnet.%s[*].id", "private_link_subnets")
-	}  else {
-		privateLinkSubnetsRef = modules.GetModuleVariableName("private_link_connection", "private_link_subnet_ids")
-		privateLinkSubnetsRef = fmt.Sprintf("var.%s", privateLinkSubnetsRef)
-	}
-
-	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResource(
-		"jump_cluster_private_link_attachment",
-		"jump_cluster_private_link_attachment",
-		awsRegionVarName,
-		targetEnvironmentIdVarName,
-	))
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
-		"jump_cluster_vpc_endpoint",
-		vpcIdVarName,
-		"confluent_private_link_attachment.jump_cluster_private_link_attachment.aws[0].vpc_endpoint_service_name",
-		fmt.Sprintf("var.%s", securityGroupIdVarName),
-		privateLinkSubnetsRef,
-		[]string{"confluent_private_link_attachment.jump_cluster_private_link_attachment"},
-	))
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnectionResource(
-		"jump_cluster_private_link_connection",
-		"jump_cluster_private_link_connection",
-		targetEnvironmentIdVarName,
-		"aws_vpc_endpoint.jump_cluster_vpc_endpoint.id",
-		"confluent_private_link_attachment.jump_cluster_private_link_attachment.id",
-	))
-	rootBody.AppendNewline()
-
-	// AWS allows only one private hosted zone (private link to Confluent Cloud) per domain per VPC.
-	var route53ZoneRef string
-	if request.HasExistingPrivateLink {
-		rootBody.AppendBlock(aws.GenerateRoute53ZoneDataSource(
-			"jump_cluster_private_link_zone",
-			vpcIdVarName,
-			"confluent_private_link_attachment.jump_cluster_private_link_attachment.dns_domain",
-		))
-
-		route53ZoneRef = "data.aws_route53_zone.jump_cluster_private_link_zone.zone_id"
-	} else {
-		rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
-			"jump_cluster_private_link_zone",
-			vpcIdVarName,
-			"confluent_private_link_attachment.jump_cluster_private_link_attachment.dns_domain",
-		))
-
-		route53ZoneRef = "aws_route53_zone.jump_cluster_private_link_zone.zone_id"
-	}
-	rootBody.AppendNewline()
-
-	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
-		"jump_cluster_private_link_record",
-		route53ZoneRef,
-		"kcp_jump_cluster_"+utils.RandomString(5),
-		"aws_vpc_endpoint.jump_cluster_vpc_endpoint.dns_entry[0].dns_name",
-	))
-	rootBody.AppendNewline()
-
-	return string(f.Bytes())
-}
-
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVariablesTf(request types.MigrationWizardRequest) string {
-	requiredVariables := modules.GetMigrationInfraPrivateLinkModuleVariableDefinitions(request)
-	return mi.generateVariablesTf(requiredVariables)
-}
-
-func (mi *MigrationInfraHCLService) generatePrivateLinkConnectionVersionsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-	terraformBody := terraformBlock.Body()
-
-	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-	requiredProvidersBody := requiredProvidersBlock.Body()
-
-	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
 
 	return string(f.Bytes())
 }

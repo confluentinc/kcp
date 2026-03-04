@@ -76,8 +76,47 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 title: 'Cluster Type',
                 description: 'Select the type of cluster',
               },
+              prevent_destroy: {
+                type: 'boolean',
+                title: 'Enable prevent_destroy lifecycle rule',
+                description:
+                  'When enabled, Terraform will prevent accidental destruction of provisioned resources',
+                default: true,
+              },
             },
             required: ['environment_name', 'cluster_name', 'cluster_type'],
+            dependencies: {
+              cluster_type: {
+                oneOf: [
+                  {
+                    properties: {
+                      cluster_type: { enum: ['dedicated'] },
+                      cluster_availability: {
+                        type: 'string',
+                        title: 'Cluster Availability',
+                        enum: ['SINGLE_ZONE', 'MULTI_ZONE'],
+                        default: 'SINGLE_ZONE',
+                        description:
+                          'Availability zone configuration. MULTI_ZONE requires at least 2 CKUs.',
+                      },
+                      cluster_cku: {
+                        type: 'integer',
+                        title: 'CKUs',
+                        default: 1,
+                        minimum: 1,
+                        description:
+                          'Number of Confluent Kafka Units. MULTI_ZONE requires at least 2.',
+                      },
+                    },
+                  },
+                  {
+                    properties: {
+                      cluster_type: { enum: ['enterprise'] },
+                    },
+                  },
+                ],
+              },
+            },
           },
           uiSchema: {
             environment_name: {
@@ -87,6 +126,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
               'ui:placeholder': 'e.g., production-cluster',
             },
             cluster_type: {
+              'ui:widget': 'select',
+            },
+            cluster_availability: {
               'ui:widget': 'select',
             },
           },
@@ -165,8 +207,47 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 title: 'Cluster Type',
                 description: 'Select the type of cluster',
               },
+              prevent_destroy: {
+                type: 'boolean',
+                title: 'Enable prevent_destroy lifecycle rule',
+                description:
+                  'When enabled, Terraform will prevent accidental destruction of provisioned resources',
+                default: true,
+              },
             },
             required: ['environment_id', 'cluster_name', 'cluster_type'],
+            dependencies: {
+              cluster_type: {
+                oneOf: [
+                  {
+                    properties: {
+                      cluster_type: { enum: ['dedicated'] },
+                      cluster_availability: {
+                        type: 'string',
+                        title: 'Cluster Availability',
+                        enum: ['SINGLE_ZONE', 'MULTI_ZONE'],
+                        default: 'SINGLE_ZONE',
+                        description:
+                          'Availability zone configuration. MULTI_ZONE requires at least 2 CKUs.',
+                      },
+                      cluster_cku: {
+                        type: 'integer',
+                        title: 'CKUs',
+                        default: 1,
+                        minimum: 1,
+                        description:
+                          'Number of Confluent Kafka Units. MULTI_ZONE requires at least 2.',
+                      },
+                    },
+                  },
+                  {
+                    properties: {
+                      cluster_type: { enum: ['enterprise'] },
+                    },
+                  },
+                ],
+              },
+            },
           },
           uiSchema: {
             environment_id: {
@@ -176,6 +257,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
               'ui:placeholder': 'e.g., production-cluster',
             },
             cluster_type: {
+              'ui:widget': 'select',
+            },
+            cluster_availability: {
               'ui:widget': 'select',
             },
           },

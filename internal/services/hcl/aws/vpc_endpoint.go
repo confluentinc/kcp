@@ -6,6 +6,12 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+func GenerateVpcEndpointDataSource(tfResourceName, vpceIdVarName string) *hclwrite.Block {
+	vpcEndpointBlock := hclwrite.NewBlock("data", []string{"aws_vpc_endpoint", tfResourceName})
+	vpcEndpointBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(vpceIdVarName))
+	return vpcEndpointBlock
+}
+
 func GenerateVpcEndpointResource(tfResourceName, vpcIdVarName, privateLinkAttachmentServiceNameRef, securityGroupRef, subnetRef string, dependsOnRefs []string) *hclwrite.Block {
 	vpcEndpointBlock := hclwrite.NewBlock("resource", []string{"aws_vpc_endpoint", tfResourceName})
 
