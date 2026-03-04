@@ -83,12 +83,15 @@ func (m *MigrationInitializer) Run() error {
 		CurrentState:         types.StateUninitialized,
 	}
 
+	// Ensure state file exists with this migration BEFORE any downstream operations
+	// All subsequent code (orchestrator, persistence, etc.) can safely assume file exists
+	migrationState.UpsertMigration(*config)
+	if err := migrationState.WriteToFile(m.opts.migrationStateFile); err != nil {
+		return fmt.Errorf("failed to write migration state file: %w", err)
+	}
+
 	// Skip validation if flag is set
 	if m.opts.skipValidate {
-		migrationState.UpsertMigration(*config)
-		if err := migrationState.WriteToFile(m.opts.migrationStateFile); err != nil {
-			return fmt.Errorf("failed to save migration state: %w", err)
-		}
 		slog.Info("migration created (validation skipped)",
 			"migrationId", config.MigrationId,
 			"currentState", config.CurrentState,
