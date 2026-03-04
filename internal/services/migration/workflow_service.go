@@ -15,35 +15,22 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-// MigrationWorkflow defines the business operations for migration workflow
-type MigrationWorkflow interface {
-	Initialize(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error
-	CheckLags(ctx context.Context, config *types.MigrationConfig, threshold, maxWaitTime int64, clusterApiKey, clusterApiSecret string) error
-	FenceGateway(ctx context.Context, config *types.MigrationConfig) error
-	PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error
-	CheckPromotionCompletion(ctx context.Context, config *types.MigrationConfig) error
-	SwitchGateway(ctx context.Context, config *types.MigrationConfig) error
-}
-
-// DefaultMigrationWorkflow implements MigrationWorkflow using injected services
-type DefaultMigrationWorkflow struct {
+type MigrationWorkflow struct {
 	gatewayService     gateway.Service
 	clusterLinkService clusterlink.Service
 }
 
-// NewDefaultMigrationWorkflow creates a new workflow service with injected dependencies
-func NewDefaultMigrationWorkflow(
+func NewMigrationWorkflow(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-) *DefaultMigrationWorkflow {
-	return &DefaultMigrationWorkflow{
+) *MigrationWorkflow {
+	return &MigrationWorkflow{
 		gatewayService:     gatewayService,
 		clusterLinkService: clusterLinkService,
 	}
 }
 
-// Initialize validates infrastructure and populates migration config
-func (s *DefaultMigrationWorkflow) Initialize(
+func (s *MigrationWorkflow) Initialize(
 	ctx context.Context,
 	config *types.MigrationConfig,
 	clusterApiKey, clusterApiSecret string,
@@ -141,7 +128,7 @@ func (s *DefaultMigrationWorkflow) Initialize(
 }
 
 // CheckLags polls mirror topics until lag is below threshold or timeout
-func (s *DefaultMigrationWorkflow) CheckLags(
+func (s *MigrationWorkflow) CheckLags(
 	ctx context.Context,
 	config *types.MigrationConfig,
 	threshold, maxWaitTime int64,
@@ -281,7 +268,7 @@ func (s *DefaultMigrationWorkflow) CheckLags(
 }
 
 // FenceGateway adds fence configuration to the source route to block traffic
-func (s *DefaultMigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
+func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
 	slog.Info("🚧 Fencing gateway route", "route", config.SourceRouteName, "gateway", config.GatewayCrdName)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
@@ -361,7 +348,7 @@ func (s *DefaultMigrationWorkflow) FenceGateway(ctx context.Context, config *typ
 }
 
 // PromoteTopics polls mirror topics and promotes those with zero lag
-func (s *DefaultMigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	slog.Info("topic promotion process started")
 
 	clusterLinkConfig := clusterlink.Config{
@@ -455,7 +442,7 @@ func (s *DefaultMigrationWorkflow) PromoteTopics(ctx context.Context, config *ty
 }
 
 // CheckPromotionCompletion is a placeholder for promotion completion verification
-func (s *DefaultMigrationWorkflow) CheckPromotionCompletion(ctx context.Context, config *types.MigrationConfig) error {
+func (s *MigrationWorkflow) CheckPromotionCompletion(ctx context.Context, config *types.MigrationConfig) error {
 	slog.Info("waiting for topic promotion to complete.....")
 	slog.Info("this can be removed")
 	slog.Info("waiting for topic promotion to complete...done")
@@ -463,7 +450,7 @@ func (s *DefaultMigrationWorkflow) CheckPromotionCompletion(ctx context.Context,
 }
 
 // SwitchGateway switches the gateway to point to Confluent Cloud
-func (s *DefaultMigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
+func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
 	slog.Info("🔄 Switching gateway to Confluent Cloud", "destination", config.DestinationName)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)

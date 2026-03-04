@@ -11,22 +11,22 @@ import (
 
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
-	config   *types.MigrationConfig
-	fsm      *fsm.FSM
-	workflow MigrationWorkflow
-	stateFilePath   string
+	config        *types.MigrationConfig
+	fsm           *fsm.FSM
+	workflow      *MigrationWorkflow
+	stateFilePath string
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
 	config *types.MigrationConfig,
-	workflow MigrationWorkflow,
+	workflow *MigrationWorkflow,
 	stateFilePath string,
 ) *MigrationOrchestrator {
 	o := &MigrationOrchestrator{
-		config:   config,
-		workflow: workflow,
-		stateFilePath:   stateFilePath,
+		config:        config,
+		workflow:      workflow,
+		stateFilePath: stateFilePath,
 	}
 	o.initializeFSM()
 	return o
