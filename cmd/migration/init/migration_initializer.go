@@ -4,8 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/persistence"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/google/uuid"
 )
@@ -44,7 +49,7 @@ func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitialize
 }
 
 func (m *MigrationInitializer) Run() error {
-	// Load or create migration state (following KCP pattern)
+	// Load or create migration state
 	var migrationState *types.MigrationState
 	if _, err := os.Stat(m.opts.migrationStateFile); err == nil {
 		// File exists, load it
@@ -57,7 +62,10 @@ func (m *MigrationInitializer) Run() error {
 		migrationState = types.NewMigrationState()
 	}
 
-	migrationOpts := types.MigrationOpts{
+	// Create MigrationConfig
+	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
+	config := &types.MigrationConfig{
+		MigrationId:          migrationId,
 		GatewayNamespace:     m.opts.gatewayNamespace,
 		GatewayCrdName:       m.opts.gatewayCrdName,
 		SourceName:           m.opts.sourceName,
@@ -70,44 +78,51 @@ func (m *MigrationInitializer) Run() error {
 		ClusterLinkName:      m.opts.clusterLinkName,
 		Topics:               m.opts.topics,
 		AuthMode:             m.opts.authMode,
-		ClusterApiKey:        m.opts.clusterApiKey,
-		ClusterApiSecret:     m.opts.clusterApiSecret,
 		CCBootstrapEndpoint:  m.opts.ccBootstrapEndpoint,
 		LoadBalancerEndpoint: m.opts.loadBalancerEndpoint,
+		CurrentState:         types.StateUninitialized,
 	}
 
-	// Generate UUID-based migration ID
-	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
-	migration := types.NewMigration(migrationId, migrationOpts)
-
-	// Provide save function for FSM callbacks
-	migration.SetSaveStateFunc(func() error {
-		migrationState.UpsertMigration(*migration)
-		return migrationState.WriteToFile(m.opts.migrationStateFile)
-	})
-
-	// Skip validation if flag is set (useful for testing without infrastructure)
+	// Skip validation if flag is set
 	if m.opts.skipValidate {
-		// Save migration metadata without calling Initialize()
-		migrationState.UpsertMigration(*migration)
+		migrationState.UpsertMigration(*config)
 		if err := migrationState.WriteToFile(m.opts.migrationStateFile); err != nil {
 			return fmt.Errorf("failed to save migration state: %w", err)
 		}
 		slog.Info("migration created (validation skipped)",
-			"migrationId", migration.MigrationId,
-			"currentState", migration.GetCurrentState(),
+			"migrationId", config.MigrationId,
+			"currentState", config.CurrentState,
 			"stateFile", m.opts.migrationStateFile)
 		return nil
 	}
 
-	// Normal path: validate infrastructure and initialize
-	if err := migration.Initialize(context.Background()); err != nil {
+	// Create services
+	gatewayService := gateway.NewK8sService(m.opts.kubeConfigPath)
+	clusterLinkService := clusterlink.NewConfluentCloudService(&http.Client{})
+
+	// Create workflow service with injected services
+	workflowService := migration.NewDefaultWorkflowService(gatewayService, clusterLinkService)
+
+	// Create persistence service
+	persistenceService := persistence.NewFileSystemService()
+
+	// Create orchestrator with all dependencies
+	orchestrator := migration.NewOrchestrator(
+		config,
+		workflowService,
+		persistenceService,
+		m.opts.migrationStateFile,
+	)
+
+	// Initialize migration
+	ctx := context.Background()
+	if err := orchestrator.Initialize(ctx, m.opts.clusterApiKey, m.opts.clusterApiSecret); err != nil {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 
 	slog.Info("migration initialized",
-		"migrationId", migration.MigrationId,
-		"currentState", migration.GetCurrentState(),
+		"migrationId", config.MigrationId,
+		"currentState", config.CurrentState,
 		"stateFile", m.opts.migrationStateFile)
 	return nil
 }
