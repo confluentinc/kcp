@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
@@ -277,4 +278,305 @@ func (s *DefaultWorkflowService) CheckLags(
 			// Continue polling
 		}
 	}
+}
+
+// FenceGateway adds fence configuration to the source route to block traffic
+func (s *DefaultWorkflowService) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
+	slog.Info("🚧 Fencing gateway route", "route", config.SourceRouteName, "gateway", config.GatewayCrdName)
+
+	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
+	// This must be first to avoid race conditions where rollout completes before we capture UIDs
+	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.GatewayNamespace, config.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
+	}
+
+	// Step 2: Get the current gateway YAML to find the source route index
+	gatewayYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.GatewayNamespace, config.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to get gateway: %w", err)
+	}
+
+	var gw types.GatewayResource
+	if err := yaml.Unmarshal(gatewayYAML, &gw); err != nil {
+		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	}
+
+	// Step 3: Find the source route index
+	routeIndex := -1
+	for i, route := range gw.Spec.Routes {
+		if route.Name == config.SourceRouteName {
+			routeIndex = i
+			break
+		}
+	}
+	if routeIndex == -1 {
+		return fmt.Errorf("source route '%s' not found in gateway routes", config.SourceRouteName)
+	}
+
+	if gw.Spec.Routes[routeIndex].Fence != nil {
+		slog.Warn("⚠️  Route already fenced, replacing configuration", "route", config.SourceRouteName)
+	}
+
+	// Step 4: Build JSON patch to add fence configuration
+	const (
+		FenceScope        = "ALL"
+		FenceErrorCode    = "BROKER_NOT_AVAILABLE"
+		FenceErrorMessage = "This route is currently unavailable - all requests are blocked by me!?"
+	)
+	patchOps := []map[string]any{
+		{
+			"op":   "add",
+			"path": fmt.Sprintf("/spec/routes/%d/fence", routeIndex),
+			"value": map[string]any{
+				"scope":        FenceScope,
+				"errorCode":    FenceErrorCode,
+				"errorMessage": FenceErrorMessage,
+			},
+		},
+	}
+
+	// Step 5: Apply the patch to fence the route
+	if err := s.gatewayService.PatchGateway(ctx, config.GatewayNamespace, config.GatewayCrdName, patchOps); err != nil {
+		return fmt.Errorf("failed to fence gateway route '%s': %w", config.SourceRouteName, err)
+	}
+
+	slog.Info("✅ Route fenced", "scope", FenceScope)
+
+	// Step 6: Wait for gateway pods to be recycled with new configuration
+	const (
+		pollInterval = 5 * time.Second
+		timeout      = 5 * time.Minute
+	)
+
+	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
+
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.GatewayNamespace, config.GatewayCrdName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+		return fmt.Errorf("failed waiting for gateway pods: %w", err)
+	}
+
+	slog.Info("✅ Gateway fenced and ready")
+
+	return nil
+}
+
+// PromoteTopics polls mirror topics and promotes those with zero lag
+func (s *DefaultWorkflowService) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+	slog.Info("topic promotion process started")
+
+	clusterLinkConfig := clusterlink.Config{
+		RestEndpoint: config.ClusterRestEndpoint,
+		ClusterID:    config.ClusterId,
+		LinkName:     config.ClusterLinkName,
+		APIKey:       clusterApiKey,
+		APISecret:    clusterApiSecret,
+		Topics:       config.Topics,
+	}
+
+	pollInterval := 5 * time.Second
+
+	for {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Step 1: List all mirror topics
+		mirrorTopics, err := s.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
+		if err != nil {
+			return fmt.Errorf("failed to list mirror topics: %w", err)
+		}
+
+		// no mirror topics found, promotion is complete
+		if len(mirrorTopics) == 0 {
+			slog.Info("no mirror topics found, promotion complete")
+			return nil
+		}
+
+		// Step 2: Get active mirror topics with zero lag
+		topicsToPromote := clusterlink.GetActiveTopicsWithZeroLag(mirrorTopics)
+
+		// Check completion condition: no active topics found
+		activeCount := clusterlink.CountActiveMirrorTopics(mirrorTopics)
+		if activeCount == 0 {
+			slog.Info("no active mirror topics remaining, promotion complete")
+			return nil
+		}
+
+		// If no topics ready to promote (all have non-zero lag), wait and retry
+		if len(topicsToPromote) == 0 {
+			if clusterlink.HasActiveTopicsWithNonZeroLag(mirrorTopics) {
+				slog.Info("active topics found but lag is not zero, waiting before retry",
+					"activeTopics", activeCount,
+					"pollInterval", pollInterval)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(pollInterval):
+					continue
+				}
+			}
+			// No active topics with any lag status - we're done
+			slog.Info("promotion complete, no more topics to promote")
+			return nil
+		}
+
+		// Step 3: Promote topics that are active and have zero lag
+		slog.Info("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
+
+		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
+		if err != nil {
+			return fmt.Errorf("failed to promote mirror topics: %w", err)
+		}
+
+		// Log any promotion errors
+		for _, topic := range promoteResponse.Data {
+			if topic.ErrorCode != 0 {
+				slog.Warn("topic promotion error",
+					"topic", topic.MirrorTopicName,
+					"errorCode", topic.ErrorCode,
+					"errorMessage", topic.ErrorMessage)
+			} else {
+				slog.Info("topic promotion initiated", "topic", topic.MirrorTopicName)
+			}
+		}
+
+		// Wait before checking again
+		slog.Info("waiting for promotion to complete before next check", "pollInterval", pollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+			// Continue to next iteration
+		}
+	}
+}
+
+// CheckPromotionCompletion is a placeholder for promotion completion verification
+func (s *DefaultWorkflowService) CheckPromotionCompletion(ctx context.Context, config *types.MigrationConfig) error {
+	slog.Info("waiting for topic promotion to complete.....")
+	slog.Info("this can be removed")
+	slog.Info("waiting for topic promotion to complete...done")
+	return nil
+}
+
+// SwitchGateway switches the gateway to point to Confluent Cloud
+func (s *DefaultWorkflowService) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
+	slog.Info("🔄 Switching gateway to Confluent Cloud", "destination", config.DestinationName)
+
+	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
+	// This must be first to avoid race conditions where rollout completes before we capture UIDs
+	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.GatewayNamespace, config.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
+	}
+
+	// Step 2: Get the current gateway to find the source route index
+	gatewayYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.GatewayNamespace, config.GatewayCrdName)
+	if err != nil {
+		return fmt.Errorf("failed to get gateway: %w", err)
+	}
+
+	var gw types.GatewayResource
+	if err := yaml.Unmarshal(gatewayYAML, &gw); err != nil {
+		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	}
+
+	// Step 3: Find the source route index
+	routeIndex := -1
+	for i, route := range gw.Spec.Routes {
+		if route.Name == config.SourceRouteName {
+			routeIndex = i
+			break
+		}
+	}
+	if routeIndex == -1 {
+		return fmt.Errorf("source route '%s' not found in gateway routes", config.SourceRouteName)
+	}
+
+	// Step 4: Build JSON patch to add streaming domain and replace route
+	patchOps := []map[string]any{
+		// Add the new streaming domain
+		{
+			"op":   "add",
+			"path": "/spec/streamingDomains/-",
+			"value": map[string]any{
+				"name": "confluent-cloud-plain",
+				"type": "kafka",
+				"kafkaCluster": map[string]any{
+					"bootstrapServers": []map[string]any{
+						{
+							"id":       "SASL_PLAIN",
+							"endpoint": "SASL_SSL://" + config.CCBootstrapEndpoint,
+							"tls": map[string]any{
+								"secretRef": "confluent-tls",
+							},
+						},
+					},
+				},
+			},
+		},
+		// Replace the source route to point to the new streaming domain
+		{
+			"op":   "replace",
+			"path": fmt.Sprintf("/spec/routes/%d", routeIndex),
+			"value": map[string]any{
+				"name":     "swap-msk-unauth-to-cc-route",
+				"endpoint": config.LoadBalancerEndpoint,
+				"brokerIdentificationStrategy": map[string]any{
+					"type":    "host",
+					"pattern": fmt.Sprintf("broker$(nodeId).%s", config.LoadBalancerEndpoint),
+				},
+				"streamingDomain": map[string]any{
+					"name":              "confluent-cloud-plain",
+					"bootstrapServerId": "SASL_PLAIN",
+				},
+				"security": map[string]any{
+					"auth":        "swap",
+					"secretStore": "file-store",
+					"client": map[string]any{
+						"authentication": map[string]any{
+							"type": "none",
+						},
+						"tls": map[string]any{
+							"secretRef": "gateway-tls",
+						},
+					},
+					"cluster": map[string]any{
+						"authentication": map[string]any{
+							"type": "plain",
+							"jaasConfigPassThrough": map[string]any{
+								"secretRef": "plain-jaas",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Step 5: Apply the patch atomically (both operations together)
+	if err := s.gatewayService.PatchGateway(ctx, config.GatewayNamespace, config.GatewayCrdName, patchOps); err != nil {
+		return fmt.Errorf("failed to patch gateway: %w", err)
+	}
+
+	slog.Info("✅ Gateway config updated")
+
+	// Step 6: Wait for gateway pods to be recycled with new configuration
+	const (
+		pollInterval = 5 * time.Second
+		timeout      = 5 * time.Minute
+	)
+
+	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
+
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.GatewayNamespace, config.GatewayCrdName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+		return fmt.Errorf("failed waiting for gateway pods: %w", err)
+	}
+
+	slog.Info("✅ Gateway switchover complete")
+
+	return nil
 }
