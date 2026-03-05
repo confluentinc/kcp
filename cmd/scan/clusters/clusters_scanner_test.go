@@ -278,7 +278,8 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 				// No auth method configured - will cause GetSelectedAuthType to fail
-				wantErr:    true,
+			},
+			wantErr:    true,
 			wantErrMsg: "❌ failed to determine auth type for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: no authentication method enabled for cluster",
 		},
 		{
@@ -310,7 +311,8 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				AuthMethod: types.AuthMethodConfig{
 					IAM: &types.IAMConfig{Use: true}, // Valid auth method so GetSelectedAuthType succeeds
 				},
-				wantErr:    true,
+			},
+			wantErr:    true,
 			wantErrMsg: "❌ failed to get broker addresses for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: ❌ No SASL/IAM brokers found in the cluster",
 		},
 		{
