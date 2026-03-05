@@ -134,6 +134,7 @@ test-env-up-sasl:
 	docker-compose -f test/docker/docker-compose-sasl.yml up -d
 	@echo "Waiting for SASL cluster to be ready (this may take 30-40 seconds)..."
 	@sleep 30
+	@bash test/docker/scripts/setup-test-data-sasl.sh
 	@echo "SASL environment is ready on port 9093"
 
 test-certs-generate:
@@ -145,6 +146,7 @@ test-env-up-tls: test-certs-generate
 	docker-compose -f test/docker/docker-compose-tls.yml up -d
 	@echo "Waiting for TLS cluster to be ready..."
 	@sleep 20
+	@bash test/docker/scripts/setup-test-data-tls.sh
 	@echo "TLS environment is ready on port 9094"
 
 test-env-down:

@@ -9,6 +9,7 @@ services:
       - "9094:9094"
     volumes:
       - ./certs:/etc/kafka/secrets
+      - ./configs/tls-client.properties:/etc/kafka/client.properties:ro
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
