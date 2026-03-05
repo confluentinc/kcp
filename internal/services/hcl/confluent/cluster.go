@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateKafkaClusterResource creates a new Confluent Kafka cluster resource
-func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, regionVarName, environmentIdRef string) *hclwrite.Block {
+func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, availability string, cku int, regionVarName, environmentIdRef, networkIdRef string, preventDestroy bool) *hclwrite.Block {
 	clusterBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_cluster", tfResourceName})
 	clusterBlock.Body().SetAttributeRaw("display_name", utils.TokensForVarReference(clusterVarName))
 	clusterBlock.Body().SetAttributeValue("cloud", cty.StringVal("AWS"))
@@ -15,14 +15,10 @@ func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, r
 
 	switch clusterType {
 	case "dedicated":
-		/*
-			When we begin work on sizing the Confluent Cloud dedicated cluster based on the MSK cluster, we need to beware that
-			`MULTI_ZONE` is required if CKUs exceed 1.
-		*/
-		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("SINGLE_ZONE"))
+		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal(availability))
 		clusterBlock.Body().AppendNewline()
 		dedicatedBlock := clusterBlock.Body().AppendNewBlock("dedicated", nil)
-		dedicatedBlock.Body().SetAttributeValue("cku", cty.NumberIntVal(1))
+		dedicatedBlock.Body().SetAttributeValue("cku", cty.NumberIntVal(int64(cku)))
 	case "enterprise":
 		clusterBlock.Body().SetAttributeValue("availability", cty.StringVal("HIGH"))
 		clusterBlock.Body().AppendNewline()
@@ -37,7 +33,14 @@ func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, r
 	clusterBlock.Body().AppendBlock(environmentRefBlock)
 	clusterBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(clusterBlock, "prevent_destroy", true)
+	if networkIdRef != "" {
+		networkRefBlock := hclwrite.NewBlock("network", nil)
+		networkRefBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(networkIdRef))
+		clusterBlock.Body().AppendBlock(networkRefBlock)
+		clusterBlock.Body().AppendNewline()
+	}
+
+	utils.GenerateLifecycleBlock(clusterBlock, "prevent_destroy", preventDestroy)
 
 	return clusterBlock
 }
