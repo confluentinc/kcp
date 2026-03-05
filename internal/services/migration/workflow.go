@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 )
 
 type MigrationWorkflow struct {
@@ -36,48 +37,20 @@ func (s *MigrationWorkflow) Initialize(
 ) error {
 	slog.Info("initializing migration", "migrationId", config.MigrationId)
 
-	// Check Kubernetes permissions
-	allowed, err := s.gatewayService.CheckPermissions(
-		ctx,
-		"update",
-		gateway.GatewayResourcePlural,
-		gateway.GatewayGroup,
-		config.GatewayNamespace,
-	)
+	// Validate YAML files are parseable
+	if err := validateYAML(config.FencedCrYAML, "fenced CR"); err != nil {
+		return err
+	}
+	if err := validateYAML(config.SwitchoverCrYAML, "switchover CR"); err != nil {
+		return err
+	}
+
+	// Fetch and store the initial CR YAML from k8s
+	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName)
 	if err != nil {
-		return fmt.Errorf("permission check failed: %w", err)
+		return fmt.Errorf("failed to get initial CR YAML: %w", err)
 	}
-	if !allowed {
-		return fmt.Errorf("you don't have permission to update gateway resources")
-	}
-	slog.Info("permission check passed", "verb", "update")
-
-	// Get and validate gateway
-	gatewayYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.GatewayNamespace, config.GatewayCrdName)
-	if err != nil {
-		return fmt.Errorf("failed to get gateway as YAML: %w", err)
-	}
-
-	gatewayConfig := gateway.GatewayConfig{
-		Namespace:            config.GatewayNamespace,
-		CRDName:              config.GatewayCrdName,
-		SourceName:           config.SourceName,
-		DestinationName:      config.DestinationName,
-		SourceRouteName:      config.SourceRouteName,
-		DestinationRouteName: config.DestinationRouteName,
-		AuthMode:             config.AuthMode,
-		KubeConfigPath:       config.KubeConfigPath,
-	}
-
-	if err := s.gatewayService.ValidateGateway(ctx, gatewayYAML, gatewayConfig); err != nil {
-		return fmt.Errorf("gateway validation failed: %w", err)
-	}
-
-	slog.Info("gateway validation successful",
-		"source", config.SourceName,
-		"destination", config.DestinationName,
-		"route", config.SourceRouteName,
-	)
+	config.InitialCrYAML = initialCrYAML
 
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
@@ -118,11 +91,19 @@ func (s *MigrationWorkflow) Initialize(
 	}
 
 	// Update config with discovered data
-	config.GatewayOriginalYAML = gatewayYAML
+	config.InitialCrYAML = initialCrYAML
 	config.ClusterLinkTopics = clusterLinkTopics
 	config.ClusterLinkConfigs = configs
 
 	slog.Info("migration initialized successfully")
+	return nil
+}
+
+func validateYAML(data []byte, name string) error {
+	var out any
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return fmt.Errorf("%s YAML is not valid: %w", name, err)
+	}
 	return nil
 }
 

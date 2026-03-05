@@ -24,8 +24,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		Long:          "Execute a migration",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationInit,
-		RunE:          runMigrationInit,
+		PreRunE:       preRunMigrationExecute,
+		RunE:          runMigrationExecute,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -66,7 +66,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	return migrationExecuteCmd
 }
 
-func preRunMigrationInit(cmd *cobra.Command, args []string) error {
+func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runMigrationInit(cmd *cobra.Command, args []string) error {
+func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
 	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {

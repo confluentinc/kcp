@@ -133,9 +133,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read switchover CR YAML file: %w", err)
 	}
 
-	// ===== PHASE 3: Create new MigrationConfig with generated UUID =====
-	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
-
 	// Parse kube config path with default
 	kubeConfigPathResolved := kubeConfigPath
 	if kubeConfigPathResolved == "" {
@@ -148,7 +145,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	slog.Info("using kube config path", "path", kubeConfigPathResolved)
 
 	config := &types.MigrationConfig{
-		MigrationId:         migrationId,
+		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
 		K8sNamespace:        k8sNamespace,
 		PassthroughCrName:   passthroughCrName,
 		KubeConfigPath:      kubeConfigPathResolved,

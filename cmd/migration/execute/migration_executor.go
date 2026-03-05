@@ -42,6 +42,7 @@ func (m *MigrationExecutor) Run() error {
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		workflow,
+		&m.opts.MigrationState,
 		m.opts.MigrationStateFile,
 	)
 

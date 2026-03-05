@@ -36,24 +36,27 @@ type ExecutionParams struct {
 
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
-	config        *types.MigrationConfig
-	fsm           *fsm.FSM
-	workflow      *MigrationWorkflow
-	stateFilePath string
-	execParams    ExecutionParams // Runtime execution parameters
+	config         *types.MigrationConfig
+	fsm            *fsm.FSM
+	workflow       *MigrationWorkflow
+	migrationState *types.MigrationState
+	stateFilePath  string
+	execParams     ExecutionParams // Runtime execution parameters
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
 	config *types.MigrationConfig,
 	workflow *MigrationWorkflow,
+	migrationState *types.MigrationState,
 	stateFilePath string,
 ) *MigrationOrchestrator {
 	orchestrator := &MigrationOrchestrator{
-		config:        config,
-		workflow:      workflow,
-		stateFilePath: stateFilePath,
-		execParams:    ExecutionParams{}, // Zero values initially
+		config:         config,
+		workflow:       workflow,
+		migrationState: migrationState,
+		stateFilePath:  stateFilePath,
+		execParams:     ExecutionParams{}, // Zero values initially
 	}
 	orchestrator.initializeFSM()
 
@@ -217,17 +220,9 @@ func (o *MigrationOrchestrator) leavePromotedCallback(ctx context.Context, e *fs
 
 // saveState persists the current migration config to the state file
 func (o *MigrationOrchestrator) saveState() error {
-	// Load the current state file
-	state, err := types.NewMigrationStateFromFile(o.stateFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to load state for update: %w", err)
-	}
+	o.migrationState.UpsertMigration(*o.config)
 
-	// Update the migration config in the state
-	state.UpsertMigration(*o.config)
-
-	// Save the updated state
-	if err := state.WriteToFile(o.stateFilePath); err != nil {
+	if err := o.migrationState.WriteToFile(o.stateFilePath); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
