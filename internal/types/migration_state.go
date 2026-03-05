@@ -12,15 +12,15 @@ import (
 // MigrationState represents the migration state file structure
 // This is a dedicated state file for migration commands (init, execute, list)
 type MigrationState struct {
-	Migrations   []Migration  `json:"migrations"`
-	KcpBuildInfo KcpBuildInfo `json:"kcp_build_info"`
-	Timestamp    time.Time    `json:"timestamp"`
+	Migrations   []MigrationConfig `json:"migrations"`
+	KcpBuildInfo KcpBuildInfo      `json:"kcp_build_info"`
+	Timestamp    time.Time         `json:"timestamp"`
 }
 
 // NewMigrationState creates a new empty MigrationState with metadata
 func NewMigrationState() *MigrationState {
 	return &MigrationState{
-		Migrations: []Migration{},
+		Migrations: []MigrationConfig{},
 		KcpBuildInfo: KcpBuildInfo{
 			Version: build_info.Version,
 			Commit:  build_info.Commit,
@@ -71,23 +71,22 @@ func (ms *MigrationState) WriteToFile(filePath string) error {
 }
 
 // UpsertMigration adds a new migration or updates an existing one by ID
-func (ms *MigrationState) UpsertMigration(migration Migration) {
+func (ms *MigrationState) UpsertMigration(config MigrationConfig) {
 	for i, existing := range ms.Migrations {
-		if existing.MigrationId == migration.MigrationId {
-			ms.Migrations[i] = migration
+		if existing.MigrationId == config.MigrationId {
+			ms.Migrations[i] = config
 			return
 		}
 	}
-	ms.Migrations = append(ms.Migrations, migration)
+	ms.Migrations = append(ms.Migrations, config)
 }
 
 // GetMigrationById retrieves a migration by its ID
-func (ms *MigrationState) GetMigrationById(migrationId string) (*Migration, error) {
-	for _, migration := range ms.Migrations {
-		if migration.MigrationId == migrationId {
-			// Return a copy to avoid external mutation
-			m := migration
-			return &m, nil
+func (ms *MigrationState) GetMigrationById(migrationId string) (*MigrationConfig, error) {
+	for _, config := range ms.Migrations {
+		if config.MigrationId == migrationId {
+			c := config
+			return &c, nil
 		}
 	}
 	return nil, fmt.Errorf("migration not found: %s", migrationId)

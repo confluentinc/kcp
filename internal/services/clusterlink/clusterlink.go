@@ -282,7 +282,7 @@ func HasActiveTopicsWithNonZeroLag(mirrors []MirrorTopic) bool {
 			if lag.Lag != 0 {
 				return true
 			}
-			
+
 		}
 	}
 	return false
