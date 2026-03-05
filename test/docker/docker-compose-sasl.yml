@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  kafka-sasl:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka-sasl
+    container_name: kcp-test-kafka-sasl
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./configs/kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-sasl:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://kafka-sasl:29093,SASL_PLAINTEXT://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-sasl:29092,SASL_PLAINTEXT://localhost:9093'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'MkU4OEVBNTcwNTJENDM2Qk'
+      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+    command: >
+      bash -c "
+        # Format storage
+        kafka-storage format -t MkU4OEVBNTcwNTJENDM2Qk -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+
+        # Create SCRAM users using kafka-configs (KRaft mode)
+        echo 'Starting Kafka temporarily to create SCRAM users...'
+        /etc/confluent/docker/run &
+        KAFKA_PID=$$!
+
+        # Wait for Kafka to be ready
+        echo 'Waiting for Kafka to start...'
+        sleep 20
+
+        # Create SCRAM credentials
+        echo 'Creating SCRAM credentials...'
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
+
+        echo 'SCRAM credentials created. Kafka is running.'
+        # Keep Kafka running
+        wait
+      "

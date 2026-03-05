@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  kafka-tls:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka-tls
+    container_name: kcp-test-kafka-tls
+    ports:
+      - "9094:9094"
+    volumes:
+      - ./certs:/etc/kafka/secrets
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-tls:29093'
+      KAFKA_LISTENERS: 'SSL://kafka-tls:29092,CONTROLLER://kafka-tls:29093,SSL_HOST://0.0.0.0:9094'
+      KAFKA_ADVERTISED_LISTENERS: 'SSL://kafka-tls:29092,SSL_HOST://localhost:9094'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,SSL:SSL,SSL_HOST:SSL'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'SSL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'TkU4OEVBNTcwNTJENDM2Qk'
+      # TLS/SSL Configuration
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.server.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_password.txt
+      KAFKA_SSL_KEY_CREDENTIALS: keystore_password.txt
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.server.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_password.txt
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ''
+    command: >
+      bash -c "
+        # Format storage
+        kafka-storage format -t TkU4OEVBNTcwNTJENDM2Qk -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+
+        # Start Kafka
+        /etc/confluent/docker/run
+      "
