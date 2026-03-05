@@ -249,6 +249,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/nonexistent/abc-123",
@@ -274,6 +275,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
@@ -305,6 +307,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
@@ -346,6 +349,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
