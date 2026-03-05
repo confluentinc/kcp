@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/sources/msk"
 	"github.com/confluentinc/kcp/internal/sources/osk"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -54,6 +55,11 @@ func NewScanClustersCmd() *cobra.Command {
 }
 
 func preRunScanClusters(cmd *cobra.Command, args []string) error {
+	// Bind environment variables to flags
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
 	// Validate source type
 	if sourceType != "msk" && sourceType != "osk" {
 		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
