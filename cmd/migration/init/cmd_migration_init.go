@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -120,49 +122,88 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
-	opts, err := parseMigrationInitializerOpts()
-	if err != nil {
-		return fmt.Errorf("failed to parse migration opts: %v", err)
+	// ===== PHASE 1: Load or create state =====
+	var migrationState *types.MigrationState
+	if _, err := os.Stat(migrationStateFile); err == nil {
+		// File exists, load it
+		migrationState, err = types.NewMigrationStateFromFile(migrationStateFile)
+		if err != nil {
+			return fmt.Errorf("failed to load migration state: %w", err)
+		}
+	} else {
+		// File doesn't exist, create new state
+		migrationState = types.NewMigrationState()
 	}
 
-	migrationInitializer := NewMigrationInitializer(*opts)
+	// ===== PHASE 2: Create new MigrationConfig with generated UUID =====
+	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
+
+	// Parse kube config path with default
+	kubeConfigPathResolved := kubeConfigPath
+	if kubeConfigPathResolved == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get user home directory: %v", err)
+		}
+		kubeConfigPathResolved = filepath.Join(homeDir, ".kube", "config")
+	}
+	slog.Info("using kube config path", "path", kubeConfigPathResolved)
+
+	config := &types.MigrationConfig{
+		MigrationId:          migrationId,
+		GatewayNamespace:     gatewayNamespace,
+		GatewayCrdName:       gatewayCrdName,
+		SourceName:           sourceName,
+		DestinationName:      "", // Not used currently
+		SourceRouteName:      sourceRouteName,
+		DestinationRouteName: "", // Not used currently
+		KubeConfigPath:       kubeConfigPathResolved,
+		ClusterId:            clusterId,
+		ClusterRestEndpoint:  clusterRestEndpoint,
+		ClusterLinkName:      clusterLinkName,
+		Topics:               topics,
+		AuthMode:             authMode,
+		CCBootstrapEndpoint:  ccBootstrapEndpoint,
+		LoadBalancerEndpoint: loadBalancerEndpoint,
+		CurrentState:         types.StateUninitialized,
+	}
+
+	// ===== PHASE 3: Early write - upsert migration and write to file =====
+	// CRITICAL: File MUST exist before orchestrator runs to prevent panic
+	migrationState.UpsertMigration(*config)
+	if err := migrationState.WriteToFile(migrationStateFile); err != nil {
+		return fmt.Errorf("failed to write migration state file: %w", err)
+	}
+
+	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
+	if skipValidate {
+		slog.Info("migration created (validation skipped)",
+			"migrationId", config.MigrationId,
+			"currentState", config.CurrentState,
+			"stateFile", migrationStateFile)
+		return nil
+	}
+
+	// ===== PHASE 5: Pass to initializer for validation orchestration only =====
+	opts := parseMigrationInitializerOpts(*migrationState, *config)
+	migrationInitializer := NewMigrationInitializer(opts)
 	if err := migrationInitializer.Run(); err != nil {
 		return err
 	}
 
+	slog.Info("migration initialized",
+		"migrationId", config.MigrationId,
+		"currentState", config.CurrentState,
+		"stateFile", migrationStateFile)
 	return nil
 }
 
-func parseMigrationInitializerOpts() (*MigrationInitializerOpts, error) {
-	if kubeConfigPath == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user home directory: %v", err)
-		}
-
-		kubeConfigPath = filepath.Join(homeDir, ".kube", "config")
+func parseMigrationInitializerOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationInitializerOpts {
+	return MigrationInitializerOpts{
+		MigrationStateFile: migrationStateFile,
+		MigrationState:     migrationState,
+		MigrationConfig:    config,
+		ClusterApiKey:      clusterApiKey,
+		ClusterApiSecret:   clusterApiSecret,
 	}
-	slog.Info("using kube config path", "path", kubeConfigPath)
-
-	return &MigrationInitializerOpts{
-		migrationStateFile: migrationStateFile,
-		skipValidate:       skipValidate,
-
-		gatewayNamespace: gatewayNamespace,
-		gatewayCrdName:   gatewayCrdName,
-		sourceName:       sourceName,
-		// destinationName:      destinationName,
-		sourceRouteName: sourceRouteName,
-		// destinationRouteName: destinationRouteName,
-		kubeConfigPath:       kubeConfigPath,
-		clusterLinkName:      clusterLinkName,
-		clusterRestEndpoint:  clusterRestEndpoint,
-		clusterId:            clusterId,
-		clusterApiKey:        clusterApiKey,
-		clusterApiSecret:     clusterApiSecret,
-		topics:               topics,
-		authMode:             authMode,
-		ccBootstrapEndpoint:  ccBootstrapEndpoint,
-		loadBalancerEndpoint: loadBalancerEndpoint,
-	}, nil
 }

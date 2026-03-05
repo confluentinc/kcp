@@ -64,3 +64,6 @@ tmp
 # local work not to be committed :)
 scratch/
 scp-to-ec2.sh
+
+# claude plans
+plans/
