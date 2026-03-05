@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend
+.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-down test-integration-osk test-all-envs
 
 # Build the frontend
 build-frontend:
@@ -115,4 +115,43 @@ test-cov:
 test-cov-ui:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
+
+# Docker Compose test environments
+test-env-up-plaintext:
+	@echo "Starting plaintext Kafka test environment (ZooKeeper-based)..."
+	docker-compose -f test/docker/docker-compose-plaintext.yml up -d
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9092
+	@bash test/docker/scripts/setup-test-data.sh localhost:9092
+
+test-env-up-kraft:
+	@echo "Starting KRaft Kafka test environment (no ZooKeeper)..."
+	docker-compose -f test/docker/docker-compose-kraft.yml up -d
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9095
+	@bash test/docker/scripts/setup-test-data.sh localhost:9095
+
+test-env-down:
+	@echo "Stopping all test environments..."
+	docker-compose -f test/docker/docker-compose-plaintext.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-kraft.yml down -v 2>/dev/null || true
+
+test-integration-osk: test-env-up-plaintext
+	@echo "Running OSK integration tests (ZooKeeper mode)..."
+	TEST_KAFKA_BOOTSTRAP=localhost:9092 go test -tags=integration ./cmd/scan/clusters/... -v
+	$(MAKE) test-env-down
+	@echo "Running OSK integration tests (KRaft mode)..."
+	$(MAKE) test-env-up-kraft
+	TEST_KAFKA_BOOTSTRAP=localhost:9095 go test -tags=integration ./cmd/scan/clusters/... -v
+	$(MAKE) test-env-down
+
+test-all-envs:
+	@echo "Testing OSK scanning against all Kafka configurations..."
+	@echo "\n=== Testing ZooKeeper-based cluster ==="
+	$(MAKE) test-env-up-plaintext
+	kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-plaintext.yaml --state-file test-state-zk.json
+	$(MAKE) test-env-down
+	@echo "\n=== Testing KRaft-based cluster ==="
+	$(MAKE) test-env-up-kraft
+	kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-kraft.yaml --state-file test-state-kraft.json
+	$(MAKE) test-env-down
+	@echo "\n✅ All environment tests passed!"
 
