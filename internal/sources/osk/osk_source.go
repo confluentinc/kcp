@@ -181,7 +181,11 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 			clientBrokerEncryptionInTransit,
 			region,
 			kafkaVersion,
-			client.WithSASLSCRAMAuth(clusterCreds.AuthMethod.SASLScram.Username, clusterCreds.AuthMethod.SASLScram.Password),
+			client.WithSASLSCRAMAuth(
+				clusterCreds.AuthMethod.SASLScram.Username,
+				clusterCreds.AuthMethod.SASLScram.Password,
+				clusterCreds.AuthMethod.SASLScram.Mechanism,
+			),
 		)
 	case types.AuthTypeUnauthenticatedTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(

@@ -187,6 +187,7 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 		amc.SASLScram.Use = existing.SASLScram.Use
 		amc.SASLScram.Username = existing.SASLScram.Username
 		amc.SASLScram.Password = existing.SASLScram.Password
+		amc.SASLScram.Mechanism = existing.SASLScram.Mechanism
 	}
 }
 
@@ -210,7 +211,8 @@ type TLSConfig struct {
 }
 
 type SASLScramConfig struct {
-	Use      bool   `yaml:"use"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Use       bool   `yaml:"use"`
+	Username  string `yaml:"username"`
+	Password  string `yaml:"password"`
+	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512", defaults to "SHA256"
 }

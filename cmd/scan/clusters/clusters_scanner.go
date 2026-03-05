@@ -136,7 +136,11 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	case types.AuthTypeIAM:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
 	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password))
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(
+			clusterAuth.AuthMethod.SASLScram.Username,
+			clusterAuth.AuthMethod.SASLScram.Password,
+			clusterAuth.AuthMethod.SASLScram.Mechanism,
+		))
 	case types.AuthTypeUnauthenticatedTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedTlsAuth())
 	case types.AuthTypeUnauthenticatedPlaintext:
