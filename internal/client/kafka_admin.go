@@ -89,7 +89,8 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	config.Net.SASL.Password = password
 	config.Net.SASL.Handshake = true
 
-	// Default to SHA256 if not specified or empty
+	// Default to SHA256 for OSK clusters (most common in open source)
+	// MSK credentials are explicitly set to SHA512 during discovery (AWS MSK requirement)
 	if mechanism == "" || mechanism == "SHA256" {
 		config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
 			return &XDGSCRAMClient{HashGeneratorFcn: SHA256}

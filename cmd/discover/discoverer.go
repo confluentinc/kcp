@@ -253,9 +253,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	}
 	if isSaslScramAvailable {
 		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
-			Use:      !defaultAuthSelected,
-			Username: "",
-			Password: "",
+			Use:       !defaultAuthSelected,
+			Username:  "",
+			Password:  "",
+			Mechanism: "SHA512", // AWS MSK only supports SCRAM-SHA-512
 		}
 		defaultAuthSelected = true
 	}
