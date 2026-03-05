@@ -309,7 +309,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 	const (
 		FenceScope        = "ALL"
 		FenceErrorCode    = "BROKER_NOT_AVAILABLE"
-		FenceErrorMessage = "This route is currently unavailable - all requests are blocked by me!?"
+		FenceErrorMessage = "This route is currently unavailable"
 	)
 	patchOps := []map[string]any{
 		{

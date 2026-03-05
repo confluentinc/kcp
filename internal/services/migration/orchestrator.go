@@ -9,12 +9,39 @@ import (
 	"github.com/looplab/fsm"
 )
 
+// WorkflowStep defines a single step in the migration workflow
+type WorkflowStep struct {
+	Event       string
+	Description string
+	FromState   string
+	ToState     string
+}
+
+// canonicalWorkflow is the single source of truth for the migration workflow sequence
+var canonicalWorkflow = []WorkflowStep{
+	{types.EventInitialize, "initializing migration", types.StateUninitialized, types.StateInitialized},
+	{types.EventWaitForLags, "checking replication lags", types.StateInitialized, types.StateLagsOk},
+	{types.EventFence, "fencing gateway", types.StateLagsOk, types.StateFenced},
+	{types.EventPromote, "promoting topics", types.StateFenced, types.StatePromoting},
+	{types.EventWaitForPromotionCompletion, "waiting for promotion completion", types.StatePromoting, types.StatePromoted},
+	{types.EventSwitch, "switching gateway config", types.StatePromoted, types.StateSwitched},
+}
+
+// ExecutionParams holds runtime parameters needed during migration execution
+type ExecutionParams struct {
+	Threshold        int64
+	MaxWaitTime      int64
+	ClusterApiKey    string
+	ClusterApiSecret string
+}
+
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
 	config        *types.MigrationConfig
 	fsm           *fsm.FSM
 	workflow      *MigrationWorkflow
 	stateFilePath string
+	execParams    ExecutionParams // Runtime execution parameters
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
@@ -23,27 +50,65 @@ func NewMigrationOrchestrator(
 	workflow *MigrationWorkflow,
 	stateFilePath string,
 ) *MigrationOrchestrator {
-	o := &MigrationOrchestrator{
+	orchestrator := &MigrationOrchestrator{
 		config:        config,
 		workflow:      workflow,
 		stateFilePath: stateFilePath,
+		execParams:    ExecutionParams{}, // Zero values initially
 	}
-	o.initializeFSM()
-	return o
+	orchestrator.initializeFSM()
+
+	return orchestrator
 }
 
-// initializeFSM sets up the finite state machine with events and callbacks
+// Initialize triggers the initialization event
+func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
+	// Store API credentials for use by callback
+	o.execParams.ClusterApiKey = clusterApiKey
+	o.execParams.ClusterApiSecret = clusterApiSecret
+
+	return o.fsm.Event(ctx, types.EventInitialize)
+}
+
+// Execute runs the full migration workflow from the current state
+func (o *MigrationOrchestrator) Execute(ctx context.Context, threshold, maxWaitTime int64, clusterApiKey, clusterApiSecret string) error {
+	// Store runtime parameters once for use by all callbacks
+	o.execParams.Threshold = threshold
+	o.execParams.MaxWaitTime = maxWaitTime
+	o.execParams.ClusterApiKey = clusterApiKey
+	o.execParams.ClusterApiSecret = clusterApiSecret
+
+	// Drive execution from canonical workflow - single source of truth
+	for _, step := range canonicalWorkflow {
+		if !o.canTransition(step.Event) {
+			slog.Debug("skipping already-completed step", "step", step.Description, "event", step.Event)
+			continue // Skip already-completed steps (enables resumability)
+		}
+
+		slog.Info("executing migration step", "step", step.Description)
+		if err := o.fsm.Event(ctx, step.Event); err != nil {
+			return fmt.Errorf("failed during %s: %w", step.Description, err)
+		}
+	}
+
+	return nil
+}
+
+// initializeFSM sets up the finite state machine from the canonical workflow definition
 func (o *MigrationOrchestrator) initializeFSM() {
+	// Build FSM events from canonical workflow
+	events := make(fsm.Events, 0, len(canonicalWorkflow))
+	for _, step := range canonicalWorkflow {
+		events = append(events, fsm.EventDesc{
+			Name: step.Event,
+			Src:  []string{step.FromState},
+			Dst:  step.ToState,
+		})
+	}
+
 	o.fsm = fsm.NewFSM(
 		o.config.CurrentState,
-		fsm.Events{
-			{Name: types.EventInitialize, Src: []string{types.StateUninitialized}, Dst: types.StateInitialized},
-			{Name: types.EventWaitForLags, Src: []string{types.StateInitialized}, Dst: types.StateLagsOk},
-			{Name: types.EventFence, Src: []string{types.StateLagsOk}, Dst: types.StateFenced},
-			{Name: types.EventPromote, Src: []string{types.StateFenced}, Dst: types.StatePromoting},
-			{Name: types.EventWaitForPromotionCompletion, Src: []string{types.StatePromoting}, Dst: types.StatePromoted},
-			{Name: types.EventSwitch, Src: []string{types.StatePromoted}, Dst: types.StateSwitched},
-		},
+		events,
 		fsm.Callbacks{
 			"before_event":                      o.beforeEventCallback,
 			"after_event":                       o.afterEventCallback,
@@ -90,21 +155,8 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 func (o *MigrationOrchestrator) leaveUninitializedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: LEAVING STATE", "state", types.StateUninitialized)
 
-	// Extract args: clusterApiKey, clusterApiSecret
-	var clusterApiKey, clusterApiSecret string
-	if len(e.Args) > 0 {
-		if key, ok := e.Args[0].(string); ok {
-			clusterApiKey = key
-		}
-	}
-	if len(e.Args) > 1 {
-		if secret, ok := e.Args[1].(string); ok {
-			clusterApiSecret = secret
-		}
-	}
-
-	// Delegate to workflow service
-	if err := o.workflow.Initialize(ctx, o.config, clusterApiKey, clusterApiSecret); err != nil {
+	// Delegate to workflow service using stored parameters
+	if err := o.workflow.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
 	}
@@ -114,33 +166,8 @@ func (o *MigrationOrchestrator) leaveUninitializedCallback(ctx context.Context, 
 func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: LEAVING STATE", "state", types.StateInitialized)
 
-	// Extract args: threshold, maxWaitTime, clusterApiKey, clusterApiSecret
-	var threshold, maxWaitTime int64
-	var clusterApiKey, clusterApiSecret string
-
-	if len(e.Args) > 0 {
-		if t, ok := e.Args[0].(int64); ok {
-			threshold = t
-		}
-	}
-	if len(e.Args) > 1 {
-		if mw, ok := e.Args[1].(int64); ok {
-			maxWaitTime = mw
-		}
-	}
-	if len(e.Args) > 2 {
-		if key, ok := e.Args[2].(string); ok {
-			clusterApiKey = key
-		}
-	}
-	if len(e.Args) > 3 {
-		if secret, ok := e.Args[3].(string); ok {
-			clusterApiSecret = secret
-		}
-	}
-
-	// Delegate to workflow service
-	if err := o.workflow.CheckLags(ctx, o.config, threshold, maxWaitTime, clusterApiKey, clusterApiSecret); err != nil {
+	// Delegate to workflow service using stored parameters
+	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.Threshold, o.execParams.MaxWaitTime, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
 	}
@@ -150,7 +177,7 @@ func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e 
 func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: LEAVING STATE", "state", types.StateLagsOk)
 
-	// No args needed for fencing
+	// No runtime params needed for fencing
 	if err := o.workflow.FenceGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 		return
@@ -161,21 +188,8 @@ func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.
 func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: LEAVING STATE", "state", types.StateFenced)
 
-	// Extract args: clusterApiKey, clusterApiSecret
-	var clusterApiKey, clusterApiSecret string
-	if len(e.Args) > 0 {
-		if key, ok := e.Args[0].(string); ok {
-			clusterApiKey = key
-		}
-	}
-	if len(e.Args) > 1 {
-		if secret, ok := e.Args[1].(string); ok {
-			clusterApiSecret = secret
-		}
-	}
-
-	// Delegate to workflow service
-	if err := o.workflow.PromoteTopics(ctx, o.config, clusterApiKey, clusterApiSecret); err != nil {
+	// Delegate to workflow service using stored parameters
+	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
 	}
@@ -185,7 +199,7 @@ func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.
 func (o *MigrationOrchestrator) leavePromotingCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: LEAVING STATE", "state", types.StatePromoting)
 
-	// No args needed for checking promotion completion
+	// No runtime params needed for checking promotion completion
 	if err := o.workflow.CheckPromotionCompletion(ctx, o.config); err != nil {
 		e.Cancel(err)
 		return
@@ -196,7 +210,7 @@ func (o *MigrationOrchestrator) leavePromotingCallback(ctx context.Context, e *f
 func (o *MigrationOrchestrator) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("FSM: LEAVING STATE", "state", types.StatePromoted)
 
-	// No args needed for switching gateway
+	// No runtime params needed for switching gateway
 	if err := o.workflow.SwitchGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 		return
@@ -220,49 +234,6 @@ func (o *MigrationOrchestrator) saveState() error {
 	}
 
 	return nil
-}
-
-// Initialize triggers the initialization event
-func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
-	return o.fsm.Event(ctx, types.EventInitialize, clusterApiKey, clusterApiSecret)
-}
-
-// Execute runs the full migration workflow from the current state
-func (o *MigrationOrchestrator) Execute(ctx context.Context, threshold, maxWaitTime int64, clusterApiKey, clusterApiSecret string) error {
-	// Execute remaining steps based on current state
-	steps := []struct {
-		event       string
-		description string
-		args        []any
-	}{
-		{types.EventWaitForLags, "checking lags", []any{threshold, maxWaitTime, clusterApiKey, clusterApiSecret}},
-		{types.EventFence, "fencing gateway", []any{}},
-		{types.EventPromote, "promoting topics", []any{clusterApiKey, clusterApiSecret}},
-		{types.EventWaitForPromotionCompletion, "waiting for promotion completion", []any{}},
-		{types.EventSwitch, "switching gateway config", []any{}},
-	}
-
-	for _, step := range steps {
-		if !o.canTransition(step.event) {
-			continue
-		}
-
-		if err := o.fsm.Event(ctx, step.event, step.args...); err != nil {
-			return fmt.Errorf("failed during %s: %w", step.description, err)
-		}
-	}
-
-	return nil
-}
-
-// GetCurrentState returns the current FSM state
-func (o *MigrationOrchestrator) GetCurrentState() string {
-	return o.fsm.Current()
-}
-
-// GetConfig returns the migration configuration
-func (o *MigrationOrchestrator) GetConfig() *types.MigrationConfig {
-	return o.config
 }
 
 // canTransition checks if the given event can be triggered from the current state
