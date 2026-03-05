@@ -9,7 +9,7 @@ import (
 )
 
 // GenerateEnvironmentResource creates a new Confluent environment resource
-func GenerateEnvironmentResource(tfResourceName, envVarName string) *hclwrite.Block {
+func GenerateEnvironmentResource(tfResourceName, envVarName string, preventDestroy bool) *hclwrite.Block {
 	environmentBlock := hclwrite.NewBlock("resource", []string{"confluent_environment", tfResourceName})
 	environmentBlock.Body().SetAttributeRaw("display_name", utils.TokensForVarReference(envVarName))
 	environmentBlock.Body().AppendNewline()
@@ -19,7 +19,7 @@ func GenerateEnvironmentResource(tfResourceName, envVarName string) *hclwrite.Bl
 	environmentBlock.Body().AppendBlock(streamGovernanceBlock)
 	environmentBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(environmentBlock, "prevent_destroy", true)
+	utils.GenerateLifecycleBlock(environmentBlock, "prevent_destroy", preventDestroy)
 
 	return environmentBlock
 }

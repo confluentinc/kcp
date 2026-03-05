@@ -236,13 +236,8 @@ This command requires the following permissions:
     {
       "Sid": "MSKClusterConnect",
       "Effect": "Allow",
-      "Action": [
-        "kafka-cluster:Connect",
-        "kafka-cluster:DescribeCluster"
-      ],
-      "Resource": [
-        "*"
-      ]
+      "Action": ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"],
+      "Resource": ["*"]
     },
     {
       "Sid": "MSKTopicActions",
@@ -253,9 +248,7 @@ This command requires the following permissions:
         "kafka-cluster:DescribeTopic",
         "kafka-cluster:DescribeTopicDynamicConfiguration"
       ],
-      "Resource": [
-        "*"
-      ]
+      "Resource": ["*"]
     },
     {
       "Sid": "CostMetricsScanPermissions",
@@ -269,23 +262,21 @@ This command requires the following permissions:
       "Resource": "*"
     },
     {
-        "Sid": "MSKNetworkingScanPermission",
-        "Effect": "Allow",
-        "Action": [
-            "ec2:DescribeSubnets"
-        ],
-        "Resource": "*"
+      "Sid": "MSKNetworkingScanPermission",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeSubnets"],
+      "Resource": "*"
     }
   ]
 }
 ```
 
->[!NOTE]
+> [!NOTE]
 > Some permissions are optional depending on which skip flags you use:
+>
 > - If using `--skip-topics`, the `MSKTopicActions` permissions are not required
 > - If using `--skip-costs`, the `ce:GetCostAndUsage` permission is not required
 > - If using `--skip-metrics`, the CloudWatch permissions (`cloudwatch:GetMetricData`, `cloudwatch:GetMetricStatistics`, `cloudwatch:ListMetrics`) are not required
->
 
 ### `kcp scan`
 
@@ -1335,7 +1326,10 @@ One of the following combinations is required - `--state-file` + `--cluster-arn`
 - `--needs-cluster`: Whether to create a new cluster (true) or use existing (false)
 - `--cluster-name`: Name for new cluster (required when `--needs-cluster=true`)
 - `--cluster-id`: ID of existing cluster (required when `--needs-cluster=false`)
-- `--cluster-type`: Cluster type (e.g., 'basic', 'standard', 'dedicated', 'enterprise')
+- `--cluster-type`: Cluster type ('dedicated' or 'enterprise')
+- `--cluster-availability`: Cluster availability zone type ('SINGLE_ZONE' or 'MULTI_ZONE'). MULTI_ZONE requires `--cluster-cku >= 2`. (default: 'SINGLE_ZONE')
+- `--cluster-cku`: Number of CKUs for dedicated clusters (must be >= 1, MULTI_ZONE requires >= 2). (default: 1)
+- `--prevent-destroy`: Whether to set `lifecycle { prevent_destroy = true }` on generated Terraform resources. (default: true)
 
 **Private Link**:
 
@@ -1369,7 +1363,7 @@ The command creates a directory (default: `target-infra`) containing Terraform c
 
 #### `kcp create-asset migration-infra`
 
-This command generates the required Terraform to provision your migration environment. The `--type` flag will determine how the Confluent Platform jump cluster will authenticate with MSK - using either IAM or SASL/SCRAM - as well some aspects of the networking.
+This command generates the required Terraform to provision your migration environment. The `--type` flag will determine how the Confluent Platform jump cluster will authenticate with MSK - using either IAM or SASL/SCRAM - as well some aspects of the networking to connect to an existing Private Link setup between the AWS VPC and Confluent Cloud.
 
 **Required Arguments**:
 
@@ -1386,7 +1380,6 @@ This command generates the required Terraform to provision your migration enviro
 **Base Optional Arguments**:
 
 - `--existing-internet-gateway`: Whether to use an existing internet gateway. (default: false)
-- `--existing-private-link`: Whether to use an existing private link. (default: false)
 - `--output-dir`: The directory to output the migration infrastructure assets to. (default: 'migration-infra')
 
 **Type Two Flags**:
@@ -1399,7 +1392,7 @@ This command generates the required Terraform to provision your migration enviro
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
-- `--pl-subnet-ids`: [Optional] The IDs of the existing private link subnets to use for the jump cluster. (default: MSK cluster broker subnets).
+- `--existing-private-link-vpce-id`: The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud. (Required)
 - `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
 - `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
 - `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
@@ -1409,28 +1402,7 @@ This command generates the required Terraform to provision your migration enviro
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
-- `--pl-subnet-ids`: [Optional] The IDs of the existing private link subnets to use for the jump cluster. (default: MSK cluster broker subnets).
-- `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
-- `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
-- `--jump-cluster-iam-auth-role-name`: The IAM role name to authenticate the cluster link between MSK and the jump cluster.
-- `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
-- `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
-
-**Type Five Flags**:
-
-- `--target-environment-id`: The Confluent Cloud environment ID.
-- `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
-- `--pl-subnet-cidr`: The CIDR blocks to use for the new private link subnets. Three CIDRs are required.
-- `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
-- `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
-- `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
-- `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
-
-**Type Six Flags**:
-
-- `--target-environment-id`: The Confluent Cloud environment ID.
-- `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
-- `--pl-subnet-cidr`: The CIDR blocks to use for the new private link subnets. Three CIDRs are required.
+- `--existing-private-link-vpce-id`: The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud. (Required)
 - `--jump-cluster-broker-subnet-cidr`: The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.
 - `--jump-cluster-setup-host-subnet-cidr`: The CIDR block to use for the jump cluster setup host subnet.
 - `--jump-cluster-iam-auth-role-name`: The IAM role name to authenticate the cluster link between MSK and the jump cluster.
@@ -1446,31 +1418,29 @@ _Public MSK Endpoints:_
 _Private MSK Endpoints:_
 
 - Type 2: External Outbound Cluster Link [SASL/SCRAM]
-- Type 3: Jump Cluster, Reuse Existing Subnets [SASL/SCRAM]
-- Type 4: Jump Cluster, Reuse Existing Subnets [IAM]
-- Type 5: Jump Cluster, New Subnets [SASL/SCRAM]
-- Type 6: Jump Cluster, New Subnets [IAM]
+- Type 3: Jump Cluster [SASL/SCRAM]
+- Type 4: Jump Cluster [IAM]
 
 **Example Usage**
 
 > [!NOTE]
-> The example below uses `--type 3` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Moreover, `--type 3` also indicates that the migration will re-use the existing subnets of the MSK broker for the Private Link connection between the jump cluster and Confluent Cloud.
+> The example below uses `--type 3` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Type 3 requires an existing VPC endpoint (`--existing-private-link-vpce-id`) for the Private Link connection between the jump cluster and Confluent Cloud.
 
 ```bash
 kcp create-asset migration-infra /
 --state-file kcp-state.json /
---cluster-arn arn:aws:kafka:eu-west-3:635910096382:cluster/public-retention-env-cluster/7340266e-2cff-4480-b9b2-f60572a4c94c-2 /
+--cluster-arn arn:aws:kafka:us-east-1:XXX:cluster/XXX/1a2345b6-bf9f-4670-b13b-710985f5645d-5 /
 --existing-internet-gateway /
---existing-private-link /
 --output-dir type-3 /
 --type 3 /
+--existing-private-link-vpce-id vpce-0abc123def456789 /
 --jump-cluster-broker-subnet-cidr 10.0.101.0/24,10.0.102.0/24,10.0.103.0/24 /
 --jump-cluster-setup-host-subnet-cidr 10.0.104.0/24 /
 --cluster-link-name type-3-link /
---target-environment-id env-x5vmok /
---target-cluster-id lkc-n81mzz /
---target-rest-endpoint https://lkc-n81mzz.eu-west-3.aws.private.confluent.cloud:443 /
---target-bootstrap-endpoint lkc-n81mzz.eu-west-3.aws.private.confluent.cloud:9092
+--target-environment-id env-a1bcde /
+--target-cluster-id lkc-w89xyz /
+--target-rest-endpoint https://lkc-w89xyz.XXX.aws.private.confluent.cloud:443 /
+--target-bootstrap-endpoint lkc-w89xyz.XXX.aws.private.confluent.cloud:9092
 ```
 
 **Output:**
@@ -1672,11 +1642,11 @@ kcp update --check-only
 
 > [!NOTE]
 > **Permission Requirements**: If kcp is installed in a system directory (e.g., `/usr/local/bin`), the update command will check permissions early and exit with an error if sudo is required. In this case, re-run the command with sudo:
-> 
+>
 > ```shell
 > sudo kcp update
 > ```
-> 
+>
 > The error message will include the exact command to run, preserving any flags you used (e.g., `sudo kcp update --force`).
 
 ---
