@@ -52,6 +52,9 @@ func (s *MigrationWorkflow) Initialize(
 	}
 	config.InitialCrYAML = initialCrYAML
 
+	// TODO: now we have all 3 yamls - we can do some additional validation before proceeding
+
+
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
