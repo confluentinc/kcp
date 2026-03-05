@@ -29,8 +29,7 @@ var canonicalWorkflow = []WorkflowStep{
 
 // ExecutionParams holds runtime parameters needed during migration execution
 type ExecutionParams struct {
-	Threshold        int64
-	MaxWaitTime      int64
+	LagThreshold     int64
 	ClusterApiKey    string
 	ClusterApiSecret string
 }
@@ -71,10 +70,9 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 }
 
 // Execute runs the full migration workflow from the current state
-func (o *MigrationOrchestrator) Execute(ctx context.Context, threshold, maxWaitTime int64, clusterApiKey, clusterApiSecret string) error {
+func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, clusterApiKey, clusterApiSecret string) error {
 	// Store runtime parameters once for use by all callbacks
-	o.execParams.Threshold = threshold
-	o.execParams.MaxWaitTime = maxWaitTime
+	o.execParams.LagThreshold = lagThreshold
 	o.execParams.ClusterApiKey = clusterApiKey
 	o.execParams.ClusterApiSecret = clusterApiSecret
 
@@ -167,7 +165,7 @@ func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e 
 	slog.Info("FSM: LEAVING STATE", "state", types.StateInitialized)
 
 	// Delegate to workflow service using stored parameters
-	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.Threshold, o.execParams.MaxWaitTime, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
 	}

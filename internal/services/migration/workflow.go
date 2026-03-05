@@ -12,7 +12,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
-	"github.com/goccy/go-yaml"
 )
 
 type MigrationWorkflow struct {
@@ -127,18 +126,17 @@ func (s *MigrationWorkflow) Initialize(
 	return nil
 }
 
-// CheckLags polls mirror topics until lag is below threshold or timeout
+// CheckLags polls mirror topics until lag is below threshold
 func (s *MigrationWorkflow) CheckLags(
 	ctx context.Context,
 	config *types.MigrationConfig,
-	threshold, maxWaitTime int64,
+	lagThreshold int64,
 	clusterApiKey, clusterApiSecret string,
 ) error {
-	fmt.Printf("\n%s Checking mirror lag across %s (threshold: %s, timeout: %s)\n\n",
+	fmt.Printf("\n%s Checking mirror lag across %s (threshold: %s)\n\n",
 		color.CyanString("⏳"),
 		color.CyanString("%d topics", len(config.Topics)),
-		color.YellowString("%d", threshold),
-		color.YellowString("%ds", maxWaitTime))
+		color.YellowString("%d", lagThreshold))
 
 	// Early exit if no topics to check
 	if len(config.Topics) == 0 {
@@ -160,9 +158,7 @@ func (s *MigrationWorkflow) CheckLags(
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
-	// Record start time for timeout tracking
 	startTime := time.Now()
-	maxWaitDuration := time.Duration(maxWaitTime) * time.Second
 
 	// Main polling loop
 	for {
@@ -171,12 +167,6 @@ func (s *MigrationWorkflow) CheckLags(
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-		}
-
-		// Check if maxWaitTime has been exceeded
-		elapsed := time.Since(startTime)
-		if elapsed >= maxWaitDuration {
-			return fmt.Errorf("max wait time exceeded (%v): lag threshold (%d) not met within %v", elapsed, threshold, maxWaitDuration)
 		}
 
 		// Fetch current mirror topic status
@@ -216,7 +206,7 @@ func (s *MigrationWorkflow) CheckLags(
 			topicTotalLags[mirrorTopic.MirrorTopicName] = totalLag
 
 			// Check if topic's TOTAL lag exceeds threshold
-			if totalLag >= int(threshold) {
+			if totalLag >= int(lagThreshold) {
 				allBelowThreshold = false
 				topicLags[mirrorTopic.MirrorTopicName] = partitionLags
 			}
@@ -226,7 +216,7 @@ func (s *MigrationWorkflow) CheckLags(
 		if allBelowThreshold {
 			fmt.Printf("\n%s All mirror topic lags below threshold (%d)\n",
 				color.GreenString("✔"),
-				threshold)
+				lagThreshold)
 			return nil
 		}
 
@@ -237,14 +227,12 @@ func (s *MigrationWorkflow) CheckLags(
 		}
 		sort.Strings(lagTopics)
 
-		elapsed = time.Since(startTime)
-		remaining := maxWaitDuration - elapsed
+		elapsed := time.Since(startTime)
 
-		fmt.Printf("%s Waiting for lag to clear  %s  %s  %s\n",
+		fmt.Printf("%s Waiting for lag to clear  %s  %s\n",
 			color.YellowString("⏳"),
 			color.YellowString("%d/%d topics behind", len(topicLags), len(config.Topics)),
-			color.CyanString("elapsed %s", elapsed.Round(time.Second)),
-			color.CyanString("remaining %s", remaining.Round(time.Second)))
+			color.CyanString("elapsed %s", elapsed.Round(time.Second)))
 
 		for _, topic := range lagTopics {
 			parts := topicLags[topic]
@@ -267,70 +255,24 @@ func (s *MigrationWorkflow) CheckLags(
 	}
 }
 
-// FenceGateway adds fence configuration to the source route to block traffic
+// FenceGateway applies the fenced gateway CR YAML to block traffic
 func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Info("🚧 Fencing gateway route", "route", config.SourceRouteName, "gateway", config.GatewayCrdName)
+	slog.Info("🚧 Fencing gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
-	// This must be first to avoid race conditions where rollout completes before we capture UIDs
-	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.GatewayNamespace, config.GatewayCrdName)
+	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.PassthroughCrName)
 	if err != nil {
 		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
 	}
 
-	// Step 2: Get the current gateway YAML to find the source route index
-	gatewayYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.GatewayNamespace, config.GatewayCrdName)
-	if err != nil {
-		return fmt.Errorf("failed to get gateway: %w", err)
+	// Step 2: Apply the fenced CR YAML
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName, config.FencedCrYAML); err != nil {
+		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 
-	var gw types.GatewayResource
-	if err := yaml.Unmarshal(gatewayYAML, &gw); err != nil {
-		return fmt.Errorf("failed to parse gateway YAML: %w", err)
-	}
+	slog.Info("✅ Fenced gateway CR applied")
 
-	// Step 3: Find the source route index
-	routeIndex := -1
-	for i, route := range gw.Spec.Routes {
-		if route.Name == config.SourceRouteName {
-			routeIndex = i
-			break
-		}
-	}
-	if routeIndex == -1 {
-		return fmt.Errorf("source route '%s' not found in gateway routes", config.SourceRouteName)
-	}
-
-	if gw.Spec.Routes[routeIndex].Fence != nil {
-		slog.Warn("⚠️  Route already fenced, replacing configuration", "route", config.SourceRouteName)
-	}
-
-	// Step 4: Build JSON patch to add fence configuration
-	const (
-		FenceScope        = "ALL"
-		FenceErrorCode    = "BROKER_NOT_AVAILABLE"
-		FenceErrorMessage = "This route is currently unavailable"
-	)
-	patchOps := []map[string]any{
-		{
-			"op":   "add",
-			"path": fmt.Sprintf("/spec/routes/%d/fence", routeIndex),
-			"value": map[string]any{
-				"scope":        FenceScope,
-				"errorCode":    FenceErrorCode,
-				"errorMessage": FenceErrorMessage,
-			},
-		},
-	}
-
-	// Step 5: Apply the patch to fence the route
-	if err := s.gatewayService.PatchGateway(ctx, config.GatewayNamespace, config.GatewayCrdName, patchOps); err != nil {
-		return fmt.Errorf("failed to fence gateway route '%s': %w", config.SourceRouteName, err)
-	}
-
-	slog.Info("✅ Route fenced", "scope", FenceScope)
-
-	// Step 6: Wait for gateway pods to be recycled with new configuration
+	// Step 3: Wait for gateway pods to be recycled with new configuration
 	const (
 		pollInterval = 5 * time.Second
 		timeout      = 5 * time.Minute
@@ -338,7 +280,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 
 	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.GatewayNamespace, config.GatewayCrdName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
@@ -449,109 +391,24 @@ func (s *MigrationWorkflow) CheckPromotionCompletion(ctx context.Context, config
 	return nil
 }
 
-// SwitchGateway switches the gateway to point to Confluent Cloud
+// SwitchGateway applies the switchover gateway CR YAML to point to Confluent Cloud
 func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Info("🔄 Switching gateway to Confluent Cloud", "destination", config.DestinationName)
+	slog.Info("🔄 Switching gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
-	// This must be first to avoid race conditions where rollout completes before we capture UIDs
-	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.GatewayNamespace, config.GatewayCrdName)
+	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.PassthroughCrName)
 	if err != nil {
 		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
 	}
 
-	// Step 2: Get the current gateway to find the source route index
-	gatewayYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.GatewayNamespace, config.GatewayCrdName)
-	if err != nil {
-		return fmt.Errorf("failed to get gateway: %w", err)
+	// Step 2: Apply the switchover CR YAML
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName, config.SwitchoverCrYAML); err != nil {
+		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 
-	var gw types.GatewayResource
-	if err := yaml.Unmarshal(gatewayYAML, &gw); err != nil {
-		return fmt.Errorf("failed to parse gateway YAML: %w", err)
-	}
+	slog.Info("✅ Switchover gateway CR applied")
 
-	// Step 3: Find the source route index
-	routeIndex := -1
-	for i, route := range gw.Spec.Routes {
-		if route.Name == config.SourceRouteName {
-			routeIndex = i
-			break
-		}
-	}
-	if routeIndex == -1 {
-		return fmt.Errorf("source route '%s' not found in gateway routes", config.SourceRouteName)
-	}
-
-	// Step 4: Build JSON patch to add streaming domain and replace route
-	patchOps := []map[string]any{
-		// Add the new streaming domain
-		{
-			"op":   "add",
-			"path": "/spec/streamingDomains/-",
-			"value": map[string]any{
-				"name": "confluent-cloud-plain",
-				"type": "kafka",
-				"kafkaCluster": map[string]any{
-					"bootstrapServers": []map[string]any{
-						{
-							"id":       "SASL_PLAIN",
-							"endpoint": "SASL_SSL://" + config.CCBootstrapEndpoint,
-							"tls": map[string]any{
-								"secretRef": "confluent-tls",
-							},
-						},
-					},
-				},
-			},
-		},
-		// Replace the source route to point to the new streaming domain
-		{
-			"op":   "replace",
-			"path": fmt.Sprintf("/spec/routes/%d", routeIndex),
-			"value": map[string]any{
-				"name":     "swap-msk-unauth-to-cc-route",
-				"endpoint": config.LoadBalancerEndpoint,
-				"brokerIdentificationStrategy": map[string]any{
-					"type":    "host",
-					"pattern": fmt.Sprintf("broker$(nodeId).%s", config.LoadBalancerEndpoint),
-				},
-				"streamingDomain": map[string]any{
-					"name":              "confluent-cloud-plain",
-					"bootstrapServerId": "SASL_PLAIN",
-				},
-				"security": map[string]any{
-					"auth":        "swap",
-					"secretStore": "file-store",
-					"client": map[string]any{
-						"authentication": map[string]any{
-							"type": "none",
-						},
-						"tls": map[string]any{
-							"secretRef": "gateway-tls",
-						},
-					},
-					"cluster": map[string]any{
-						"authentication": map[string]any{
-							"type": "plain",
-							"jaasConfigPassThrough": map[string]any{
-								"secretRef": "plain-jaas",
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	// Step 5: Apply the patch atomically (both operations together)
-	if err := s.gatewayService.PatchGateway(ctx, config.GatewayNamespace, config.GatewayCrdName, patchOps); err != nil {
-		return fmt.Errorf("failed to patch gateway: %w", err)
-	}
-
-	slog.Info("✅ Gateway config updated")
-
-	// Step 6: Wait for gateway pods to be recycled with new configuration
+	// Step 3: Wait for gateway pods to be recycled with new configuration
 	const (
 		pollInterval = 5 * time.Second
 		timeout      = 5 * time.Minute
@@ -559,7 +416,7 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.Mig
 
 	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.GatewayNamespace, config.GatewayCrdName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 

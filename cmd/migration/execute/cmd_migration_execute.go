@@ -12,8 +12,7 @@ import (
 var (
 	migrationStateFile string
 	migrationId        string
-	threshold          int64
-	maxWaitTime        int64 // in seconds
+	lagThreshold       int64
 	clusterApiKey      string
 	clusterApiSecret   string
 )
@@ -35,8 +34,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file to use for the migration.")
 	requiredFlags.StringVar(&migrationId, "migration-id", "", "The ID of the migration to execute.")
-	requiredFlags.Int64Var(&threshold, "threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
-	requiredFlags.Int64Var(&maxWaitTime, "max-wait-time", 0, "Maximum time in seconds to wait for lags to decrease below threshold.")
+	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use for the migration.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use for the migration.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
@@ -61,8 +59,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	})
 
 	migrationExecuteCmd.MarkFlagRequired("migration-id")
-	migrationExecuteCmd.MarkFlagRequired("max-lag")
-	migrationExecuteCmd.MarkFlagRequired("max-wait-time")
+	migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
 
@@ -105,8 +102,7 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		MigrationStateFile: migrationStateFile,
 		MigrationState:     migrationState,
 		MigrationConfig:    config,
-		Threshold:          threshold,
-		MaxWaitTime:        maxWaitTime,
+		LagThreshold:       lagThreshold,
 		ClusterApiKey:      clusterApiKey,
 		ClusterApiSecret:   clusterApiSecret,
 	}

@@ -12,6 +12,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -45,6 +46,7 @@ type Service interface {
 	ValidateGateway(ctx context.Context, yaml []byte, config GatewayConfig) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]any) error
+	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration) error
 }
@@ -176,6 +178,46 @@ func (s *K8sService) PatchGateway(ctx context.Context, namespace, gatewayName st
 		Patch(ctx, gatewayName, types.JSONPatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to patch Gateway: %w", err)
+	}
+
+	return nil
+}
+
+// ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using server-side apply
+func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build config: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	gatewayGVR := schema.GroupVersionResource{
+		Group:    GatewayGroup,
+		Version:  GatewayVersion,
+		Resource: GatewayResourcePlural,
+	}
+
+	// Parse YAML into unstructured object
+	var obj unstructured.Unstructured
+	if err := yaml.Unmarshal(yamlData, &obj.Object); err != nil {
+		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	}
+
+	// Ensure metadata matches the expected resource
+	obj.SetName(gatewayName)
+	obj.SetNamespace(namespace)
+
+	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Apply(ctx, gatewayName, &obj, metav1.ApplyOptions{
+			FieldManager: "kcp-migration",
+			Force:        true,
+		})
+	if err != nil {
+		return fmt.Errorf("failed to apply gateway YAML: %w", err)
 	}
 
 	return nil

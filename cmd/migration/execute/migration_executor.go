@@ -16,8 +16,7 @@ type MigrationExecutorOpts struct {
 	MigrationStateFile string
 	MigrationState     types.MigrationState
 	MigrationConfig    types.MigrationConfig
-	Threshold          int64
-	MaxWaitTime        int64 // in seconds
+	LagThreshold       int64
 	ClusterApiKey      string
 	ClusterApiSecret   string
 }
@@ -47,7 +46,7 @@ func (m *MigrationExecutor) Run() error {
 	)
 
 	ctx := context.Background()
-	if err := orchestrator.Execute(ctx, m.opts.Threshold, m.opts.MaxWaitTime, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
+	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
