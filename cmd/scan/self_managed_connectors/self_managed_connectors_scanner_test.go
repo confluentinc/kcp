@@ -47,14 +47,16 @@ func TestSelfManagedConnectorsScanner_Run_NoSelfManagedConnectors(t *testing.T) 
 	}
 
 	state := &types.State{
-		Regions: []types.DiscoveredRegion{
-			{
-				Name: "us-east-1",
-				Clusters: []types.DiscoveredCluster{
-					{
-						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-							ClusterID: "test-id",
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								ClusterID: "test-id",
+							},
 						},
 					},
 				},
@@ -74,7 +76,7 @@ func TestSelfManagedConnectorsScanner_Run_NoSelfManagedConnectors(t *testing.T) 
 	assert.NoError(t, err)
 	assert.Empty(t, listedConnectors, "should have received empty connector list")
 
-	cluster := state.Regions[0].Clusters[0]
+	cluster := state.MSKSources.Regions[0].Clusters[0]
 	assert.Nil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors,
 		"SelfManagedConnectors should remain nil when no connectors exist")
 }
@@ -115,14 +117,16 @@ func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T
 	}
 
 	state := &types.State{
-		Regions: []types.DiscoveredRegion{
-			{
-				Name: "us-east-1",
-				Clusters: []types.DiscoveredCluster{
-					{
-						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-							ClusterID: "test-cluster-id",
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								ClusterID: "test-cluster-id",
+							},
 						},
 					},
 				},
@@ -141,7 +145,7 @@ func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T
 	assert.NoError(t, err)
 
 	// Verify self-managed connectors were added to state
-	cluster := state.Regions[0].Clusters[0]
+	cluster := state.MSKSources.Regions[0].Clusters[0]
 	assert.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
 	assert.Equal(t, 2, len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors))
 
@@ -164,12 +168,14 @@ func TestSelfManagedConnectorsScanner_Run_ListSelfManagedConnectorsError(t *test
 	}
 
 	state := &types.State{
-		Regions: []types.DiscoveredRegion{
-			{
-				Name: "us-east-1",
-				Clusters: []types.DiscoveredCluster{
-					{
-						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+						},
 					},
 				},
 			},
@@ -320,19 +326,21 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_Success(t *testi
 	assert.NoError(t, err)
 
 	// Verify update
-	cluster := state.Regions[0].Clusters[0]
+	cluster := state.MSKSources.Regions[0].Clusters[0]
 	assert.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
 	assert.Equal(t, 1, len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors))
 }
 
 func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_ClusterNotFound(t *testing.T) {
 	state := &types.State{
-		Regions: []types.DiscoveredRegion{
-			{
-				Name: "us-east-1",
-				Clusters: []types.DiscoveredCluster{
-					{
-						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+						},
 					},
 				},
 			},
@@ -385,14 +393,16 @@ func TestSelfManagedConnectorsScanner_Run_PartialFailure(t *testing.T) {
 	}
 
 	state := &types.State{
-		Regions: []types.DiscoveredRegion{
-			{
-				Name: "us-east-1",
-				Clusters: []types.DiscoveredCluster{
-					{
-						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-							ClusterID: "test-id",
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								ClusterID: "test-id",
+							},
 						},
 					},
 				},
@@ -411,7 +421,7 @@ func TestSelfManagedConnectorsScanner_Run_PartialFailure(t *testing.T) {
 	assert.NoError(t, err) // Should succeed despite partial failure
 
 	// Verify only good connectors were added
-	cluster := state.Regions[0].Clusters[0]
+	cluster := state.MSKSources.Regions[0].Clusters[0]
 	assert.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
 	assert.Equal(t, 2, len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors))
 }

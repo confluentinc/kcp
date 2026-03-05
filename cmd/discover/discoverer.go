@@ -280,8 +280,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 
 func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	allClusters := []types.DiscoveredCluster{}
-	for _, region := range state.Regions {
-		allClusters = append(allClusters, region.Clusters...)
+	if state.MSKSources != nil {
+		for _, region := range state.MSKSources.Regions {
+			allClusters = append(allClusters, region.Clusters...)
+		}
 	}
 
 	if len(allClusters) == 0 {
