@@ -52,7 +52,7 @@
     "tw-animate-css": "^1.3.7",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
-    "vite": "^7.1.2",
+    "vite": "^7.1.11",
     "vite-plugin-checker": "^0.11.0",
     "vite-plugin-eslint2": "^5.0.4"
   }
