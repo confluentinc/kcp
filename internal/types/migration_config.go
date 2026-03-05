@@ -30,6 +30,13 @@ type MigrationConfig struct {
 	// Cloud endpoints
 	CCBootstrapEndpoint  string `json:"cc_bootstrap_endpoint"`
 	LoadBalancerEndpoint string `json:"load_balancer_endpoint"`
+
+	// New gateway CR configuration
+	PassthroughCrName string `json:"passthrough_cr_name"`
+	K8sNamespace      string `json:"k8s_namespace"`
+	InitialCrYAML     []byte `json:"initial_cr_yaml"`
+	FencedCrYAML      []byte `json:"fenced_cr_yaml"`
+	SwitchoverCrYAML  []byte `json:"switchover_cr_yaml"`
 }
 
 // MigrationConfigOpts contains options for creating a new migration config
@@ -48,6 +55,10 @@ type MigrationConfigOpts struct {
 	AuthMode             string
 	CCBootstrapEndpoint  string
 	LoadBalancerEndpoint string
+	PassthroughCrName    string
+	K8sNamespace         string
+	FencedCrYAML         []byte
+	SwitchoverCrYAML     []byte
 }
 
 // NewMigrationConfig creates a new MigrationConfig with the given ID and options
@@ -69,5 +80,9 @@ func NewMigrationConfig(migrationId string, opts MigrationConfigOpts) *Migration
 		AuthMode:             opts.AuthMode,
 		CCBootstrapEndpoint:  opts.CCBootstrapEndpoint,
 		LoadBalancerEndpoint: opts.LoadBalancerEndpoint,
+		PassthroughCrName:    opts.PassthroughCrName,
+		K8sNamespace:         opts.K8sNamespace,
+		FencedCrYAML:         opts.FencedCrYAML,
+		SwitchoverCrYAML:     opts.SwitchoverCrYAML,
 	}
 }

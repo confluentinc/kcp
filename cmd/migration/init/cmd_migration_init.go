@@ -17,23 +17,19 @@ var (
 	migrationStateFile string
 	skipValidate       bool
 
-	gatewayNamespace string
-	gatewayCrdName   string
-	sourceName       string
-	// destinationName      string
-	sourceRouteName string
-	// destinationRouteName string
-	kubeConfigPath string
+	k8sNamespace      string
+	passthroughCrName string
+	kubeConfigPath    string
 
-	clusterId            string
-	clusterRestEndpoint  string
-	clusterLinkName      string
-	clusterApiKey        string
-	clusterApiSecret     string
-	topics               []string
-	authMode             string
-	ccBootstrapEndpoint  string
-	loadBalancerEndpoint string
+	clusterId           string
+	clusterRestEndpoint string
+	clusterLinkName     string
+	clusterApiKey       string
+	clusterApiSecret    string
+	topics              []string
+
+	fencedCrYamlPath     string
+	switchoverCrYamlPath string
 )
 
 func NewMigrationInitCmd() *cobra.Command {
@@ -51,19 +47,15 @@ func NewMigrationInitCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&gatewayNamespace, "gateway-namespace", "", "The Kubernetes namespace under which the gateway has been deployed to.")
-	requiredFlags.StringVar(&gatewayCrdName, "gateway-crd-name", "", "The name of the gateway CRD to use by the migration.")
+	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "The Kubernetes namespace under which the gateway has been deployed to.")
+	requiredFlags.StringVar(&passthroughCrName, "passthrough-cr-name", "", "The name of the passthrough gateway CR to use by the migration.")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ID of the cluster to use by the migration.")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "The REST endpoint of the cluster to use by the migration.")
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link to use by the migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use by the migration.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use by the migration.")
-	requiredFlags.StringVar(&sourceName, "source-name", "", "The name of the streaming domain for the source (MSK) cluster.")
-	// requiredFlags.StringVar(&destinationName, "dest-name", "", "The name of the streaming domain for the destination (CC) cluster.")
-	requiredFlags.StringVar(&sourceRouteName, "source-route-name", "", "The name of the source route that is currently in use.")
-	// requiredFlags.StringVar(&destinationRouteName, "dest-route-name", "", "The name of the destination route that will be used for the migration.")
-	requiredFlags.StringVar(&ccBootstrapEndpoint, "cc-bootstrap-endpoint", "", "The bootstrap endpoint of the Confluent Cloud cluster.")
-	requiredFlags.StringVar(&loadBalancerEndpoint, "load-balancer-endpoint", "", "The load balancer endpoint of the Confluent Cloud cluster.")
+	requiredFlags.StringVar(&fencedCrYamlPath, "fenced-cr-yaml", "", "The path to the fenced gateway CR YAML file.")
+	requiredFlags.StringVar(&switchoverCrYamlPath, "switchover-cr-yaml", "", "The path to the switchover gateway CR YAML file.")
 
 	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -74,7 +66,6 @@ func NewMigrationInitCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
-	optionalFlags.StringVar(&authMode, "auth-mode", "dest_swap", "The authentication mode to use for the migration. ('source_swap', 'dest_swap')")
 	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -96,19 +87,15 @@ func NewMigrationInitCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationInitCmd.MarkFlagRequired("gateway-namespace")
-	migrationInitCmd.MarkFlagRequired("gateway-crd-name")
+	migrationInitCmd.MarkFlagRequired("k8s-namespace")
+	migrationInitCmd.MarkFlagRequired("passthrough-cr-name")
 	migrationInitCmd.MarkFlagRequired("cluster-id")
 	migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
 	migrationInitCmd.MarkFlagRequired("cluster-link-name")
 	migrationInitCmd.MarkFlagRequired("cluster-api-key")
 	migrationInitCmd.MarkFlagRequired("cluster-api-secret")
-	migrationInitCmd.MarkFlagRequired("source-name")
-	// migrationInitCmd.MarkFlagRequired("dest-name")
-	migrationInitCmd.MarkFlagRequired("source-route-name")
-	migrationInitCmd.MarkFlagRequired("cc-bootstrap-endpoint")
-	migrationInitCmd.MarkFlagRequired("load-balancer-endpoint")
-	// migrationInitCmd.MarkFlagRequired("dest-route-name")
+	migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
+	migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
 	return migrationInitCmd
 }
@@ -135,7 +122,18 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		migrationState = types.NewMigrationState()
 	}
 
-	// ===== PHASE 2: Create new MigrationConfig with generated UUID =====
+	// ===== PHASE 2: Read YAML files =====
+	fencedCrYAML, err := os.ReadFile(fencedCrYamlPath)
+	if err != nil {
+		return fmt.Errorf("failed to read fenced CR YAML file: %w", err)
+	}
+
+	switchoverCrYAML, err := os.ReadFile(switchoverCrYamlPath)
+	if err != nil {
+		return fmt.Errorf("failed to read switchover CR YAML file: %w", err)
+	}
+
+	// ===== PHASE 3: Create new MigrationConfig with generated UUID =====
 	migrationId := fmt.Sprintf("migration-%s", uuid.New().String())
 
 	// Parse kube config path with default
@@ -150,32 +148,27 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	slog.Info("using kube config path", "path", kubeConfigPathResolved)
 
 	config := &types.MigrationConfig{
-		MigrationId:          migrationId,
-		GatewayNamespace:     gatewayNamespace,
-		GatewayCrdName:       gatewayCrdName,
-		SourceName:           sourceName,
-		DestinationName:      "", // Not used currently
-		SourceRouteName:      sourceRouteName,
-		DestinationRouteName: "", // Not used currently
-		KubeConfigPath:       kubeConfigPathResolved,
-		ClusterId:            clusterId,
-		ClusterRestEndpoint:  clusterRestEndpoint,
-		ClusterLinkName:      clusterLinkName,
-		Topics:               topics,
-		AuthMode:             authMode,
-		CCBootstrapEndpoint:  ccBootstrapEndpoint,
-		LoadBalancerEndpoint: loadBalancerEndpoint,
-		CurrentState:         types.StateUninitialized,
+		MigrationId:         migrationId,
+		K8sNamespace:        k8sNamespace,
+		PassthroughCrName:   passthroughCrName,
+		KubeConfigPath:      kubeConfigPathResolved,
+		ClusterId:           clusterId,
+		ClusterRestEndpoint: clusterRestEndpoint,
+		ClusterLinkName:     clusterLinkName,
+		Topics:              topics,
+		FencedCrYAML:        fencedCrYAML,
+		SwitchoverCrYAML:    switchoverCrYAML,
+		CurrentState:        types.StateUninitialized,
 	}
 
-	// ===== PHASE 3: Early write - upsert migration and write to file =====
+	// ===== PHASE 4: Early write - upsert migration and write to file =====
 	// CRITICAL: File MUST exist before orchestrator runs to prevent panic
 	migrationState.UpsertMigration(*config)
 	if err := migrationState.WriteToFile(migrationStateFile); err != nil {
 		return fmt.Errorf("failed to write migration state file: %w", err)
 	}
 
-	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
+	// ===== PHASE 5: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
 		slog.Info("migration created (validation skipped)",
 			"migrationId", config.MigrationId,
@@ -184,7 +177,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// ===== PHASE 5: Pass to initializer for validation orchestration only =====
+	// ===== PHASE 6: Pass to initializer for validation orchestration only =====
 	opts := parseMigrationInitializerOpts(*migrationState, *config)
 	migrationInitializer := NewMigrationInitializer(opts)
 	if err := migrationInitializer.Run(); err != nil {
