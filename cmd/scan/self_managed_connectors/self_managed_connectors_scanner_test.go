@@ -292,14 +292,16 @@ func TestSelfManagedConnectorsScanner_GetConnectorDetails_StatusError(t *testing
 
 func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_Success(t *testing.T) {
 	state := &types.State{
-		Regions: []types.DiscoveredRegion{
-			{
-				Name: "us-east-1",
-				Clusters: []types.DiscoveredCluster{
-					{
-						Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-							ClusterID: "cluster-id",
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								ClusterID: "cluster-id",
+							},
 						},
 					},
 				},

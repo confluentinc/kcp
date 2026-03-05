@@ -165,7 +165,6 @@ func TestClustersScanner_scanKafkaResources(t *testing.T) {
 					},
 				},
 			},
-		},
 			kafkaService: &mockKafkaService{
 				scanKafkaResourcesFunc: func(clusterType kafkatypes.ClusterType) (*types.KafkaAdminClientInformation, error) {
 					return &types.KafkaAdminClientInformation{
@@ -192,7 +191,6 @@ func TestClustersScanner_scanKafkaResources(t *testing.T) {
 					},
 				},
 			},
-		},
 			kafkaService: &mockKafkaService{
 				scanKafkaResourcesFunc: func(clusterType kafkatypes.ClusterType) (*types.KafkaAdminClientInformation, error) {
 					return nil, errors.New("connection timeout")
@@ -251,7 +249,6 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
-		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/nonexistent/abc-123",
@@ -277,13 +274,11 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
-		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 				// No auth method configured - will cause GetSelectedAuthType to fail
-			},
-			wantErr:    true,
+				wantErr:    true,
 			wantErrMsg: "❌ failed to determine auth type for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: no authentication method enabled for cluster",
 		},
 		{
@@ -309,15 +304,13 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
-		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 				AuthMethod: types.AuthMethodConfig{
 					IAM: &types.IAMConfig{Use: true}, // Valid auth method so GetSelectedAuthType succeeds
 				},
-			},
-			wantErr:    true,
+				wantErr:    true,
 			wantErrMsg: "❌ failed to get broker addresses for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: ❌ No SASL/IAM brokers found in the cluster",
 		},
 		{
@@ -351,7 +344,6 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
-		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
@@ -363,8 +355,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
-		},
-			wantErr:    true,
+			wantErr: true,
 			wantErrMsg: "❌ failed to create Kafka admin: ❌ failed to create Kafka admin: ❌ Failed to create admin client: authType=SASL/SCRAM brokerAddresses=[broker1:9092 broker2:9092] error=kafka: invalid configuration (Net.SASL.User must not be empty when SASL is enabled)",
 		},
 	}
