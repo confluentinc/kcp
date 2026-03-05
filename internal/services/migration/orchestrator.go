@@ -58,7 +58,8 @@ func NewMigrationOrchestrator(
 		stateFilePath:  stateFilePath,
 		execParams:     ExecutionParams{}, // Zero values initially
 	}
-	orchestrator.initializeFSM()
+	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check)
+	orchestrator.initializeFSM(config.CurrentState)
 
 	return orchestrator
 }
@@ -96,7 +97,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 }
 
 // initializeFSM sets up the finite state machine from the canonical workflow definition
-func (o *MigrationOrchestrator) initializeFSM() {
+func (o *MigrationOrchestrator) initializeFSM(currentState string) {
 	// Build FSM events from canonical workflow
 	events := make(fsm.Events, 0, len(canonicalWorkflow))
 	for _, step := range canonicalWorkflow {
@@ -108,7 +109,7 @@ func (o *MigrationOrchestrator) initializeFSM() {
 	}
 
 	o.fsm = fsm.NewFSM(
-		o.config.CurrentState,
+		currentState,
 		events,
 		fsm.Callbacks{
 			"before_event":                      o.beforeEventCallback,
