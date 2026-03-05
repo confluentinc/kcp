@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiClient } from '@/services/apiClient'
 import type { MetricsApiResponse } from '@/types/api'
+import { useSessionId } from '@/stores/store'
 
 interface ClusterMetricsFetchConfig {
   isActive: boolean
@@ -27,6 +28,7 @@ export const useClusterMetricsFetch = ({
   startDate,
   endDate,
 }: ClusterMetricsFetchConfig): ClusterMetricsFetchReturn => {
+  const sessionId = useSessionId()
   const [isLoading, setIsLoading] = useState(false)
   const [metricsResponse, setMetricsResponse] = useState<MetricsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +47,7 @@ export const useClusterMetricsFetch = ({
       try {
         const region = clusterRegion || 'unknown'
 
-        const data = await apiClient.metrics.getMetrics(region, clusterName, {
+        const data = await apiClient.metrics.getMetrics(region, clusterName, sessionId, {
           startDate,
           endDate,
         })
@@ -59,7 +61,7 @@ export const useClusterMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [isActive, clusterName, clusterRegion, startDate, endDate])
+  }, [isActive, clusterName, clusterRegion, startDate, endDate, sessionId])
 
   return {
     metricsResponse,

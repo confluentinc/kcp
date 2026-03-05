@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
 import type { Region } from '@/types'
+import { useSessionId } from '@/stores/store'
 
 interface UseSummaryCostsFetchConfig {
   regions: Region[]
@@ -27,6 +28,7 @@ export const useSummaryCostsFetch = ({
   startDate,
   endDate,
 }: UseSummaryCostsFetchConfig): UseSummaryCostsFetchReturn => {
+  const sessionId = useSessionId()
   const [regionCostData, setRegionCostData] = useState<Record<string, CostsApiResponse>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,7 +46,7 @@ export const useSummaryCostsFetch = ({
 
       try {
         const costPromises = regions.map(async (region) => {
-          const data = await apiClient.costs.getCosts(region.name, {
+          const data = await apiClient.costs.getCosts(region.name, sessionId, {
             startDate,
             endDate,
           })
@@ -68,7 +70,7 @@ export const useSummaryCostsFetch = ({
     }
 
     fetchAllRegionCosts()
-  }, [regions, startDate, endDate])
+  }, [regions, startDate, endDate, sessionId])
 
   return {
     regionCostData,
