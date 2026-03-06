@@ -34,6 +34,23 @@ func GenerateSubnetResourceWithCount(tfResourceName, subnetCidrsVarName, availab
 	return subnetBlock
 }
 
+// GenerateSubnetResourceWithCountAndZoneIds generates subnets using availability_zone_id from a list of zone IDs.
+// This is used for dedicated clusters where subnets must be created in zones that the Confluent network supports.
+func GenerateSubnetResourceWithCountAndZoneIds(tfResourceName, subnetCidrsVarName, zoneIdsVarName, vpcIdVarName string) *hclwrite.Block {
+	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
+	subnetBlock.Body().SetAttributeRaw("count", utils.TokensForFunctionCall("length", utils.TokensForVarReference(subnetCidrsVarName)))
+	subnetBlock.Body().AppendNewline()
+
+	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
+
+	// Use modulo to cycle through the network's supported zone IDs
+	moduloExpr := fmt.Sprintf("var.%s[count.index %% length(var.%s)]", zoneIdsVarName, zoneIdsVarName)
+	subnetBlock.Body().SetAttributeRaw("availability_zone_id", utils.TokensForResourceReference(moduloExpr))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(subnetCidrsVarName+"[count.index]"))
+
+	return subnetBlock
+}
+
 func GenerateSubnetDataSource(tfResourceName, subnetId string) *hclwrite.Block {
 	subnetDataBlock := hclwrite.NewBlock("data", []string{"aws_subnet", tfResourceName})
 	subnetDataBlock.Body().SetAttributeValue("id", cty.StringVal(subnetId))

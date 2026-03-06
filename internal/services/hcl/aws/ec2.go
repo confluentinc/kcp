@@ -91,7 +91,7 @@ func GenerateEc2UserDataInstanceResource(tfResourceName, amiIdRef, instanceType,
 	return resourceBlock
 }
 
-func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, instanceType, subnetIdRef, securityGroupIdsRef, keyNameRef, controllerBrokerUserDataTemplatePath, brokerUserDataTemplatePath, iamInstanceProfileName string, publicIp bool, userDataArgs map[string]hclwrite.Tokens, optionalBlocks OptionalBlocksConfig) *hclwrite.Block {
+func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, instanceType, subnetIdRef, securityGroupIdsRef, keyNameRef, controllerBrokerUserDataTemplatePath, iamInstanceProfileName string, publicIp bool, userDataArgs map[string]hclwrite.Tokens, optionalBlocks OptionalBlocksConfig) *hclwrite.Block {
 	resourceBlock := hclwrite.NewBlock("resource", []string{"aws_instance", tfResourceName})
 	instanceBody := resourceBlock.Body()
 
@@ -118,11 +118,9 @@ func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, in
 		utils.TokensForMap(userDataArgs),
 	)
 
-	brokerTemplatefileTokens := utils.TokensForFunctionCall(
-		"templatefile",
-		utils.TokensForStringTemplate(fmt.Sprintf("${path.module}/%s", brokerUserDataTemplatePath)),
-		utils.TokensForResourceReference("{}"),
-	)
+	nullTokens := hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("null")},
+	}
 
 	conditionTokens := hclwrite.Tokens{
 		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("each.key")},
@@ -135,7 +133,7 @@ func GenerateEc2UserDataInstanceResourceWithForEach(tfResourceName, amiIdRef, in
 	conditionalTokens := utils.TokensForConditional(
 		conditionTokens,
 		controllerBrokerTemplatefileTokens,
-		brokerTemplatefileTokens,
+		nullTokens,
 	)
 
 	instanceBody.SetAttributeRaw("user_data", conditionalTokens)
@@ -188,9 +186,6 @@ var jumpClusterSaslScramSetupHostUserDataTpl string
 //go:embed ec2_user_data_templates/jump_cluster_sasl_iam_setup_host_user_data.tpl
 var jumpClusterSaslIamSetupHostUserDataTpl string
 
-//go:embed ec2_user_data_templates/jump_cluster_user_data.tpl
-var jumpClusterUserDataTpl string
-
 //go:embed ec2_user_data_templates/jump_cluster_with_sasl_scram_cluster_links_user_data.tpl
 var jumpClusterWithSaslScramClusterLinksUserDataTpl string
 
@@ -206,10 +201,6 @@ func GenerateJumpClusterSaslScramSetupHostUserDataTpl() string {
 
 func GenerateJumpClusterSaslIamSetupHostUserDataTpl() string {
 	return jumpClusterSaslIamSetupHostUserDataTpl
-}
-
-func GenerateJumpClusterUserDataTpl() string {
-	return jumpClusterUserDataTpl
 }
 
 func GenerateJumpClusterWithSaslScramClusterLinksUserDataTpl() string {

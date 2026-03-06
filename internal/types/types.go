@@ -95,15 +95,13 @@ type MigrationType int
 const (
 	PublicMskEndpoints                       MigrationType = 1
 	ExternalOutboundClusterLink              MigrationType = 2
-	JumpClusterReuseExistingSubnetsSaslScram MigrationType = 3
-	JumpClusterReuseExistingSubnetsIam       MigrationType = 4
-	JumpClusterNewSubnetsSaslScram           MigrationType = 5
-	JumpClusterNewSubnetsIam                 MigrationType = 6
+	JumpClusterSaslScram MigrationType = 3
+	JumpClusterIam       MigrationType = 4
 )
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterReuseExistingSubnetsSaslScram, JumpClusterReuseExistingSubnetsIam, JumpClusterNewSubnetsSaslScram, JumpClusterNewSubnetsIam:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
 		return true
 	default:
 		return false
@@ -133,8 +131,11 @@ type TargetClusterWizardRequest struct {
 	EnvironmentId    string   `json:"environment_id"`
 	NeedsCluster     bool     `json:"needs_cluster"`
 	ClusterName      string   `json:"cluster_name"`
-	ClusterType      string   `json:"cluster_type"`
-	NeedsPrivateLink bool     `json:"needs_private_link"`
+	ClusterType         string `json:"cluster_type"`
+	ClusterAvailability string `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
+	ClusterCku          int    `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
+	NeedsPrivateLink    bool   `json:"needs_private_link"`
+	PreventDestroy      bool   `json:"prevent_destroy"`
 	VpcId            string   `json:"vpc_id"`
 	SubnetCidrRanges []string `json:"subnet_cidr_ranges"`
 }
@@ -171,10 +172,7 @@ type MigrationWizardRequest struct {
 	ExtOutboundSubnetId        string                          `json:"ext_outbound_subnet_id"`
 	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"aws_kafka_brokers"`
 
-	HasExistingPrivateLink       bool     `json:"has_existing_private_link"`
-	ReuseExistingSubnets         bool     `json:"reuse_existing_subnets"`
-	PrivateLinkExistingSubnetIds []string `json:"private_link_existing_subnet_ids"`
-	PrivateLinkNewSubnetsCidr    []string `json:"private_link_new_subnets_cidr"`
+	ExistingPrivateLinkVpceId string `json:"existing_private_link_vpce_id"`
 
 	HasExistingInternetGateway bool `json:"has_existing_internet_gateway"`
 
@@ -262,6 +260,8 @@ type MigrationInfraTerraformProject struct {
 	MainTf           string                          `json:"main.tf"`
 	ProvidersTf      string                          `json:"providers.tf"`
 	VariablesTf      string                          `json:"variables.tf"`
+	OutputsTf        string                          `json:"outputs.tf"`
+	ReadmeMd         string                          `json:"README.md"`
 	InputsAutoTfvars string                          `json:"inputs.auto.tfvars"`
 	Modules          []MigrationInfraTerraformModule `json:"modules"`
 }
