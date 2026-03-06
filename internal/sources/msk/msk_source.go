@@ -21,8 +21,8 @@ func NewMSKSource() *MSKSource {
 }
 
 // Type returns the source type
-func (s *MSKSource) Type() sources.SourceType {
-	return sources.SourceTypeMSK
+func (s *MSKSource) Type() types.SourceType {
+	return types.SourceTypeMSK
 }
 
 // LoadCredentials loads MSK credentials from a file
@@ -68,7 +68,7 @@ func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 	// This will be implemented when we update the scan clusters command
 
 	result := &sources.ScanResult{
-		SourceType: sources.SourceTypeMSK,
+		SourceType: types.SourceTypeMSK,
 		Clusters:   make([]sources.ClusterScanResult, 0),
 	}
 

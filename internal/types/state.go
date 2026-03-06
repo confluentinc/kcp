@@ -663,9 +663,10 @@ type Subject struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Regions          []ProcessedRegion           `json:"regions"`
+	Regions          []ProcessedRegion           `json:"regions"`            // DEPRECATED: Use Sources instead
+	Sources          []ProcessedSource           `json:"sources"`            // NEW: unified source array
 	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
-	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
+	KcpBuildInfo     interface{}                 `json:"kcp_build_info,omitempty"`
 	Timestamp        time.Time                   `json:"timestamp"`
 }
 
@@ -782,4 +783,38 @@ type ServiceCostAggregates struct {
 	AmortizedCost    map[string]any `json:"amortized_cost"`
 	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
 	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
+}
+
+// SourceType represents the type of Kafka source
+type SourceType string
+
+const (
+	SourceTypeMSK SourceType = "msk"
+	SourceTypeOSK SourceType = "osk"
+)
+
+// ProcessedSource represents a unified source (MSK or OSK) with discriminated union
+type ProcessedSource struct {
+	Type    SourceType           `json:"type"`
+	MSKData *ProcessedMSKSource  `json:"msk_data,omitempty"`
+	OSKData *ProcessedOSKSource  `json:"osk_data,omitempty"`
+}
+
+// ProcessedMSKSource contains processed MSK data (regions)
+type ProcessedMSKSource struct {
+	Regions []ProcessedRegion `json:"regions"`
+}
+
+// ProcessedOSKSource contains processed OSK data (flat cluster array)
+type ProcessedOSKSource struct {
+	Clusters []ProcessedOSKCluster `json:"clusters"`
+}
+
+// ProcessedOSKCluster represents an OSK cluster in the API response
+type ProcessedOSKCluster struct {
+	ID                          string                      `json:"id"`
+	BootstrapServers            []string                    `json:"bootstrap_servers"`
+	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
+	Metadata                    OSKClusterMetadata          `json:"metadata"`
 }

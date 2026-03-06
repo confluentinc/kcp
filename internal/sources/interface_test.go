@@ -4,14 +4,15 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/sources"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 func TestSourceType_Constants(t *testing.T) {
-	if sources.SourceTypeMSK != "msk" {
-		t.Errorf("expected SourceTypeMSK to be 'msk', got '%s'", sources.SourceTypeMSK)
+	if types.SourceTypeMSK != "msk" {
+		t.Errorf("expected SourceTypeMSK to be 'msk', got '%s'", types.SourceTypeMSK)
 	}
-	if sources.SourceTypeOSK != "osk" {
-		t.Errorf("expected SourceTypeOSK to be 'osk', got '%s'", sources.SourceTypeOSK)
+	if types.SourceTypeOSK != "osk" {
+		t.Errorf("expected SourceTypeOSK to be 'osk', got '%s'", types.SourceTypeOSK)
 	}
 }
 

@@ -159,9 +159,9 @@ func loadOrCreateState(stateFilePath string) (*types.State, error) {
 // mergeResultsIntoState merges scan results into the state file
 func mergeResultsIntoState(state *types.State, result *sources.ScanResult) error {
 	switch result.SourceType {
-	case sources.SourceTypeMSK:
+	case types.SourceTypeMSK:
 		return mergeMSKResults(state, result)
-	case sources.SourceTypeOSK:
+	case types.SourceTypeOSK:
 		return mergeOSKResults(state, result)
 	default:
 		return fmt.Errorf("unsupported source type: %s", result.SourceType)

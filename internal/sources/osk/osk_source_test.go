@@ -8,14 +8,15 @@ import (
 
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/sources/osk"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOSKSource_Type(t *testing.T) {
 	source := osk.NewOSKSource()
-	if source.Type() != sources.SourceTypeOSK {
-		t.Errorf("expected source type %s, got %s", sources.SourceTypeOSK, source.Type())
+	if source.Type() != types.SourceTypeOSK {
+		t.Errorf("expected source type %s, got %s", types.SourceTypeOSK, source.Type())
 	}
 }
 
@@ -80,7 +81,7 @@ clusters:
 
 	// No clusters should have been scanned (all were disabled)
 	assert.Equal(t, 0, len(result.Clusters), "expected no clusters to be scanned when all are disabled")
-	assert.Equal(t, sources.SourceTypeOSK, result.SourceType)
+	assert.Equal(t, types.SourceTypeOSK, result.SourceType)
 }
 
 func TestOSKSource_Scan_SkipsOnlyDisabledClusters(t *testing.T) {

@@ -799,3 +799,33 @@ func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
 		t.Error("MSKSources should be initialized even when copying OSK data")
 	}
 }
+
+func TestProcessedSource_TypeDiscrimination(t *testing.T) {
+	// Test MSK source
+	mskSource := ProcessedSource{
+		Type: SourceTypeMSK,
+		MSKData: &ProcessedMSKSource{
+			Regions: []ProcessedRegion{},
+		},
+	}
+	if mskSource.Type != SourceTypeMSK {
+		t.Errorf("Expected MSK type, got %s", mskSource.Type)
+	}
+	if mskSource.MSKData == nil {
+		t.Error("MSKData should not be nil for MSK source")
+	}
+
+	// Test OSK source
+	oskSource := ProcessedSource{
+		Type: SourceTypeOSK,
+		OSKData: &ProcessedOSKSource{
+			Clusters: []ProcessedOSKCluster{},
+		},
+	}
+	if oskSource.Type != SourceTypeOSK {
+		t.Errorf("Expected OSK type, got %s", oskSource.Type)
+	}
+	if oskSource.OSKData == nil {
+		t.Error("OSKData should not be nil for OSK source")
+	}
+}

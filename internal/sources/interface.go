@@ -6,18 +6,10 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// SourceType represents the type of Kafka source
-type SourceType string
-
-const (
-	SourceTypeMSK SourceType = "msk"
-	SourceTypeOSK SourceType = "osk"
-)
-
 // Source represents a Kafka source (MSK or OSK) that can be scanned
 type Source interface {
 	// Type returns the source type (msk or osk)
-	Type() SourceType
+	Type() types.SourceType
 
 	// LoadCredentials loads authentication credentials from a file
 	LoadCredentials(credentialsPath string) error
@@ -44,7 +36,7 @@ type ScanOptions struct {
 
 // ScanResult contains the results of scanning a source
 type ScanResult struct {
-	SourceType SourceType
+	SourceType types.SourceType
 	Clusters   []ClusterScanResult
 }
 

@@ -24,8 +24,8 @@ func NewOSKSource() *OSKSource {
 }
 
 // Type returns the source type
-func (s *OSKSource) Type() sources.SourceType {
-	return sources.SourceTypeOSK
+func (s *OSKSource) Type() types.SourceType {
+	return types.SourceTypeOSK
 }
 
 // LoadCredentials loads OSK credentials from a file
@@ -65,7 +65,7 @@ func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 	slog.Info("starting OSK cluster scan", "clusters", len(s.credentials.Clusters))
 
 	result := &sources.ScanResult{
-		SourceType: sources.SourceTypeOSK,
+		SourceType: types.SourceTypeOSK,
 		Clusters:   make([]sources.ClusterScanResult, 0),
 	}
 
