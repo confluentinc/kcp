@@ -71,9 +71,15 @@ export interface ProcessedState {
  * State upload request payload
  */
 export interface StateUploadRequest {
-  regions: Region[]
+  msk_sources?: {
+    regions: Region[]
+  }
+  osk_sources?: {
+    clusters: any[] // Will be processed by backend
+  }
   schema_registries?: SchemaRegistry[]
-  [key: string]: unknown
+  kcp_build_info?: unknown
+  timestamp?: string
 }
 
 /**

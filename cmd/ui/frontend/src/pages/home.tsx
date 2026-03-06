@@ -46,8 +46,8 @@ export const Home = () => {
         const content = e.target?.result as string
         const parsed = JSON.parse(content) as StateUploadRequest
 
-        // Validate that we have a Discovery object with regions
-        if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
+        // Validate that we have a State object with sources (msk_sources or osk_sources)
+        if (parsed && typeof parsed === 'object' && ('msk_sources' in parsed || 'osk_sources' in parsed)) {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
@@ -65,7 +65,7 @@ export const Home = () => {
             throw new Error('Invalid response format from server')
           }
         } else {
-          throw new Error('Invalid file format. Expected a KCP state file with regions.')
+          throw new Error('Invalid file format. Expected a KCP state file with msk_sources or osk_sources.')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to process file')
