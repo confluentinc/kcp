@@ -27,10 +27,6 @@ type MigrationConfig struct {
 	ClusterLinkConfigs  map[string]string `json:"cluster_link_configs"`
 	GatewayOriginalYAML []byte            `json:"gateway_original_yaml"`
 
-	// Cloud endpoints
-	CCBootstrapEndpoint  string `json:"cc_bootstrap_endpoint"`
-	LoadBalancerEndpoint string `json:"load_balancer_endpoint"`
-
 	// New gateway CR configuration
 	PassthroughCrName string `json:"passthrough_cr_name"`
 	K8sNamespace      string `json:"k8s_namespace"`
@@ -53,9 +49,7 @@ type MigrationConfigOpts struct {
 	ClusterLinkName      string
 	Topics               []string
 	AuthMode             string
-	CCBootstrapEndpoint  string
-	LoadBalancerEndpoint string
-	PassthroughCrName    string
+	PassthroughCrName string
 	K8sNamespace         string
 	FencedCrYAML         []byte
 	SwitchoverCrYAML     []byte
@@ -78,9 +72,7 @@ func NewMigrationConfig(migrationId string, opts MigrationConfigOpts) *Migration
 		ClusterLinkName:      opts.ClusterLinkName,
 		Topics:               opts.Topics,
 		AuthMode:             opts.AuthMode,
-		CCBootstrapEndpoint:  opts.CCBootstrapEndpoint,
-		LoadBalancerEndpoint: opts.LoadBalancerEndpoint,
-		PassthroughCrName:    opts.PassthroughCrName,
+		PassthroughCrName: opts.PassthroughCrName,
 		K8sNamespace:         opts.K8sNamespace,
 		FencedCrYAML:         opts.FencedCrYAML,
 		SwitchoverCrYAML:     opts.SwitchoverCrYAML,
