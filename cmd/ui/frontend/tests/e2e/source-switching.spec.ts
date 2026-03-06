@@ -49,13 +49,13 @@ test.describe('Switching Between MSK and OSK', () => {
     await page.click('text=staging-kafka-cluster')
 
     // Verify no Metrics tab
-    await expect(page.locator('button[role="tab"]:has-text("Metrics")')).not.toBeVisible()
+    await expect(page.locator('nav button:has-text("Metrics")')).not.toBeVisible()
   })
 
   test('MSK cluster has Metrics tab', async ({ page }) => {
     await page.click('text=msk-cluster-1')
 
     // Verify Metrics tab exists
-    await expect(page.locator('button[role="tab"]:has-text("Metrics")')).toBeVisible()
+    await expect(page.locator('nav button:has-text("Metrics")')).toBeVisible()
   })
 })

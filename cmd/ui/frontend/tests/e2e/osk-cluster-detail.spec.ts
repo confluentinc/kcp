@@ -21,13 +21,13 @@ test.describe('OSK Cluster Detail View', () => {
 
   test('displays correct tabs for OSK cluster', async ({ page }) => {
     // Verify OSK-specific tabs are present
-    await expect(page.locator('button[role="tab"]:has-text("Cluster")')).toBeVisible()
-    await expect(page.locator('button[role="tab"]:has-text("Topics")')).toBeVisible()
-    await expect(page.locator('button[role="tab"]:has-text("ACLs")')).toBeVisible()
-    await expect(page.locator('button[role="tab"]:has-text("Connectors")')).toBeVisible()
+    await expect(page.locator('nav button:has-text("Cluster")')).toBeVisible()
+    await expect(page.locator('nav button:has-text("Topics")')).toBeVisible()
+    await expect(page.locator('nav button:has-text("ACLs")')).toBeVisible()
+    await expect(page.locator('nav button:has-text("Connectors")')).toBeVisible()
 
     // Verify Metrics tab is NOT present
-    await expect(page.locator('button[role="tab"]:has-text("Metrics")')).not.toBeVisible()
+    await expect(page.locator('nav button:has-text("Metrics")')).not.toBeVisible()
   })
 
   test('displays bootstrap servers in cluster tab', async ({ page }) => {
@@ -40,12 +40,12 @@ test.describe('OSK Cluster Detail View', () => {
   test('displays metadata fields', async ({ page }) => {
     // Verify metadata section
     await expect(page.locator('text=Cluster Metadata')).toBeVisible()
-    await expect(page.locator('text=Environment')).toBeVisible()
-    await expect(page.locator('text=production')).toBeVisible()
-    await expect(page.locator('text=Location')).toBeVisible()
-    await expect(page.locator('text=datacenter-1')).toBeVisible()
-    await expect(page.locator('text=Kafka Version')).toBeVisible()
-    await expect(page.locator('text=3.6.0')).toBeVisible()
+    await expect(page.locator('div.text-sm:has-text("Environment")').first()).toBeVisible()
+    await expect(page.locator('span.font-medium:has-text("production")')).toBeVisible()
+    await expect(page.locator('div.text-sm:has-text("Location")').first()).toBeVisible()
+    await expect(page.locator('span.font-medium:has-text("datacenter-1")')).toBeVisible()
+    await expect(page.locator('div.text-sm:has-text("Kafka Version")').first()).toBeVisible()
+    await expect(page.locator('span.font-medium:has-text("3.6.0")')).toBeVisible()
   })
 
   test('displays labels', async ({ page }) => {
@@ -55,14 +55,14 @@ test.describe('OSK Cluster Detail View', () => {
   })
 
   test('Topics tab shows Kafka topics', async ({ page }) => {
-    await page.click('button[role="tab"]:has-text("Topics")')
+    await page.click('nav button:has-text("Topics")')
 
     // Verify topics appear (reusing MSK component)
     await expect(page.locator('text=orders')).toBeVisible()
   })
 
   test('ACLs tab shows Kafka ACLs', async ({ page }) => {
-    await page.click('button[role="tab"]:has-text("ACLs")')
+    await page.click('nav button:has-text("ACLs")')
 
     // Verify ACLs appear
     await expect(page.locator('text=User:alice')).toBeVisible()
