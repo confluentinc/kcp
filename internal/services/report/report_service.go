@@ -18,6 +18,7 @@ func NewReportService() *ReportService {
 
 func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 	sources := []types.ProcessedSource{}
+	var legacyRegions []types.ProcessedRegion // For backward compatibility with FilterRegionCosts, FilterClusterMetrics, FilterMetrics
 
 	// Process MSK if present
 	if state.MSKSources != nil && len(state.MSKSources.Regions) > 0 {
@@ -52,6 +53,8 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 			})
 		}
 
+		legacyRegions = processedRegions // Save for backward compatibility
+
 		mskSource := types.ProcessedSource{
 			Type: types.SourceTypeMSK,
 			MSKData: &types.ProcessedMSKSource{
@@ -84,9 +87,10 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 		sources = append(sources, oskSource)
 	}
 
-	// Return the processed state with unified sources
+	// Return the processed state with unified sources and backward-compatible regions field
 	processedState := types.ProcessedState{
 		Sources:          sources,
+		Regions:          legacyRegions, // DEPRECATED: Still populated for backward compatibility with existing API methods
 		SchemaRegistries: state.SchemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
 		Timestamp:        state.Timestamp,
