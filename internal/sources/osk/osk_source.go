@@ -84,6 +84,10 @@ func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 				clusterCreds.ID, err))
 			continue
 		}
+		if clusterResult == nil {
+			// Cluster was intentionally skipped (all auth methods disabled)
+			continue
+		}
 
 		result.Clusters = append(result.Clusters, *clusterResult)
 		slog.Info("successfully scanned OSK cluster",
@@ -109,6 +113,14 @@ func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 
 // scanCluster scans a single OSK cluster using Kafka Admin API
 func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClusterAuth, opts sources.ScanOptions) (*sources.ClusterScanResult, error) {
+	// Skip clusters with all auth methods disabled
+	enabledMethods := clusterCreds.GetAuthMethods()
+	if len(enabledMethods) == 0 {
+		slog.Info("skipping disabled cluster (all auth methods set to use: false)",
+			"cluster", clusterCreds.ID)
+		return nil, nil
+	}
+
 	// Get the selected auth type
 	authType, err := clusterCreds.GetSelectedAuthType()
 	if err != nil {
