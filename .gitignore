@@ -32,6 +32,8 @@ crash.*.log
 
 # keep generated json files out of commits
 *.json
+# But allow test fixtures
+!cmd/ui/frontend/tests/fixtures/*.json
 
 # Ignore coverage files
 coverage.out
