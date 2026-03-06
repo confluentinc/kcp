@@ -259,7 +259,7 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string 
 	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(confluent.GenerateEmptyProviderBlock())
+	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -268,6 +268,21 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string 
 func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
+
+	// Add provider-level variables (CC API key/secret)
+	for _, v := range confluent.ConfluentProviderVariables {
+		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
+		variableBody := variableBlock.Body()
+
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
+		if v.Description != "" {
+			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
+		}
+		if v.Sensitive {
+			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
+		}
+		rootBody.AppendNewline()
+	}
 
 	for _, v := range confluent.SchemaExporterVariables {
 		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})

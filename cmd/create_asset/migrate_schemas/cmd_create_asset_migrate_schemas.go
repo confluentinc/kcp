@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	stateFile string
-	url       string
+	stateFile       string
+	url             string
+	ccSRRestEndpoint string
 )
 
 func NewMigrateSchemasCmd() *cobra.Command {
@@ -31,6 +32,7 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&url, "url", "", "The URL of the schema registry to migrate schemas from.")
+	requiredFlags.StringVar(&ccSRRestEndpoint, "cc-sr-rest-endpoint", "", "The REST endpoint of the Confluent Cloud target schema registry.")
 	migrateSchemasCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -54,6 +56,7 @@ func NewMigrateSchemasCmd() *cobra.Command {
 
 	migrateSchemasCmd.MarkFlagRequired("state-file")
 	migrateSchemasCmd.MarkFlagRequired("url")
+	migrateSchemasCmd.MarkFlagRequired("cc-sr-rest-endpoint")
 
 	return migrateSchemasCmd
 }
@@ -103,7 +106,8 @@ func parseMigrateSchemasOpts() (*MigrateSchemasOpts, error) {
 	}
 
 	opts := MigrateSchemasOpts{
-		SchemaRegistry: schemaRegistry,
+		SchemaRegistry:   schemaRegistry,
+		CCSRRestEndpoint: ccSRRestEndpoint,
 		// Default exporter for CLI - this may be configurable in the future
 		Exporters: []SchemaExporter{
 			{
