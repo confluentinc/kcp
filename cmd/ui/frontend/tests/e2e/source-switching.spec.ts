@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import stateBoth from '../fixtures/state-both.json'
+import stateBoth from '../fixtures/state-both.json' with { type: 'json' }
 
 test.describe('Switching Between MSK and OSK', () => {
   test.beforeEach(async ({ page }) => {
