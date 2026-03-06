@@ -74,21 +74,34 @@ func NewStateFrom(fromState *State) *State {
 	}
 
 	if fromState == nil {
-		// Initialize with empty MSK sources
+		// Initialize both sources with empty arrays
 		workingState.MSKSources = &MSKSourcesState{
 			Regions: []DiscoveredRegion{},
 		}
+		workingState.OSKSources = &OSKSourcesState{
+			Clusters: []OSKDiscoveredCluster{},
+		}
 	} else {
-		// Copy existing data
+		// Copy existing MSK data or initialize empty
 		if fromState.MSKSources != nil {
 			mskSources := &MSKSourcesState{
 				Regions: make([]DiscoveredRegion, len(fromState.MSKSources.Regions)),
 			}
 			copy(mskSources.Regions, fromState.MSKSources.Regions)
 			workingState.MSKSources = mskSources
+		} else {
+			workingState.MSKSources = &MSKSourcesState{
+				Regions: []DiscoveredRegion{},
+			}
 		}
+
+		// Copy existing OSK data or initialize empty
 		if fromState.OSKSources != nil {
 			workingState.OSKSources = fromState.OSKSources
+		} else {
+			workingState.OSKSources = &OSKSourcesState{
+				Clusters: []OSKDiscoveredCluster{},
+			}
 		}
 	}
 

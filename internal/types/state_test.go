@@ -760,3 +760,42 @@ func TestOSKSourcesState_Structure(t *testing.T) {
 		t.Errorf("expected 2 clusters, got %d", len(state.Clusters))
 	}
 }
+
+func TestNewStateFrom_AlwaysInitializesBothSources(t *testing.T) {
+	// Test nil input
+	state := NewStateFrom(nil)
+	if state.MSKSources == nil {
+		t.Error("MSKSources should be initialized, got nil")
+	}
+	if state.OSKSources == nil {
+		t.Error("OSKSources should be initialized, got nil")
+	}
+	if len(state.MSKSources.Regions) != 0 {
+		t.Errorf("MSKSources.Regions should be empty, got %d items", len(state.MSKSources.Regions))
+	}
+	if len(state.OSKSources.Clusters) != 0 {
+		t.Errorf("OSKSources.Clusters should be empty, got %d items", len(state.OSKSources.Clusters))
+	}
+}
+
+func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
+	// Create state with OSK data
+	existingState := &State{
+		OSKSources: &OSKSourcesState{
+			Clusters: []OSKDiscoveredCluster{
+				{ID: "test-cluster"},
+			},
+		},
+	}
+
+	newState := NewStateFrom(existingState)
+	if newState.OSKSources == nil {
+		t.Fatal("OSKSources should be preserved")
+	}
+	if len(newState.OSKSources.Clusters) != 1 {
+		t.Errorf("Expected 1 OSK cluster, got %d", len(newState.OSKSources.Clusters))
+	}
+	if newState.MSKSources == nil {
+		t.Error("MSKSources should be initialized even when copying OSK data")
+	}
+}
