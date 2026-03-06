@@ -20,6 +20,7 @@ type AdminConfig struct {
 	authType        types.AuthType
 	username        string
 	password        string
+	saslMechanism   string
 	awsAccessKey    string
 	awsAccessSecret string
 	caCertFile      string
@@ -38,11 +39,12 @@ func WithIAMAuth() AdminOption {
 }
 
 // WithSASLSCRAMAuth configures the admin client to use SASL/SCRAM authentication
-func WithSASLSCRAMAuth(username, password string) AdminOption {
+func WithSASLSCRAMAuth(username, password, mechanism string) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeSASLSCRAM
 		config.username = username
 		config.password = password
+		config.saslMechanism = mechanism
 	}
 }
 
@@ -76,16 +78,30 @@ func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) 
 	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
 }
 
-func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string) {
-	slog.Info("🔍 configuring SASL/SCRAM authentication")
+func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string) {
+	slog.Info("configuring SASL/SCRAM authentication", "mechanism", mechanism)
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{
+		InsecureSkipVerify: true, // Skip verification for self-signed certs in test environments
+	}
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
 	config.Net.SASL.Handshake = true
-	config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &XDGSCRAMClient{HashGeneratorFcn: SHA512} }
-	config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
+
+	// Default to SHA256 for OSK clusters (most common in open source)
+	// MSK credentials are explicitly set to SHA512 during discovery (AWS MSK requirement)
+	if mechanism == "" || mechanism == "SHA256" {
+		config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+			return &XDGSCRAMClient{HashGeneratorFcn: SHA256}
+		}
+		config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA256
+	} else if mechanism == "SHA512" {
+		config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+			return &XDGSCRAMClient{HashGeneratorFcn: SHA512}
+		}
+		config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
+	}
 }
 
 func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
@@ -511,7 +527,7 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	case types.AuthTypeIAM:
 		configureSASLTypeOAuthAuthentication(saramaConfig, region)
 	case types.AuthTypeSASLSCRAM:
-		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
+		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism)
 	case types.AuthTypeUnauthenticatedTLS:
 		configureUnauthenticatedAuthentication(saramaConfig, true)
 	case types.AuthTypeUnauthenticatedPlaintext:

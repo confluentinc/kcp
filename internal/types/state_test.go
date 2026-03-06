@@ -24,9 +24,11 @@ func TestNewState(t *testing.T) {
 		{
 			name: "non-nil fromState copies regions",
 			fromState: &State{
-				Regions: []DiscoveredRegion{
-					{Name: "us-east-1"},
-					{Name: "eu-west-1"},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{
+						{Name: "us-east-1"},
+						{Name: "eu-west-1"},
+					},
 				},
 			},
 			wantNil:     false,
@@ -45,24 +47,28 @@ func TestNewState(t *testing.T) {
 			}
 
 			if result != nil {
-				// Check if regions slice is empty when expected
-				isEmpty := len(result.Regions) == 0
+				// Check if MSKSources exists and regions slice is empty when expected
+				var regions []DiscoveredRegion
+				if result.MSKSources != nil {
+					regions = result.MSKSources.Regions
+				}
+				isEmpty := len(regions) == 0
 				if isEmpty != tt.wantEmpty {
 					t.Errorf("NewState() regions empty = %v, want empty = %v", isEmpty, tt.wantEmpty)
 				}
 
 				// Check that regions match expected
-				if len(result.Regions) != len(tt.wantRegions) {
-					t.Errorf("NewState() got %d regions, want %d", len(result.Regions), len(tt.wantRegions))
+				if len(regions) != len(tt.wantRegions) {
+					t.Errorf("NewState() got %d regions, want %d", len(regions), len(tt.wantRegions))
 				}
 
 				for i, expectedName := range tt.wantRegions {
-					if i >= len(result.Regions) {
+					if i >= len(regions) {
 						t.Errorf("NewState() missing region at index %d", i)
 						continue
 					}
-					if result.Regions[i].Name != expectedName {
-						t.Errorf("NewState() region[%d] = %q, want %q", i, result.Regions[i].Name, expectedName)
+					if regions[i].Name != expectedName {
+						t.Errorf("NewState() region[%d] = %q, want %q", i, regions[i].Name, expectedName)
 					}
 				}
 			}
@@ -79,7 +85,9 @@ func TestUpsertRegion(t *testing.T) {
 		{
 			name: "add new region to empty state",
 			initialState: &State{
-				Regions: []DiscoveredRegion{},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{},
+				},
 			},
 			upsertRegion: DiscoveredRegion{Name: "us-west-2"},
 			wantRegions: []DiscoveredRegion{
@@ -89,9 +97,11 @@ func TestUpsertRegion(t *testing.T) {
 		{
 			name: "add new region to existing regions",
 			initialState: &State{
-				Regions: []DiscoveredRegion{
-					{Name: "us-east-1"},
-					{Name: "eu-west-1"},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{
+						{Name: "us-east-1"},
+						{Name: "eu-west-1"},
+					},
 				},
 			},
 			upsertRegion: DiscoveredRegion{Name: "ap-south-1"},
@@ -104,10 +114,12 @@ func TestUpsertRegion(t *testing.T) {
 		{
 			name: "replace existing region with new content",
 			initialState: &State{
-				Regions: []DiscoveredRegion{
-					{Name: "us-east-1"},
-					{Name: "eu-west-1", ClusterArns: []string{"old-cluster-1", "old-cluster-2"}},
-					{Name: "ap-south-1"},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{
+						{Name: "us-east-1"},
+						{Name: "eu-west-1", ClusterArns: []string{"old-cluster-1", "old-cluster-2"}},
+						{Name: "ap-south-1"},
+					},
 				},
 			},
 			upsertRegion: DiscoveredRegion{Name: "eu-west-1", ClusterArns: []string{"new-cluster-1", "new-cluster-2", "new-cluster-3"}},
@@ -124,17 +136,20 @@ func TestUpsertRegion(t *testing.T) {
 			tt.initialState.UpsertRegion(tt.upsertRegion)
 
 			// Check that final state matches expected exactly
-			if len(tt.initialState.Regions) != len(tt.wantRegions) {
-				t.Errorf("UpsertRegion() got %d regions, want %d", len(tt.initialState.Regions), len(tt.wantRegions))
+			if tt.initialState.MSKSources == nil {
+				t.Fatal("UpsertRegion() MSKSources is nil")
+			}
+			if len(tt.initialState.MSKSources.Regions) != len(tt.wantRegions) {
+				t.Errorf("UpsertRegion() got %d regions, want %d", len(tt.initialState.MSKSources.Regions), len(tt.wantRegions))
 			}
 
 			for i, wantRegion := range tt.wantRegions {
-				if i >= len(tt.initialState.Regions) {
+				if i >= len(tt.initialState.MSKSources.Regions) {
 					t.Errorf("UpsertRegion() missing region at index %d", i)
 					continue
 				}
 
-				actualRegion := tt.initialState.Regions[i]
+				actualRegion := tt.initialState.MSKSources.Regions[i]
 
 				// Check name
 				if actualRegion.Name != wantRegion.Name {
@@ -282,7 +297,9 @@ func TestWriteReportCommands(t *testing.T) {
 		{
 			name: "empty state writes headers only",
 			state: &State{
-				Regions: []DiscoveredRegion{},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{},
+				},
 			},
 			stateFilePath: "/path/to/state.json",
 			wantContains: []string{
@@ -298,9 +315,11 @@ func TestWriteReportCommands(t *testing.T) {
 		{
 			name: "state with regions but no clusters",
 			state: &State{
-				Regions: []DiscoveredRegion{
-					{Name: "us-east-1", Clusters: []DiscoveredCluster{}},
-					{Name: "eu-west-1", Clusters: []DiscoveredCluster{}},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{
+						{Name: "us-east-1", Clusters: []DiscoveredCluster{}},
+						{Name: "eu-west-1", Clusters: []DiscoveredCluster{}},
+					},
 				},
 			},
 			stateFilePath: "/path/to/state.json",
@@ -320,18 +339,20 @@ func TestWriteReportCommands(t *testing.T) {
 		{
 			name: "state with regions and clusters",
 			state: &State{
-				Regions: []DiscoveredRegion{
-					{
-						Name: "us-east-1",
-						Clusters: []DiscoveredCluster{
-							{Name: "cluster-1", Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/cluster-1/abc123"},
-							{Name: "cluster-2", Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/cluster-2/def456"},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{
+						{
+							Name: "us-east-1",
+							Clusters: []DiscoveredCluster{
+								{Name: "cluster-1", Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/cluster-1/abc123"},
+								{Name: "cluster-2", Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/cluster-2/def456"},
+							},
 						},
-					},
-					{
-						Name: "eu-west-1",
-						Clusters: []DiscoveredCluster{
-							{Name: "cluster-3", Arn: "arn:aws:kafka:eu-west-1:123456789012:cluster/cluster-3/ghi789"},
+						{
+							Name: "eu-west-1",
+							Clusters: []DiscoveredCluster{
+								{Name: "cluster-3", Arn: "arn:aws:kafka:eu-west-1:123456789012:cluster/cluster-3/ghi789"},
+							},
 						},
 					},
 				},
@@ -356,11 +377,13 @@ func TestWriteReportCommands(t *testing.T) {
 		{
 			name: "state with single region and single cluster",
 			state: &State{
-				Regions: []DiscoveredRegion{
-					{
-						Name: "ap-south-1",
-						Clusters: []DiscoveredCluster{
-							{Name: "my-cluster", Arn: "arn:aws:kafka:ap-south-1:123456789012:cluster/my-cluster/xyz789"},
+				MSKSources: &MSKSourcesState{
+					Regions: []DiscoveredRegion{
+						{
+							Name: "ap-south-1",
+							Clusters: []DiscoveredCluster{
+								{Name: "my-cluster", Arn: "arn:aws:kafka:ap-south-1:123456789012:cluster/my-cluster/xyz789"},
+							},
 						},
 					},
 				},
@@ -448,8 +471,10 @@ func TestWriteReportCommands(t *testing.T) {
 func TestWriteReportCommands_FileError(t *testing.T) {
 	// Test error handling for invalid file path
 	state := &State{
-		Regions: []DiscoveredRegion{
-			{Name: "us-east-1", Clusters: []DiscoveredCluster{}},
+		MSKSources: &MSKSourcesState{
+			Regions: []DiscoveredRegion{
+				{Name: "us-east-1", Clusters: []DiscoveredCluster{}},
+			},
 		},
 	}
 
@@ -701,5 +726,37 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOSKDiscoveredCluster_Structure(t *testing.T) {
+	cluster := OSKDiscoveredCluster{
+		ID:               "prod-kafka-01",
+		BootstrapServers: []string{"broker1:9092"},
+		Metadata: OSKClusterMetadata{
+			Environment:  "production",
+			Location:     "us-datacenter-1",
+			KafkaVersion: "3.6.0",
+		},
+	}
+
+	if cluster.ID != "prod-kafka-01" {
+		t.Errorf("expected ID 'prod-kafka-01', got '%s'", cluster.ID)
+	}
+	if cluster.Metadata.Environment != "production" {
+		t.Errorf("expected environment 'production', got '%s'", cluster.Metadata.Environment)
+	}
+}
+
+func TestOSKSourcesState_Structure(t *testing.T) {
+	state := OSKSourcesState{
+		Clusters: []OSKDiscoveredCluster{
+			{ID: "cluster-1"},
+			{ID: "cluster-2"},
+		},
+	}
+
+	if len(state.Clusters) != 2 {
+		t.Errorf("expected 2 clusters, got %d", len(state.Clusters))
 	}
 }

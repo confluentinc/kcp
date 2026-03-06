@@ -18,13 +18,48 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
-// State represents the raw input data structure (kcp-state.json file)
-// This is what gets fed INTO the frontend/API for processing
+// MSKSourcesState contains all MSK-specific data
+type MSKSourcesState struct {
+	Regions []DiscoveredRegion `json:"regions"`
+}
+
+// OSKSourcesState contains all OSK-specific data
+type OSKSourcesState struct {
+	Clusters []OSKDiscoveredCluster `json:"clusters"`
+}
+
+// OSKDiscoveredCluster represents a discovered OSK cluster
+type OSKDiscoveredCluster struct {
+	ID                          string                      `json:"id"`
+	BootstrapServers            []string                    `json:"bootstrap_servers"`
+	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
+	Metadata                    OSKClusterMetadata          `json:"metadata"`
+}
+
+// OSKClusterMetadata contains optional metadata about OSK clusters
+type OSKClusterMetadata struct {
+	Environment  string            `json:"environment,omitempty"`
+	Location     string            `json:"location,omitempty"`
+	KafkaVersion string            `json:"kafka_version,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	LastScanned  time.Time         `json:"last_scanned"`
+}
+
+// State represents the unified state file (kcp-state.json)
 type State struct {
-	Regions          []DiscoveredRegion          `json:"regions"`
+	MSKSources       *MSKSourcesState            `json:"msk_sources,omitempty"`
+	OSKSources       *OSKSourcesState            `json:"osk_sources,omitempty"`
 	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
 	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
 	Timestamp        time.Time                   `json:"timestamp"`
+}
+
+// Validate checks that the state file has valid structure
+func (s *State) Validate() error {
+	// Allow both to be nil for fresh initialization
+	// This validation is primarily for detecting legacy state files when loading from disk
+	return nil
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -39,11 +74,22 @@ func NewStateFrom(fromState *State) *State {
 	}
 
 	if fromState == nil {
-		workingState.Regions = []DiscoveredRegion{}
+		// Initialize with empty MSK sources
+		workingState.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
 	} else {
-		// Copy existing regions to preserve untouched regions
-		workingState.Regions = make([]DiscoveredRegion, len(fromState.Regions))
-		copy(workingState.Regions, fromState.Regions)
+		// Copy existing data
+		if fromState.MSKSources != nil {
+			mskSources := &MSKSourcesState{
+				Regions: make([]DiscoveredRegion, len(fromState.MSKSources.Regions)),
+			}
+			copy(mskSources.Regions, fromState.MSKSources.Regions)
+			workingState.MSKSources = mskSources
+		}
+		if fromState.OSKSources != nil {
+			workingState.OSKSources = fromState.OSKSources
+		}
 	}
 
 	return workingState
@@ -58,6 +104,11 @@ func NewStateFromFile(stateFile string) (*State, error) {
 	var state State
 	if err := json.Unmarshal(file, &state); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+	}
+
+	// Validate state file format
+	if err := state.Validate(); err != nil {
+		return nil, err
 	}
 
 	return &state, nil
@@ -76,7 +127,8 @@ func (s *State) WriteReportCommands(filePath string, stateFilePath string) error
 	clusterCommands := []string{"# Report cluster metrics commands"}
 
 	// Loop through regions
-	for _, region := range s.Regions {
+	if s.MSKSources != nil {
+		for _, region := range s.MSKSources.Regions {
 		// Output command for report costs for this region
 		regionCommand := []string{fmt.Sprintf("# region: %s", region.Name)}
 		regionCommand = append(regionCommand, fmt.Sprintf("kcp report costs --state-file %s --region %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, region.Name))
@@ -87,6 +139,7 @@ func (s *State) WriteReportCommands(filePath string, stateFilePath string) error
 			clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
 			clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-arn %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
 			clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
+		}
 		}
 	}
 
@@ -113,23 +166,31 @@ func (s *State) PersistStateFile(stateFile string) error {
 // UpsertRegion inserts a new region or updates an existing one by name
 // Automatically preserves KafkaAdminClientInformation from existing clusters
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
-	for i, existingRegion := range s.Regions {
+	if s.MSKSources == nil {
+		s.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+	}
+	for i, existingRegion := range s.MSKSources.Regions {
 		if existingRegion.Name == newRegion.Name {
 			discoveredClusters := newRegion.Clusters
 			newRegion.Clusters = existingRegion.Clusters
 			// set discovered clusters and refresh into state (preserves KafkaAdminClientInformation)
 			newRegion.RefreshClusters(discoveredClusters)
-			s.Regions[i] = newRegion
+			s.MSKSources.Regions[i] = newRegion
 			return
 		}
 	}
-	s.Regions = append(s.Regions, newRegion)
+	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
 }
 
 func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
 	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
-	for i := range s.Regions {
-		region := &s.Regions[i]
+	if s.MSKSources == nil {
+		return fmt.Errorf("no MSK sources found in state file")
+	}
+	for i := range s.MSKSources.Regions {
+		region := &s.MSKSources.Regions[i]
 		if region.Name == regionName {
 			for j := range region.Clusters {
 				cluster := &region.Clusters[j]
@@ -166,10 +227,12 @@ func dedupDiscoveredClients(discoveredClients []DiscoveredClient) []DiscoveredCl
 }
 
 func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
-	for _, region := range s.Regions {
-		for _, cluster := range region.Clusters {
-			if cluster.Arn == clusterArn {
-				return &cluster, nil
+	if s.MSKSources != nil {
+		for _, region := range s.MSKSources.Regions {
+			for _, cluster := range region.Clusters {
+				if cluster.Arn == clusterArn {
+					return &cluster, nil
+				}
 			}
 		}
 	}

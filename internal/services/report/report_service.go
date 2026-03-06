@@ -20,7 +20,8 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 	processedRegions := []types.ProcessedRegion{}
 
 	// Process each region: flatten costs and metrics for frontend consumption
-	for _, region := range state.Regions {
+	if state.MSKSources != nil {
+		for _, region := range state.MSKSources.Regions {
 		// Flatten cost data from nested AWS Cost Explorer format
 		processedCosts := rs.flattenCosts(region)
 
@@ -47,6 +48,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 			Costs:          processedCosts,
 			Clusters:       processedClusters,
 		})
+		}
 	}
 
 	// Return the processed state with flattened data for frontend consumption
