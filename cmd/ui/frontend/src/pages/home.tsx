@@ -3,7 +3,6 @@ import { TCOInputs as TCOInputsPage } from '@/components/tco/TCOInputsPage'
 import { Sidebar } from '@/components/explore/Sidebar'
 import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
 import { Explore } from '@/components/explore/Explore'
-import { LagMonitor } from '@/components/lag-monitor/LagMonitor'
 import { AppHeader } from '@/components/common/AppHeader'
 import { Tabs } from '@/components/common/Tabs'
 import { useAppStore, useSessionId } from '@/stores/store'
@@ -107,7 +106,6 @@ export const Home = () => {
                   { id: 'explore', label: 'Explore' },
                   { id: 'migration-assets', label: 'Migrate' },
                   { id: 'tco-inputs', label: 'TCO Inputs' },
-                  { id: 'lag-monitor', label: 'Mirror Topic Lag Monitor' },
                 ]}
                 activeId={activeTopTab}
                 onChange={(id) => setActiveTopTab(id as TopLevelTab)}
@@ -147,14 +145,6 @@ export const Home = () => {
                     </div>
                   </div>
                 </MigrationErrorBoundary>
-              )}
-
-              {activeTopTab === TOP_LEVEL_TABS.LAG_MONITOR && (
-                <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                  <div className="h-full overflow-auto">
-                    <LagMonitor />
-                  </div>
-                </div>
               )}
             </div>
           ) : (

@@ -6,8 +6,6 @@ import type {
   StateUploadRequest,
   StateUploadResponse,
   ApiErrorResponse,
-  LagMonitorApiResponse,
-  LagMonitorConfig,
 } from '@/types/api'
 import { API_ENDPOINTS, REQUEST_TIMEOUT } from '@/constants'
 
@@ -242,25 +240,6 @@ const state = {
 }
 
 /**
- * Lag Monitor API functions
- */
-const lagMonitor = {
-  /**
-   * Get cluster link mirror topics lag status
-   */
-  async getLagStatus(config?: RequestConfig): Promise<LagMonitorApiResponse> {
-    return get<LagMonitorApiResponse>(API_ENDPOINTS.LAG_MONITOR, undefined, config)
-  },
-
-  /**
-   * Get cluster link configuration (non-sensitive)
-   */
-  async getConfig(config?: RequestConfig): Promise<LagMonitorConfig> {
-    return get<LagMonitorConfig>(`${API_ENDPOINTS.LAG_MONITOR}/config`, undefined, config)
-  },
-}
-
-/**
  * Wizard API functions
  */
 const wizard = {
@@ -287,6 +266,5 @@ export const apiClient = {
   metrics,
   costs,
   state,
-  lagMonitor,
   wizard,
 }

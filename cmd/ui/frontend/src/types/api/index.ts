@@ -5,5 +5,4 @@ export * from './common'
 export * from './metrics'
 export * from './costs'
 export * from './state'
-export * from './lagMonitor'
 

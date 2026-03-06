@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/cmd/ui/api"
-	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -12,12 +11,7 @@ import (
 )
 
 var (
-	port                    string
-	clusterLinkRestEndpoint string
-	clusterLinkClusterID    string
-	clusterLinkName         string
-	clusterLinkAPIKey       string
-	clusterLinkAPISecret    string
+	port string
 )
 
 func NewUICmd() *cobra.Command {
@@ -32,13 +26,6 @@ func NewUICmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&port, "port", "p", "5556", "Port to run the UI server on")
-
-	// Optional cluster link flags for lag monitoring
-	cmd.Flags().StringVar(&clusterLinkRestEndpoint, "rest-endpoint", "", "Cluster link REST endpoint (optional, for lag monitoring)")
-	cmd.Flags().StringVar(&clusterLinkClusterID, "cluster-id", "", "Cluster link cluster ID (optional, for lag monitoring)")
-	cmd.Flags().StringVar(&clusterLinkName, "cluster-link-name", "", "Cluster link name (optional, for lag monitoring)")
-	cmd.Flags().StringVar(&clusterLinkAPIKey, "cluster-api-key", "", "Cluster link API key (optional, for lag monitoring)")
-	cmd.Flags().StringVar(&clusterLinkAPISecret, "cluster-api-secret", "", "Cluster link API secret (optional, for lag monitoring)")
 
 	return cmd
 }
@@ -61,9 +48,8 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 	targetInfraHCLService := hcl.NewTargetInfraHCLService()
 	migrationInfraHCLService := hcl.NewMigrationInfraHCLService()
 	migrationScriptsHCLService := hcl.NewMigrationScriptsHCLService()
-	clusterLinkService := clusterlink.NewConfluentCloudService(nil)
 
-	ui := api.NewUI(reportService, *targetInfraHCLService, *migrationInfraHCLService, *migrationScriptsHCLService, clusterLinkService, *opts)
+	ui := api.NewUI(reportService, *targetInfraHCLService, *migrationInfraHCLService, *migrationScriptsHCLService, *opts)
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
 	}
@@ -73,12 +59,7 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 
 func parseUICmdOpts() (*api.UICmdOpts, error) {
 	opts := api.UICmdOpts{
-		Port:                    port,
-		ClusterLinkRestEndpoint: clusterLinkRestEndpoint,
-		ClusterLinkClusterID:    clusterLinkClusterID,
-		ClusterLinkName:         clusterLinkName,
-		ClusterLinkAPIKey:       clusterLinkAPIKey,
-		ClusterLinkAPISecret:    clusterLinkAPISecret,
+		Port: port,
 	}
 
 	return &opts, nil
