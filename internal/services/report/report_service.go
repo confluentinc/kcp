@@ -17,43 +17,76 @@ func NewReportService() *ReportService {
 }
 
 func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
-	processedRegions := []types.ProcessedRegion{}
+	sources := []types.ProcessedSource{}
 
-	// Process each region: flatten costs and metrics for frontend consumption
-	if state.MSKSources != nil {
+	// Process MSK if present
+	if state.MSKSources != nil && len(state.MSKSources.Regions) > 0 {
+		processedRegions := []types.ProcessedRegion{}
+
 		for _, region := range state.MSKSources.Regions {
-		// Flatten cost data from nested AWS Cost Explorer format
-		processedCosts := rs.flattenCosts(region)
+			// Flatten cost data from nested AWS Cost Explorer format
+			processedCosts := rs.flattenCosts(region)
 
-		// Process each cluster's metrics
-		processedClusters := []types.ProcessedCluster{}
-		for _, cluster := range region.Clusters {
-			// Flatten metrics data from nested CloudWatch format
-			processedMetrics := rs.flattenMetrics(cluster)
+			// Process each cluster's metrics
+			processedClusters := []types.ProcessedCluster{}
+			for _, cluster := range region.Clusters {
+				// Flatten metrics data from nested CloudWatch format
+				processedMetrics := rs.flattenMetrics(cluster)
 
-			processedClusters = append(processedClusters, types.ProcessedCluster{
-				Name:                        cluster.Name,
-				Arn:                         cluster.Arn,
-				Region:                      cluster.Region,
-				ClusterMetrics:              processedMetrics,
-				AWSClientInformation:        cluster.AWSClientInformation,
-				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
-				DiscoveredClients:           cluster.DiscoveredClients,
+				processedClusters = append(processedClusters, types.ProcessedCluster{
+					Name:                        cluster.Name,
+					Arn:                         cluster.Arn,
+					Region:                      cluster.Region,
+					ClusterMetrics:              processedMetrics,
+					AWSClientInformation:        cluster.AWSClientInformation,
+					KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+					DiscoveredClients:           cluster.DiscoveredClients,
+				})
+			}
+
+			processedRegions = append(processedRegions, types.ProcessedRegion{
+				Name:           region.Name,
+				Configurations: region.Configurations,
+				Costs:          processedCosts,
+				Clusters:       processedClusters,
 			})
 		}
 
-		processedRegions = append(processedRegions, types.ProcessedRegion{
-			Name:           region.Name,
-			Configurations: region.Configurations,
-			Costs:          processedCosts,
-			Clusters:       processedClusters,
-		})
+		mskSource := types.ProcessedSource{
+			Type: types.SourceTypeMSK,
+			MSKData: &types.ProcessedMSKSource{
+				Regions: processedRegions,
+			},
 		}
+		sources = append(sources, mskSource)
 	}
 
-	// Return the processed state with flattened data for frontend consumption
+	// Process OSK if present
+	if state.OSKSources != nil && len(state.OSKSources.Clusters) > 0 {
+		processedOSKClusters := []types.ProcessedOSKCluster{}
+
+		for _, cluster := range state.OSKSources.Clusters {
+			processedOSKClusters = append(processedOSKClusters, types.ProcessedOSKCluster{
+				ID:                          cluster.ID,
+				BootstrapServers:            cluster.BootstrapServers,
+				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+				DiscoveredClients:           cluster.DiscoveredClients,
+				Metadata:                    cluster.Metadata,
+			})
+		}
+
+		oskSource := types.ProcessedSource{
+			Type: types.SourceTypeOSK,
+			OSKData: &types.ProcessedOSKSource{
+				Clusters: processedOSKClusters,
+			},
+		}
+		sources = append(sources, oskSource)
+	}
+
+	// Return the processed state with unified sources
 	processedState := types.ProcessedState{
-		Regions:          processedRegions,
+		Sources:          sources,
 		SchemaRegistries: state.SchemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
 		Timestamp:        state.Timestamp,
