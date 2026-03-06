@@ -55,10 +55,34 @@ func NewMigrationOrchestrator(
 		workflow:       workflow,
 		migrationState: migrationState,
 		stateFilePath:  stateFilePath,
-		execParams:     ExecutionParams{}, // Zero values initially
 	}
+
+	// Build FSM events from canonical workflow
+	events := make(fsm.Events, 0, len(canonicalWorkflow))
+	for _, step := range canonicalWorkflow {
+		events = append(events, fsm.EventDesc{
+			Name: step.Event,
+			Src:  []string{step.FromState},
+			Dst:  step.ToState,
+		})
+	}
+
 	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check)
-	orchestrator.initializeFSM(config.CurrentState)
+	orchestrator.fsm = fsm.NewFSM(
+		config.CurrentState,
+		events,
+		fsm.Callbacks{
+			"before_event":                      orchestrator.beforeEventCallback,
+			"after_event":                       orchestrator.afterEventCallback,
+			"enter_state":                       orchestrator.enterStateCallback,
+			"leave_state":                       orchestrator.leaveStateCallback,
+			"leave_" + types.StateUninitialized: orchestrator.leaveUninitializedCallback,
+			"leave_" + types.StateInitialized:   orchestrator.leaveInitializedCallback,
+			"leave_" + types.StateLagsOk:        orchestrator.leaveLagsOkCallback,
+			"leave_" + types.StateFenced:        orchestrator.leaveFencedCallback,
+			"leave_" + types.StatePromoted:      orchestrator.leavePromotedCallback,
+		},
+	)
 
 	return orchestrator
 }
@@ -93,35 +117,6 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	}
 
 	return nil
-}
-
-// initializeFSM sets up the finite state machine from the canonical workflow definition
-func (o *MigrationOrchestrator) initializeFSM(currentState string) {
-	// Build FSM events from canonical workflow
-	events := make(fsm.Events, 0, len(canonicalWorkflow))
-	for _, step := range canonicalWorkflow {
-		events = append(events, fsm.EventDesc{
-			Name: step.Event,
-			Src:  []string{step.FromState},
-			Dst:  step.ToState,
-		})
-	}
-
-	o.fsm = fsm.NewFSM(
-		currentState,
-		events,
-		fsm.Callbacks{
-			"before_event":                      o.beforeEventCallback,
-			"after_event":                       o.afterEventCallback,
-			"enter_state":                       o.enterStateCallback,
-			"leave_state":                       o.leaveStateCallback,
-			"leave_" + types.StateUninitialized: o.leaveUninitializedCallback,
-			"leave_" + types.StateInitialized:   o.leaveInitializedCallback,
-			"leave_" + types.StateLagsOk:        o.leaveLagsOkCallback,
-			"leave_" + types.StateFenced:        o.leaveFencedCallback,
-			"leave_" + types.StatePromoted:      o.leavePromotedCallback,
-		},
-	)
 }
 
 // beforeEventCallback is called before any event transition
