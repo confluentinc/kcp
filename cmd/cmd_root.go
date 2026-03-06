@@ -11,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/create_asset"
 	"github.com/confluentinc/kcp/cmd/discover"
+	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
 	"github.com/confluentinc/kcp/cmd/ui"
@@ -72,6 +73,7 @@ func init() {
 		report.NewReportCmd(),
 		ui.NewUICmd(),
 		discover.NewDiscoverCmd(),
+		migration.NewMigrationCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
 	)
