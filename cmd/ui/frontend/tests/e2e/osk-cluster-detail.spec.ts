@@ -5,6 +5,9 @@ test.describe('OSK Cluster Detail View', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
 
+    // Click the upload button to reveal the file input
+    await page.click('button:has-text("Upload KCP State File")')
+
     // Upload state file
     const fileInput = page.locator('input[type="file"]')
     await fileInput.setInputFiles({

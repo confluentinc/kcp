@@ -5,6 +5,9 @@ test.describe('Switching Between MSK and OSK', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
 
+    // Click the upload button to reveal the file input
+    await page.click('button:has-text("Upload KCP State File")')
+
     // Upload state with both MSK and OSK
     const fileInput = page.locator('input[type="file"]')
     await fileInput.setInputFiles({
@@ -13,7 +16,9 @@ test.describe('Switching Between MSK and OSK', () => {
       buffer: Buffer.from(JSON.stringify(stateBoth)),
     })
 
-    await page.waitForTimeout(500)
+    // Wait for both sections to appear (confirms state is loaded)
+    await page.waitForSelector('text=AWS MSK', { timeout: 5000 })
+    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
   })
 
   test('displays both MSK and OSK sections', async ({ page }) => {
@@ -39,10 +44,14 @@ test.describe('Switching Between MSK and OSK', () => {
   })
 
   test('MSK summary only shows MSK data', async ({ page }) => {
-    await page.click('text=Summary')
+    // Click Summary button and wait for content to load
+    await page.click('button:has-text("Summary")')
 
-    // Verify cost analysis appears (MSK-only feature)
-    await expect(page.locator('text=Cost Analysis Summary')).toBeVisible()
+    // Wait for the Summary view to render (shows "MSK Cost Summary" when data is present)
+    await page.waitForSelector('h1:has-text("MSK Cost Summary")', { timeout: 5000 })
+
+    // Verify MSK cost summary appears (MSK-only feature)
+    await expect(page.locator('text=MSK Cost Summary')).toBeVisible()
   })
 
   test('OSK cluster does not have Metrics tab', async ({ page }) => {
