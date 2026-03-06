@@ -12,7 +12,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
-	"github.com/goccy/go-yaml"
 )
 
 type MigrationWorkflow struct {
@@ -37,22 +36,17 @@ func (s *MigrationWorkflow) Initialize(
 ) error {
 	slog.Info("initializing migration", "migrationId", config.MigrationId)
 
-	// Validate YAML files are parseable
-	if err := validateYAML(config.FencedCrYAML, "fenced CR"); err != nil {
-		return err
-	}
-	if err := validateYAML(config.SwitchoverCrYAML, "switchover CR"); err != nil {
-		return err
-	}
-
-	// Fetch and store the initial CR YAML from k8s
+	// Fetch the initial CR YAML from k8s
 	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName)
 	if err != nil {
 		return fmt.Errorf("failed to get initial CR YAML: %w", err)
 	}
 	config.InitialCrYAML = initialCrYAML
 
-	// TODO: now we have all 3 yamls - we can do some additional validation before proceeding
+	// Validate all three gateway CRs are consistent
+	if err := s.gatewayService.ValidateGatewayCRs(config.InitialCrYAML, config.FencedCrYAML, config.SwitchoverCrYAML); err != nil {
+		return fmt.Errorf("gateway CR validation failed: %w", err)
+	}
 
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
@@ -98,14 +92,6 @@ func (s *MigrationWorkflow) Initialize(
 	config.ClusterLinkConfigs = configs
 
 	slog.Info("migration initialized successfully")
-	return nil
-}
-
-func validateYAML(data []byte, name string) error {
-	var out any
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return fmt.Errorf("%s YAML is not valid: %w", name, err)
-	}
 	return nil
 }
 

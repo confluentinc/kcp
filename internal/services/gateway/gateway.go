@@ -2,10 +2,8 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"slices"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -28,24 +26,11 @@ const (
 	GatewayResourcePlural = "gateways"
 )
 
-// GatewayConfig holds gateway configuration
-type GatewayConfig struct {
-	Namespace            string
-	CRDName              string
-	SourceName           string
-	DestinationName      string
-	SourceRouteName      string
-	DestinationRouteName string
-	AuthMode             string
-	KubeConfigPath       string
-}
-
 // Service defines gateway operations
 type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
-	ValidateGateway(ctx context.Context, yaml []byte, config GatewayConfig) error
+	ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]any) error
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration) error
@@ -95,21 +80,9 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 	return yamlBytes, nil
 }
 
-// ValidateGateway validates gateway YAML contains expected configuration
-func (s *K8sService) ValidateGateway(ctx context.Context, gatewayYAML []byte, config GatewayConfig) error {
-	var gateway GatewayResource
-	if err := yaml.Unmarshal(gatewayYAML, &gateway); err != nil {
-		return fmt.Errorf("failed to parse gateway YAML: %w", err)
-	}
-
-	if err := validateStreamingDomains(gateway, config); err != nil {
-		return err
-	}
-
-	if err := validateRoutes(gateway, config); err != nil {
-		return err
-	}
-
+// ValidateGatewayCRs validates that the initial, fenced, and switchover gateway CRs are consistent
+func (s *K8sService) ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error {
+	// TODO: implement cross-CR validation
 	return nil
 }
 
@@ -147,40 +120,6 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 	}
 
 	return response.Status.Allowed, nil
-}
-
-// PatchGateway patches the gateway resource using JSON patch format
-func (s *K8sService) PatchGateway(ctx context.Context, namespace, gatewayName string, patchOps []map[string]any) error {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
-
-	// Marshal patch operations to JSON
-	patchBytes, err := json.Marshal(patchOps)
-	if err != nil {
-		return fmt.Errorf("failed to marshal patch operations: %w", err)
-	}
-
-	// Apply JSON patch
-	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
-		Patch(ctx, gatewayName, types.JSONPatchType, patchBytes, metav1.PatchOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to patch Gateway: %w", err)
-	}
-
-	return nil
 }
 
 // ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using server-side apply
@@ -378,22 +317,6 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	return fmt.Errorf("timed out waiting for gateway pods to be replaced (timeout: %s)", timeout)
 }
 
-// getGatewayPodUIDs returns a set of UIDs for the current gateway pods
-func (s *K8sService) getGatewayPodUIDs(ctx context.Context, clientset kubernetes.Interface, namespace, labelSelector string) (map[types.UID]struct{}, error) {
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	uids := make(map[types.UID]struct{}, len(pods.Items))
-	for _, pod := range pods.Items {
-		uids[pod.UID] = struct{}{}
-	}
-	return uids, nil
-}
-
 // allPodsReplaced checks if all current pods have different UIDs from initial set
 func allPodsReplaced(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) bool {
 	for _, pod := range currentPods {
@@ -437,108 +360,6 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
-}
-
-// validateStreamingDomains validates streaming domains exist in gateway
-func validateStreamingDomains(gateway GatewayResource, config GatewayConfig) error {
-	streamingDomainNames := make([]string, len(gateway.Spec.StreamingDomains))
-	for i, domain := range gateway.Spec.StreamingDomains {
-		streamingDomainNames[i] = domain.Name
-	}
-
-	if !slices.Contains(streamingDomainNames, config.SourceName) {
-		return fmt.Errorf("source streaming domain '%s' not found in gateway streamingDomains. Available domains: %v",
-			config.SourceName, streamingDomainNames)
-	}
-
-	// if !slices.Contains(streamingDomainNames, config.DestinationName) {
-	// 	return fmt.Errorf("destination streaming domain '%s' not found in gateway streamingDomains. Available domains: %v",
-	// 		config.DestinationName, streamingDomainNames)
-	// }
-
-	return nil
-}
-
-// validateRoutes validates routes exist and have correct configuration
-func validateRoutes(gateway GatewayResource, config GatewayConfig) error {
-	routeNames := make([]string, len(gateway.Spec.Routes))
-	for i, route := range gateway.Spec.Routes {
-		routeNames[i] = route.Name
-
-		if err := validateSourceRoute(route, config); err != nil {
-			return err
-		}
-
-		if err := validateDestinationRoute(route, config); err != nil {
-			return err
-		}
-	}
-
-	if !slices.Contains(routeNames, config.SourceRouteName) {
-		return fmt.Errorf("source route '%s' not found in gateway routes. Available routes: %v",
-			config.SourceRouteName, routeNames)
-	}
-
-	// if !slices.Contains(routeNames, config.DestinationRouteName) {
-	// 	return fmt.Errorf("destination route '%s' not found in gateway routes. Available routes: %v",
-	// 		config.DestinationRouteName, routeNames)
-	// }
-
-	return nil
-}
-
-// validateSourceRoute validates source route configuration
-func validateSourceRoute(route Route, config GatewayConfig) error {
-	if route.Name != config.SourceRouteName {
-		return nil
-	}
-
-	if route.StreamingDomain.Name != config.SourceName {
-		return fmt.Errorf("source route '%s' streaming domain '%s' does not match expected source streaming domain '%s'",
-			route.Name, route.StreamingDomain.Name, config.SourceName)
-	}
-
-	/*
-		- If the `auth_mode` is passed as/defaulted to 'dest_swap', we would expect the user's route to be 'passthrough'.
-			Then the future route would be 'swap' so that the clients do not need to update their credentials.
-		- If the `auth_mode` is passed as 'source_swap', we would expect the user's route to be a 'swap'.
-			Then the future route would be 'passthrough' as the clients already use the CC credentials.
-	*/
-	if config.AuthMode == "dest_swap" && route.Security.Auth != "passthrough" {
-		return fmt.Errorf("source route '%s' expected to be 'passthrough', found '%s'",
-			config.SourceRouteName, route.Security.Auth)
-	}
-
-	if config.AuthMode == "source_swap" && route.Security.Auth != "swap" {
-		return fmt.Errorf("source route '%s' expected to be 'swap', found '%s'",
-			config.SourceRouteName, route.Security.Auth)
-	}
-
-	return nil
-}
-
-// validateDestinationRoute validates destination route configuration
-func validateDestinationRoute(route Route, config GatewayConfig) error {
-	if route.Name != config.DestinationRouteName {
-		return nil
-	}
-
-	if route.StreamingDomain.Name != config.DestinationName {
-		return fmt.Errorf("destination route '%s' streaming domain '%s' does not match expected destination streaming domain '%s'",
-			config.DestinationRouteName, route.StreamingDomain.Name, config.DestinationName)
-	}
-
-	if route.Security.Client.Authentication.Type == "" {
-		return fmt.Errorf("destination route '%s' is missing client authentication configuration",
-			config.DestinationRouteName)
-	}
-
-	if route.Security.Cluster.Authentication.Type == "" {
-		return fmt.Errorf("destination route '%s' is missing cluster authentication configuration",
-			config.DestinationRouteName)
-	}
-
-	return nil
 }
 
 // GatewayResource represents the Kubernetes Gateway CRD structure
