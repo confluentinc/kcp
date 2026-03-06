@@ -550,8 +550,12 @@ func TestNewOSKCredentialsFromFile_ValidationFailure(t *testing.T) {
 clusters:
 - id: prod-kafka-01
   bootstrap_servers:
-  - broker1:9092
-  auth_method: {}
+  - invalid-server
+  auth_method:
+    sasl_scram:
+      use: true
+      username: user
+      password: pass
 `
 	tmpFile := filepath.Join(t.TempDir(), "invalid-creds.yaml")
 	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0644))
