@@ -19,9 +19,15 @@ var (
 
 func NewMigrationExecuteCmd() *cobra.Command {
 	migrationExecuteCmd := &cobra.Command{
-		Use:           "execute",
-		Short:         "Execute a migration",
-		Long:          "Execute a migration",
+		Use:   "execute",
+		Short: "Execute an initialized migration",
+		Long: `Execute an initialized migration through its remaining workflow steps.
+
+This command resumes a migration from its current state, progressing through:
+lag checking, gateway fencing, topic promotion, and gateway switchover.
+
+The migration must first be created with 'kcp migration init'. If execution is
+interrupted, re-running this command will resume from the last completed step.`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationExecute,
@@ -32,11 +38,11 @@ func NewMigrationExecuteCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file to use for the migration.")
-	requiredFlags.StringVar(&migrationId, "migration-id", "", "The ID of the migration to execute.")
+	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "Path to the migration state file.")
+	requiredFlags.StringVar(&migrationId, "migration-id", "", "ID of the migration to execute (from 'kcp migration list').")
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
-	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use for the migration.")
-	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use for the migration.")
+	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
+	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
