@@ -54,7 +54,6 @@ func (s *MigrationWorkflow) Initialize(
 
 	// TODO: now we have all 3 yamls - we can do some additional validation before proceeding
 
-
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
@@ -365,14 +364,6 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			// Continue to next iteration
 		}
 	}
-}
-
-// CheckPromotionCompletion is a placeholder for promotion completion verification
-func (s *MigrationWorkflow) CheckPromotionCompletion(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Info("waiting for topic promotion to complete.....")
-	slog.Info("this can be removed")
-	slog.Info("waiting for topic promotion to complete...done")
-	return nil
 }
 
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent Cloud

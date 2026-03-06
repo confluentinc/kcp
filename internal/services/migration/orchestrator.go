@@ -22,8 +22,7 @@ var canonicalWorkflow = []WorkflowStep{
 	{types.EventInitialize, "initializing migration", types.StateUninitialized, types.StateInitialized},
 	{types.EventWaitForLags, "checking replication lags", types.StateInitialized, types.StateLagsOk},
 	{types.EventFence, "fencing gateway", types.StateLagsOk, types.StateFenced},
-	{types.EventPromote, "promoting topics", types.StateFenced, types.StatePromoting},
-	{types.EventWaitForPromotionCompletion, "waiting for promotion completion", types.StatePromoting, types.StatePromoted},
+	{types.EventPromote, "promoting topics", types.StateFenced, types.StatePromoted},
 	{types.EventSwitch, "switching gateway config", types.StatePromoted, types.StateSwitched},
 }
 
@@ -120,7 +119,6 @@ func (o *MigrationOrchestrator) initializeFSM(currentState string) {
 			"leave_" + types.StateInitialized:   o.leaveInitializedCallback,
 			"leave_" + types.StateLagsOk:        o.leaveLagsOkCallback,
 			"leave_" + types.StateFenced:        o.leaveFencedCallback,
-			"leave_" + types.StatePromoting:     o.leavePromotingCallback,
 			"leave_" + types.StatePromoted:      o.leavePromotedCallback,
 		},
 	)
@@ -192,17 +190,6 @@ func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.
 
 	// Delegate to workflow service using stored parameters
 	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
-		e.Cancel(err)
-		return
-	}
-}
-
-// leavePromotingCallback delegates to workflow service CheckPromotionCompletion
-func (o *MigrationOrchestrator) leavePromotingCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", types.StatePromoting)
-
-	// No runtime params needed for checking promotion completion
-	if err := o.workflow.CheckPromotionCompletion(ctx, o.config); err != nil {
 		e.Cancel(err)
 		return
 	}
