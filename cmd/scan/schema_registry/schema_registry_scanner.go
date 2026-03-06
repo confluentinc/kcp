@@ -65,17 +65,10 @@ func (srs *SchemaRegistryScanner) Run() error {
 		Subjects:             subjects,
 	}
 
-	previouslyScanned := false
-	for i, existing := range srs.State.SchemaRegistries {
-		if existing.URL == schemaRegistryInformation.URL {
-			srs.State.SchemaRegistries[i] = schemaRegistryInformation
-			previouslyScanned = true
-		}
+	if srs.State.SchemaRegistries == nil {
+		srs.State.SchemaRegistries = &types.SchemaRegistriesState{}
 	}
-
-	if !previouslyScanned {
-		srs.State.SchemaRegistries = append(srs.State.SchemaRegistries, schemaRegistryInformation)
-	}
+	srs.State.SchemaRegistries.UpsertConfluentSchemaRegistry(schemaRegistryInformation)
 
 	if err := srs.State.PersistStateFile(srs.StateFile); err != nil {
 		return fmt.Errorf("failed to save schema registry state: %v", err)

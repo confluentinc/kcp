@@ -49,10 +49,16 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 		})
 	}
 
+	// Flatten Confluent schema registries for frontend compatibility
+	var schemaRegistries []types.SchemaRegistryInformation
+	if state.SchemaRegistries != nil {
+		schemaRegistries = state.SchemaRegistries.ConfluentSchemaRegistry
+	}
+
 	// Return the processed state with flattened data for frontend consumption
 	processedState := types.ProcessedState{
 		Regions:          processedRegions,
-		SchemaRegistries: state.SchemaRegistries,
+		SchemaRegistries: schemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
 		Timestamp:        state.Timestamp,
 	}

@@ -88,11 +88,13 @@ func parseMigrateSchemasOpts() (*MigrateSchemasOpts, error) {
 
 	var schemaRegistry types.SchemaRegistryInformation
 	found := false
-	for _, sr := range state.SchemaRegistries {
-		if sr.URL == url {
-			schemaRegistry = sr
-			found = true
-			break
+	if state.SchemaRegistries != nil {
+		for _, sr := range state.SchemaRegistries.ConfluentSchemaRegistry {
+			if sr.URL == url {
+				schemaRegistry = sr
+				found = true
+				break
+			}
 		}
 	}
 
