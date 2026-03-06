@@ -88,9 +88,6 @@ func (c OSKCredentials) Validate() (bool, []error) {
 
 		// Validate auth method
 		enabledMethods := cluster.GetAuthMethods()
-		if len(enabledMethods) == 0 {
-			errs = append(errs, fmt.Errorf("%s (id=%s): no authentication method enabled", clusterRef, cluster.ID))
-		}
 		if len(enabledMethods) > 1 {
 			errs = append(errs, fmt.Errorf("%s (id=%s): multiple authentication methods enabled (only one allowed)",
 				clusterRef, cluster.ID))

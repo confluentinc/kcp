@@ -91,9 +91,9 @@ func TestOSKCredentials_Validate_NoAuthMethod(t *testing.T) {
 		},
 	}
 
-	valid, _ := creds.Validate()
-	if valid {
-		t.Error("expected validation to fail when no auth method is enabled")
+	valid, errs := creds.Validate()
+	if !valid {
+		t.Errorf("expected validation to pass when no auth method is enabled (cluster will be skipped during scan), got errors: %v", errs)
 	}
 }
 
@@ -627,6 +627,36 @@ func TestOSKCredentials_Validate_WithMetadata(t *testing.T) {
 	valid, errs := creds.Validate()
 	if !valid {
 		t.Errorf("expected valid credentials with metadata, got errors: %v", errs)
+	}
+}
+
+func TestOSKCredentials_Validate_AllAuthMethodsDisabled(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "disabled-cluster",
+				BootstrapServers: []string{"localhost:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLScram:                &SASLScramConfig{Use: false},
+					TLS:                      &TLSConfig{Use: false},
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: false},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	if !valid {
+		t.Errorf("expected validation to pass when all auth methods are disabled (cluster will be skipped during scan), got errors: %v", errs)
+	}
+
+	// Verify GetSelectedAuthType returns error for disabled cluster
+	authType, err := creds.Clusters[0].GetSelectedAuthType()
+	if err == nil {
+		t.Error("expected GetSelectedAuthType to fail when no auth methods enabled")
+	}
+	if authType != "" {
+		t.Errorf("expected empty auth type, got: %s", authType)
 	}
 }
 
