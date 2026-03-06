@@ -1,94 +1,13 @@
 package client
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
-	"net"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/IBM/sarama"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// Helper function to create test certificates
-func createTestCertificates(t *testing.T) (string, string, string) {
-	// Create CA certificate
-	ca := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			Organization: []string{"Test CA"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(time.Hour * 24),
-		IsCA:                  true,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-	}
-
-	caPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &caPrivKey.PublicKey, caPrivKey)
-	require.NoError(t, err)
-
-	// Create client certificate
-	client := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject: pkix.Name{
-			Organization: []string{"Test Client"},
-		},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().Add(time.Hour * 24),
-		DNSNames:    []string{"localhost"},
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-	}
-
-	clientPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	clientBytes, err := x509.CreateCertificate(rand.Reader, client, ca, &clientPrivKey.PublicKey, caPrivKey)
-	require.NoError(t, err)
-
-	// Create temporary files
-	tempDir := t.TempDir()
-	caCertFile := filepath.Join(tempDir, "ca.crt")
-	clientCertFile := filepath.Join(tempDir, "client.crt")
-	clientKeyFile := filepath.Join(tempDir, "client.key")
-
-	// Write CA certificate
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caBytes})
-	err = os.WriteFile(caCertFile, caPEM, 0644)
-	require.NoError(t, err)
-
-	// Write client certificate
-	clientPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientBytes})
-	err = os.WriteFile(clientCertFile, clientPEM, 0644)
-	require.NoError(t, err)
-
-	// Write client private key
-	clientKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(clientPrivKey),
-	})
-	err = os.WriteFile(clientKeyFile, clientKeyPEM, 0600)
-	require.NoError(t, err)
-
-	return caCertFile, clientCertFile, clientKeyFile
-}
 
 func TestAdminOptionFunctions(t *testing.T) {
 	tests := []struct {
@@ -148,200 +67,141 @@ func TestAdminOptionFunctions(t *testing.T) {
 	}
 }
 
-func TestConfigureCommonSettings(t *testing.T) {
-	config := sarama.NewConfig()
-	clientID := "test-client"
-
-	configureCommonSettings(config, clientID, sarama.V4_0_0_0)
-
-	// Verify common settings
-	assert.Equal(t, sarama.V4_0_0_0, config.Version)
-	assert.Equal(t, clientID, config.ClientID)
-	assert.Equal(t, 10*time.Second, config.Net.DialTimeout)
-	assert.Equal(t, 30*time.Second, config.Net.ReadTimeout)
-	assert.Equal(t, 30*time.Second, config.Net.KeepAlive)
-	assert.Equal(t, 15*time.Second, config.Metadata.Timeout)
-	assert.Equal(t, 3, config.Metadata.Retry.Max)
-	assert.Equal(t, 250*time.Millisecond, config.Metadata.Retry.Backoff)
-}
-
-func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
-	config := sarama.NewConfig()
-	region := "us-west-2"
-
-	configureSASLTypeOAuthAuthentication(config, region)
-
-	// Verify SASL/OAuth configuration
-	assert.True(t, config.Net.TLS.Enable)
-	assert.NotNil(t, config.Net.TLS.Config)
-	assert.True(t, config.Net.SASL.Enable)
-	assert.Equal(t, string(sarama.SASLTypeOAuth), string(config.Net.SASL.Mechanism))
-	assert.NotNil(t, config.Net.SASL.TokenProvider)
-
-	// Verify token provider is correctly configured
-	tokenProvider, ok := config.Net.SASL.TokenProvider.(*MSKAccessTokenProvider)
-	assert.True(t, ok)
-	assert.Equal(t, region, tokenProvider.region)
-}
-
-func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
-	config := sarama.NewConfig()
-	username := "test-user"
-	password := "test-pass"
-
-	configureSASLTypeSCRAMAuthentication(config, username, password)
-
-	// Verify SASL/SCRAM configuration
-	assert.True(t, config.Net.TLS.Enable)
-	assert.NotNil(t, config.Net.TLS.Config)
-	assert.True(t, config.Net.SASL.Enable)
-	assert.Equal(t, username, config.Net.SASL.User)
-	assert.Equal(t, password, config.Net.SASL.Password)
-	assert.True(t, config.Net.SASL.Handshake)
-	assert.Equal(t, string(sarama.SASLTypeSCRAMSHA512), string(config.Net.SASL.Mechanism))
-	assert.NotNil(t, config.Net.SASL.SCRAMClientGeneratorFunc)
-
-	// Verify SCRAM client generator function
-	scramClient := config.Net.SASL.SCRAMClientGeneratorFunc()
-	assert.NotNil(t, scramClient)
-}
-
-func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
+func TestBuildConfigMap(t *testing.T) {
 	tests := []struct {
-		name                            string
-		clientBrokerEncryptionInTransit kafkatypes.ClientBroker
-		expectedTLSEnabled              bool
+		name             string
+		brokerAddresses  []string
+		config           AdminConfig
+		expectError      bool
+		expectedKeys     map[string]string
+		unexpectedKeys   []string
 	}{
 		{
-			name:                            "TLS encryption enabled for TLS",
-			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
-			expectedTLSEnabled:              true,
+			name:            "IAM auth produces correct config",
+			brokerAddresses: []string{"broker1:9098", "broker2:9098"},
+			config: AdminConfig{
+				authType: types.AuthTypeIAM,
+			},
+			expectedKeys: map[string]string{
+				"bootstrap.servers": "broker1:9098,broker2:9098",
+				"client.id":         "kcp-cli",
+				"security.protocol": "SASL_SSL",
+				"sasl.mechanisms":    "OAUTHBEARER",
+			},
 		},
 		{
-			name:                            "TLS encryption enabled for TLS_PLAINTEXT",
-			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTlsPlaintext,
-			expectedTLSEnabled:              true,
+			name:            "SASL/SCRAM auth produces correct config",
+			brokerAddresses: []string{"broker1:9096"},
+			config: AdminConfig{
+				authType: types.AuthTypeSASLSCRAM,
+				username: "myuser",
+				password: "mypass",
+			},
+			expectedKeys: map[string]string{
+				"bootstrap.servers": "broker1:9096",
+				"security.protocol": "SASL_SSL",
+				"sasl.mechanisms":    "SCRAM-SHA-512",
+				"sasl.username":      "myuser",
+				"sasl.password":      "mypass",
+			},
 		},
 		{
-			name:                            "TLS encryption disabled for PLAINTEXT",
-			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerPlaintext,
-			expectedTLSEnabled:              false,
+			name:            "Unauthenticated TLS produces correct config",
+			brokerAddresses: []string{"broker1:9094"},
+			config: AdminConfig{
+				authType: types.AuthTypeUnauthenticatedTLS,
+			},
+			expectedKeys: map[string]string{
+				"security.protocol": "SSL",
+			},
+			unexpectedKeys: []string{"sasl.mechanisms", "sasl.username"},
+		},
+		{
+			name:            "Unauthenticated Plaintext produces correct config",
+			brokerAddresses: []string{"broker1:9092"},
+			config: AdminConfig{
+				authType: types.AuthTypeUnauthenticatedPlaintext,
+			},
+			expectedKeys: map[string]string{
+				"security.protocol": "PLAINTEXT",
+			},
+			unexpectedKeys: []string{"sasl.mechanisms"},
+		},
+		{
+			name:            "TLS auth produces correct config",
+			brokerAddresses: []string{"broker1:9094"},
+			config: AdminConfig{
+				authType:       types.AuthTypeTLS,
+				caCertFile:     "/path/to/ca.crt",
+				clientCertFile: "/path/to/client.crt",
+				clientKeyFile:  "/path/to/client.key",
+			},
+			expectedKeys: map[string]string{
+				"security.protocol":      "SSL",
+				"ssl.ca.location":        "/path/to/ca.crt",
+				"ssl.certificate.location": "/path/to/client.crt",
+				"ssl.key.location":       "/path/to/client.key",
+			},
+		},
+		{
+			name:            "Unsupported auth type returns error",
+			brokerAddresses: []string{"broker1:9092"},
+			config: AdminConfig{
+				authType: types.AuthType("UNSUPPORTED"),
+			},
+			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := sarama.NewConfig()
-
-			// Determine if TLS should be enabled based on the encryption type
-			withTLSEncryption := tt.clientBrokerEncryptionInTransit != kafkatypes.ClientBrokerPlaintext
-			configureUnauthenticatedAuthentication(config, withTLSEncryption)
-
-			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
-			if tt.expectedTLSEnabled {
-				assert.NotNil(t, config.Net.TLS.Config)
-			}
-		})
-	}
-}
-
-func TestConfigureTLSAuth(t *testing.T) {
-	caCertFile, clientCertFile, clientKeyFile := createTestCertificates(t)
-
-	tests := []struct {
-		name           string
-		caCertFile     string
-		clientCertFile string
-		clientKeyFile  string
-		expectError    bool
-		errorContains  string
-	}{
-		{
-			name:           "successful TLS configuration",
-			caCertFile:     caCertFile,
-			clientCertFile: clientCertFile,
-			clientKeyFile:  clientKeyFile,
-			expectError:    false,
-		},
-		{
-			name:           "client certificate file not found",
-			caCertFile:     caCertFile,
-			clientCertFile: "nonexistent.crt",
-			clientKeyFile:  clientKeyFile,
-			expectError:    true,
-			errorContains:  "failed to load client certificate",
-		},
-		{
-			name:           "client key file not found",
-			caCertFile:     caCertFile,
-			clientCertFile: clientCertFile,
-			clientKeyFile:  "nonexistent.key",
-			expectError:    true,
-			errorContains:  "failed to load client certificate",
-		},
-		{
-			name:           "CA certificate file not found",
-			caCertFile:     "nonexistent-ca.crt",
-			clientCertFile: clientCertFile,
-			clientKeyFile:  clientKeyFile,
-			expectError:    true,
-			errorContains:  "failed to read CA certificate file",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := sarama.NewConfig()
-
-			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile)
+			configMap, err := buildConfigMap(tt.brokerAddresses, tt.config)
 
 			if tt.expectError {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorContains)
-			} else {
-				require.NoError(t, err)
-				assert.True(t, config.Net.TLS.Enable)
-				assert.NotNil(t, config.Net.TLS.Config)
+				return
+			}
 
-				// Verify TLS config has certificates
-				tlsConfig := config.Net.TLS.Config
-				assert.Len(t, tlsConfig.Certificates, 1)
-				assert.NotNil(t, tlsConfig.RootCAs)
+			require.NoError(t, err)
+
+			for key, expectedValue := range tt.expectedKeys {
+				val, err := configMap.Get(key, "")
+				require.NoError(t, err, "key %s should exist", key)
+				assert.Equal(t, expectedValue, val, "key %s should have correct value", key)
+			}
+
+			for _, key := range tt.unexpectedKeys {
+				val, err := configMap.Get(key, nil)
+				require.NoError(t, err)
+				assert.Nil(t, val, "key %s should not be set", key)
 			}
 		})
 	}
 }
 
-func TestMSKAccessTokenProvider_Token(t *testing.T) {
+func TestKafkaAdminInterface(t *testing.T) {
+	// Test that KafkaAdminClient properly implements the KafkaAdmin interface
+	var _ KafkaAdmin = (*KafkaAdminClient)(nil)
+}
 
-	t.Skip("skipping integration test that requires credentials configuration")
-
-	// TODO: Fix this test to not require credentials configuration
-
-	provider := &MSKAccessTokenProvider{
-		region: "us-west-2",
+func TestClusterKafkaMetadata_Structure(t *testing.T) {
+	// Test the ClusterKafkaMetadata structure
+	metadata := &ClusterKafkaMetadata{
+		Brokers: []types.BrokerInfo{
+			{ID: 1, Address: "broker1:9092"},
+			{ID: 2, Address: "broker2:9092"},
+		},
+		ControllerID: 1,
+		ClusterID:    "test-cluster",
 	}
 
-	// Note: This test will fail if AWS credentials are not properly configured
-	// or if there are network issues. In a real test environment, you might
-	// want to mock the AWS signer.
-	token, err := provider.Token()
-
-	// We can't easily test the actual token generation without AWS credentials,
-	// but we can test the structure and error handling
-	if err != nil {
-		// If there's an error (e.g., no AWS credentials), that's expected
-		assert.Contains(t, err.Error(), "NoCredentialProviders")
-	} else {
-		// If successful, verify token structure
-		assert.NotNil(t, token)
-		assert.NotEmpty(t, token.Token)
-	}
+	assert.Len(t, metadata.Brokers, 2)
+	assert.Equal(t, int32(1), metadata.ControllerID)
+	assert.Equal(t, "test-cluster", metadata.ClusterID)
 }
 
 func TestNewKafkaAdmin(t *testing.T) {
 	t.Skip("skipping integration test that requires real Kafka brokers")
-	caCertFile, clientCertFile, clientKeyFile := createTestCertificates(t)
 
 	tests := []struct {
 		name                            string
@@ -369,7 +229,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			expectError:                     false,
 		},
 		{
-			name:                            "successful unauthenticated auth creation",
+			name:                            "successful unauthenticated TLS auth creation",
 			brokerAddresses:                 []string{"broker1:9094"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
@@ -377,37 +237,12 @@ func TestNewKafkaAdmin(t *testing.T) {
 			expectError:                     false,
 		},
 		{
-			name:                            "successful unauthenticated auth creation",
+			name:                            "successful unauthenticated plaintext auth creation",
 			brokerAddresses:                 []string{"broker1:9092"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerPlaintext,
 			region:                          "us-west-2",
 			opts:                            []AdminOption{WithUnauthenticatedPlaintextAuth()},
 			expectError:                     false,
-		},
-		{
-			name:                            "successful TLS auth creation",
-			brokerAddresses:                 []string{"broker1:9094"},
-			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
-			region:                          "us-west-2",
-			opts:                            []AdminOption{WithTLSAuth(caCertFile, clientCertFile, clientKeyFile)},
-			expectError:                     false,
-		},
-		{
-			name:                            "TLS auth with invalid certificate files",
-			brokerAddresses:                 []string{"broker1:9094"},
-			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
-			region:                          "us-west-2",
-			opts:                            []AdminOption{WithTLSAuth("invalid.crt", "invalid.crt", "invalid.key")},
-			expectError:                     true,
-			errorContains:                   "Failed to configure TLS authentication",
-		},
-		{
-			name:                            "unsupported auth type",
-			brokerAddresses:                 []string{"broker1:9092"},
-			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
-			region:                          "us-west-2",
-			opts:                            []AdminOption{},
-			expectError:                     false, // Defaults to IAM auth
 		},
 		{
 			name:                            "empty broker addresses",
@@ -439,12 +274,9 @@ func TestNewKafkaAdmin(t *testing.T) {
 
 func TestNewKafkaAdmin_DefaultConfiguration(t *testing.T) {
 	t.Skip("skipping integration test that requires real Kafka brokers")
-	// Test that NewKafkaAdmin uses IAM auth by default
 	admin, err := NewKafkaAdmin([]string{"broker1:9098"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0")
 
-	// This will likely fail due to network/credentials, but we can verify the error message
 	if err != nil {
-		// The error should be related to creating the admin client, not auth type
 		assert.NotContains(t, err.Error(), "Auth type")
 		assert.Contains(t, err.Error(), "Failed to create admin client")
 	} else {
@@ -455,99 +287,18 @@ func TestNewKafkaAdmin_DefaultConfiguration(t *testing.T) {
 
 func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	t.Skip("skipping integration test that requires real Kafka brokers")
-	// Test that multiple options can be applied
 	opts := []AdminOption{
 		WithIAMAuth(),
-		WithSASLSCRAMAuth("user", "pass"), // This should override the IAM auth
+		WithSASLSCRAMAuth("user", "pass"),
 	}
 
 	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0", opts...)
 
-	// This will likely fail due to network/credentials, but we can verify the error message
 	if err != nil {
-		// The error should be related to creating the admin client, not auth type
 		assert.NotContains(t, err.Error(), "Auth type")
 		assert.Contains(t, err.Error(), "Failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
 		admin.Close()
-	}
-}
-
-func TestKafkaAdminInterface(t *testing.T) {
-	// Test that KafkaAdminClient properly implements the KafkaAdmin interface
-	var _ KafkaAdmin = (*KafkaAdminClient)(nil)
-}
-
-func TestClusterKafkaMetadata_Structure(t *testing.T) {
-	// Test the ClusterKafkaMetadata structure
-	metadata := &ClusterKafkaMetadata{
-		Brokers: []types.BrokerInfo{
-			{ID: 1, Address: "broker1:9092"},
-			{ID: 2, Address: "broker2:9092"},
-		},
-		ControllerID: 1,
-		ClusterID:    "test-cluster",
-	}
-
-	assert.Len(t, metadata.Brokers, 2)
-	assert.Equal(t, int32(1), metadata.ControllerID)
-	assert.Equal(t, "test-cluster", metadata.ClusterID)
-}
-
-func TestSaramaKafkaVersionParsing(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedOutput sarama.KafkaVersion
-	}{
-		{
-			name:           "4.0.x.kraft should convert to sarama.V4_0_0_0",
-			input:          "4.0.x.kraft",
-			expectedOutput: sarama.V4_0_0_0,
-		},
-		{
-			name:           "3.9.x should convert to sarama.V3_9_0_0",
-			input:          "3.9.x",
-			expectedOutput: sarama.V3_9_0_0,
-		},
-		{
-			name:           "3.9.x.kraft should convert to sarama.V3_9_0_0",
-			input:          "3.9.x.kraft",
-			expectedOutput: sarama.V3_9_0_0,
-		},
-		{
-			name:           "3.7.x.kraft should convert to sarama.V3_7_0_0",
-			input:          "3.7.x.kraft",
-			expectedOutput: sarama.V3_7_0_0,
-		},
-		{
-			name:           "3.6.0.1 should convert to sarama.V3_6_0_0",
-			input:          "3.6.0.1",
-			expectedOutput: sarama.V3_6_0_0,
-		},
-		{
-			name:           "3.6.0 should remain sarama.V3_6_0_0",
-			input:          "3.6.0",
-			expectedOutput: sarama.V3_6_0_0,
-		},
-		{
-			name:           "2.8.2.tiered should convert to sarama.V2_8_2_0",
-			input:          "2.8.2.tiered",
-			expectedOutput: sarama.V2_8_2_0,
-		},
-		{
-			name:           "2.6.0 should remain sarama.V2_6_0_0",
-			input:          "2.6.0",
-			expectedOutput: sarama.V2_6_0_0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := sarama.ParseKafkaVersion(utils.ConvertKafkaVersion(&tt.input))
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedOutput, result)
-		})
 	}
 }

@@ -2,16 +2,14 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"os"
+	"strings"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/aws/aws-msk-iam-sasl-signer-go/signer"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -67,75 +65,6 @@ func WithTLSAuth(caCertFile string, clientCertFile string, clientKeyFile string)
 	}
 }
 
-func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) {
-	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
-	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
-	config.Net.SASL.Enable = true
-	config.Net.SASL.Mechanism = sarama.SASLTypeOAuth
-	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
-}
-
-func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string) {
-	slog.Info("🔍 configuring SASL/SCRAM authentication")
-	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
-	config.Net.SASL.Enable = true
-	config.Net.SASL.User = username
-	config.Net.SASL.Password = password
-	config.Net.SASL.Handshake = true
-	config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &XDGSCRAMClient{HashGeneratorFcn: SHA512} }
-	config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
-}
-
-func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
-	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
-	config.Net.TLS.Enable = withTLSEncryption
-	config.Net.TLS.Config = &tls.Config{}
-}
-
-func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string) error {
-	tlsConfig := tls.Config{}
-
-	cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
-	if err != nil {
-		return fmt.Errorf("failed to load client certificate: %v", err)
-	}
-	tlsConfig.Certificates = []tls.Certificate{cert}
-
-	caCert, err := os.ReadFile(caCertFile)
-	if err != nil {
-		return fmt.Errorf("failed to read CA certificate file: %v", err)
-	}
-
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return fmt.Errorf("failed to append CA certificate to pool")
-	}
-	tlsConfig.RootCAs = caCertPool
-
-	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tlsConfig
-	return nil
-}
-
-func configureCommonSettings(config *sarama.Config, clientID string, kafkaVersion sarama.KafkaVersion) {
-	config.Version = kafkaVersion
-	config.ClientID = clientID
-
-	// Network-level timeout configurations
-	config.Net.DialTimeout = 10 * time.Second // Connection establishment timeout
-	config.Net.ReadTimeout = 30 * time.Second // Socket read operations timeout
-	config.Net.KeepAlive = 30 * time.Second   // TCP keep-alive interval
-
-	// Request-specific timeout configurations
-	config.Metadata.Timeout = 15 * time.Second // Metadata request timeout
-
-	// Retry configuration with backoff
-	config.Metadata.Retry.Max = 3
-	config.Metadata.Retry.Backoff = 250 * time.Millisecond
-}
-
 // ClusterKafkaMetadata represents cluster information including brokers, controller, and cluster ID
 type ClusterKafkaMetadata struct {
 	Brokers      []types.BrokerInfo
@@ -154,163 +83,232 @@ type KafkaAdmin interface {
 	Close() error
 }
 
-// MSKAccessTokenProvider implements sarama.AccessTokenProvider for MSK IAM authentication
-type MSKAccessTokenProvider struct {
-	region string
-}
-
-func (m *MSKAccessTokenProvider) Token() (*sarama.AccessToken, error) {
-	token, _, err := signer.GenerateAuthToken(context.TODO(), m.region)
-
-	return &sarama.AccessToken{Token: token}, err
-}
-
-// KafkaAdminClient wraps sarama.ClusterAdmin to implement our KafkaAdmin interface
+// KafkaAdminClient wraps confluent-kafka-go AdminClient to implement our KafkaAdmin interface
 type KafkaAdminClient struct {
-	admin           sarama.ClusterAdmin
+	admin           *kafka.AdminClient
 	region          string
 	config          AdminConfig
-	saramaConfig    *sarama.Config
-	resourceAcls    map[string]sarama.ResourceAcls
+	configMap       kafka.ConfigMap
 	brokerAddresses []string
 }
 
-/*
-A custom implementation of the ListTopics() function in Sarama that returns all topic configs
-instead of just overridden configs. This was done to reduce the number of requests to the broker.
-https://github.com/IBM/sarama/blob/main/admin.go#L349
-*/
-func (k *KafkaAdminClient) ListTopicsWithConfigs() ([]types.TopicDetails, error) {
-	// Get controller to use as a connection broker to avoid opening a new broker connection
-	controller, err := k.admin.Controller()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get controller: %w", err)
+// buildConfigMap creates a kafka.ConfigMap from broker addresses and admin config
+func buildConfigMap(brokerAddresses []string, config AdminConfig) (kafka.ConfigMap, error) {
+	bootstrapServers := strings.Join(brokerAddresses, ",")
+	configMap := kafka.ConfigMap{
+		"bootstrap.servers": bootstrapServers,
+		"client.id":         "kcp-cli",
 	}
 
-	// Send the all-topic MetadataRequest
-	metadataReq := sarama.NewMetadataRequest(k.saramaConfig.Version, nil)
-	metadataResp, err := controller.GetMetadata(metadataReq)
+	switch config.authType {
+	case types.AuthTypeIAM:
+		_ = configMap.SetKey("security.protocol", "SASL_SSL")
+		_ = configMap.SetKey("sasl.mechanisms", "OAUTHBEARER")
+	case types.AuthTypeSASLSCRAM:
+		_ = configMap.SetKey("security.protocol", "SASL_SSL")
+		_ = configMap.SetKey("sasl.mechanisms", "SCRAM-SHA-512")
+		_ = configMap.SetKey("sasl.username", config.username)
+		_ = configMap.SetKey("sasl.password", config.password)
+	case types.AuthTypeUnauthenticatedTLS:
+		_ = configMap.SetKey("security.protocol", "SSL")
+	case types.AuthTypeUnauthenticatedPlaintext:
+		_ = configMap.SetKey("security.protocol", "PLAINTEXT")
+	case types.AuthTypeTLS:
+		_ = configMap.SetKey("security.protocol", "SSL")
+		_ = configMap.SetKey("ssl.ca.location", config.caCertFile)
+		_ = configMap.SetKey("ssl.certificate.location", config.clientCertFile)
+		_ = configMap.SetKey("ssl.key.location", config.clientKeyFile)
+	default:
+		return nil, fmt.Errorf("auth type: %v not yet supported", config.authType)
+	}
+
+	return configMap, nil
+}
+
+// handleOAuthTokenRefresh handles OAuthBearer token refresh for IAM auth.
+// It runs as a goroutine, polling the admin client for token refresh events
+// and generating new tokens using the AWS MSK IAM signer.
+func handleOAuthTokenRefresh(adminClient *kafka.AdminClient, region string) {
+	// AdminClient doesn't expose Poll() or Events() channels for OAuthBearerTokenRefresh events.
+	// We proactively set the token and refresh it periodically.
+	for {
+		token, expirationTimeMs, err := signer.GenerateAuthToken(context.TODO(), region)
+		if err != nil {
+			_ = adminClient.SetOAuthBearerTokenFailure(err.Error())
+			slog.Error("failed to generate IAM auth token", "error", err)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		oauthToken := kafka.OAuthBearerToken{
+			TokenValue: token,
+			Expiration: time.UnixMilli(expirationTimeMs),
+		}
+		err = adminClient.SetOAuthBearerToken(oauthToken)
+		if err != nil {
+			slog.Error("failed to set OAuthBearer token", "error", err)
+		}
+
+		// Refresh the token at 80% of its lifetime
+		lifetime := time.Until(time.UnixMilli(expirationTimeMs))
+		refreshIn := time.Duration(float64(lifetime) * 0.8)
+		if refreshIn < 10*time.Second {
+			refreshIn = 10 * time.Second
+		}
+		time.Sleep(refreshIn)
+	}
+}
+
+// NewKafkaAdmin creates a new Kafka admin client for the given broker addresses and region
+func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, opts ...AdminOption) (KafkaAdmin, error) {
+	config := AdminConfig{
+		authType: types.AuthTypeIAM,
+	}
+	for _, opt := range opts {
+		opt(&config)
+	}
+
+	configMap, err := buildConfigMap(brokerAddresses, config)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to build config: %v", err)
+	}
+
+	admin, err := kafka.NewAdminClient(&configMap)
+	if err != nil {
+		return nil, fmt.Errorf("❌ Failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
+	}
+
+	// Handle OAuthBearer token refresh for IAM auth
+	if config.authType == types.AuthTypeIAM {
+		go handleOAuthTokenRefresh(admin, region)
+	}
+
+	return &KafkaAdminClient{
+		admin:           admin,
+		region:          region,
+		config:          config,
+		configMap:       configMap,
+		brokerAddresses: brokerAddresses,
+	}, nil
+}
+
+func (k *KafkaAdminClient) ListTopicsWithConfigs() ([]types.TopicDetails, error) {
+	// Get metadata for all topics
+	metadata, err := k.admin.GetMetadata(nil, true, 15000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metadata: %w", err)
 	}
 
-	topicsDetailsMap := make(map[string]sarama.TopicDetail)
-	var describeConfigsResources []*sarama.ConfigResource
-
-	if len(metadataResp.Topics) == 0 && len(metadataResp.Brokers) > 0 {
-		slog.Warn("⚠️ no topics found in metadata response, this")
+	if len(metadata.Topics) == 0 && len(metadata.Brokers) > 0 {
+		slog.Warn("⚠️ no topics found in metadata response")
 	}
 
-	for _, topic := range metadataResp.Topics {
-		topicDetails := sarama.TopicDetail{
-			NumPartitions: int32(len(topic.Partitions)),
-		}
-		if len(topic.Partitions) > 0 {
-			topicDetails.ReplicaAssignment = map[int32][]int32{}
-			for _, partition := range topic.Partitions {
-				topicDetails.ReplicaAssignment[partition.ID] = partition.Replicas
-			}
-			topicDetails.ReplicationFactor = int16(len(topic.Partitions[0].Replicas))
-		}
-		topicsDetailsMap[topic.Name] = topicDetails
-
-		// we populate the resources we want to describe from the MetadataResponse
-		topicResource := &sarama.ConfigResource{
-			Type: sarama.TopicResource,
-			Name: topic.Name,
-		}
-		describeConfigsResources = append(describeConfigsResources, topicResource)
+	// Build ConfigResource list for DescribeConfigs
+	var configResources []kafka.ConfigResource
+	for topicName := range metadata.Topics {
+		configResources = append(configResources, kafka.ConfigResource{
+			Type: kafka.ResourceTopic,
+			Name: topicName,
+		})
 	}
 
-	// Send the DescribeConfigsRequest
-	describeConfigsReq := &sarama.DescribeConfigsRequest{
-		Resources: describeConfigsResources,
-	}
+	// Describe configs for all topics
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	if k.saramaConfig.Version.IsAtLeast(sarama.V1_1_0_0) {
-		describeConfigsReq.Version = 1
-	}
-
-	if k.saramaConfig.Version.IsAtLeast(sarama.V2_0_0_0) {
-		describeConfigsReq.Version = 2
-	}
-
-	describeConfigsResp, err := controller.DescribeConfigs(describeConfigsReq)
+	configResults, err := k.admin.DescribeConfigs(ctx, configResources)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe configs: %w", err)
 	}
 
-	for _, resource := range describeConfigsResp.Resources {
-		topicDetails := topicsDetailsMap[resource.Name]
-		topicDetails.ConfigEntries = make(map[string]*string)
-
-		for _, entry := range resource.Configs {
-			// Include ALL configs without filtering (no default/sensitive filtering)
-			topicDetails.ConfigEntries[entry.Name] = &entry.Value
+	// Build a map of topic name -> config entries
+	topicConfigs := make(map[string]map[string]kafka.ConfigEntryResult)
+	for _, result := range configResults {
+		if result.Error.Code() != kafka.ErrNoError {
+			continue
 		}
-
-		topicsDetailsMap[resource.Name] = topicDetails
+		topicConfigs[result.Name] = result.Config
 	}
 
+	// Build the result
 	var result []types.TopicDetails
-	for topicName, topic := range topicsDetailsMap {
+	for topicName, topicMeta := range metadata.Topics {
+		numPartitions := len(topicMeta.Partitions)
+		var replicationFactor int
+		if numPartitions > 0 {
+			replicationFactor = len(topicMeta.Partitions[0].Replicas)
+		}
+
 		configurations := make(map[string]*string)
-		for key, valuePtr := range topic.ConfigEntries {
-			if valuePtr != nil {
-				configurations[key] = valuePtr
+		if configs, ok := topicConfigs[topicName]; ok {
+			for _, entry := range configs {
+				value := entry.Value
+				configurations[entry.Name] = &value
 			}
 		}
+
 		result = append(result, types.TopicDetails{
 			Name:              topicName,
-			Partitions:        int(topic.NumPartitions),
-			ReplicationFactor: int(topic.ReplicationFactor),
+			Partitions:        numPartitions,
+			ReplicationFactor: replicationFactor,
 			Configurations:    configurations,
 		})
 	}
+
 	return result, nil
 }
 
 func (k *KafkaAdminClient) DescribeConfig() ([]types.BrokerConfigEntry, error) {
-	entries, err := k.admin.DescribeConfig(sarama.ConfigResource{
-		Type: sarama.ConfigResourceType(sarama.BrokerResource),
-		Name: "1",
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	configResults, err := k.admin.DescribeConfigs(ctx, []kafka.ConfigResource{
+		{Type: kafka.ResourceBroker, Name: "1"},
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	var result []types.BrokerConfigEntry
-	for _, entry := range entries {
-		result = append(result, types.BrokerConfigEntry{
-			Name:      entry.Name,
-			Value:     entry.Value,
-			IsDefault: entry.Default,
-		})
+	for _, configResult := range configResults {
+		if configResult.Error.Code() != kafka.ErrNoError {
+			return nil, fmt.Errorf("failed to describe broker config: %v", configResult.Error)
+		}
+		for _, entry := range configResult.Config {
+			result = append(result, types.BrokerConfigEntry{
+				Name:      entry.Name,
+				Value:     entry.Value,
+				IsDefault: entry.IsDefault,
+			})
+		}
 	}
 	return result, nil
 }
 
 func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error) {
-	brokers, controllerID, err := k.admin.DescribeCluster()
+	metadata, err := k.admin.GetMetadata(nil, false, 15000)
 	if err != nil {
 		return nil, err
 	}
 
-	var clusterID string
-	// Get cluster ID by connecting to a broker and requesting metadata
-	if len(brokers) > 0 {
-		clusterID, err = k.getClusterIDFromBroker(brokers[0])
-		if err != nil {
-			return nil, err
-		}
+	// Get cluster ID
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	clusterID, err := k.admin.ClusterID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster ID: %w", err)
 	}
 
 	var brokerInfos []types.BrokerInfo
-	for _, broker := range brokers {
+	for _, broker := range metadata.Brokers {
 		brokerInfos = append(brokerInfos, types.BrokerInfo{
-			ID:      broker.ID(),
-			Address: broker.Addr(),
+			ID:      broker.ID,
+			Address: fmt.Sprintf("%s:%d", broker.Host, broker.Port),
 		})
 	}
+
+	// The originating broker is the controller for our purposes
+	controllerID := metadata.OriginatingBroker.ID
+
 	return &ClusterKafkaMetadata{
 		Brokers:      brokerInfos,
 		ControllerID: controllerID,
@@ -318,269 +316,233 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 	}, nil
 }
 
-// getClusterIDFromBroker establishes a connection to a specific broker and retrieves the cluster ID
-func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string, error) {
-	// Create a new broker connection
-	brokerConn := sarama.NewBroker(broker.Addr())
-	err := brokerConn.Open(k.saramaConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to open broker connection: %v", err)
-	}
-	defer brokerConn.Close()
-
-	// Request metadata from the broker
-	metadataReq := &sarama.MetadataRequest{Version: 7}
-	metadata, err := brokerConn.GetMetadata(metadataReq)
-
-	if err != nil {
-		return "", fmt.Errorf("failed to get metadata: %v", err)
-	}
-
-	if metadata.ClusterID == nil {
-		return "", fmt.Errorf("cluster ID not available in metadata")
-	}
-
-	return *metadata.ClusterID, nil
-}
-
 func (k *KafkaAdminClient) ListAcls() ([]types.Acls, error) {
-	aclFilter := sarama.AclFilter{
-		ResourceType:              sarama.AclResourceAny,
-		ResourceName:              nil,
-		ResourcePatternTypeFilter: sarama.AclPatternAny,
-		Principal:                 nil,
-		Host:                      nil,
-		Operation:                 sarama.AclOperationAny,
-		PermissionType:            sarama.AclPermissionAny,
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	aclFilter := kafka.ACLBindingFilter{
+		Type:                kafka.ResourceAny,
+		ResourcePatternType: kafka.ResourcePatternTypeAny,
+		Operation:           kafka.ACLOperationAny,
+		PermissionType:      kafka.ACLPermissionTypeAny,
 	}
-	resourceAcls, err := k.admin.ListAcls(aclFilter)
+
+	describeResult, err := k.admin.DescribeACLs(ctx, aclFilter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list ACLs: %w", err)
 	}
+
+	if describeResult.Error.Code() != kafka.ErrNoError {
+		return nil, fmt.Errorf("failed to list ACLs: %v", describeResult.Error)
+	}
+
 	var result []types.Acls
-	for _, resourceAcl := range resourceAcls {
-		for _, acl := range resourceAcl.Acls {
-			result = append(result, types.Acls{
-				ResourceType:        resourceAcl.ResourceType.String(),
-				ResourceName:        resourceAcl.ResourceName,
-				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
-				Principal:           acl.Principal,
-				Host:                acl.Host,
-				Operation:           acl.Operation.String(),
-				PermissionType:      acl.PermissionType.String(),
-			})
-		}
+	for _, binding := range describeResult.ACLBindings {
+		result = append(result, types.Acls{
+			ResourceType:        binding.Type.String(),
+			ResourceName:        binding.Name,
+			ResourcePatternType: binding.ResourcePatternType.String(),
+			Principal:           binding.Principal,
+			Host:                binding.Host,
+			Operation:           binding.Operation.String(),
+			PermissionType:      binding.PermissionType.String(),
+		})
 	}
 	return result, nil
 }
 
 func (k *KafkaAdminClient) Close() error {
-	return k.admin.Close()
+	k.admin.Close()
+	return nil
+}
+
+// newConsumer creates a new confluent-kafka-go Consumer using the same auth config
+func (k *KafkaAdminClient) newConsumer() (*kafka.Consumer, error) {
+	// Copy the config map and add consumer-specific settings
+	consumerConfig := kafka.ConfigMap{}
+	for key, value := range k.configMap {
+		_ = consumerConfig.SetKey(key, value)
+	}
+	_ = consumerConfig.SetKey("group.id", "kcp-cli-consumer-"+fmt.Sprintf("%d", time.Now().UnixNano()))
+	_ = consumerConfig.SetKey("auto.offset.reset", "earliest")
+	_ = consumerConfig.SetKey("enable.auto.commit", false)
+
+	consumer, err := kafka.NewConsumer(&consumerConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle OAuthBearer token for the consumer if using IAM auth
+	if k.config.authType == types.AuthTypeIAM {
+		token, expirationTimeMs, err := signer.GenerateAuthToken(context.TODO(), k.region)
+		if err != nil {
+			consumer.Close()
+			return nil, fmt.Errorf("failed to generate IAM auth token for consumer: %w", err)
+		}
+		oauthToken := kafka.OAuthBearerToken{
+			TokenValue: token,
+			Expiration: time.UnixMilli(expirationTimeMs),
+		}
+		if err := consumer.SetOAuthBearerToken(oauthToken); err != nil {
+			consumer.Close()
+			return nil, fmt.Errorf("failed to set OAuthBearer token for consumer: %w", err)
+		}
+	}
+
+	return consumer, nil
 }
 
 // GetAllMessagesWithKeyFilter retrieves all messages from a specific topic across all partitions
 // that have keys starting with the specified prefix
 // Returns a map of connector names to their configuration JSON strings
 func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPrefix string) (map[string]string, error) {
-	consumer, err := sarama.NewConsumer(k.brokerAddresses, k.saramaConfig)
+	consumer, err := k.newConsumer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
 	defer consumer.Close()
 
-	partitions, err := consumer.Partitions(topicName)
+	// Get metadata to discover partitions
+	topicMeta, err := consumer.GetMetadata(&topicName, false, 10000)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get partitions for topic %s: %w", topicName, err)
+		return nil, fmt.Errorf("failed to get metadata for topic %s: %w", topicName, err)
 	}
 
-	if len(partitions) == 0 {
+	topicInfo, ok := topicMeta.Topics[topicName]
+	if !ok || len(topicInfo.Partitions) == 0 {
 		return nil, fmt.Errorf("topic %s has no partitions", topicName)
 	}
 
-	connectorConfigs := make(map[string]string)
+	// Assign all partitions starting from the beginning
+	var partitions []kafka.TopicPartition
+	for _, p := range topicInfo.Partitions {
+		partitions = append(partitions, kafka.TopicPartition{
+			Topic:     &topicName,
+			Partition: p.ID,
+			Offset:    kafka.OffsetBeginning,
+		})
+	}
 
-	for _, partition := range partitions {
-		// Creates a partition consumer starting from the oldest offset.
-		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, sarama.OffsetOldest)
-		if err != nil {
-			continue
+	if err := consumer.Assign(partitions); err != nil {
+		return nil, fmt.Errorf("failed to assign partitions: %w", err)
+	}
+
+	connectorConfigs := make(map[string]string)
+	overallTimeout := time.After(30 * time.Second)
+	lastMessageTime := time.Now()
+
+	for {
+		select {
+		case <-overallTimeout:
+			return connectorConfigs, nil
+		default:
 		}
 
-		// For compacted topics, we don't know how many messages remain after compaction so we read messages
-		// from the earliest offset until no more messages are read and the timout is hit.
-		timeout := time.After(30 * time.Second)
-		lastMessageTime := time.Now()
-
-	consumeLoop:
-		for {
-			select {
-			case msg := <-partitionConsumer.Messages():
-				if msg != nil {
-					lastMessageTime = time.Now()
-					if len(msg.Key) > 0 {
-						keyStr := string(msg.Key)
-						// Checks if the key starts with the prefix.
-						if len(keyStr) >= len(keyPrefix) && keyStr[:len(keyPrefix)] == keyPrefix {
-							// Uses the full key as the connector name.
-							connectorConfigs[keyStr] = string(msg.Value)
-						}
-					}
-				}
-			case err := <-partitionConsumer.Errors():
-				if err != nil {
-					break consumeLoop
-				}
-			case <-timeout:
-				// Overall timeout for this partition.
-				break consumeLoop
-			case <-time.After(5 * time.Second):
-				// If no messages received for 5 seconds, assume we've reached the end.
+		msg, err := consumer.ReadMessage(5 * time.Second)
+		if err != nil {
+			// Check if it's a timeout (no more messages)
+			kafkaErr, ok := err.(kafka.Error)
+			if ok && kafkaErr.Code() == kafka.ErrTimedOut {
 				if time.Since(lastMessageTime) >= 5*time.Second {
-					break consumeLoop
+					break
 				}
+				continue
+			}
+			// Other errors - break out
+			break
+		}
+
+		lastMessageTime = time.Now()
+		if len(msg.Key) > 0 {
+			keyStr := string(msg.Key)
+			if len(keyStr) >= len(keyPrefix) && keyStr[:len(keyPrefix)] == keyPrefix {
+				connectorConfigs[keyStr] = string(msg.Value)
 			}
 		}
-
-		partitionConsumer.Close()
 	}
 
 	return connectorConfigs, nil
 }
 
 // GetConnectorStatusMessages retrieves status messages from the connect-status topic
-// by consuming the last 1000 messages from each partition and tracking the most recent status
+// by consuming messages from each partition and tracking the most recent status
 // for each connector based on message timestamp
 func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[string]string, error) {
-	consumer, err := sarama.NewConsumer(k.brokerAddresses, k.saramaConfig)
+	consumer, err := k.newConsumer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
 	defer consumer.Close()
 
-	partitions, err := consumer.Partitions(topicName)
+	// Get metadata to discover partitions
+	topicMeta, err := consumer.GetMetadata(&topicName, false, 10000)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get partitions for topic %s: %w", topicName, err)
+		return nil, fmt.Errorf("failed to get metadata for topic %s: %w", topicName, err)
 	}
 
-	if len(partitions) == 0 {
+	topicInfo, ok := topicMeta.Topics[topicName]
+	if !ok || len(topicInfo.Partitions) == 0 {
 		return nil, fmt.Errorf("topic %s has no partitions", topicName)
+	}
+
+	// Assign all partitions starting from the beginning
+	var partitions []kafka.TopicPartition
+	for _, p := range topicInfo.Partitions {
+		partitions = append(partitions, kafka.TopicPartition{
+			Topic:     &topicName,
+			Partition: p.ID,
+			Offset:    kafka.OffsetBeginning,
+		})
+	}
+
+	if err := consumer.Assign(partitions); err != nil {
+		return nil, fmt.Errorf("failed to assign partitions: %w", err)
 	}
 
 	connectorStatuses := make(map[string]string)
 	connectorTimestamps := make(map[string]int64)
+	overallTimeout := time.After(30 * time.Second)
+	lastMessageTime := time.Now()
 
-	for _, partition := range partitions {
-		partitionConsumer, err := consumer.ConsumePartition(topicName, partition, sarama.OffsetOldest)
-		if err != nil {
-			continue // Skip this partition if we can't consume it
+	for {
+		select {
+		case <-overallTimeout:
+			return connectorStatuses, nil
+		default:
 		}
 
-		// For compacted topics, we don't know how many messages remain after compaction
-		// So we read messages until we hit a timeout instead of counting to newest offset
-		timeout := time.After(30 * time.Second)
-		lastMessageTime := time.Now()
-
-	partitionLoop:
-		for {
-			select {
-			case msg := <-partitionConsumer.Messages():
-				if msg != nil {
-					lastMessageTime = time.Now()
-
-					if len(msg.Key) > 0 {
-						keyStr := string(msg.Key)
-
-						// Check if the key starts with "status-connector-"
-						if len(keyStr) >= 17 && keyStr[:17] == "status-connector-" {
-							connectorName := keyStr[17:]
-
-							// Get message timestamp
-							var msgTimestamp int64
-							if msg.Timestamp.IsZero() {
-								msgTimestamp = int64(msg.Offset)
-							} else {
-								msgTimestamp = msg.Timestamp.UnixMilli()
-							}
-
-							// Only update if this is a newer message
-							if existingTimestamp, exists := connectorTimestamps[connectorName]; !exists || msgTimestamp > existingTimestamp {
-								connectorStatuses[connectorName] = string(msg.Value)
-								connectorTimestamps[connectorName] = msgTimestamp
-							}
-						}
-					}
-				}
-			case err := <-partitionConsumer.Errors():
-				if err != nil {
-					// Log the error but continue with other partitions
-					break partitionLoop
-				}
-			case <-timeout:
-				// Overall timeout for this partition
-				break partitionLoop
-			case <-time.After(5 * time.Second):
-				// If no messages received for 5 seconds, assume we've reached the end
+		msg, err := consumer.ReadMessage(5 * time.Second)
+		if err != nil {
+			kafkaErr, ok := err.(kafka.Error)
+			if ok && kafkaErr.Code() == kafka.ErrTimedOut {
 				if time.Since(lastMessageTime) >= 5*time.Second {
-					break partitionLoop
+					break
+				}
+				continue
+			}
+			break
+		}
+
+		lastMessageTime = time.Now()
+		if len(msg.Key) > 0 {
+			keyStr := string(msg.Key)
+			if len(keyStr) >= 17 && keyStr[:17] == "status-connector-" {
+				connectorName := keyStr[17:]
+
+				var msgTimestamp int64
+				if msg.Timestamp.IsZero() {
+					msgTimestamp = int64(msg.TopicPartition.Offset)
+				} else {
+					msgTimestamp = msg.Timestamp.UnixMilli()
+				}
+
+				if existingTimestamp, exists := connectorTimestamps[connectorName]; !exists || msgTimestamp > existingTimestamp {
+					connectorStatuses[connectorName] = string(msg.Value)
+					connectorTimestamps[connectorName] = msgTimestamp
 				}
 			}
 		}
-
-		partitionConsumer.Close()
 	}
 
 	return connectorStatuses, nil
-}
-
-// NewKafkaAdmin creates a new Kafka admin client for the given broker addresses and region
-func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, opts ...AdminOption) (KafkaAdmin, error) {
-	// Default configuration
-	config := AdminConfig{
-		authType: types.AuthTypeIAM, // Default to IAM auth
-	}
-
-	// Apply all options
-	for _, opt := range opts {
-		opt(&config)
-	}
-
-	saramaKafkaVersion, err := sarama.ParseKafkaVersion(kafkaVersion)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to parse Kafka version: %v", err)
-	}
-
-	saramaConfig := sarama.NewConfig()
-	configureCommonSettings(saramaConfig, "kcp-cli", saramaKafkaVersion)
-
-	switch config.authType {
-	case types.AuthTypeIAM:
-		configureSASLTypeOAuthAuthentication(saramaConfig, region)
-	case types.AuthTypeSASLSCRAM:
-		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
-	case types.AuthTypeUnauthenticatedTLS:
-		configureUnauthenticatedAuthentication(saramaConfig, true)
-	case types.AuthTypeUnauthenticatedPlaintext:
-		configureUnauthenticatedAuthentication(saramaConfig, false)
-	case types.AuthTypeTLS:
-		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("❌ Failed to configure TLS authentication: %v", err)
-		}
-	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", config.authType)
-	}
-
-	admin, err := sarama.NewClusterAdmin(brokerAddresses, saramaConfig)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
-	}
-
-	return &KafkaAdminClient{
-		admin:           admin,
-		region:          region,
-		config:          config,
-		saramaConfig:    saramaConfig,
-		resourceAcls:    make(map[string]sarama.ResourceAcls),
-		brokerAddresses: brokerAddresses,
-	}, nil
 }

@@ -28,7 +28,7 @@ type Topics struct {
 	Details []TopicDetails `json:"details"`
 }
 
-// Preferred over sarama.ResourceAcls because it is flattened vs sarama's nested structure.
+// Acls provides a flattened ACL representation for easier processing.
 type Acls struct {
 	ResourceType        string `json:"ResourceType"`
 	ResourceName        string `json:"ResourceName"`
