@@ -10,9 +10,21 @@
             "region": "us-east-1",
             "aws_client_information": {
               "msk_cluster_config": {
+                "ClusterArn": "arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster-1/uuid",
+                "ClusterType": "PROVISIONED",
+                "CreationTime": "2026-01-01T00:00:00Z",
                 "Provisioned": {
-                  "NumberOfBrokerNodes": 3
+                  "NumberOfBrokerNodes": 3,
+                  "BrokerNodeGroupInfo": {
+                    "InstanceType": "kafka.m5.large",
+                    "BrokerAZDistribution": "DEFAULT"
+                  }
                 }
+              }
+            },
+            "metrics": {
+              "metadata": {
+                "broker_type": "kafka.m5.large"
               }
             },
             "kafka_admin_client_information": {
