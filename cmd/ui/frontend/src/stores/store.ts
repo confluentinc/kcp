@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import type { Cluster, Region } from '@/types'
+import type { Cluster, Region, SourceType } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
 import type { ProcessedState, SchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
@@ -84,8 +84,10 @@ interface AppState {
 
   // Selection state
   selectedView: ViewType | null
+  selectedSourceType: SourceType | null
   selectedRegionName: string | null
   selectedClusterArn: string | null
+  selectedOSKClusterId: string | null
 
   // TCO workload data (keyed by ARN)
   tcoWorkloadData: WorkloadData
@@ -116,6 +118,7 @@ interface AppState {
   selectSummary: () => void
   selectRegion: (regionName: string) => void
   selectCluster: (regionName: string, clusterArn: string, preselectedMetric?: string) => void
+  selectOSKCluster: (clusterId: string) => void
   selectTCOInputs: () => void
   selectSchemaRegistries: () => void
   clearSelection: () => void
@@ -167,8 +170,10 @@ export const useAppStore = create<AppState>()(
       sessionId: crypto.randomUUID(),
       kcpState: null,
       selectedView: null,
+      selectedSourceType: null,
       selectedRegionName: null,
       selectedClusterArn: null,
+      selectedOSKClusterId: null,
       tcoWorkloadData: {},
       clusterDateFilters: {},
       regionState: {},
@@ -190,8 +195,10 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: 'summary',
+            selectedSourceType: 'msk',
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectSummary'
@@ -201,8 +208,10 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: 'region',
+            selectedSourceType: 'msk',
             selectedRegionName: regionName,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectRegion'
@@ -212,12 +221,27 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: 'cluster',
+            selectedSourceType: 'msk',
             selectedRegionName: regionName,
             selectedClusterArn: clusterArn,
+            selectedOSKClusterId: null,
             preselectedMetric: preselectedMetric || null,
           },
           false,
           'selectCluster'
+        ),
+
+      selectOSKCluster: (clusterId) =>
+        set(
+          {
+            selectedView: 'cluster',
+            selectedSourceType: 'osk',
+            selectedOSKClusterId: clusterId,
+            selectedRegionName: null,
+            selectedClusterArn: null,
+          },
+          false,
+          'selectOSKCluster'
         ),
 
       selectTCOInputs: () =>
@@ -226,6 +250,7 @@ export const useAppStore = create<AppState>()(
             selectedView: 'tco-inputs',
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectTCOInputs'
@@ -237,6 +262,7 @@ export const useAppStore = create<AppState>()(
             selectedView: 'schema-registries',
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectSchemaRegistries'
@@ -246,8 +272,10 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: null,
+            selectedSourceType: null,
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'clearSelection'
