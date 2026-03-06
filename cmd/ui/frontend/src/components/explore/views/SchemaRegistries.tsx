@@ -128,7 +128,7 @@ const ConfluentRegistryCard = ({
   return (
     <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors">
       {/* Registry Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card rounded-t-lg">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
@@ -159,7 +159,7 @@ const ConfluentRegistryCard = ({
                 className="border border-gray-200 dark:border-border rounded-lg"
               >
                 {/* Subject Header */}
-                <div className="p-4 bg-gray-50 dark:bg-card border-b border-gray-200 dark:border-border">
+                <div className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}>
                   <button
                     onClick={() => toggleSubject(subjectKey)}
                     className="w-full text-left flex items-center justify-between"
@@ -326,7 +326,7 @@ const GlueRegistryCard = ({
   return (
     <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors">
       {/* Registry Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card rounded-t-lg">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
@@ -370,7 +370,7 @@ const GlueRegistryCard = ({
                   className="border border-gray-200 dark:border-border rounded-lg"
                 >
                   {/* Schema Header */}
-                  <div className="p-4 bg-gray-50 dark:bg-card border-b border-gray-200 dark:border-border">
+                  <div className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}>
                     <button
                       onClick={() => toggleSchema(schemaKey)}
                       className="w-full text-left flex items-center justify-between"
