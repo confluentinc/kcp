@@ -77,11 +77,13 @@ export interface StateUploadRequest {
 }
 
 /**
- * State upload API response
+ * State upload API response (same as ProcessedState)
  */
 export interface StateUploadResponse {
-  regions: Region[]
+  sources: ProcessedSource[]
   schema_registries?: SchemaRegistry[]
+  kcp_build_info?: unknown
+  timestamp?: string
   message?: string
 }
 

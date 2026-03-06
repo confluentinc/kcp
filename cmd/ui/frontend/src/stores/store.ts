@@ -585,10 +585,17 @@ export const useSchemaRegistries = () =>
 export const useSelectedCluster = () => {
   return useAppStore(
     useShallow((state) => {
-      if (!state.selectedClusterArn || !state.kcpState || !state.kcpState.regions) return null
+      if (!state.selectedClusterArn || !state.kcpState) return null
+
+      // Find the MSK source
+      const mskSource = state.kcpState.sources.find(
+        (s) => s.type === 'msk' && s.msk_data !== undefined
+      )
+
+      if (!mskSource?.msk_data?.regions) return null
 
       // Search through all regions to find the cluster with matching ARN
-      for (const region of state.kcpState.regions) {
+      for (const region of mskSource.msk_data.regions) {
         if (!region.clusters) continue
         const cluster = region.clusters.find((c) => {
           const arn = getClusterArn(c)
@@ -611,8 +618,16 @@ export const useSelectedCluster = () => {
 export const useSelectedRegion = () => {
   return useAppStore(
     useShallow((state) => {
-      if (!state.selectedRegionName || !state.kcpState || !state.kcpState.regions) return null
-      return state.kcpState.regions.find((r) => r.name === state.selectedRegionName) || null
+      if (!state.selectedRegionName || !state.kcpState) return null
+
+      // Find the MSK source
+      const mskSource = state.kcpState.sources.find(
+        (s) => s.type === 'msk' && s.msk_data !== undefined
+      )
+
+      if (!mskSource?.msk_data?.regions) return null
+
+      return mskSource.msk_data.regions.find((r) => r.name === state.selectedRegionName) || null
     })
   )
 }
@@ -702,11 +717,20 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
   const state = useAppStore.getState()
   const kcpState = state.kcpState
 
-  if (!kcpState?.regions || !arn) {
+  if (!kcpState || !arn) {
     return null
   }
 
-  for (const region of kcpState.regions) {
+  // Find the MSK source
+  const mskSource = kcpState.sources.find(
+    (s) => s.type === 'msk' && s.msk_data !== undefined
+  )
+
+  if (!mskSource?.msk_data?.regions) {
+    return null
+  }
+
+  for (const region of mskSource.msk_data.regions) {
     const cluster = region.clusters?.find(
       (c) => c.arn === arn || c.aws_client_information?.msk_cluster_config?.ClusterArn === arn
     )

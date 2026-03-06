@@ -52,12 +52,13 @@ export const Home = () => {
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
           // Set the entire processed state in one action
-          if (result && result.regions) {
+          if (result && result.sources) {
             setKcpState(result)
             setIsProcessing(false)
 
-            // Auto-select summary view if we have regions
-            if (result.regions.length > 0) {
+            // Auto-select summary view if we have MSK sources with regions
+            const mskSource = result.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+            if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
               selectSummary()
             }
           } else {

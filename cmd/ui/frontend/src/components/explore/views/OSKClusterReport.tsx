@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useAppStore } from '@/stores/store'
 import { isOSKSource } from '@/lib/sourceUtils'
 import { OSKClusterHeader } from './OSKClusterHeader'
@@ -6,14 +7,15 @@ import { ClusterTopics } from '../clusters/ClusterTopics'
 import { ClusterACLs } from '../clusters/ClusterACLs'
 import { ClusterConnectors } from '../clusters/ClusterConnectors'
 import { ClusterClients } from '../clusters/ClusterClients'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/common/Tabs'
+import { Tabs } from '@/components/common/Tabs'
 
 export const OSKClusterReport = () => {
-  const processedState = useAppStore((state) => state.processedState)
+  const kcpState = useAppStore((state) => state.kcpState)
   const selectedOSKClusterId = useAppStore((state) => state.selectedOSKClusterId)
+  const [activeTab, setActiveTab] = useState('cluster')
 
   // Find the OSK source
-  const oskSource = processedState?.sources.find(isOSKSource)
+  const oskSource = kcpState?.sources.find(isOSKSource)
   const cluster = oskSource?.osk_data?.clusters.find((c) => c.id === selectedOSKClusterId)
 
   if (!cluster) {
@@ -28,45 +30,50 @@ export const OSKClusterReport = () => {
     )
   }
 
+  // Build tabs array
+  const tabs = [
+    { id: 'cluster', label: 'Cluster' },
+    { id: 'topics', label: 'Topics' },
+    { id: 'acls', label: 'ACLs' },
+    { id: 'connectors', label: 'Connectors' },
+  ]
+
+  if (cluster.discovered_clients && cluster.discovered_clients.length > 0) {
+    tabs.push({ id: 'clients', label: 'Clients' })
+  }
+
   return (
     <div className="p-6 space-y-6">
       <OSKClusterHeader cluster={cluster} />
 
-      <Tabs defaultValue="cluster">
-        <TabsList>
-          <TabsTrigger value="cluster">Cluster</TabsTrigger>
-          <TabsTrigger value="topics">Topics</TabsTrigger>
-          <TabsTrigger value="acls">ACLs</TabsTrigger>
-          <TabsTrigger value="connectors">Connectors</TabsTrigger>
-          {cluster.discovered_clients && cluster.discovered_clients.length > 0 && (
-            <TabsTrigger value="clients">Clients</TabsTrigger>
-          )}
-        </TabsList>
+      <Tabs tabs={tabs} activeId={activeTab} onChange={setActiveTab} />
 
-        <TabsContent value="cluster">
-          <OSKClusterOverview cluster={cluster} />
-        </TabsContent>
+      <div className="mt-6">
+        {activeTab === 'cluster' && <OSKClusterOverview cluster={cluster} />}
 
-        <TabsContent value="topics">
-          <ClusterTopics topics={cluster.kafka_admin_client_information?.topics} />
-        </TabsContent>
-
-        <TabsContent value="acls">
-          <ClusterACLs acls={cluster.kafka_admin_client_information?.acls} />
-        </TabsContent>
-
-        <TabsContent value="connectors">
-          <ClusterConnectors
-            connectors={cluster.kafka_admin_client_information?.self_managed_connectors}
-          />
-        </TabsContent>
-
-        {cluster.discovered_clients && cluster.discovered_clients.length > 0 && (
-          <TabsContent value="clients">
-            <ClusterClients clients={cluster.discovered_clients} />
-          </TabsContent>
+        {activeTab === 'topics' && (
+          <ClusterTopics kafkaAdminInfo={cluster.kafka_admin_client_information} />
         )}
-      </Tabs>
+
+        {activeTab === 'acls' && (
+          <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
+        )}
+
+        {activeTab === 'connectors' && (
+          <ClusterConnectors
+            connectors={[]}
+            selfManagedConnectors={
+              cluster.kafka_admin_client_information?.self_managed_connectors?.connectors
+            }
+          />
+        )}
+
+        {activeTab === 'clients' &&
+          cluster.discovered_clients &&
+          cluster.discovered_clients.length > 0 && (
+            <ClusterClients clients={cluster.discovered_clients} />
+          )}
+      </div>
     </div>
   )
 }
