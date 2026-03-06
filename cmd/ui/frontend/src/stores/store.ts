@@ -564,7 +564,13 @@ export const useKcpState = () => useAppStore((state) => state.kcpState)
 /**
  * Get all regions from KCP state
  */
-export const useRegions = () => useAppStore((state) => state.kcpState?.regions ?? EMPTY_REGIONS)
+export const useRegions = () => {
+  const kcpState = useAppStore((state) => state.kcpState)
+  const mskSource = kcpState?.sources.find(
+    (s) => s.type === 'msk' && s.msk_data !== undefined
+  )
+  return mskSource?.msk_data?.regions ?? EMPTY_REGIONS
+}
 
 /**
  * Get schema registries from KCP state
