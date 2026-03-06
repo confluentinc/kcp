@@ -61,7 +61,6 @@ export interface SchemaRegistry {
  * Processed state structure from backend
  */
 export interface ProcessedState {
-  regions: Region[] // DEPRECATED: Use sources instead
   sources: ProcessedSource[]
   schema_registries?: SchemaRegistry[]
   kcp_build_info?: unknown

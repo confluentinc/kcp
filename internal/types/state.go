@@ -663,8 +663,7 @@ type Subject struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Regions          []ProcessedRegion           `json:"regions"`            // DEPRECATED: Use Sources instead
-	Sources          []ProcessedSource           `json:"sources"`            // NEW: unified source array
+	Sources          []ProcessedSource           `json:"sources"`
 	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
 	KcpBuildInfo     interface{}                 `json:"kcp_build_info,omitempty"`
 	Timestamp        time.Time                   `json:"timestamp"`

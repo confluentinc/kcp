@@ -97,11 +97,18 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 
 // FilterRegionCosts filters the processed state to return cost data for a specific region
 func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
-	// Find the specified region
+	// Find the MSK source and the specified region
 	var targetRegion *types.ProcessedRegion
-	for _, r := range processedState.Regions {
-		if strings.EqualFold(r.Name, regionName) {
-			targetRegion = &r
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
+			for _, r := range source.MSKData.Regions {
+				if strings.EqualFold(r.Name, regionName) {
+					targetRegion = &r
+					break
+				}
+			}
+		}
+		if targetRegion != nil {
 			break
 		}
 	}
@@ -161,13 +168,24 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 	var regionName string
 	var targetCluster *types.ProcessedCluster
 
-	for _, region := range processedState.Regions {
-		for _, cluster := range region.Clusters {
-			if strings.EqualFold(cluster.Arn, clusterArn) {
-				targetCluster = &cluster
-				regionName = region.Name
-				break
+	// Find the cluster in MSK sources
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
+			for _, region := range source.MSKData.Regions {
+				for _, cluster := range region.Clusters {
+					if strings.EqualFold(cluster.Arn, clusterArn) {
+						targetCluster = &cluster
+						regionName = region.Name
+						break
+					}
+				}
+				if targetCluster != nil {
+					break
+				}
 			}
+		}
+		if targetCluster != nil {
+			break
 		}
 	}
 
@@ -216,11 +234,18 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 
 // filterMetrics filters the processed state by region, cluster, and date range
 func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	// Find the specified region
+	// Find the specified region in MSK sources
 	var targetRegion *types.ProcessedRegion
-	for _, r := range processedState.Regions {
-		if strings.EqualFold(r.Name, regionName) {
-			targetRegion = &r
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
+			for _, r := range source.MSKData.Regions {
+				if strings.EqualFold(r.Name, regionName) {
+					targetRegion = &r
+					break
+				}
+			}
+		}
+		if targetRegion != nil {
 			break
 		}
 	}
