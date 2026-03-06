@@ -112,11 +112,14 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 }
 
 func (cs *ClustersScanner) getClusterFromDiscovery(region, clusterArn string) (*types.DiscoveredCluster, error) {
-	for i, currentRegion := range cs.State.Regions {
+	if cs.State.MSKSources == nil {
+		return nil, fmt.Errorf("no MSK sources found in state file")
+	}
+	for i, currentRegion := range cs.State.MSKSources.Regions {
 		if currentRegion.Name == region {
 			for j, currentCluster := range currentRegion.Clusters {
 				if currentCluster.Arn == clusterArn {
-					return &cs.State.Regions[i].Clusters[j], nil
+					return &cs.State.MSKSources.Regions[i].Clusters[j], nil
 				}
 			}
 		}
@@ -133,7 +136,11 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	case types.AuthTypeIAM:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
 	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password))
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(
+			clusterAuth.AuthMethod.SASLScram.Username,
+			clusterAuth.AuthMethod.SASLScram.Password,
+			clusterAuth.AuthMethod.SASLScram.Mechanism,
+		))
 	case types.AuthTypeUnauthenticatedTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedTlsAuth())
 	case types.AuthTypeUnauthenticatedPlaintext:
@@ -154,10 +161,12 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 func (cs *ClustersScanner) outputExecutiveSummary() error {
 	// Only include clusters that have had been hit against the KAfka Admin API.
 	allClusters := []types.DiscoveredCluster{}
-	for _, region := range cs.State.Regions {
-		for _, cluster := range region.Clusters {
-			if cluster.KafkaAdminClientInformation.ClusterID != "" {
-				allClusters = append(allClusters, cluster)
+	if cs.State.MSKSources != nil {
+		for _, region := range cs.State.MSKSources.Regions {
+			for _, cluster := range region.Clusters {
+				if cluster.KafkaAdminClientInformation.ClusterID != "" {
+					allClusters = append(allClusters, cluster)
+				}
 			}
 		}
 	}

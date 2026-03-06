@@ -128,7 +128,7 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 	}
 
 	if startDate == nil && endDate == nil {
-		if len(state.Regions) == 0 {
+		if state.MSKSources == nil || len(state.MSKSources.Regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")
 		}
 
@@ -141,9 +141,11 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 
 	if len(clusterArns) == 0 {
 		// retrieve all cluster ARNs from state file
-		for _, region := range state.Regions {
-			for _, cluster := range region.Clusters {
-				clusterArns = append(clusterArns, cluster.Arn)
+		if state.MSKSources != nil {
+			for _, region := range state.MSKSources.Regions {
+				for _, cluster := range region.Clusters {
+					clusterArns = append(clusterArns, cluster.Arn)
+				}
 			}
 		}
 

@@ -34,7 +34,8 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 			name: "found cluster in region",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
 							Clusters: []types.DiscoveredCluster{
@@ -47,6 +48,7 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 					},
 				},
 			},
+		},
 			region:     "us-east-1",
 			clusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 			wantCluster: &types.DiscoveredCluster{
@@ -59,7 +61,8 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 			name: "no regions match",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
 							Clusters: []types.DiscoveredCluster{
@@ -72,6 +75,7 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 					},
 				},
 			},
+		},
 			region:      "us-west-2",
 			clusterArn:  "arn:aws:kafka:us-west-2:123456789012:cluster/test-cluster/abc-123",
 			wantCluster: nil,
@@ -82,7 +86,8 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 			name: "no clusters match",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
 							Clusters: []types.DiscoveredCluster{
@@ -95,6 +100,7 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 					},
 				},
 			},
+		},
 			region:      "us-east-1",
 			clusterArn:  "arn:aws:kafka:us-east-1:123456789012:cluster/different-cluster/xyz-999",
 			wantCluster: nil,
@@ -120,17 +126,19 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 				// Verify that the returned pointer points to the actual cluster in discovery
 				// This is important for mutation operations
 				found := false
-				for i, region := range tt.scanner.State.Regions {
-					if region.Name == tt.region {
-						for j, cluster := range region.Clusters {
-							if cluster.Arn == tt.clusterArn {
-								assert.Same(t, &tt.scanner.State.Regions[i].Clusters[j], gotCluster)
-								found = true
+				if tt.scanner.State.MSKSources != nil {
+					for i, region := range tt.scanner.State.MSKSources.Regions {
+						if region.Name == tt.region {
+							for j, cluster := range region.Clusters {
+								if cluster.Arn == tt.clusterArn {
+									assert.Same(t, &tt.scanner.State.MSKSources.Regions[i].Clusters[j], gotCluster)
+									found = true
 								break
 							}
 						}
 						break
 					}
+				}
 				}
 				assert.True(t, found, "Expected cluster should have been found in the discovery state")
 			}
@@ -232,7 +240,8 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "getClusterFromDiscovery returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name:     "us-east-1",
 							Clusters: []types.DiscoveredCluster{},
@@ -240,6 +249,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/nonexistent/abc-123",
@@ -251,7 +261,8 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "GetSelectedAuthType returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
 							Clusters: []types.DiscoveredCluster{
@@ -264,6 +275,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
@@ -276,7 +288,8 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "GetBootstrapBrokersForAuthType returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
 							Clusters: []types.DiscoveredCluster{
@@ -294,6 +307,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
@@ -308,7 +322,8 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "createKafkaAdmin returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
 						{
 							Name: "us-east-1",
 							Clusters: []types.DiscoveredCluster{
@@ -334,6 +349,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
+		},
 			region: "us-east-1",
 			clusterAuth: types.ClusterAuth{
 				Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
@@ -345,7 +361,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 					},
 				},
 			},
-			wantErr:    true,
+			wantErr: true,
 			wantErrMsg: "❌ failed to create Kafka admin: ❌ failed to create Kafka admin: ❌ Failed to create admin client: authType=SASL/SCRAM brokerAddresses=[broker1:9092 broker2:9092] error=kafka: invalid configuration (Net.SASL.User must not be empty when SASL is enabled)",
 		},
 	}
