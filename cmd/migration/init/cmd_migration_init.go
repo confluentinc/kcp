@@ -34,9 +34,15 @@ var (
 
 func NewMigrationInitCmd() *cobra.Command {
 	migrationInitCmd := &cobra.Command{
-		Use:           "init",
-		Short:         "PLACEHOLDER",
-		Long:          "PLACEHOLDER",
+		Use:   "init",
+		Short: "Initialize a new migration",
+		Long: `Initialize a new migration by validating infrastructure and persisting migration state.
+
+This command validates the cluster link and mirror topics on the destination cluster,
+fetches the current gateway CR from Kubernetes, validates consistency across the initial,
+fenced, and switchover gateway CRs, and writes the migration configuration to the state file.
+
+The state file can then be used by 'kcp migration execute' to run the migration.`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationInit,
@@ -47,15 +53,15 @@ func NewMigrationInitCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "The Kubernetes namespace under which the gateway has been deployed to.")
-	requiredFlags.StringVar(&passthroughCrName, "passthrough-cr-name", "", "The name of the passthrough gateway CR to use by the migration.")
-	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ID of the cluster to use by the migration.")
-	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "The REST endpoint of the cluster to use by the migration.")
-	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link to use by the migration.")
-	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "The API key of the cluster to use by the migration.")
-	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "The API secret of the cluster to use by the migration.")
-	requiredFlags.StringVar(&fencedCrYamlPath, "fenced-cr-yaml", "", "The path to the fenced gateway CR YAML file.")
-	requiredFlags.StringVar(&switchoverCrYamlPath, "switchover-cr-yaml", "", "The path to the switchover gateway CR YAML file.")
+	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
+	requiredFlags.StringVar(&passthroughCrName, "passthrough-cr-name", "", "Name of the passthrough gateway custom resource in Kubernetes.")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
+	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
+	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "Name of the cluster link on the destination cluster.")
+	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
+	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
+	requiredFlags.StringVar(&fencedCrYamlPath, "fenced-cr-yaml", "", "Path to the gateway CR YAML that blocks traffic during migration.")
+	requiredFlags.StringVar(&switchoverCrYamlPath, "switchover-cr-yaml", "", "Path to the gateway CR YAML that routes traffic to Confluent Cloud.")
 
 	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
