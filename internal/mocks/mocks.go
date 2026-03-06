@@ -3,7 +3,6 @@ package mocks
 import (
 	"context"
 
-	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -13,16 +12,16 @@ import (
 
 // MockKafkaAdmin is a mock implementation of the KafkaAdmin interface
 type MockKafkaAdmin struct {
-	ListTopicsWithConfigsFunc       func() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithConfigsFunc       func() ([]types.TopicDetails, error)
 	GetClusterKafkaMetadataFunc     func() (*client.ClusterKafkaMetadata, error)
-	DescribeConfigFunc              func() ([]sarama.ConfigEntry, error)
-	ListAclsFunc                    func() ([]sarama.ResourceAcls, error)
+	DescribeConfigFunc              func() ([]types.BrokerConfigEntry, error)
+	ListAclsFunc                    func() ([]types.Acls, error)
 	GetAllMessagesWithKeyFilterFunc func(topicName string, keyPrefix string) (map[string]string, error)
 	GetConnectorStatusMessagesFunc  func(topicName string) (map[string]string, error)
 	CloseFunc                       func() error
 }
 
-func (m *MockKafkaAdmin) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+func (m *MockKafkaAdmin) ListTopicsWithConfigs() ([]types.TopicDetails, error) {
 	return m.ListTopicsWithConfigsFunc()
 }
 
@@ -30,11 +29,11 @@ func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata
 	return m.GetClusterKafkaMetadataFunc()
 }
 
-func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
+func (m *MockKafkaAdmin) DescribeConfig() ([]types.BrokerConfigEntry, error) {
 	return m.DescribeConfigFunc()
 }
 
-func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
+func (m *MockKafkaAdmin) ListAcls() ([]types.Acls, error) {
 	return m.ListAclsFunc()
 }
 

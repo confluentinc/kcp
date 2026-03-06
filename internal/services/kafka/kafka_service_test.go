@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/IBM/sarama"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/mocks"
@@ -43,7 +42,7 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 						ClusterID: "test-cluster-123",
 					}, nil
 				},
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() ([]types.TopicDetails, error) {
 					return nil, errors.New("failed to connect to brokers")
 				},
 			},
@@ -59,12 +58,13 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 						ClusterID: "serverless-cluster-456",
 					}, nil
 				},
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
-					return map[string]sarama.TopicDetail{
-						"serverless-topic": {
-							NumPartitions:     int32(1),
-							ReplicationFactor: int16(1),
-							ConfigEntries:     map[string]*string{},
+				ListTopicsWithConfigsFunc: func() ([]types.TopicDetails, error) {
+					return []types.TopicDetails{
+						{
+							Name:              "serverless-topic",
+							Partitions:        1,
+							ReplicationFactor: 1,
+							Configurations:    map[string]*string{},
 						},
 					}, nil
 				},
@@ -84,16 +84,17 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 						ClusterID: "provisioned-cluster-789",
 					}, nil
 				},
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
-					return map[string]sarama.TopicDetail{
-						"provisioned-topic": {
-							NumPartitions:     int32(3),
-							ReplicationFactor: int16(2),
-							ConfigEntries:     map[string]*string{},
+				ListTopicsWithConfigsFunc: func() ([]types.TopicDetails, error) {
+					return []types.TopicDetails{
+						{
+							Name:              "provisioned-topic",
+							Partitions:        3,
+							ReplicationFactor: 2,
+							Configurations:    map[string]*string{},
 						},
 					}, nil
 				},
-				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+				ListAclsFunc: func() ([]types.Acls, error) {
 					return nil, errors.New("ACL authorization failed")
 				},
 			},
@@ -109,39 +110,35 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 						ClusterID: "success-cluster-999",
 					}, nil
 				},
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() ([]types.TopicDetails, error) {
 					retentionMs := "604800000"
-					return map[string]sarama.TopicDetail{
-						"orders": {
-							NumPartitions:     int32(6),
-							ReplicationFactor: int16(3),
-							ConfigEntries: map[string]*string{
+					return []types.TopicDetails{
+						{
+							Name:              "orders",
+							Partitions:        6,
+							ReplicationFactor: 3,
+							Configurations: map[string]*string{
 								"retention.ms": &retentionMs,
 							},
 						},
-						"users": {
-							NumPartitions:     int32(3),
-							ReplicationFactor: int16(2),
-							ConfigEntries:     map[string]*string{},
+						{
+							Name:              "users",
+							Partitions:        3,
+							ReplicationFactor: 2,
+							Configurations:    map[string]*string{},
 						},
 					}, nil
 				},
-				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
-					return []sarama.ResourceAcls{
+				ListAclsFunc: func() ([]types.Acls, error) {
+					return []types.Acls{
 						{
-							Resource: sarama.Resource{
-								ResourceType:        sarama.AclResourceTopic,
-								ResourceName:        "orders",
-								ResourcePatternType: sarama.AclPatternLiteral,
-							},
-							Acls: []*sarama.Acl{
-								{
-									Principal:      "User:orders-service",
-									Host:           "*",
-									Operation:      sarama.AclOperationWrite,
-									PermissionType: sarama.AclPermissionAllow,
-								},
-							},
+							ResourceType:        "Topic",
+							ResourceName:        "orders",
+							ResourcePatternType: "Literal",
+							Principal:           "User:orders-service",
+							Host:                "*",
+							Operation:           "Write",
+							PermissionType:      "Allow",
 						},
 					}, nil
 				},
@@ -206,7 +203,7 @@ func TestKafkaService_scanClusterTopics(t *testing.T) {
 		{
 			name: "ListTopicsWithConfigs returns error",
 			mockClient: &mocks.MockKafkaAdmin{
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() ([]types.TopicDetails, error) {
 					return nil, errors.New("network timeout")
 				},
 			},
@@ -217,23 +214,24 @@ func TestKafkaService_scanClusterTopics(t *testing.T) {
 		{
 			name: "successful topic scan and processing",
 			mockClient: &mocks.MockKafkaAdmin{
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+				ListTopicsWithConfigsFunc: func() ([]types.TopicDetails, error) {
 					retentionMs := "86400000"
 					cleanupPolicy := "delete"
-					return map[string]sarama.TopicDetail{
-						"test-topic-1": {
-							NumPartitions:     int32(3),
-							ReplicationFactor: int16(2),
-							ConfigEntries: map[string]*string{
+					return []types.TopicDetails{
+						{
+							Name:              "test-topic-1",
+							Partitions:        3,
+							ReplicationFactor: 2,
+							Configurations: map[string]*string{
 								"retention.ms":   &retentionMs,
 								"cleanup.policy": &cleanupPolicy,
-								"empty.config":   nil, // Test nil value handling
 							},
 						},
-						"test-topic-2": {
-							NumPartitions:     int32(6),
-							ReplicationFactor: int16(3),
-							ConfigEntries: map[string]*string{
+						{
+							Name:              "test-topic-2",
+							Partitions:        6,
+							ReplicationFactor: 3,
+							Configurations: map[string]*string{
 								"retention.ms": &retentionMs,
 							},
 						},
@@ -371,7 +369,7 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 		{
 			name: "ListAcls returns error",
 			mockClient: &mocks.MockKafkaAdmin{
-				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+				ListAclsFunc: func() ([]types.Acls, error) {
 					return nil, errors.New("connection failed")
 				},
 			},
@@ -379,30 +377,27 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 			wantErrMsg: "❌ Failed to list acls: connection failed",
 		},
 		{
-			name: "successful ACL scan and flattening",
+			name: "successful ACL scan pass-through",
 			mockClient: &mocks.MockKafkaAdmin{
-				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
-					return []sarama.ResourceAcls{
+				ListAclsFunc: func() ([]types.Acls, error) {
+					return []types.Acls{
 						{
-							Resource: sarama.Resource{
-								ResourceType:        sarama.AclResourceTopic,
-								ResourceName:        "test-topic",
-								ResourcePatternType: sarama.AclPatternLiteral,
-							},
-							Acls: []*sarama.Acl{
-								{
-									Principal:      "User:test-user",
-									Host:           "*",
-									Operation:      sarama.AclOperationRead,
-									PermissionType: sarama.AclPermissionAllow,
-								},
-								{
-									Principal:      "User:another-user",
-									Host:           "192.168.1.1",
-									Operation:      sarama.AclOperationWrite,
-									PermissionType: sarama.AclPermissionDeny,
-								},
-							},
+							ResourceType:        "Topic",
+							ResourceName:        "test-topic",
+							ResourcePatternType: "Literal",
+							Principal:           "User:test-user",
+							Host:                "*",
+							Operation:           "Read",
+							PermissionType:      "Allow",
+						},
+						{
+							ResourceType:        "Topic",
+							ResourceName:        "test-topic",
+							ResourcePatternType: "Literal",
+							Principal:           "User:another-user",
+							Host:                "192.168.1.1",
+							Operation:           "Write",
+							PermissionType:      "Deny",
 						},
 					}, nil
 				},
@@ -429,10 +424,10 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
 
-				// Verify ACL flattening: should have 2 flattened ACLs from the single resource
+				// Verify ACL pass-through: should have 2 ACLs
 				assert.Len(t, result, 2)
 
-				// Check first flattened ACL
+				// Check first ACL
 				assert.Equal(t, "Topic", result[0].ResourceType)
 				assert.Equal(t, "test-topic", result[0].ResourceName)
 				assert.Equal(t, "Literal", result[0].ResourcePatternType)
@@ -441,7 +436,7 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 				assert.Equal(t, "Read", result[0].Operation)
 				assert.Equal(t, "Allow", result[0].PermissionType)
 
-				// Check second flattened ACL
+				// Check second ACL
 				assert.Equal(t, "Topic", result[1].ResourceType)
 				assert.Equal(t, "test-topic", result[1].ResourceName)
 				assert.Equal(t, "User:another-user", result[1].Principal)

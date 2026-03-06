@@ -138,17 +138,17 @@ func configureCommonSettings(config *sarama.Config, clientID string, kafkaVersio
 
 // ClusterKafkaMetadata represents cluster information including brokers, controller, and cluster ID
 type ClusterKafkaMetadata struct {
-	Brokers      []*sarama.Broker
+	Brokers      []types.BrokerInfo
 	ControllerID int32
 	ClusterID    string
 }
 
 // KafkaAdmin interface defines the Kafka admin operations we need
 type KafkaAdmin interface {
-	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithConfigs() ([]types.TopicDetails, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
-	DescribeConfig() ([]sarama.ConfigEntry, error)
-	ListAcls() ([]sarama.ResourceAcls, error)
+	DescribeConfig() ([]types.BrokerConfigEntry, error)
+	ListAcls() ([]types.Acls, error)
 	GetAllMessagesWithKeyFilter(topicName string, keyPrefix string) (map[string]string, error)
 	GetConnectorStatusMessages(topicName string) (map[string]string, error)
 	Close() error
@@ -180,7 +180,7 @@ A custom implementation of the ListTopics() function in Sarama that returns all 
 instead of just overridden configs. This was done to reduce the number of requests to the broker.
 https://github.com/IBM/sarama/blob/main/admin.go#L349
 */
-func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+func (k *KafkaAdminClient) ListTopicsWithConfigs() ([]types.TopicDetails, error) {
 	// Get controller to use as a connection broker to avoid opening a new broker connection
 	controller, err := k.admin.Controller()
 	if err != nil {
@@ -252,14 +252,41 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 		topicsDetailsMap[resource.Name] = topicDetails
 	}
 
-	return topicsDetailsMap, nil
+	var result []types.TopicDetails
+	for topicName, topic := range topicsDetailsMap {
+		configurations := make(map[string]*string)
+		for key, valuePtr := range topic.ConfigEntries {
+			if valuePtr != nil {
+				configurations[key] = valuePtr
+			}
+		}
+		result = append(result, types.TopicDetails{
+			Name:              topicName,
+			Partitions:        int(topic.NumPartitions),
+			ReplicationFactor: int(topic.ReplicationFactor),
+			Configurations:    configurations,
+		})
+	}
+	return result, nil
 }
 
-func (k *KafkaAdminClient) DescribeConfig() ([]sarama.ConfigEntry, error) {
-	return k.admin.DescribeConfig(sarama.ConfigResource{
-		Type: sarama.ConfigResourceType(sarama.ConfigResourceType(sarama.BrokerResource)),
+func (k *KafkaAdminClient) DescribeConfig() ([]types.BrokerConfigEntry, error) {
+	entries, err := k.admin.DescribeConfig(sarama.ConfigResource{
+		Type: sarama.ConfigResourceType(sarama.BrokerResource),
 		Name: "1",
 	})
+	if err != nil {
+		return nil, err
+	}
+	var result []types.BrokerConfigEntry
+	for _, entry := range entries {
+		result = append(result, types.BrokerConfigEntry{
+			Name:      entry.Name,
+			Value:     entry.Value,
+			IsDefault: entry.Default,
+		})
+	}
+	return result, nil
 }
 
 func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error) {
@@ -277,8 +304,15 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 		}
 	}
 
+	var brokerInfos []types.BrokerInfo
+	for _, broker := range brokers {
+		brokerInfos = append(brokerInfos, types.BrokerInfo{
+			ID:      broker.ID(),
+			Address: broker.Addr(),
+		})
+	}
 	return &ClusterKafkaMetadata{
-		Brokers:      brokers,
+		Brokers:      brokerInfos,
 		ControllerID: controllerID,
 		ClusterID:    clusterID,
 	}, nil
@@ -309,9 +343,8 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 	return *metadata.ClusterID, nil
 }
 
-func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
+func (k *KafkaAdminClient) ListAcls() ([]types.Acls, error) {
 	aclFilter := sarama.AclFilter{
-		// nil means any resource name, principal, or host.
 		ResourceType:              sarama.AclResourceAny,
 		ResourceName:              nil,
 		ResourcePatternTypeFilter: sarama.AclPatternAny,
@@ -320,12 +353,24 @@ func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
 		Operation:                 sarama.AclOperationAny,
 		PermissionType:            sarama.AclPermissionAny,
 	}
-
-	result, err := k.admin.ListAcls(aclFilter)
+	resourceAcls, err := k.admin.ListAcls(aclFilter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list ACLs: %w", err)
 	}
-
+	var result []types.Acls
+	for _, resourceAcl := range resourceAcls {
+		for _, acl := range resourceAcl.Acls {
+			result = append(result, types.Acls{
+				ResourceType:        resourceAcl.ResourceType.String(),
+				ResourceName:        resourceAcl.ResourceName,
+				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
+				Principal:           acl.Principal,
+				Host:                acl.Host,
+				Operation:           acl.Operation.String(),
+				PermissionType:      acl.PermissionType.String(),
+			})
+		}
+	}
 	return result, nil
 }
 

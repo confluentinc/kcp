@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -21,150 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// MockClusterAdmin implements sarama.ClusterAdmin for testing
-type MockClusterAdmin struct {
-	topics        map[string]sarama.TopicDetail
-	topicsError   error
-	brokers       []*sarama.Broker
-	controllerID  int32
-	describeError error
-	closeError    error
-}
-
-func (m *MockClusterAdmin) ListTopics() (map[string]sarama.TopicDetail, error) {
-	return m.topics, m.topicsError
-}
-
-func (m *MockClusterAdmin) DescribeCluster() ([]*sarama.Broker, int32, error) {
-	return m.brokers, m.controllerID, m.describeError
-}
-
-func (m *MockClusterAdmin) Close() error {
-	return m.closeError
-}
-
-// Implement missing methods from sarama.ClusterAdmin interface
-func (m *MockClusterAdmin) AlterClientQuotas(components []sarama.QuotaEntityComponent, op sarama.ClientQuotasOp, validateOnly bool) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) AlterConfig(resource sarama.ConfigResourceType, name string, entries map[string]*string, validateOnly bool) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) AlterPartitionReassignments(topic string, assignment [][]int32) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) AlterUserScramCredentials(delete []sarama.AlterUserScramCredentialsDelete, upsert []sarama.AlterUserScramCredentialsUpsert) (*sarama.AlterUserScramCredentialsResponse, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) CreateACL(resource sarama.Resource, acl sarama.Acl) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) CreatePartitions(topic string, count int32, assignment [][]int32, validateOnly bool) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) CreateTopic(topic string, detail *sarama.TopicDetail, validateOnly bool) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DeleteACL(filter []sarama.AclFilter, validateOnly bool) ([]sarama.MatchingAcl, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DeleteRecords(topic string, partitionOffsets map[int32]int64) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DeleteTopic(topic string) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DescribeACL(filter []sarama.AclFilter) ([]sarama.ResourceAcls, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DescribeClientQuotas(components []sarama.QuotaFilterComponent, strict bool) ([]sarama.DescribeClientQuotasEntry, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DescribeConfig(resource sarama.ConfigResourceType, name string) ([]sarama.ConfigEntry, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DescribeLogDirs(brokers []int32) (map[int32][]sarama.DescribeLogDirsResponseDirMetadata, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) DescribeUserScramCredentials(users []string) ([]*sarama.DescribeUserScramCredentialsResult, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) IncrementalAlterConfig(resource sarama.ConfigResourceType, name string, entries map[string]sarama.IncrementalAlterConfigsEntry, validateOnly bool) error {
-	return fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) ListPartitionReassignments(topics map[string][]int32) (map[string]map[int32]*sarama.PartitionReplicaReassignmentsStatus, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) Metadata() (*sarama.MetadataResponse, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) RemoveMemberFromConsumerGroup(groupID string, groupInstanceIds []string) (*sarama.LeaveGroupResponse, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) ResourceName(resource sarama.ConfigResourceType, name string) string {
-	return fmt.Sprintf("%v:%s", resource, name)
-}
-
-func (m *MockClusterAdmin) SupportedFeatures() map[sarama.ConfigResourceType]bool {
-	return nil
-}
-
-func (m *MockClusterAdmin) ValidateOnlySupported() bool {
-	return false
-}
-
-func (m *MockClusterAdmin) Controller() (*sarama.Broker, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockClusterAdmin) Coordinator(consumerGroup string) (*sarama.Broker, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-// MockBroker implements sarama.Broker for testing
-type MockBroker struct {
-	addr          string
-	metadata      *sarama.MetadataResponse
-	metadataError error
-	openError     error
-	closeError    error
-}
-
-func (m *MockBroker) Addr() string {
-	return m.addr
-}
-
-func (m *MockBroker) Open(config *sarama.Config) error {
-	return m.openError
-}
-
-func (m *MockBroker) Close() error {
-	return m.closeError
-}
-
-func (m *MockBroker) GetMetadata(request *sarama.MetadataRequest) (*sarama.MetadataResponse, error) {
-	return m.metadata, m.metadataError
-}
 
 // Helper function to create test certificates
 func createTestCertificates(t *testing.T) (string, string, string) {
@@ -627,9 +482,9 @@ func TestKafkaAdminInterface(t *testing.T) {
 func TestClusterKafkaMetadata_Structure(t *testing.T) {
 	// Test the ClusterKafkaMetadata structure
 	metadata := &ClusterKafkaMetadata{
-		Brokers: []*sarama.Broker{
-			sarama.NewBroker("broker1:9092"),
-			sarama.NewBroker("broker2:9092"),
+		Brokers: []types.BrokerInfo{
+			{ID: 1, Address: "broker1:9092"},
+			{ID: 2, Address: "broker2:9092"},
 		},
 		ControllerID: 1,
 		ClusterID:    "test-cluster",

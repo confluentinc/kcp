@@ -39,6 +39,17 @@ type Acls struct {
 	PermissionType      string `json:"PermissionType"`
 }
 
+type BrokerConfigEntry struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	IsDefault bool   `json:"is_default"`
+}
+
+type BrokerInfo struct {
+	ID      int32  `json:"id"`
+	Address string `json:"address"`
+}
+
 type ACLMapping struct {
 	Operation       string
 	ResourceType    string

@@ -72,29 +72,12 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
-	topics, err := ks.client.ListTopicsWithConfigs()
+	topicDetails, err := ks.client.ListTopicsWithConfigs()
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to list topics with configs: %v", err)
 	}
 
-	slog.Info("🔍 found topics", "count", len(topics))
-
-	var topicDetails []types.TopicDetails
-	for topicName, topic := range topics {
-		configurations := make(map[string]*string)
-		for key, valuePtr := range topic.ConfigEntries {
-			if valuePtr != nil {
-				configurations[key] = valuePtr
-			}
-		}
-
-		topicDetails = append(topicDetails, types.TopicDetails{
-			Name:              topicName,
-			Partitions:        int(topic.NumPartitions),
-			ReplicationFactor: int(topic.ReplicationFactor),
-			Configurations:    configurations,
-		})
-	}
+	slog.Info("🔍 found topics", "count", len(topicDetails))
 
 	return topicDetails, nil
 }
@@ -119,24 +102,7 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
 	}
 
-	// Flatten the ACLs for easier processing
-	var flattenedAcls []types.Acls
-	for _, resourceAcl := range acls {
-		for _, acl := range resourceAcl.Acls {
-			flattenedAcl := types.Acls{
-				ResourceType:        resourceAcl.ResourceType.String(),
-				ResourceName:        resourceAcl.ResourceName,
-				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
-				Principal:           acl.Principal,
-				Host:                acl.Host,
-				Operation:           acl.Operation.String(),
-				PermissionType:      acl.PermissionType.String(),
-			}
-			flattenedAcls = append(flattenedAcls, flattenedAcl)
-		}
-	}
-
-	return flattenedAcls, nil
+	return acls, nil
 }
 
 func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) ([]types.SelfManagedConnector, error) {
