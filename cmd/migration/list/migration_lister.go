@@ -83,24 +83,7 @@ func (ml *MigrationLister) displayMigration(index int, migration types.Migration
 	// Gateway
 	fmt.Printf("    %s %s\n",
 		color.HiBlackString("Gateway:"),
-		color.WhiteString("%s/%s", migration.GatewayNamespace, migration.GatewayCrdName))
-
-	// Source
-	fmt.Printf("    %s %s\n",
-		color.HiBlackString("Source:"),
-		color.WhiteString(migration.SourceName))
-
-	// Destination
-	if migration.DestinationName != "" {
-		fmt.Printf("    %s %s\n",
-			color.HiBlackString("Destination:"),
-			color.WhiteString(migration.DestinationName))
-	}
-
-	// Source Route
-	fmt.Printf("    %s %s\n",
-		color.HiBlackString("Source Route:"),
-		color.WhiteString(migration.SourceRouteName))
+		color.WhiteString("%s/%s", migration.K8sNamespace, migration.PassthroughCrName))
 
 	// Cluster Link
 	fmt.Printf("    %s %s\n",
@@ -189,8 +172,6 @@ func (ml *MigrationLister) getStatusColor(state string) *color.Color {
 	case "lags_ok":
 		return color.New(color.FgCyan)
 	case "fenced":
-		return color.New(color.FgYellow)
-	case "promoting":
 		return color.New(color.FgYellow)
 	case "promoted":
 		return color.New(color.FgGreen)

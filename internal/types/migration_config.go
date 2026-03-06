@@ -7,8 +7,6 @@ type MigrationConfig struct {
 	CurrentState string `json:"current_state"`
 
 	// Gateway configuration
-	GatewayNamespace     string `json:"gateway_namespace"`
-	GatewayCrdName       string `json:"gateway_crd_name"`
 	SourceName           string `json:"source_name"`
 	DestinationName      string `json:"destination_name"`
 	SourceRouteName      string `json:"source_route_name"`
@@ -37,9 +35,7 @@ type MigrationConfig struct {
 
 // MigrationConfigOpts contains options for creating a new migration config
 type MigrationConfigOpts struct {
-	GatewayNamespace     string
-	GatewayCrdName       string
-	SourceName           string
+	SourceName string
 	DestinationName      string
 	SourceRouteName      string
 	DestinationRouteName string
@@ -60,8 +56,6 @@ func NewMigrationConfig(migrationId string, opts MigrationConfigOpts) *Migration
 	return &MigrationConfig{
 		MigrationId:          migrationId,
 		CurrentState:         StateUninitialized,
-		GatewayNamespace:     opts.GatewayNamespace,
-		GatewayCrdName:       opts.GatewayCrdName,
 		SourceName:           opts.SourceName,
 		DestinationName:      opts.DestinationName,
 		SourceRouteName:      opts.SourceRouteName,
