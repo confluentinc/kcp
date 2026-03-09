@@ -3,7 +3,7 @@ import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import type { Cluster, Region } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
-import type { ProcessedState, SchemaRegistry, SchemaRegistriesState } from '@/types/api/state'
+import type { ProcessedState, SchemaRegistry, SchemaRegistriesState, GlueSchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
 import { getClusterArn } from '@/lib/clusterUtils'
@@ -39,6 +39,7 @@ interface MigrationAssets {
     [WIZARD_TYPES.MIGRATION_INFRA]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATION_SCRIPTS]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATE_SCHEMAS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_GLUE_SCHEMAS]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATE_TOPICS]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATE_ACLS]: TerraformFiles | null
   }
@@ -694,4 +695,16 @@ export const getAllSchemaRegistries = (): SchemaRegistry[] => {
   }
 
   return kcpState.schema_registries.confluent_schema_registry
+}
+
+// Utility function to get all AWS Glue schema registries from state (used by migration wizard)
+export const getAllGlueSchemaRegistries = (): GlueSchemaRegistry[] => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState?.schema_registries?.aws_glue) {
+    return []
+  }
+
+  return kcpState.schema_registries.aws_glue
 }
