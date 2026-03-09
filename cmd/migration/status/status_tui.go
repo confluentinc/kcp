@@ -516,6 +516,10 @@ func renderSparkline(data []int) string {
 	var sb strings.Builder
 	for _, v := range data {
 		idx := v * (len(sparkBlocks) - 1) / maxVal
+		// Clamp index to valid range to handle negative lag values
+		if idx < 0 {
+			idx = 0
+		}
 		if idx >= len(sparkBlocks) {
 			idx = len(sparkBlocks) - 1
 		}
