@@ -243,6 +243,18 @@ type SchemaRegistryExporterConfig struct {
 	SourceURL string   `json:"source_url"`
 }
 
+type MigrateGlueSchemasRequest struct {
+	ConfluentCloudSchemaRegistryURL string                              `json:"confluent_cloud_schema_registry_url"`
+	GlueRegistries                  []GlueSchemaRegistryMigrationConfig `json:"glue_registries"`
+}
+
+type GlueSchemaRegistryMigrationConfig struct {
+	Migrate      bool         `json:"migrate"`
+	RegistryName string       `json:"registry_name"`
+	Region       string       `json:"region"`
+	Schemas      []GlueSchema `json:"schemas"`
+}
+
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure
 // configuration. Each module contains its own Terraform files and additional assets.
 type MigrationInfraTerraformModule struct {
@@ -274,9 +286,10 @@ type MigrationScriptsTerraformProject struct {
 
 // MigrationScriptsTerraformFolder represents a Terraform folder within the migration scripts
 type MigrationScriptsTerraformFolder struct {
-	Name             string `json:"name"`
-	MainTf           string `json:"main.tf"`
-	ProvidersTf      string `json:"providers.tf"`
-	VariablesTf      string `json:"variables.tf"`
-	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
+	Name             string            `json:"name"`
+	MainTf           string            `json:"main.tf"`
+	ProvidersTf      string            `json:"providers.tf"`
+	VariablesTf      string            `json:"variables.tf"`
+	InputsAutoTfvars string            `json:"inputs.auto.tfvars"`
+	AdditionalFiles  map[string]string `json:"additional_files,omitempty"`
 }

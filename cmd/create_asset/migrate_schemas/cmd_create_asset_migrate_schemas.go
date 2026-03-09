@@ -10,16 +10,18 @@ import (
 )
 
 var (
-	stateFile       string
-	url             string
+	stateFile        string
+	url              string
+	glueRegistryName string
 	ccSRRestEndpoint string
+	outputDir        string
 )
 
 func NewMigrateSchemasCmd() *cobra.Command {
 	migrateSchemasCmd := &cobra.Command{
 		Use:           "migrate-schemas",
 		Short:         "Create assets for the migrate schemas",
-		Long:          "Create assets to enable the migration of schemas to Confluent Cloud",
+		Long:          "Create assets to enable the migration of schemas to Confluent Cloud.\nSupports both Confluent Schema Registry (--url) and AWS Glue Schema Registry (--glue-registry) sources.",
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateSchemas,
 		RunE:          runMigrateSchemas,
@@ -31,16 +33,30 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&url, "url", "", "The URL of the schema registry to migrate schemas from.")
 	requiredFlags.StringVar(&ccSRRestEndpoint, "cc-sr-rest-endpoint", "", "The REST endpoint of the Confluent Cloud target schema registry.")
 	migrateSchemasCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
+	// Source flags (one of these is required).
+	sourceFlags := pflag.NewFlagSet("source", pflag.ExitOnError)
+	sourceFlags.SortFlags = false
+	sourceFlags.StringVar(&url, "url", "", "The URL of a Confluent Schema Registry to migrate schemas from (uses schema exporter).")
+	sourceFlags.StringVar(&glueRegistryName, "glue-registry", "", "The name of an AWS Glue Schema Registry to migrate schemas from (uses confluent_schema resources).")
+	migrateSchemasCmd.Flags().AddFlagSet(sourceFlags)
+	groups[sourceFlags] = "Source Flags (one required)"
+
+	// Optional flags.
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&outputDir, "output-dir", "migrate_schemas", "The output directory for the generated assets.")
+	migrateSchemasCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
 	migrateSchemasCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, sourceFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Source Flags (one required)", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -55,7 +71,6 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	})
 
 	migrateSchemasCmd.MarkFlagRequired("state-file")
-	migrateSchemasCmd.MarkFlagRequired("url")
 	migrateSchemasCmd.MarkFlagRequired("cc-sr-rest-endpoint")
 
 	return migrateSchemasCmd
@@ -66,10 +81,25 @@ func preRunMigrateSchemas(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if url == "" && glueRegistryName == "" {
+		return fmt.Errorf("one of --url or --glue-registry is required")
+	}
+	if url != "" && glueRegistryName != "" {
+		return fmt.Errorf("--url and --glue-registry are mutually exclusive")
+	}
+
 	return nil
 }
 
 func runMigrateSchemas(cmd *cobra.Command, args []string) error {
+	if glueRegistryName != "" {
+		return runMigrateGlueSchemas()
+	}
+
+	return runMigrateConfluentSchemas()
+}
+
+func runMigrateConfluentSchemas() error {
 	opts, err := parseMigrateSchemasOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse migrate schemas opts: %v", err)
@@ -78,6 +108,20 @@ func runMigrateSchemas(cmd *cobra.Command, args []string) error {
 	migrateSchemasAssetGenerator := NewMigrateSchemasAssetGenerator(*opts)
 	if err := migrateSchemasAssetGenerator.Run(); err != nil {
 		return fmt.Errorf("failed to create migrate schemas assets: %v", err)
+	}
+
+	return nil
+}
+
+func runMigrateGlueSchemas() error {
+	opts, err := parseMigrateGlueSchemasOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse glue schema migration opts: %v", err)
+	}
+
+	generator := NewMigrateGlueSchemasAssetGenerator(*opts)
+	if err := generator.Run(); err != nil {
+		return fmt.Errorf("failed to create glue schema migration assets: %v", err)
 	}
 
 	return nil
@@ -119,4 +163,33 @@ func parseMigrateSchemasOpts() (*MigrateSchemasOpts, error) {
 	}
 
 	return &opts, nil
+}
+
+func parseMigrateGlueSchemasOpts() (*MigrateGlueSchemasOpts, error) {
+	state, err := types.NewStateFromFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load existing state file: %v", err)
+	}
+
+	var glueRegistry types.GlueSchemaRegistryInformation
+	found := false
+	if state.SchemaRegistries != nil {
+		for _, gr := range state.SchemaRegistries.AWSGlue {
+			if gr.RegistryName == glueRegistryName {
+				glueRegistry = gr
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("glue schema registry %q not found in state file", glueRegistryName)
+	}
+
+	return &MigrateGlueSchemasOpts{
+		GlueRegistry:     glueRegistry,
+		CCSRRestEndpoint: ccSRRestEndpoint,
+		OutputDir:        outputDir,
+	}, nil
 }
