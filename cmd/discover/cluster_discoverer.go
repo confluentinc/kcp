@@ -61,8 +61,8 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool) (*types.DiscoveredCluster, error) {
-	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool, skipManagedConnectors bool) (*types.DiscoveredCluster, error) {
+	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics, skipManagedConnectors)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 	}, nil
 }
 
-func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
+func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool, skipManagedConnectors bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
 	awsClientInfo := types.AWSClientInformation{}
 	kafkaClientInfo := types.KafkaAdminClientInformation{}
 
@@ -150,11 +150,15 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
-	if err != nil {
-		return nil, nil, err
+	if skipManagedConnectors {
+		slog.Info("⏭️ skipping MSK Connect connector discovery")
+	} else {
+		connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
+		if err != nil {
+			return nil, nil, err
+		}
+		awsClientInfo.Connectors = connectors
 	}
-	awsClientInfo.Connectors = connectors
 
 	if !skipTopics {
 		topics, err := cd.discoverTopics(ctx, clusterArn)
