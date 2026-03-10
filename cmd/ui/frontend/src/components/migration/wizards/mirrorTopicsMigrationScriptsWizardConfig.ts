@@ -34,7 +34,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterArn: strin
               },
               cluster_link_name: {
                 type: 'string',
-                title: 'Cluster Link Name',
+                title: 'Cluster Link Name (created during migration)',
               },
             },
             required: ['target_cluster_id', 'target_cluster_rest_endpoint', 'cluster_link_name'],

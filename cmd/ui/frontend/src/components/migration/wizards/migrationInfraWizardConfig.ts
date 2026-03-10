@@ -91,7 +91,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               cluster_link_name: {
                 type: 'string',
-                title: 'Confluent Cloud Cluster Link Name'
+                title: 'Cluster Link Name (created during migration)'
               },
               msk_cluster_id: {
                 type: 'string',
@@ -187,7 +187,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             properties: {
               cluster_link_name: {
                 type: 'string',
-                title: 'Confluent Cloud Cluster Link Name',
+                title: 'Cluster Link Name (created during migration)',
               },
               target_environment_id: {
                 type: 'string',
@@ -532,7 +532,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               cluster_link_name: {
                 type: 'string',
-                title: 'Confluent Cloud Cluster Link Name'
+                title: 'Cluster Link Name (created during migration)'
               },
             },
             required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
@@ -615,7 +615,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               },
               cluster_link_name: {
                 type: 'string',
-                title: 'Confluent Cloud Cluster Link Name'
+                title: 'Cluster Link Name (created during migration)'
               },
               jump_cluster_iam_auth_role_name: {
                 type: 'string',
