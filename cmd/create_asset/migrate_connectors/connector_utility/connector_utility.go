@@ -87,7 +87,7 @@ func (cu *ConnectorUtility) Run() error {
 	if err := cu.generateREADME(readmePath); err != nil {
 		return fmt.Errorf("failed to generate README: %w", err)
 	}
-	
+
 	fmt.Println()
 	color.Green("See the README.md file in the output directory for next steps.")
 
