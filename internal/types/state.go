@@ -561,9 +561,9 @@ type CostQueryInfo struct {
 	GroupBy         []string            `json:"group_by"`
 	Metrics         []string            `json:"metrics"`
 	Tags            map[string][]string `json:"tags,omitempty"`
-	AWSCLICommand   string              `json:"aws_cli_command"`
-	ConsoleURL      string              `json:"console_url"`
-	AggregationNote string              `json:"aggregation_note"`
+	AWSCLICommand   string `json:"aws_cli_command"`
+	ConsoleURL      string `json:"console_url"`
+	AggregationNote string `json:"aggregation_note"`
 }
 
 type CostInformation struct {

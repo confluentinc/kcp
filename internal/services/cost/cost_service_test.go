@@ -2,9 +2,9 @@ package cost
 
 import (
 	"encoding/json"
-	"net/url"
 	"strings"
 	"testing"
+
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
@@ -73,53 +73,15 @@ func TestBuildCostQueryInfo(t *testing.T) {
 		assert.Contains(t, queryInfo.AWSCLICommand, `"EC2 - Other"`)
 		assert.Contains(t, queryInfo.AWSCLICommand, `"AWS Certificate Manager"`)
 
-		// Verify console URL
-		assert.Contains(t, queryInfo.ConsoleURL, "console.aws.amazon.com/cost-management")
+		// Verify console URL format
+		assert.Contains(t, queryInfo.ConsoleURL, "us-east-1.console.aws.amazon.com/costmanagement/home#/cost-explorer")
 		assert.Contains(t, queryInfo.ConsoleURL, "startDate=2025-03-10")
 		assert.Contains(t, queryInfo.ConsoleURL, "endDate=2026-03-10")
 		assert.Contains(t, queryInfo.ConsoleURL, "granularity=Daily")
-
-		// Decode and verify the filter parameter in console URL
-		// The URL has a fragment (#/cost-explorer?...), so we need to parse the fragment
-		decodedURL, err := url.Parse(queryInfo.ConsoleURL)
-		require.NoError(t, err)
-
-		// Extract query parameters from the fragment
-		fragment := decodedURL.Fragment
-		require.NotEmpty(t, fragment)
-
-		// Find the query string in the fragment (after the ?)
-		queryStart := strings.Index(fragment, "?")
-		require.NotEqual(t, -1, queryStart, "Fragment should contain query parameters")
-
-		queryString := fragment[queryStart+1:]
-		fragmentQuery, err := url.ParseQuery(queryString)
-		require.NoError(t, err)
-
-		filterParam := fragmentQuery.Get("filter")
-		require.NotEmpty(t, filterParam)
-
-		var consoleFilter []map[string]interface{}
-		err = json.Unmarshal([]byte(filterParam), &consoleFilter)
-		require.NoError(t, err)
-
-		// Should have 2 filter items (Service and Region)
-		assert.Len(t, consoleFilter, 2)
-
-		// Verify service filter
-		serviceFilter := consoleFilter[0]
-		assert.Equal(t, "Service", serviceFilter["dimension"])
-		assert.Equal(t, true, serviceFilter["include"])
-		serviceValues := serviceFilter["values"].([]interface{})
-		assert.Len(t, serviceValues, 3)
-
-		// Verify region filter
-		regionFilter := consoleFilter[1]
-		assert.Equal(t, "Region", regionFilter["dimension"])
-		assert.Equal(t, true, regionFilter["include"])
-		regionValues := regionFilter["values"].([]interface{})
-		assert.Len(t, regionValues, 1)
-		assert.Equal(t, "us-east-1", regionValues[0])
+		// Verify filter contains encoded service and region values
+		assert.Contains(t, queryInfo.ConsoleURL, "filter=")
+		assert.Contains(t, queryInfo.ConsoleURL, "Amazon%20Managed%20Streaming%20for%20Apache%20Kafka")
+		assert.Contains(t, queryInfo.ConsoleURL, "us-east-1")
 	})
 
 	t.Run("with tags", func(t *testing.T) {
@@ -222,56 +184,30 @@ func TestBuildJSONArray(t *testing.T) {
 	}
 }
 
-func TestBuildConsoleFilter(t *testing.T) {
-	t.Run("with single service", func(t *testing.T) {
-		region := "us-west-2"
-		services := []string{"Amazon MSK"}
+func TestConsoleFilterEncode(t *testing.T) {
+	input := `[{"dimension":"Service"}]`
+	expected := `%5B%7B%22dimension%22:%22Service%22%7D%5D`
+	assert.Equal(t, expected, consoleFilterEncode(input))
+}
 
-		filterJSON := buildConsoleFilter(region, services)
+func TestBuildConsoleURL(t *testing.T) {
+	url := buildConsoleURL("us-east-1", "2025-03-10", "2026-03-10", []string{"Amazon MSK"})
 
-		// Parse the JSON
-		var filters []map[string]interface{}
-		err := json.Unmarshal([]byte(filterJSON), &filters)
-		require.NoError(t, err)
+	// Verify base URL structure
+	assert.Contains(t, url, "us-east-1.console.aws.amazon.com/costmanagement/home#/cost-explorer")
 
-		// Should have 2 filters (Service, Region)
-		assert.Len(t, filters, 2)
+	// Verify date params
+	assert.Contains(t, url, "startDate=2025-03-10")
+	assert.Contains(t, url, "endDate=2026-03-10")
 
-		// Verify service filter
-		serviceFilter := filters[0]
-		assert.Equal(t, "Service", serviceFilter["dimension"])
-		assert.Equal(t, true, serviceFilter["include"])
-		serviceValues := serviceFilter["values"].([]interface{})
-		assert.Len(t, serviceValues, 1)
-		assert.Equal(t, "Amazon MSK", serviceValues[0])
+	// Verify filter uses correct encoded format with dimension id/displayValue and operator
+	assert.Contains(t, url, "%22id%22:%22Service%22")
+	assert.Contains(t, url, "%22operator%22:%22INCLUDES%22")
+	assert.Contains(t, url, "%22id%22:%22Region%22")
+	assert.Contains(t, url, "Amazon%20MSK")
 
-		// Verify region filter
-		regionFilter := filters[1]
-		assert.Equal(t, "Region", regionFilter["dimension"])
-		assert.Equal(t, true, regionFilter["include"])
-		regionValues := regionFilter["values"].([]interface{})
-		assert.Len(t, regionValues, 1)
-		assert.Equal(t, "us-west-2", regionValues[0])
-	})
-
-	t.Run("with multiple services", func(t *testing.T) {
-		region := "eu-west-1"
-		services := []string{
-			"Amazon Managed Streaming for Apache Kafka",
-			"EC2 - Other",
-			"AWS Certificate Manager",
-		}
-
-		filterJSON := buildConsoleFilter(region, services)
-
-		var filters []map[string]interface{}
-		err := json.Unmarshal([]byte(filterJSON), &filters)
-		require.NoError(t, err)
-
-		assert.Len(t, filters, 2)
-
-		serviceFilter := filters[0]
-		serviceValues := serviceFilter["values"].([]interface{})
-		assert.Len(t, serviceValues, 3)
-	})
+	// Verify other required params
+	assert.Contains(t, url, "historicalRelativeRange=CUSTOM")
+	assert.Contains(t, url, "reportMode=STANDARD")
+	assert.Contains(t, url, "chartStyle=STACK")
 }
