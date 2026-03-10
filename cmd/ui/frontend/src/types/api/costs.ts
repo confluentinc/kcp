@@ -60,12 +60,29 @@ export interface CostAggregates {
 }
 
 /**
+ * Cost query information for transparency
+ */
+export interface CostQueryInfo {
+  time_period: { start: string; end: string }
+  granularity: string
+  services: string[]
+  regions: string[]
+  group_by: string[]
+  metrics: string[]
+  tags?: Record<string, string[]>
+  aws_cli_command: string
+  console_url: string
+  aggregation_note: string
+}
+
+/**
  * Costs API response structure
  */
 export interface CostsApiResponse {
   metadata: ApiMetadata
   results: CostResult[]
   aggregates?: CostAggregates
+  query_info?: CostQueryInfo
 }
 
 /**

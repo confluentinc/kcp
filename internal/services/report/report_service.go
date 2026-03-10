@@ -116,6 +116,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 		Metadata:   regionCosts.Metadata,
 		Results:    filteredCosts,
 		Aggregates: aggregates,
+		QueryInfo:  regionCosts.QueryInfo,
 	}, nil
 }
 
@@ -459,8 +460,9 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 	}
 
 	return types.ProcessedRegionCosts{
-		Metadata: region.Costs.CostMetadata,
-		Results:  processedCosts,
+		Metadata:  region.Costs.CostMetadata,
+		Results:   processedCosts,
+		QueryInfo: region.Costs.QueryInfo,
 	}
 }
 
