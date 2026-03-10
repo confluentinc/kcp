@@ -154,9 +154,8 @@ func (s *MigrationWorkflow) CheckLags(
 			topicMap[topic] = true
 		}
 
-		// Check lag for all partitions of all relevant mirror topics
+		// Check total lag for all relevant mirror topics
 		allBelowThreshold := true
-		topicLags := make(map[string][]string)
 		topicTotalLags := make(map[string]int)
 
 		for _, mirrorTopic := range mirrorTopics {
@@ -165,23 +164,14 @@ func (s *MigrationWorkflow) CheckLags(
 				continue
 			}
 
-			// Calculate total lag across all partitions for this topic
 			totalLag := 0
-			partitionLags := make([]string, 0, len(mirrorTopic.MirrorLags))
-
 			for _, lag := range mirrorTopic.MirrorLags {
 				totalLag += lag.Lag
-				partitionLags = append(partitionLags,
-					fmt.Sprintf("p%d:%d", lag.Partition, lag.Lag))
 			}
 
-			// Store total lag for this topic
-			topicTotalLags[mirrorTopic.MirrorTopicName] = totalLag
-
-			// Check if topic's TOTAL lag exceeds threshold
-			if totalLag >= int(lagThreshold) {
+			if totalLag > int(lagThreshold) {
 				allBelowThreshold = false
-				topicLags[mirrorTopic.MirrorTopicName] = partitionLags
+				topicTotalLags[mirrorTopic.MirrorTopicName] = totalLag
 			}
 		}
 
@@ -194,8 +184,8 @@ func (s *MigrationWorkflow) CheckLags(
 		}
 
 		// Build sorted list of topic names with lag
-		lagTopics := make([]string, 0, len(topicLags))
-		for topic := range topicLags {
+		lagTopics := make([]string, 0, len(topicTotalLags))
+		for topic := range topicTotalLags {
 			lagTopics = append(lagTopics, topic)
 		}
 		sort.Strings(lagTopics)
@@ -204,17 +194,15 @@ func (s *MigrationWorkflow) CheckLags(
 
 		fmt.Printf("%s Waiting for lag to clear  %s  %s\n",
 			color.YellowString("⏳"),
-			color.YellowString("%d/%d topics behind", len(topicLags), len(config.Topics)),
+			color.YellowString("%d/%d topics behind", len(topicTotalLags), len(config.Topics)),
 			color.CyanString("elapsed %s", elapsed.Round(time.Second)))
 
 		for _, topic := range lagTopics {
-			parts := topicLags[topic]
-			totalLag := topicTotalLags[topic]
-			fmt.Printf("   %s %s  %s\n",
+			fmt.Printf("   %s %s  %s %s\n",
 				color.YellowString("↳"),
 				color.WhiteString(topic),
-				color.HiBlackString("(total lag: %d, %d partitions: %s)",
-					totalLag, len(parts), strings.Join(parts, ", ")))
+				color.CyanString("lag:"),
+				color.YellowString(formatLag(topicTotalLags[topic])))
 		}
 		fmt.Printf("\n")
 
@@ -226,6 +214,22 @@ func (s *MigrationWorkflow) CheckLags(
 			// Continue polling
 		}
 	}
+}
+
+// formatLag formats an integer with comma separators (e.g. 21655 -> "21,655")
+func formatLag(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var result []byte
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
 }
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic
@@ -329,6 +333,16 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 		}
 
 		// Step 3: Promote topics that are active and have zero lag
+		fmt.Printf("   %s %s confirmed at zero lag\n",
+			color.GreenString("✔"),
+			color.WhiteString("%d/%d topics", len(topicsToPromote), activeCount))
+		for _, topic := range topicsToPromote {
+			fmt.Printf("   %s %s  %s %s\n",
+				color.GreenString("↳"),
+				color.WhiteString(topic),
+				color.CyanString("lag:"),
+				color.GreenString("0"))
+		}
 		fmt.Printf("   %s Promoting %d mirror topics...\n",
 			color.CyanString("📤"), len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
