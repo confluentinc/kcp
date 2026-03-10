@@ -23,11 +23,44 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var verbose bool
+
 var RootCmd = &cobra.Command{
 	Use:   "kcp",
 	Short: "A CLI tool for kafka cluster planning and migration",
 	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + getDocURL(),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// --- Logging setup (must be here so --verbose flag is parsed) ---
+		lumberjackLogger := &lumberjack.Logger{
+			Filename: "kcp.log",
+			MaxSize:  25,
+			Compress: true,
+		}
+
+		// File handler: always writes everything (Debug+)
+		fileHandler := NewPrettyHandler(lumberjackLogger, PrettyHandlerOptions{
+			SlogOpts: slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			},
+		})
+
+		// Console handler: Warn+ by default, Debug+ with --verbose
+		consoleLevel := slog.LevelWarn
+		if verbose {
+			consoleLevel = slog.LevelDebug
+		}
+		consoleHandler := NewPrettyHandler(os.Stdout, PrettyHandlerOptions{
+			SlogOpts: slog.HandlerOptions{
+				Level: consoleLevel,
+			},
+		})
+
+		// Fan out to both handlers
+		logger := slog.New(NewFanOutHandler(fileHandler, consoleHandler))
+		slog.SetDefault(logger)
+
+		// --- End logging setup ---
+
 		if build_info.Version == "dev" {
 			fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
 				color.RedString("┌─────────────────────────────────────────────────────────────────────────┐"),
@@ -52,20 +85,7 @@ var RootCmd = &cobra.Command{
 func init() {
 	cobra.EnableTraverseRunHooks = true
 
-	lumberjackLogger := &lumberjack.Logger{
-		Filename: "kcp.log",
-		MaxSize:  25,
-		Compress: true,
-	}
-	opts := PrettyHandlerOptions{
-		SlogOpts: slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		},
-	}
-	handler := NewPrettyHandler(io.MultiWriter(lumberjackLogger, os.Stdout), opts)
-	logger := slog.New(handler)
-
-	slog.SetDefault(logger)
+	RootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Enable verbose logging to console")
 
 	RootCmd.AddCommand(
 		create_asset.NewCreateAssetCmd(),

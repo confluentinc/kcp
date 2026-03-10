@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/fatih/color"
 	"github.com/looplab/fsm"
 )
 
@@ -15,15 +16,16 @@ type WorkflowStep struct {
 	Description string
 	FromState   string
 	ToState     string
+	UserMessage string // Emoji-prefixed message shown to the user
 }
 
 // canonicalWorkflow is the single source of truth for the migration workflow sequence
 var canonicalWorkflow = []WorkflowStep{
-	{types.EventInitialize, "initializing migration", types.StateUninitialized, types.StateInitialized},
-	{types.EventWaitForLags, "checking replication lags", types.StateInitialized, types.StateLagsOk},
-	{types.EventFence, "fencing gateway", types.StateLagsOk, types.StateFenced},
-	{types.EventPromote, "promoting topics", types.StateFenced, types.StatePromoted},
-	{types.EventSwitch, "switching gateway config", types.StatePromoted, types.StateSwitched},
+	{types.EventInitialize, "initializing migration", types.StateUninitialized, types.StateInitialized, "🔍 Initializing migration..."},
+	{types.EventWaitForLags, "checking replication lags", types.StateInitialized, types.StateLagsOk, "⏳ Checking replication lags..."},
+	{types.EventFence, "fencing gateway", types.StateLagsOk, types.StateFenced, "🚧 Fencing gateway..."},
+	{types.EventPromote, "promoting topics", types.StateFenced, types.StatePromoted, "📤 Promoting mirror topics..."},
+	{types.EventSwitch, "switching gateway config", types.StatePromoted, types.StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
 }
 
 // ExecutionParams holds runtime parameters needed during migration execution
@@ -110,23 +112,26 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			continue // Skip already-completed steps (enables resumability)
 		}
 
-		slog.Info("executing migration step", "step", step.Description)
+		fmt.Printf("\n%s\n", color.CyanString(step.UserMessage))
+		slog.Debug("executing migration step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
+		fmt.Printf("%s\n", color.GreenString("✅ Done"))
 	}
 
+	fmt.Printf("\n%s\n", color.GreenString("🎉 Migration complete!"))
 	return nil
 }
 
 // beforeEventCallback is called before any event transition
 func (o *MigrationOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: BEFORE EVENT", "event", e.Event, "src", e.Src, "dst", e.Dst)
+	slog.Debug("FSM: before event", "event", e.Event, "src", e.Src, "dst", e.Dst)
 }
 
 // afterEventCallback is called after any event transition
 func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: AFTER EVENT", "event", e.Event, "src", e.Src, "dst", e.Dst)
+	slog.Debug("FSM: after event", "event", e.Event, "src", e.Src, "dst", e.Dst)
 
 	// Update config state and save
 	o.config.CurrentState = e.Dst
@@ -138,19 +143,16 @@ func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.E
 
 // enterStateCallback is called when entering any state
 func (o *MigrationOrchestrator) enterStateCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: ENTERING STATE", "state", e.Dst)
+	slog.Debug("FSM: entering state", "state", e.Dst)
 }
 
 // leaveStateCallback is called when leaving any state
 func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", e.Src)
+	slog.Debug("FSM: leaving state", "state", e.Src)
 }
 
 // leaveUninitializedCallback delegates to workflow service Initialize
 func (o *MigrationOrchestrator) leaveUninitializedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", types.StateUninitialized)
-
-	// Delegate to workflow service using stored parameters
 	if err := o.workflow.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
@@ -159,9 +161,6 @@ func (o *MigrationOrchestrator) leaveUninitializedCallback(ctx context.Context, 
 
 // leaveInitializedCallback delegates to workflow service CheckLags
 func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", types.StateInitialized)
-
-	// Delegate to workflow service using stored parameters
 	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
@@ -170,9 +169,6 @@ func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e 
 
 // leaveLagsOkCallback delegates to workflow service FenceGateway
 func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", types.StateLagsOk)
-
-	// No runtime params needed for fencing
 	if err := o.workflow.FenceGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 		return
@@ -181,9 +177,6 @@ func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.
 
 // leaveFencedCallback delegates to workflow service PromoteTopics
 func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", types.StateFenced)
-
-	// Delegate to workflow service using stored parameters
 	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return
@@ -192,9 +185,6 @@ func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.
 
 // leavePromotedCallback delegates to workflow service SwitchGateway
 func (o *MigrationOrchestrator) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
-	slog.Info("FSM: LEAVING STATE", "state", types.StatePromoted)
-
-	// No runtime params needed for switching gateway
 	if err := o.workflow.SwitchGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 		return

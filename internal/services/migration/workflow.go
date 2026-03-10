@@ -34,7 +34,7 @@ func (s *MigrationWorkflow) Initialize(
 	config *types.MigrationConfig,
 	clusterApiKey, clusterApiSecret string,
 ) error {
-	slog.Info("initializing migration", "migrationId", config.MigrationId)
+	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
 	// Fetch the initial CR YAML from k8s
 	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName)
@@ -47,6 +47,8 @@ func (s *MigrationWorkflow) Initialize(
 	if err := s.gatewayService.ValidateGatewayCRs(config.InitialCrYAML, config.FencedCrYAML, config.SwitchoverCrYAML); err != nil {
 		return fmt.Errorf("gateway CR validation failed: %w", err)
 	}
+	slog.Debug("gateway CRs validated")
+	fmt.Printf("   %s Gateway CRs validated\n", color.GreenString("✔"))
 
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
@@ -58,7 +60,7 @@ func (s *MigrationWorkflow) Initialize(
 		Topics:       config.Topics,
 	}
 
-	slog.Info("describing cluster link", "clusterId", config.ClusterId, "clusterLinkName", config.ClusterLinkName)
+	slog.Debug("describing cluster link", "clusterId", config.ClusterId, "clusterLinkName", config.ClusterLinkName)
 
 	mirrorTopics, err := s.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
 	if err != nil {
@@ -72,13 +74,15 @@ func (s *MigrationWorkflow) Initialize(
 
 	// Validate topics
 	if len(config.Topics) > 0 {
-		slog.Info("validating topics in cluster link", "topic count", len(config.Topics))
+		slog.Debug("validating topics in cluster link", "topicCount", len(config.Topics))
 		if err := s.clusterLinkService.ValidateTopics(config.Topics, clusterLinkTopics); err != nil {
 			return fmt.Errorf("failed to validate topics in cluster link: %w", err)
 		}
 	} else {
 		config.Topics = clusterLinkTopics
 	}
+	slog.Debug("cluster link validated", "activeTopicCount", len(clusterLinkTopics))
+	fmt.Printf("   %s Cluster link validated (%d mirror topics active)\n", color.GreenString("✔"), len(clusterLinkTopics))
 
 	// Get cluster link configs
 	configs, err := s.clusterLinkService.ListConfigs(ctx, clusterLinkConfig)
@@ -91,7 +95,7 @@ func (s *MigrationWorkflow) Initialize(
 	config.ClusterLinkTopics = clusterLinkTopics
 	config.ClusterLinkConfigs = configs
 
-	slog.Info("migration initialized successfully")
+	slog.Debug("migration initialized successfully")
 	return nil
 }
 
@@ -212,7 +216,7 @@ func (s *MigrationWorkflow) CheckLags(
 				color.HiBlackString("(total lag: %d, %d partitions: %s)",
 					totalLag, len(parts), strings.Join(parts, ", ")))
 		}
-		fmt.Println()
+		fmt.Printf("\n")
 
 		// Wait for next poll interval or context cancellation
 		select {
@@ -226,7 +230,7 @@ func (s *MigrationWorkflow) CheckLags(
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic
 func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Info("🚧 Fencing gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
+	slog.Debug("fencing gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
 	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.PassthroughCrName)
@@ -238,8 +242,8 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName, config.FencedCrYAML); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
-
-	slog.Info("✅ Fenced gateway CR applied")
+	slog.Debug("fenced gateway CR applied")
+	fmt.Printf("   %s Fenced gateway CR applied\n", color.GreenString("✔"))
 
 	// Step 3: Wait for gateway pods to be recycled with new configuration
 	const (
@@ -247,20 +251,21 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 		timeout      = 5 * time.Minute
 	)
 
-	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
+	fmt.Printf("   %s Waiting for gateway pod rollout...\n", color.CyanString("⏳"))
+	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
 	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
-	slog.Info("✅ Gateway fenced and ready")
-
+	slog.Debug("gateway fenced and ready")
+	fmt.Printf("   %s Gateway pods rolled out\n", color.GreenString("✔"))
 	return nil
 }
 
 // PromoteTopics polls mirror topics and promotes those with zero lag
 func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
-	slog.Info("topic promotion process started")
+	slog.Debug("topic promotion process started")
 
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
@@ -289,7 +294,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 
 		// no mirror topics found, promotion is complete
 		if len(mirrorTopics) == 0 {
-			slog.Info("no mirror topics found, promotion complete")
+			slog.Debug("no mirror topics found, promotion complete")
 			return nil
 		}
 
@@ -299,16 +304,17 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 		// Check completion condition: no active topics found
 		activeCount := clusterlink.CountActiveMirrorTopics(mirrorTopics)
 		if activeCount == 0 {
-			slog.Info("no active mirror topics remaining, promotion complete")
+			slog.Debug("no active mirror topics remaining, promotion complete")
 			return nil
 		}
 
 		// If no topics ready to promote (all have non-zero lag), wait and retry
 		if len(topicsToPromote) == 0 {
 			if clusterlink.HasActiveTopicsWithNonZeroLag(mirrorTopics) {
-				slog.Info("active topics found but lag is not zero, waiting before retry",
-					"activeTopics", activeCount,
-					"pollInterval", pollInterval)
+				fmt.Printf("   %s Waiting for lag to reach zero (%d active topics)...\n",
+					color.CyanString("⏳"), activeCount)
+				slog.Debug("active topics found but lag is not zero, waiting before retry",
+					"activeTopics", activeCount, "pollInterval", pollInterval)
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
@@ -317,32 +323,37 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 				}
 			}
 			// No active topics with any lag status - we're done
-			slog.Info("promotion complete, no more topics to promote")
+			slog.Debug("promotion complete, no more topics to promote")
 			return nil
 		}
 
 		// Step 3: Promote topics that are active and have zero lag
-		slog.Info("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
+		fmt.Printf("   %s Promoting %d mirror topics...\n",
+			color.CyanString("📤"), len(topicsToPromote))
+		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
 		}
 
-		// Log any promotion errors
+		// Log promotion results
 		for _, topic := range promoteResponse.Data {
 			if topic.ErrorCode != 0 {
+				fmt.Printf("   %s Topic %s promotion error: %s\n",
+					color.RedString("✗"), topic.MirrorTopicName, topic.ErrorMessage)
 				slog.Warn("topic promotion error",
 					"topic", topic.MirrorTopicName,
 					"errorCode", topic.ErrorCode,
 					"errorMessage", topic.ErrorMessage)
 			} else {
-				slog.Info("topic promotion initiated", "topic", topic.MirrorTopicName)
+				fmt.Printf("   %s %s promoted\n", color.GreenString("✔"), topic.MirrorTopicName)
+				slog.Debug("topic promotion initiated", "topic", topic.MirrorTopicName)
 			}
 		}
 
 		// Wait before checking again
-		slog.Info("waiting for promotion to complete before next check", "pollInterval", pollInterval)
+		slog.Debug("waiting for promotion to complete before next check", "pollInterval", pollInterval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -354,7 +365,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent Cloud
 func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Info("🔄 Switching gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
+	slog.Debug("switching gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
 	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.PassthroughCrName)
@@ -366,8 +377,8 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.Mig
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName, config.SwitchoverCrYAML); err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
-
-	slog.Info("✅ Switchover gateway CR applied")
+	slog.Debug("switchover gateway CR applied")
+	fmt.Printf("   %s Switchover gateway CR applied\n", color.GreenString("✔"))
 
 	// Step 3: Wait for gateway pods to be recycled with new configuration
 	const (
@@ -375,13 +386,14 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.Mig
 		timeout      = 5 * time.Minute
 	)
 
-	slog.Info("⏳ Waiting for gateway pod rollout", "timeout", timeout)
+	fmt.Printf("   %s Waiting for gateway pod rollout...\n", color.CyanString("⏳"))
+	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
 	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
-	slog.Info("✅ Gateway switchover complete")
-
+	slog.Debug("gateway switchover complete")
+	fmt.Printf("   %s Gateway pods rolled out\n", color.GreenString("✔"))
 	return nil
 }
