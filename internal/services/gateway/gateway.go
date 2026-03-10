@@ -33,7 +33,15 @@ type Service interface {
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
-	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration) error
+	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
+}
+
+// PodRolloutProgress reports the current state of a pod rollout
+type PodRolloutProgress struct {
+	InitialPodCount int
+	ReplacedCount   int
+	ReadyCount      int
+	RolloutDetected bool
 }
 
 // K8sService implements gateway operations using Kubernetes clients
@@ -205,7 +213,7 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 //  2. Wait for complete replacement: Ensure all initial pods are replaced and new pods are ready
 //
 // This prevents returning prematurely when maxSurge creates extra pods during the rollout.
-func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration) error {
+func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
@@ -221,7 +229,7 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 
 	// Calculate initial pod count from the passed UIDs
 	initialPodCount := len(initialPodUIDs)
-	slog.Info("waiting for gateway pod rollout", "namespace", namespace, "gateway", gatewayName, "initialPodCount", initialPodCount)
+	slog.Debug("waiting for gateway pod rollout", "namespace", namespace, "gateway", gatewayName, "initialPodCount", initialPodCount)
 
 	// Phase 1: Wait for rollout to start (10 second detection window)
 	changeDetectionDeadline := time.Now().Add(10 * time.Second)
@@ -244,12 +252,12 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		// Check if any pod changed (new UID) or became not ready
 		for _, pod := range pods.Items {
 			if _, wasInitial := initialPodUIDs[pod.UID]; !wasInitial {
-				slog.Info("new pod detected, rollout started", "pod", pod.Name)
+				slog.Debug("new pod detected, rollout started", "pod", pod.Name)
 				rolloutDetected = true
 				break
 			}
 			if !isPodReady(&pod) {
-				slog.Info("pod not ready, rollout started", "pod", pod.Name)
+				slog.Debug("pod not ready, rollout started", "pod", pod.Name)
 				rolloutDetected = true
 				break
 			}
@@ -263,12 +271,20 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	}
 
 	if !rolloutDetected {
-		slog.Info("no rollout detected within 10 seconds, assuming config change did not require pod restart")
+		slog.Debug("no rollout detected within 10 seconds, assuming config change did not require pod restart")
+		if onProgress != nil {
+			onProgress(PodRolloutProgress{
+				InitialPodCount: initialPodCount,
+				ReplacedCount:   initialPodCount,
+				ReadyCount:      initialPodCount,
+				RolloutDetected: false,
+			})
+		}
 		return nil
 	}
 
 	// Phase 2: Wait for all pods to be completely replaced
-	slog.Info("rollout detected, waiting for complete pod replacement")
+	slog.Debug("rollout detected, waiting for complete pod replacement")
 
 	deadline := time.Now().Add(timeout)
 
@@ -286,29 +302,26 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 			return fmt.Errorf("failed to list gateway pods: %w", err)
 		}
 
-		currentPodCount := len(pods.Items)
+		replacedCount := countReplacedPods(pods.Items, initialPodUIDs)
+		readyCount := countReadyPods(pods.Items)
 
-		// Check completion criteria
-		if currentPodCount == initialPodCount {
-			if allPodsReplaced(pods.Items, initialPodUIDs) {
-				readyCount := countReadyPods(pods.Items)
-				if readyCount == currentPodCount {
-					slog.Info("all gateway pods replaced and ready", "podCount", currentPodCount)
-					return nil
-				}
-				slog.Info("all pods replaced but not all ready",
-					"ready", fmt.Sprintf("%d/%d", readyCount, currentPodCount))
-			} else {
-				replacedCount := countReplacedPods(pods.Items, initialPodUIDs)
-				slog.Info("pod replacement in progress",
-					"replaced", fmt.Sprintf("%d/%d", replacedCount, initialPodCount))
-			}
-		} else {
-			// maxSurge in effect - extra pods exist
-			replacedCount := countReplacedPods(pods.Items, initialPodUIDs)
-			slog.Info("rollout in progress with maxSurge",
-				"totalPods", currentPodCount,
-				"replacedPods", fmt.Sprintf("%d/%d", replacedCount, initialPodCount))
+		slog.Debug("pod rollout progress",
+			"replaced", fmt.Sprintf("%d/%d", replacedCount, initialPodCount),
+			"ready", fmt.Sprintf("%d/%d", readyCount, initialPodCount))
+
+		if onProgress != nil {
+			onProgress(PodRolloutProgress{
+				InitialPodCount: initialPodCount,
+				ReplacedCount:   replacedCount,
+				ReadyCount:      readyCount,
+				RolloutDetected: true,
+			})
+		}
+
+		// Check completion: all replaced and all ready
+		if allPodsReplaced(pods.Items, initialPodUIDs) && len(pods.Items) == initialPodCount && readyCount == initialPodCount {
+			slog.Debug("all gateway pods replaced and ready", "podCount", initialPodCount)
+			return nil
 		}
 
 		time.Sleep(pollInterval)

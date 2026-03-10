@@ -251,15 +251,16 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 		timeout      = 5 * time.Minute
 	)
 
-	fmt.Printf("   %s Waiting for gateway pod rollout...\n", color.CyanString("⏳"))
+	initialPodCount := len(initialGatewayPodUIDs)
+	fmt.Printf("   %s Waiting for pod rollout (0/%d pods replaced)...\n", color.CyanString("⏳"), initialPodCount)
 	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
 	slog.Debug("gateway fenced and ready")
-	fmt.Printf("   %s Gateway pods rolled out\n", color.GreenString("✔"))
+	fmt.Printf("   %s All %d pods rolled out\n", color.GreenString("✔"), initialPodCount)
 	return nil
 }
 
@@ -386,14 +387,24 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.Mig
 		timeout      = 5 * time.Minute
 	)
 
-	fmt.Printf("   %s Waiting for gateway pod rollout...\n", color.CyanString("⏳"))
+	initialPodCount := len(initialGatewayPodUIDs)
+	fmt.Printf("   %s Waiting for pod rollout (0/%d pods replaced)...\n", color.CyanString("⏳"), initialPodCount)
 	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout); err != nil {
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
 	slog.Debug("gateway switchover complete")
-	fmt.Printf("   %s Gateway pods rolled out\n", color.GreenString("✔"))
+	fmt.Printf("   %s All %d pods rolled out\n", color.GreenString("✔"), initialPodCount)
 	return nil
+}
+
+func printPodRolloutProgress(p gateway.PodRolloutProgress) {
+	if !p.RolloutDetected {
+		fmt.Printf("   %s No pod restart required\n", color.GreenString("✔"))
+		return
+	}
+	fmt.Printf("   %s %d/%d pods replaced, %d/%d ready\n",
+		color.CyanString("⏳"), p.ReplacedCount, p.InitialPodCount, p.ReadyCount, p.InitialPodCount)
 }
