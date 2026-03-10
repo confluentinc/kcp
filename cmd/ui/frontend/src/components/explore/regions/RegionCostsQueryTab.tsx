@@ -1,5 +1,4 @@
 import { ExternalLink } from 'lucide-react'
-import { MetricsCodeViewer } from '@/components/explore/clusters/MetricsCodeViewer'
 import { Button } from '@/components/common/ui/button'
 import type { CostQueryInfo } from '@/types/api'
 
@@ -8,10 +7,12 @@ interface RegionCostsQueryTabProps {
 }
 
 export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => {
-  if (!queryInfo) {
+  if (!queryInfo || !queryInfo.aws_cli_command) {
     return (
       <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-8 text-center">
-        <p className="text-gray-500 dark:text-gray-400">No query information available</p>
+        <p className="text-gray-500 dark:text-gray-400">
+          No query information available. Re-run <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-sm">kcp discover</code> to generate cost query details.
+        </p>
       </div>
     )
   }
@@ -23,47 +24,32 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Query Parameters
         </h3>
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-3">
           <div>
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Time Range:
+              Time Range
             </span>
-            <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               {queryInfo.time_period.start} to {queryInfo.time_period.end}
-            </span>
+            </p>
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Granularity:
+              Granularity
             </span>
-            <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               {queryInfo.granularity}
-            </span>
+            </p>
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Services:
+              Regions
             </span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {queryInfo.services.map((service) => (
-                <span
-                  key={service}
-                  className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                >
-                  {service}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Regions:
-            </span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {queryInfo.regions.map((region) => (
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(queryInfo.regions ?? []).map((region) => (
                 <span
                   key={region}
-                  className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
                 >
                   {region}
                 </span>
@@ -72,13 +58,13 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Group By:
+              Group By
             </span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {queryInfo.group_by.map((group) => (
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(queryInfo.group_by ?? []).map((group) => (
                 <span
                   key={group}
-                  className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
                 >
                   {group}
                 </span>
@@ -87,27 +73,47 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Metrics:
+              Services
             </span>
-            <ul className="mt-2 ml-6 list-disc text-sm text-gray-600 dark:text-gray-400">
-              {queryInfo.metrics.map((metric) => (
-                <li key={metric}>{metric}</li>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(queryInfo.services ?? []).map((service) => (
+                <span
+                  key={service}
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                >
+                  {service}
+                </span>
               ))}
-            </ul>
+            </div>
+          </div>
+          <div>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Metrics
+            </span>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {(queryInfo.metrics ?? []).map((metric) => (
+                <span
+                  key={metric}
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                >
+                  {metric}
+                </span>
+              ))}
+            </div>
           </div>
           {queryInfo.tags && Object.keys(queryInfo.tags).length > 0 && (
-            <div>
+            <div className="col-span-2">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Tags:
+                Tags
               </span>
-              <div className="mt-2 space-y-1">
+              <div className="mt-1 flex flex-wrap gap-1.5">
                 {Object.entries(queryInfo.tags).map(([key, values]) => (
-                  <div
+                  <span
                     key={key}
-                    className="text-sm text-gray-600 dark:text-gray-400"
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
                   >
-                    <span className="font-medium">{key}:</span> {values.join(', ')}
-                  </div>
+                    {key}: {values.join(', ')}
+                  </span>
                 ))}
               </div>
             </div>
@@ -117,15 +123,22 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
 
       {/* AWS CLI Command Section */}
       <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          AWS CLI Command
-        </h3>
-        <MetricsCodeViewer
-          data={queryInfo.aws_cli_command}
-          label="CLI Command"
-          onCopy={() => navigator.clipboard.writeText(queryInfo.aws_cli_command)}
-          isJSON={false}
-        />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            AWS CLI Command
+          </h3>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigator.clipboard.writeText(queryInfo.aws_cli_command)}
+            className="text-xs"
+          >
+            Copy CLI Command
+          </Button>
+        </div>
+        <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-gray-50 dark:bg-gray-900 p-4 rounded border">
+          {queryInfo.aws_cli_command}
+        </pre>
       </div>
 
       {/* AWS Console Link Section */}

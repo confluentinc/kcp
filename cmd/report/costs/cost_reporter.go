@@ -107,9 +107,6 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 		}
 	}
 
-	// Add query details section
-	r.addQueryDetails(md, regionCostData)
-
 	// Add cost summary section
 	r.addCostSummary(md, regionCostData)
 
@@ -117,6 +114,9 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 	for _, regionData := range regionCostData {
 		r.addRegionSection(md, regionData.Region, regionData)
 	}
+
+	// Add query details section at the end
+	r.addQueryDetails(md, regionCostData)
 
 	return md
 }

@@ -116,6 +116,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 		Metadata:   regionCosts.Metadata,
 		Results:    filteredCosts,
 		Aggregates: aggregates,
+		QueryInfo:  regionCosts.QueryInfo,
 	}, nil
 }
 
