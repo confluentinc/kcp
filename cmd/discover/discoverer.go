@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -165,14 +163,6 @@ func (d *Discoverer) discoverRegions() error {
 
 	if err := d.outputClusterSummaryTable(state); err != nil {
 		slog.Warn("failed to output cluster summary table", "error", err)
-	}
-
-	if err := d.outputCostQuerySummary(state); err != nil {
-		slog.Warn("failed to output cost query summary", "error", err)
-	}
-
-	if err := d.outputMetricsQuerySummary(state); err != nil {
-		slog.Warn("failed to output metrics query summary", "error", err)
 	}
 
 	return nil
@@ -412,6 +402,8 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 		}
 	}
 
+	md.AddParagraph("To view cost and metrics reports, including the queries used to gather data, run `kcp report` or explore in `kcp ui`.")
+
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
 
@@ -484,125 +476,3 @@ func getClusterStorageInfo(cluster types.DiscoveredCluster) (storageMode, volume
 	return "N/A", "N/A", "N/A"
 }
 
-func (d *Discoverer) outputCostQuerySummary(state *types.State) error {
-	// Collect all regions that have cost data
-	var regionsWithCostData []string
-	var queryInfo *types.CostQueryInfo
-
-	for _, region := range state.Regions {
-		if len(region.Costs.CostResults) > 0 {
-			regionsWithCostData = append(regionsWithCostData, region.Name)
-			// Capture query info from first region with cost data
-			if queryInfo == nil {
-				queryInfo = &region.Costs.QueryInfo
-			}
-		}
-	}
-
-	// Skip output if no regions have cost data
-	if len(regionsWithCostData) == 0 {
-		return nil
-	}
-
-	// Create markdown document
-	md := markdown.New()
-	md.AddHeading("Cost Query Details", 2)
-
-	// Add time range
-	md.AddParagraph(fmt.Sprintf("**Time Range:** %s — %s", queryInfo.TimePeriod.Start, queryInfo.TimePeriod.End))
-
-	// Add granularity
-	md.AddParagraph(fmt.Sprintf("**Granularity:** %s", queryInfo.Granularity))
-
-	// Add services as bullet list
-	md.AddParagraph("**Services:**")
-	md.AddList(queryInfo.Services)
-
-	// Add regions as comma-separated list
-	md.AddParagraph(fmt.Sprintf("**Regions:** %s", strings.Join(regionsWithCostData, ", ")))
-
-	// Add group by as comma-separated list
-	md.AddParagraph(fmt.Sprintf("**Group By:** %s", strings.Join(queryInfo.GroupBy, ", ")))
-
-	// Add metrics as bullet list
-	md.AddParagraph("**Metrics:**")
-	md.AddList(queryInfo.Metrics)
-
-	// Add tags if present
-	if len(queryInfo.Tags) > 0 {
-		md.AddParagraph("**Tags:**")
-		var tagList []string
-		for key, values := range queryInfo.Tags {
-			tagList = append(tagList, fmt.Sprintf("%s: %s", key, strings.Join(values, ", ")))
-		}
-		md.AddList(tagList)
-	}
-
-	// Add aggregation note in italics
-	md.AddParagraph(fmt.Sprintf("*%s*", queryInfo.AggregationNote))
-
-	// Add AWS CLI Command section
-	md.AddHeading("AWS CLI Command", 3)
-	md.AddCodeBlock(queryInfo.AWSCLICommand, "bash")
-
-	// Add AWS Console URL section
-	md.AddHeading("AWS Console URL", 3)
-	md.AddParagraph(queryInfo.ConsoleURL)
-
-	// Print to terminal
-	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
-}
-
-func (d *Discoverer) outputMetricsQuerySummary(state *types.State) error {
-	// Find first cluster with metrics query info
-	var queryInfos []types.MetricQueryInfo
-	var clusterName string
-
-	for _, region := range state.Regions {
-		for _, cluster := range region.Clusters {
-			if len(cluster.ClusterMetrics.QueryInfo) > 0 {
-				queryInfos = cluster.ClusterMetrics.QueryInfo
-				clusterName = cluster.Name
-				break
-			}
-		}
-		if queryInfos != nil {
-			break
-		}
-	}
-
-	if queryInfos == nil {
-		return nil
-	}
-
-	md := markdown.New()
-	md.AddHeading("Metrics Query Details", 2)
-	md.AddParagraph(fmt.Sprintf("**Cluster:** %s", clusterName))
-
-	for _, info := range queryInfos {
-		md.AddHeading(info.MetricName, 3)
-
-		md.AddParagraph(fmt.Sprintf("**Namespace:** %s", info.Namespace))
-		md.AddParagraph(fmt.Sprintf("**Dimensions:** %s", info.Dimensions))
-		md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
-		md.AddParagraph(fmt.Sprintf("**Period:** %d seconds", info.Period))
-
-		if info.SearchExpression != "" {
-			md.AddParagraph("**SEARCH Expression:**")
-			md.AddCodeBlock(info.SearchExpression, "")
-		}
-
-		if info.MathExpression != "" {
-			md.AddParagraph(fmt.Sprintf("**Aggregation:** `%s`", info.MathExpression))
-		}
-
-		if info.AWSCLICommand != "" {
-			md.AddParagraph("**AWS CLI Command:**")
-			md.AddCodeBlock(info.AWSCLICommand, "bash")
-		}
-
-		md.AddParagraph(fmt.Sprintf("*%s*", info.AggregationNote))
-	}
-
-	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
-}
