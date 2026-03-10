@@ -2,8 +2,11 @@ package cost
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,6 +38,14 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 
 	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
 
+	metrics := []string{
+		string(costexplorertypes.MetricUnblendedCost),
+		string(costexplorertypes.MetricBlendedCost),
+		string(costexplorertypes.MetricAmortizedCost),
+		string(costexplorertypes.MetricNetAmortizedCost),
+		string(costexplorertypes.MetricNetUnblendedCost),
+	}
+
 	// Collect all results across pages
 	var allResults []costexplorertypes.ResultByTime
 	var nextToken *string
@@ -57,6 +68,9 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 		nextToken = output.NextPageToken
 	}
 
+	// Build query info with CLI command and console URL
+	queryInfo := buildCostQueryInfo(region, startStr, endStr, granularity, services, metrics, tags)
+
 	costInformation := types.CostInformation{
 		CostMetadata: types.CostMetadata{
 			StartDate:   startDate,
@@ -66,6 +80,7 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 			Services:    services,
 		},
 		CostResults: allResults,
+		QueryInfo:   queryInfo,
 	}
 
 	return costInformation, nil
@@ -139,4 +154,95 @@ func (cs *CostService) buildCostExplorerInput(region string, start, end *string,
 	}
 
 	return input
+}
+
+// buildCostQueryInfo generates structured query information including AWS CLI command and console URL
+func buildCostQueryInfo(region string, start, end *string, granularity costexplorertypes.Granularity, services []string, metrics []string, tags map[string][]string) types.CostQueryInfo {
+	// Build filter JSON for CLI command
+	filterParts := []string{
+		fmt.Sprintf(`{"Dimensions":{"Key":"REGION","Values":["%s"]}}`, region),
+		fmt.Sprintf(`{"Dimensions":{"Key":"SERVICE","Values":[%s]}}`, buildJSONArray(services)),
+	}
+
+	// Add tags to filter if present
+	for key, values := range tags {
+		filterParts = append(filterParts, fmt.Sprintf(`{"Tags":{"Key":"%s","Values":[%s]}}`, key, buildJSONArray(values)))
+	}
+
+	filterJSON := fmt.Sprintf(`{"And":[%s]}`, strings.Join(filterParts, ","))
+
+	// Build AWS CLI command
+	cliCommand := fmt.Sprintf(`aws ce get-cost-and-usage \
+  --time-period Start=%s,End=%s \
+  --granularity %s \
+  --filter '%s' \
+  --metrics %s \
+  --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=USAGE_TYPE`,
+		*start,
+		*end,
+		strings.ToUpper(string(granularity)),
+		filterJSON,
+		strings.Join(metrics, " "))
+
+	// Build console URL filter
+	consoleFilter := buildConsoleFilter(region, services)
+	encodedFilter := url.QueryEscape(consoleFilter)
+
+	// Build console URL
+	consoleURL := fmt.Sprintf(
+		"https://console.aws.amazon.com/cost-management/home#/cost-explorer?chartStyle=Stack&costAggregate=unBlendedCost&endDate=%s&excludeForecasting=true&filter=%s&granularity=Daily&groupBy=[\"Service\"]&startDate=%s",
+		*end,
+		encodedFilter,
+		*start,
+	)
+
+	return types.CostQueryInfo{
+		TimePeriod: types.CostQueryTimePeriod{
+			Start: *start,
+			End:   *end,
+		},
+		Granularity:     string(granularity),
+		Services:        services,
+		Regions:         []string{region},
+		GroupBy:         []string{"Service", "UsageType"},
+		Metrics:         metrics,
+		Tags:            tags,
+		AWSCLICommand:   cliCommand,
+		ConsoleURL:      consoleURL,
+		AggregationNote: "KCP aggregates daily results by summing costs per usage type over the selected time range and computing average/min/max statistics. The raw AWS output shows individual daily line items.",
+	}
+}
+
+// buildJSONArray converts a string slice to a JSON array string for CLI commands
+func buildJSONArray(items []string) string {
+	quoted := make([]string, len(items))
+	for i, item := range items {
+		quoted[i] = fmt.Sprintf(`"%s"`, item)
+	}
+	return strings.Join(quoted, ",")
+}
+
+// buildConsoleFilter creates the filter JSON for AWS Cost Explorer console URL
+func buildConsoleFilter(region string, services []string) string {
+	type ConsoleFilterItem struct {
+		Dimension string   `json:"dimension"`
+		Values    []string `json:"values"`
+		Include   bool     `json:"include"`
+	}
+
+	filters := []ConsoleFilterItem{
+		{
+			Dimension: "Service",
+			Values:    services,
+			Include:   true,
+		},
+		{
+			Dimension: "Region",
+			Values:    []string{region},
+			Include:   true,
+		},
+	}
+
+	jsonBytes, _ := json.Marshal(filters)
+	return string(jsonBytes)
 }

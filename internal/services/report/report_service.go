@@ -459,8 +459,9 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 	}
 
 	return types.ProcessedRegionCosts{
-		Metadata: region.Costs.CostMetadata,
-		Results:  processedCosts,
+		Metadata:  region.Costs.CostMetadata,
+		Results:   processedCosts,
+		QueryInfo: region.Costs.QueryInfo,
 	}
 }
 
