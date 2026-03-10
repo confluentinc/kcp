@@ -92,7 +92,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			Name: "cluster_link_name",
 			Definition: types.TerraformVariable{
 				Name:        "cluster_link_name",
-				Description: "Name of the cluster link between the source and target Confluent Cloud clusters.",
+				Description: "Name of the cluster link that will be created between the source and target Confluent Cloud clusters.",
 				Sensitive:   false,
 				Type:        "string",
 			},
