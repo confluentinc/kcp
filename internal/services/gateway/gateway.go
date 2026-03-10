@@ -38,10 +38,10 @@ type Service interface {
 
 // PodRolloutProgress reports the current state of a pod rollout
 type PodRolloutProgress struct {
-	InitialPodCount int
-	ReplacedCount   int
-	ReadyCount      int
-	RolloutDetected bool
+	InitialPodCount  int
+	NewPodsReady     int
+	OldPodsRemaining int
+	RolloutDetected  bool
 }
 
 // K8sService implements gateway operations using Kubernetes clients
@@ -274,10 +274,10 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		slog.Debug("no rollout detected within 10 seconds, assuming config change did not require pod restart")
 		if onProgress != nil {
 			onProgress(PodRolloutProgress{
-				InitialPodCount: initialPodCount,
-				ReplacedCount:   initialPodCount,
-				ReadyCount:      initialPodCount,
-				RolloutDetected: false,
+				InitialPodCount:  initialPodCount,
+				NewPodsReady:     initialPodCount,
+				OldPodsRemaining: 0,
+				RolloutDetected:  false,
 			})
 		}
 		return nil
@@ -302,24 +302,24 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 			return fmt.Errorf("failed to list gateway pods: %w", err)
 		}
 
-		replacedCount := countReplacedPods(pods.Items, initialPodUIDs)
-		readyCount := countReadyPods(pods.Items)
+		newPodsReady := countNewReadyPods(pods.Items, initialPodUIDs)
+		oldPodsRemaining := countOldPods(pods.Items, initialPodUIDs)
 
 		slog.Debug("pod rollout progress",
-			"replaced", fmt.Sprintf("%d/%d", replacedCount, initialPodCount),
-			"ready", fmt.Sprintf("%d/%d", readyCount, initialPodCount))
+			"newPodsReady", fmt.Sprintf("%d/%d", newPodsReady, initialPodCount),
+			"oldPodsRemaining", oldPodsRemaining)
 
 		if onProgress != nil {
 			onProgress(PodRolloutProgress{
-				InitialPodCount: initialPodCount,
-				ReplacedCount:   replacedCount,
-				ReadyCount:      readyCount,
-				RolloutDetected: true,
+				InitialPodCount:  initialPodCount,
+				NewPodsReady:     newPodsReady,
+				OldPodsRemaining: oldPodsRemaining,
+				RolloutDetected:  true,
 			})
 		}
 
-		// Check completion: all replaced and all ready
-		if allPodsReplaced(pods.Items, initialPodUIDs) && len(pods.Items) == initialPodCount && readyCount == initialPodCount {
+		// Check completion: all old pods gone, all new pods ready, correct count
+		if oldPodsRemaining == 0 && newPodsReady == initialPodCount && len(pods.Items) == initialPodCount {
 			slog.Debug("all gateway pods replaced and ready", "podCount", initialPodCount)
 			return nil
 		}
@@ -356,6 +356,28 @@ func countReadyPods(pods []corev1.Pod) int {
 	count := 0
 	for _, pod := range pods {
 		if isPodReady(&pod) {
+			count++
+		}
+	}
+	return count
+}
+
+// countNewReadyPods counts how many new pods (not in initial set) are ready
+func countNewReadyPods(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) int {
+	count := 0
+	for _, pod := range currentPods {
+		if _, wasInitial := initialUIDs[pod.UID]; !wasInitial && isPodReady(&pod) {
+			count++
+		}
+	}
+	return count
+}
+
+// countOldPods counts how many initial pods are still present
+func countOldPods(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) int {
+	count := 0
+	for _, pod := range currentPods {
+		if _, wasInitial := initialUIDs[pod.UID]; wasInitial {
 			count++
 		}
 	}

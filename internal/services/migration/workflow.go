@@ -405,6 +405,11 @@ func printPodRolloutProgress(p gateway.PodRolloutProgress) {
 		fmt.Printf("   %s No pod restart required\n", color.GreenString("✔"))
 		return
 	}
-	fmt.Printf("   %s %d/%d pods replaced, %d/%d ready\n",
-		color.CyanString("⏳"), p.ReplacedCount, p.InitialPodCount, p.ReadyCount, p.InitialPodCount)
+	if p.NewPodsReady == p.InitialPodCount && p.OldPodsRemaining > 0 {
+		fmt.Printf("   %s %d/%d new pods ready, waiting for old pods to terminate...\n",
+			color.CyanString("⏳"), p.NewPodsReady, p.InitialPodCount)
+	} else {
+		fmt.Printf("   %s %d/%d new pods ready...\n",
+			color.CyanString("⏳"), p.NewPodsReady, p.InitialPodCount)
+	}
 }
