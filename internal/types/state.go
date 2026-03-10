@@ -523,6 +523,7 @@ const (
 type ClusterMetrics struct {
 	MetricMetadata MetricMetadata                     `json:"metadata"`
 	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
+	QueryInfo      []MetricQueryInfo                  `json:"query_info"`
 }
 
 type MetricMetadata struct {
@@ -545,6 +546,18 @@ type CloudWatchTimeWindow struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Period    int32
+}
+
+type MetricQueryInfo struct {
+	MetricName       string `json:"metric_name"`
+	Namespace        string `json:"namespace"`
+	Dimensions       string `json:"dimensions"`
+	Statistic        string `json:"statistic"`
+	Period           int32  `json:"period"`
+	SearchExpression string `json:"search_expression"`
+	MathExpression   string `json:"math_expression"`
+	AWSCLICommand    string `json:"aws_cli_command"`
+	AggregationNote  string `json:"aggregation_note"`
 }
 
 // ----- costs -----
@@ -696,6 +709,7 @@ type ProcessedClusterMetrics struct {
 	Metadata   MetricMetadata             `json:"metadata"`
 	Metrics    []ProcessedMetric          `json:"results"`
 	Aggregates map[string]MetricAggregate `json:"aggregates"`
+	QueryInfo  []MetricQueryInfo          `json:"query_info"`
 }
 
 type ProcessedMetric struct {

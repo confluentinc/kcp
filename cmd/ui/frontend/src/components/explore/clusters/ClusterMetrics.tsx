@@ -13,6 +13,7 @@ import { ErrorDisplay } from '@/components/common/ErrorDisplay'
 import { DataViewTabs } from '@/components/common/DataViewTabs'
 import { MetricsChartTab } from './MetricsChartTab'
 import { MetricsTableTab } from './MetricsTableTab'
+import { ClusterMetricsQueryTab } from './ClusterMetricsQueryTab'
 import type { ApiMetadata } from '@/types/api/common'
 
 interface ClusterMetricsProps {
@@ -220,6 +221,9 @@ export const ClusterMetrics = ({
               processedData={processedData}
               metricsResponse={metricsResponse}
             />
+          )}
+          renderQuery={() => (
+            <ClusterMetricsQueryTab queryInfo={metricsResponse?.query_info} />
           )}
         />
       )}

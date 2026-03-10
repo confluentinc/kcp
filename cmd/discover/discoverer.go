@@ -171,6 +171,10 @@ func (d *Discoverer) discoverRegions() error {
 		slog.Warn("failed to output cost query summary", "error", err)
 	}
 
+	if err := d.outputMetricsQuerySummary(state); err != nil {
+		slog.Warn("failed to output metrics query summary", "error", err)
+	}
+
 	return nil
 }
 
@@ -546,5 +550,59 @@ func (d *Discoverer) outputCostQuerySummary(state *types.State) error {
 	md.AddParagraph(queryInfo.ConsoleURL)
 
 	// Print to terminal
+	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
+}
+
+func (d *Discoverer) outputMetricsQuerySummary(state *types.State) error {
+	// Find first cluster with metrics query info
+	var queryInfos []types.MetricQueryInfo
+	var clusterName string
+
+	for _, region := range state.Regions {
+		for _, cluster := range region.Clusters {
+			if len(cluster.ClusterMetrics.QueryInfo) > 0 {
+				queryInfos = cluster.ClusterMetrics.QueryInfo
+				clusterName = cluster.Name
+				break
+			}
+		}
+		if queryInfos != nil {
+			break
+		}
+	}
+
+	if queryInfos == nil {
+		return nil
+	}
+
+	md := markdown.New()
+	md.AddHeading("Metrics Query Details", 2)
+	md.AddParagraph(fmt.Sprintf("**Cluster:** %s", clusterName))
+
+	for _, info := range queryInfos {
+		md.AddHeading(info.MetricName, 3)
+
+		md.AddParagraph(fmt.Sprintf("**Namespace:** %s", info.Namespace))
+		md.AddParagraph(fmt.Sprintf("**Dimensions:** %s", info.Dimensions))
+		md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+		md.AddParagraph(fmt.Sprintf("**Period:** %d seconds", info.Period))
+
+		if info.SearchExpression != "" {
+			md.AddParagraph("**SEARCH Expression:**")
+			md.AddCodeBlock(info.SearchExpression, "")
+		}
+
+		if info.MathExpression != "" {
+			md.AddParagraph(fmt.Sprintf("**Aggregation:** `%s`", info.MathExpression))
+		}
+
+		if info.AWSCLICommand != "" {
+			md.AddParagraph("**AWS CLI Command:**")
+			md.AddCodeBlock(info.AWSCLICommand, "bash")
+		}
+
+		md.AddParagraph(fmt.Sprintf("*%s*", info.AggregationNote))
+	}
+
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
