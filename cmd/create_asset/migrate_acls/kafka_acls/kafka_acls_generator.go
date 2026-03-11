@@ -54,7 +54,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 	for principal := range aclsByPrincipal {
 		principalNames = append(principalNames, principal)
 	}
-	
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
@@ -213,4 +213,3 @@ func addAclSectionForKafkaPrincipal(md *markdown.Markdown, acls []types.Acls) {
 
 	md.AddTable(headers, tableData)
 }
-
