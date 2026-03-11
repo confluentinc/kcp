@@ -515,7 +515,61 @@ func populateCLICommands(queryInfos []types.MetricQueryInfo, queries []cloudwatc
 					string(queriesJSON))
 			}
 		}
+
+		// Build CloudWatch Console Source tab JSON from the same entries
+		info.ConsoleSourceJSON = buildConsoleSourceJSON(cliEntries, region)
 	}
+}
+
+// consoleSourceJSON is the JSON structure expected by the CloudWatch Console Source tab.
+type consoleSourceJSON struct {
+	View    string `json:"view"`
+	Stacked bool   `json:"stacked"`
+	Region  string `json:"region"`
+	Metrics []any  `json:"metrics"`
+}
+
+// consoleExpressionEntry represents an expression-based metric in CloudWatch Console Source JSON.
+type consoleExpressionEntry struct {
+	ID         string `json:"id"`
+	Expression string `json:"expression"`
+	Label      string `json:"label,omitempty"`
+}
+
+func buildConsoleSourceJSON(entries []cliQueryEntry, region string) string {
+	if len(entries) == 0 {
+		return ""
+	}
+
+	source := consoleSourceJSON{
+		View:    "timeSeries",
+		Stacked: false,
+		Region:  region,
+	}
+
+	for _, entry := range entries {
+		if entry.Expression != "" {
+			ce := consoleExpressionEntry{
+				ID:         entry.ID,
+				Expression: entry.Expression,
+				Label:      entry.Label,
+			}
+			source.Metrics = append(source.Metrics, []any{ce})
+		} else if entry.MetricStat != nil {
+			// MetricStat-based: ["namespace", "metricName", "dimName", "dimValue", ...]
+			metricEntry := []any{entry.MetricStat.Metric.Namespace, entry.MetricStat.Metric.MetricName}
+			for _, dim := range entry.MetricStat.Metric.Dimensions {
+				metricEntry = append(metricEntry, dim.Name, dim.Value)
+			}
+			source.Metrics = append(source.Metrics, metricEntry)
+		}
+	}
+
+	jsonBytes, err := json.MarshalIndent(source, "", "    ")
+	if err != nil {
+		return ""
+	}
+	return string(jsonBytes)
 }
 
 // regionFromArn extracts the AWS region from an ARN (e.g. arn:aws:kafka:us-east-1:123456:cluster/...)

@@ -33,6 +33,7 @@ export interface MetricQueryInfo {
   search_expression: string
   math_expression: string
   aws_cli_command: string
+  console_source_json: string
   aggregation_note: string
 }
 

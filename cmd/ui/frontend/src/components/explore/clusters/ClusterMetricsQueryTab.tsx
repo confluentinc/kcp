@@ -21,7 +21,13 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
     )
   }
 
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 2000)
+  }
 
   return (
     <div className="space-y-6">
@@ -69,18 +75,6 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
             </div>
           </div>
 
-          {/* SEARCH Expression */}
-          {info.search_expression && (
-            <div className="mb-4">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                SEARCH Expression
-              </span>
-              <pre className="mt-1 text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto bg-gray-50 dark:bg-gray-900 p-3 rounded border">
-                {info.search_expression}
-              </pre>
-            </div>
-          )}
-
           {/* Math Expression */}
           {info.math_expression && (
             <div className="mb-4">
@@ -95,6 +89,32 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
             </div>
           )}
 
+          {/* CloudWatch Console Source JSON */}
+          {info.console_source_json && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  CloudWatch Console Source JSON
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopy(info.console_source_json, `console-${index}`)}
+                  className="text-xs"
+                >
+                  {copiedKey === `console-${index}` ? 'Copied!' : 'Copy'}
+                </Button>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                Paste into CloudWatch &rarr; Metrics &rarr; All metrics &rarr;{' '}
+                <strong>Source</strong> tab, then click <strong>Update</strong>.
+              </p>
+              <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-48 bg-gray-50 dark:bg-gray-900 p-3 rounded border">
+                {info.console_source_json}
+              </pre>
+            </div>
+          )}
+
           {/* AWS CLI Command */}
           {info.aws_cli_command && (
             <div className="mb-4">
@@ -105,14 +125,10 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    navigator.clipboard.writeText(info.aws_cli_command)
-                    setCopiedIndex(index)
-                    setTimeout(() => setCopiedIndex(null), 2000)
-                  }}
+                  onClick={() => handleCopy(info.aws_cli_command, `cli-${index}`)}
                   className="text-xs"
                 >
-                  {copiedIndex === index ? 'Copied!' : 'Copy'}
+                  {copiedKey === `cli-${index}` ? 'Copied!' : 'Copy'}
                 </Button>
               </div>
               <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-48 bg-gray-50 dark:bg-gray-900 p-3 rounded border">

@@ -223,6 +223,48 @@ func TestPopulateCLICommandsWithStorageQueries(t *testing.T) {
 	assert.Equal(t, true, entries[2]["ReturnData"])
 }
 
+func TestConsoleSourceJSON(t *testing.T) {
+	ms := &MetricService{client: nil}
+	startTime := time.Date(2025, 3, 10, 0, 0, 0, 0, time.UTC)
+	endTime := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
+
+	t.Run("SEARCH-based metric produces valid console JSON", func(t *testing.T) {
+		queries, queryInfos := ms.buildBrokerMetricQueries("test-cluster", 86400)
+		populateCLICommands(queryInfos, queries, startTime, endTime, "us-east-1")
+
+		for _, info := range queryInfos {
+			assert.NotEmpty(t, info.ConsoleSourceJSON, "ConsoleSourceJSON should be populated for %s", info.MetricName)
+
+			var source map[string]any
+			err := json.Unmarshal([]byte(info.ConsoleSourceJSON), &source)
+			require.NoError(t, err, "ConsoleSourceJSON should be valid JSON for %s", info.MetricName)
+
+			assert.Equal(t, "timeSeries", source["view"])
+			assert.Equal(t, false, source["stacked"])
+			assert.Equal(t, "us-east-1", source["region"])
+			assert.Contains(t, source, "metrics")
+
+			// Verify metrics array contains the full query chain (SEARCH + SUM)
+			metrics, ok := source["metrics"].([]any)
+			require.True(t, ok)
+			assert.Len(t, metrics, 2, "Should have SEARCH + SUM entries for %s", info.MetricName)
+		}
+	})
+
+	t.Run("MetricStat-based metric produces valid console JSON", func(t *testing.T) {
+		queries, queryInfos := ms.buildClusterMetricQueries("test-cluster", 86400)
+		populateCLICommands(queryInfos, queries, startTime, endTime, "us-east-1")
+
+		info := queryInfos[0]
+		assert.NotEmpty(t, info.ConsoleSourceJSON)
+
+		var source map[string]any
+		err := json.Unmarshal([]byte(info.ConsoleSourceJSON), &source)
+		require.NoError(t, err)
+		assert.Equal(t, "us-east-1", source["region"])
+	})
+}
+
 // Ensure MetricService with nil client doesn't panic on query building (only on execution)
 func TestMetricServiceNilClient(t *testing.T) {
 	ms := NewMetricService((*cloudwatch.Client)(nil))

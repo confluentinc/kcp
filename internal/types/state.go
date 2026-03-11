@@ -554,10 +554,11 @@ type MetricQueryInfo struct {
 	Dimensions       string `json:"dimensions"`
 	Statistic        string `json:"statistic"`
 	Period           int32  `json:"period"`
-	SearchExpression string `json:"search_expression"`
-	MathExpression   string `json:"math_expression"`
-	AWSCLICommand    string `json:"aws_cli_command"`
-	AggregationNote  string `json:"aggregation_note"`
+	SearchExpression   string `json:"search_expression"`
+	MathExpression     string `json:"math_expression"`
+	AWSCLICommand      string `json:"aws_cli_command"`
+	ConsoleSourceJSON  string `json:"console_source_json"`
+	AggregationNote    string `json:"aggregation_note"`
 }
 
 // ----- costs -----
