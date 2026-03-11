@@ -22,7 +22,7 @@ var (
 	migrationInfraType string
 	clusterLinkName    string
 
-	existingInternetGateway    bool
+	existingInternetGateway   bool
 	existingPrivateLinkVpceId string
 	outputDir                 string
 

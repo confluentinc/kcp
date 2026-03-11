@@ -103,4 +103,3 @@ func (g *TargetInfraGenerator) BuildTerraformProject(project types.MigrationInfr
 
 	return nil
 }
-

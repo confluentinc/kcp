@@ -13,4 +13,3 @@ func GenerateRandomStringResource(tfResourceName string, length int, special, nu
 	randomStringBlock.Body().SetAttributeValue("upper", cty.BoolVal(upper))
 	return randomStringBlock
 }
-

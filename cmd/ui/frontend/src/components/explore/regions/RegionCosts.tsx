@@ -17,6 +17,7 @@ import { ErrorDisplay } from '@/components/common/ErrorDisplay'
 import { DataViewTabs } from '@/components/common/DataViewTabs'
 import { RegionCostsChartTab } from './RegionCostsChartTab'
 import { RegionCostsTableTab } from './RegionCostsTableTab'
+import { RegionCostsQueryTab } from './RegionCostsQueryTab'
 import { apiClient } from '@/services/apiClient'
 import type { CostsApiResponse } from '@/types/api'
 import { COST_TYPES, AWS_SERVICES } from '@/constants'
@@ -261,6 +262,7 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
               setSelectedTableService={setSelectedTableService}
             />
           )}
+          renderQuery={() => <RegionCostsQueryTab queryInfo={costsResponse?.query_info} />}
         />
       )}
 

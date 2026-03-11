@@ -15,6 +15,7 @@ interface DataViewTabsProps {
   csvData: string
   renderChart: () => ReactNode
   renderTable: () => ReactNode
+  renderQuery?: () => ReactNode
   contentWrapperClassName?: string
 }
 
@@ -31,20 +32,24 @@ export const DataViewTabs = ({
   csvData,
   renderChart,
   renderTable,
+  renderQuery,
   contentWrapperClassName = '',
 }: DataViewTabsProps) => {
   const jsonString = JSON.stringify(jsonData, null, 2)
+
+  const tabItems = [
+    { id: TAB_IDS.CHART, label: 'Chart' },
+    { id: TAB_IDS.TABLE, label: 'Table' },
+    ...(renderQuery ? [{ id: TAB_IDS.QUERY, label: 'Query' }] : []),
+    { id: TAB_IDS.JSON, label: 'JSON' },
+    { id: TAB_IDS.CSV, label: 'CSV' },
+  ]
 
   return (
     <div className="w-full max-w-full">
       <div className="flex items-center justify-between mb-4">
         <Tabs
-          tabs={[
-            { id: TAB_IDS.CHART, label: 'Chart' },
-            { id: TAB_IDS.TABLE, label: 'Table' },
-            { id: TAB_IDS.JSON, label: 'JSON' },
-            { id: TAB_IDS.CSV, label: 'CSV' },
-          ]}
+          tabs={tabItems}
           activeId={activeTab}
           onChange={(id) => onTabChange(id as TabId)}
         />
@@ -75,6 +80,8 @@ export const DataViewTabs = ({
         {activeTab === TAB_IDS.CHART && renderChart()}
 
         {activeTab === TAB_IDS.TABLE && renderTable()}
+
+        {activeTab === TAB_IDS.QUERY && renderQuery?.()}
 
         {activeTab === TAB_IDS.JSON && (
           <MetricsCodeViewer
