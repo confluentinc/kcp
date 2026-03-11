@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -475,4 +476,3 @@ func getClusterStorageInfo(cluster types.DiscoveredCluster) (storageMode, volume
 
 	return "N/A", "N/A", "N/A"
 }
-

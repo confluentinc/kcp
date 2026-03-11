@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/stretchr/testify/assert"
@@ -105,6 +104,12 @@ func TestBuildCostQueryInfo(t *testing.T) {
 
 		// Verify filter structure has And with all conditions
 		assert.Contains(t, queryInfo.AWSCLICommand, `{"And":`)
+
+		// Verify deterministic output across multiple calls
+		for i := 0; i < 10; i++ {
+			q := buildCostQueryInfo(region, start, end, granularity, services, metrics, tags)
+			assert.Equal(t, queryInfo.AWSCLICommand, q.AWSCLICommand, "CLI command should be deterministic on iteration %d", i)
+		}
 	})
 
 	t.Run("CLI command is valid JSON filter", func(t *testing.T) {

@@ -76,8 +76,12 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 
 	// for express brokers there is no storage info
 	if brokerType == types.BrokerTypeExpress {
-		allQueries := append(brokerQueries, clusterQueries...)
-		allQueryInfos := append(brokerQueryInfos, clusterQueryInfos...)
+		allQueries := make([]cloudwatchtypes.MetricDataQuery, 0, len(brokerQueries)+len(clusterQueries))
+		allQueries = append(allQueries, brokerQueries...)
+		allQueries = append(allQueries, clusterQueries...)
+		allQueryInfos := make([]types.MetricQueryInfo, 0, len(brokerQueryInfos)+len(clusterQueryInfos))
+		allQueryInfos = append(allQueryInfos, brokerQueryInfos...)
+		allQueryInfos = append(allQueryInfos, clusterQueryInfos...)
 		populateCLICommands(allQueryInfos, allQueries, timeWindow.StartTime, timeWindow.EndTime, regionFromArn(cluster.ClusterArn))
 		return &types.ClusterMetrics{
 			MetricMetadata: metricsMetadata,
@@ -100,18 +104,31 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	}
 
 	// Combine broker and cluster metric results
-	combinedResults := append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...)
+	combinedResults := make([]cloudwatchtypes.MetricDataResult, 0,
+		len(brokerQueryResult.MetricDataResults)+len(clusterQueryResult.MetricDataResults)+
+			len(clientConnectionQueryResult.MetricDataResults)+len(storageQueryResult.MetricDataResults)+
+			len(remoteStorageQueryResult.MetricDataResults))
+	combinedResults = append(combinedResults, brokerQueryResult.MetricDataResults...)
+	combinedResults = append(combinedResults, clusterQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, clientConnectionQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, storageQueryResult.MetricDataResults...)
 	combinedResults = append(combinedResults, remoteStorageQueryResult.MetricDataResults...)
 
 	// Combine all query infos and populate CLI commands
-	allQueries := append(brokerQueries, clientConnectionQueries...)
+	allQueries := make([]cloudwatchtypes.MetricDataQuery, 0,
+		len(brokerQueries)+len(clientConnectionQueries)+len(clusterQueries)+
+			len(localStorageQueries)+len(remoteStorageQueries))
+	allQueries = append(allQueries, brokerQueries...)
+	allQueries = append(allQueries, clientConnectionQueries...)
 	allQueries = append(allQueries, clusterQueries...)
 	allQueries = append(allQueries, localStorageQueries...)
 	allQueries = append(allQueries, remoteStorageQueries...)
 
-	allQueryInfos := append(brokerQueryInfos, clientConnQueryInfos...)
+	allQueryInfos := make([]types.MetricQueryInfo, 0,
+		len(brokerQueryInfos)+len(clientConnQueryInfos)+len(clusterQueryInfos)+
+			len(localStorageQueryInfos)+len(remoteStorageQueryInfos))
+	allQueryInfos = append(allQueryInfos, brokerQueryInfos...)
+	allQueryInfos = append(allQueryInfos, clientConnQueryInfos...)
 	allQueryInfos = append(allQueryInfos, clusterQueryInfos...)
 	allQueryInfos = append(allQueryInfos, localStorageQueryInfos...)
 	allQueryInfos = append(allQueryInfos, remoteStorageQueryInfos...)

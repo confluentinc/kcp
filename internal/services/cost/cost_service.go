@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -162,8 +163,14 @@ func buildCostQueryInfo(region string, start, end *string, granularity costexplo
 		fmt.Sprintf(`{"Dimensions":{"Key":"SERVICE","Values":[%s]}}`, buildJSONArray(services)),
 	}
 
-	// Add tags to filter if present
-	for key, values := range tags {
+	// Add tags to filter if present (sorted for deterministic output)
+	tagKeys := make([]string, 0, len(tags))
+	for key := range tags {
+		tagKeys = append(tagKeys, key)
+	}
+	sort.Strings(tagKeys)
+	for _, key := range tagKeys {
+		values := tags[key]
 		filterParts = append(filterParts, fmt.Sprintf(`{"Tags":{"Key":"%s","Values":[%s]}}`, key, buildJSONArray(values)))
 	}
 

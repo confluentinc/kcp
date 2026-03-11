@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
 import type { MetricQueryInfo } from '@/types/api'
 
@@ -20,9 +21,11 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
     )
   }
 
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+
   return (
     <div className="space-y-6">
-      {(queryInfo ?? []).map((info, index) => (
+      {queryInfo.map((info, index) => (
         <div
           key={`${info.metric_name}-${index}`}
           className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6"
@@ -102,10 +105,14 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigator.clipboard.writeText(info.aws_cli_command)}
+                  onClick={() => {
+                    navigator.clipboard.writeText(info.aws_cli_command)
+                    setCopiedIndex(index)
+                    setTimeout(() => setCopiedIndex(null), 2000)
+                  }}
                   className="text-xs"
                 >
-                  Copy
+                  {copiedIndex === index ? 'Copied!' : 'Copy'}
                 </Button>
               </div>
               <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-48 bg-gray-50 dark:bg-gray-900 p-3 rounded border">

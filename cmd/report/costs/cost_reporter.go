@@ -389,7 +389,6 @@ func (r *CostReporter) addQueryDetails(md *markdown.Markdown, regionCostData []t
 
 	// Add separator
 	md.AddParagraph("---")
-	md.AddParagraph("")
 }
 
 func (r *CostReporter) formatCurrency(value *float64) string {

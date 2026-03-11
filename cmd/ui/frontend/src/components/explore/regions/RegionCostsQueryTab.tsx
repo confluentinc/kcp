@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
 import type { CostQueryInfo } from '@/types/api'
@@ -16,6 +17,8 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
       </div>
     )
   }
+
+  const [copied, setCopied] = useState(false)
 
   return (
     <div className="space-y-6">
@@ -130,10 +133,14 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigator.clipboard.writeText(queryInfo.aws_cli_command)}
+            onClick={() => {
+              navigator.clipboard.writeText(queryInfo.aws_cli_command)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 2000)
+            }}
             className="text-xs"
           >
-            Copy CLI Command
+            {copied ? 'Copied!' : 'Copy CLI Command'}
           </Button>
         </div>
         <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-gray-50 dark:bg-gray-900 p-4 rounded border">
