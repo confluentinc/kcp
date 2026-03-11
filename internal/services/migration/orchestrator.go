@@ -120,7 +120,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		fmt.Printf("%s\n", color.GreenString("✅ Done"))
 	}
 
-	fmt.Printf("\n%s\n", color.GreenString("🎉 Migration complete!"))
+	fmt.Printf("\n%s\n", color.GreenString("✅ Migration complete!"))
 	return nil
 }
 

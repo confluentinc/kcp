@@ -192,8 +192,8 @@ func (s *MigrationWorkflow) CheckLags(
 
 		elapsed := time.Since(startTime)
 
-		fmt.Printf("%s Waiting for lag to clear  %s  %s\n",
-			color.YellowString("⏳"),
+		fmt.Printf("   %s Waiting for lag to clear  %s  %s\n",
+			color.YellowString("↳"),
 			color.YellowString("%d/%d topics behind", len(topicTotalLags), len(config.Topics)),
 			color.CyanString("elapsed %s", elapsed.Round(time.Second)))
 
@@ -256,7 +256,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 	)
 
 	initialPodCount := len(initialGatewayPodUIDs)
-	fmt.Printf("   %s Waiting for pod rollout (0/%d pods replaced)...\n", color.CyanString("⏳"), initialPodCount)
+	fmt.Printf("   ↳ Waiting for pod rollout (0/%d pods replaced)...\n", initialPodCount)
 	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
 	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
@@ -316,8 +316,8 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 		// If no topics ready to promote (all have non-zero lag), wait and retry
 		if len(topicsToPromote) == 0 {
 			if clusterlink.HasActiveTopicsWithNonZeroLag(mirrorTopics) {
-				fmt.Printf("   %s Waiting for lag to reach zero (%d active topics)...\n",
-					color.CyanString("⏳"), activeCount)
+				fmt.Printf("   ↳ Waiting for lag to reach zero (%d active topics)...\n",
+					activeCount)
 				slog.Debug("active topics found but lag is not zero, waiting before retry",
 					"activeTopics", activeCount, "pollInterval", pollInterval)
 				select {
@@ -343,8 +343,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 				color.CyanString("lag:"),
 				color.GreenString("0"))
 		}
-		fmt.Printf("   %s Promoting %d mirror topics...\n",
-			color.CyanString("📤"), len(topicsToPromote))
+		fmt.Printf("   ↳ Promoting %d mirror topics...\n", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
@@ -402,7 +401,7 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.Mig
 	)
 
 	initialPodCount := len(initialGatewayPodUIDs)
-	fmt.Printf("   %s Waiting for pod rollout (0/%d pods replaced)...\n", color.CyanString("⏳"), initialPodCount)
+	fmt.Printf("   ↳ Waiting for pod rollout (0/%d pods replaced)...\n", initialPodCount)
 	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
 	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
@@ -420,10 +419,10 @@ func printPodRolloutProgress(p gateway.PodRolloutProgress) {
 		return
 	}
 	if p.NewPodsReady == p.InitialPodCount && p.OldPodsRemaining > 0 {
-		fmt.Printf("   %s %d/%d new pods ready, waiting for old pods to terminate...\n",
-			color.CyanString("⏳"), p.NewPodsReady, p.InitialPodCount)
+		fmt.Printf("   ↳ %d/%d new pods ready, waiting for existing pods to terminate...\n",
+			p.NewPodsReady, p.InitialPodCount)
 	} else {
-		fmt.Printf("   %s %d/%d new pods ready...\n",
-			color.CyanString("⏳"), p.NewPodsReady, p.InitialPodCount)
+		fmt.Printf("   ↳ %d/%d new pods ready...\n",
+			p.NewPodsReady, p.InitialPodCount)
 	}
 }
