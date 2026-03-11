@@ -78,7 +78,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	if brokerType == types.BrokerTypeExpress {
 		allQueries := append(brokerQueries, clusterQueries...)
 		allQueryInfos := append(brokerQueryInfos, clusterQueryInfos...)
-		populateCLICommands(allQueryInfos, allQueries, timeWindow.StartTime, timeWindow.EndTime)
+		populateCLICommands(allQueryInfos, allQueries, timeWindow.StartTime, timeWindow.EndTime, regionFromArn(cluster.ClusterArn))
 		return &types.ClusterMetrics{
 			MetricMetadata: metricsMetadata,
 			Results:        append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...),
@@ -115,7 +115,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	allQueryInfos = append(allQueryInfos, clusterQueryInfos...)
 	allQueryInfos = append(allQueryInfos, localStorageQueryInfos...)
 	allQueryInfos = append(allQueryInfos, remoteStorageQueryInfos...)
-	populateCLICommands(allQueryInfos, allQueries, timeWindow.StartTime, timeWindow.EndTime)
+	populateCLICommands(allQueryInfos, allQueries, timeWindow.StartTime, timeWindow.EndTime, regionFromArn(cluster.ClusterArn))
 
 	clusterMetrics := types.ClusterMetrics{
 		MetricMetadata: metricsMetadata,
@@ -143,7 +143,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 
 	// Build metric queries for all topics with aggregation
 	queries, queryInfos := ms.buildServerlessMetricQueries(*cluster.ClusterName, timeWindow.Period)
-	populateCLICommands(queryInfos, queries, timeWindow.StartTime, timeWindow.EndTime)
+	populateCLICommands(queryInfos, queries, timeWindow.StartTime, timeWindow.EndTime, regionFromArn(cluster.ClusterArn))
 
 	// Execute the metric query
 	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
@@ -409,7 +409,7 @@ type cliDimension struct {
 	Value string `json:"Value"`
 }
 
-func populateCLICommands(queryInfos []types.MetricQueryInfo, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) {
+func populateCLICommands(queryInfos []types.MetricQueryInfo, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time, region string) {
 	// Build a map from metric query info to the relevant MetricDataQuery entries.
 	// For SEARCH-based metrics: match by finding the SEARCH expression in the query list.
 	// For MetricStat-based metrics: match by MetricName.
@@ -418,7 +418,7 @@ func populateCLICommands(queryInfos []types.MetricQueryInfo, queries []cloudwatc
 		var cliEntries []cliQueryEntry
 
 		if info.SearchExpression != "" {
-			// Find the SEARCH query and its dependent math queries
+			// Find the SEARCH query and all dependent math queries (transitive)
 			for _, q := range queries {
 				if q.Expression != nil && *q.Expression == info.SearchExpression {
 					cliEntries = append(cliEntries, cliQueryEntry{
@@ -426,19 +426,32 @@ func populateCLICommands(queryInfos []types.MetricQueryInfo, queries []cloudwatc
 						Expression: aws.ToString(q.Expression),
 						ReturnData: aws.ToBool(q.ReturnData),
 					})
-					// Find the math/SUM query that references this search ID
-					searchID := aws.ToString(q.Id)
-					for _, mq := range queries {
-						if mq.Expression != nil && strings.Contains(*mq.Expression, searchID) && *mq.Expression != info.SearchExpression {
-							entry := cliQueryEntry{
-								ID:         aws.ToString(mq.Id),
-								Expression: aws.ToString(mq.Expression),
-								ReturnData: aws.ToBool(mq.ReturnData),
+					// Collect all IDs we've found so far, then find queries referencing them
+					knownIDs := map[string]bool{aws.ToString(q.Id): true}
+					for changed := true; changed; {
+						changed = false
+						for _, mq := range queries {
+							mqID := aws.ToString(mq.Id)
+							if knownIDs[mqID] || mq.Expression == nil || *mq.Expression == info.SearchExpression {
+								continue
 							}
-							if mq.Label != nil {
-								entry.Label = *mq.Label
+							// Check if this query references any known ID
+							for id := range knownIDs {
+								if strings.Contains(*mq.Expression, id) {
+									entry := cliQueryEntry{
+										ID:         mqID,
+										Expression: aws.ToString(mq.Expression),
+										ReturnData: aws.ToBool(mq.ReturnData),
+									}
+									if mq.Label != nil {
+										entry.Label = *mq.Label
+									}
+									cliEntries = append(cliEntries, entry)
+									knownIDs[mqID] = true
+									changed = true
+									break
+								}
 							}
-							cliEntries = append(cliEntries, entry)
 						}
 					}
 					break
@@ -474,15 +487,30 @@ func populateCLICommands(queryInfos []types.MetricQueryInfo, queries []cloudwatc
 		}
 
 		if len(cliEntries) > 0 {
-			queriesJSON, err := json.MarshalIndent(cliEntries, "  ", "  ")
+			queriesJSON, err := json.MarshalIndent(cliEntries, "    ", "  ")
 			if err == nil {
-				info.AWSCLICommand = fmt.Sprintf("aws cloudwatch get-metric-data \\\n  --start-time %s \\\n  --end-time %s \\\n  --metric-data-queries '%s'",
+				// Use a heredoc to avoid all shell quoting issues with single/double quotes.
+				// The <<'QUERY' form prevents any shell interpretation of the JSON content.
+				info.AWSCLICommand = fmt.Sprintf("aws cloudwatch get-metric-data \\\n  --region %s \\\n  --start-time %s \\\n  --end-time %s \\\n  --metric-data-queries \"$(cat <<'QUERY'\n%s\nQUERY\n)\"",
+					region,
 					startTime.Format(time.RFC3339),
 					endTime.Format(time.RFC3339),
 					string(queriesJSON))
 			}
 		}
 	}
+}
+
+// regionFromArn extracts the AWS region from an ARN (e.g. arn:aws:kafka:us-east-1:123456:cluster/...)
+func regionFromArn(arn *string) string {
+	if arn == nil {
+		return ""
+	}
+	parts := strings.Split(*arn, ":")
+	if len(parts) >= 4 {
+		return parts[3]
+	}
+	return ""
 }
 
 // Private Helper Functions - Query Execution

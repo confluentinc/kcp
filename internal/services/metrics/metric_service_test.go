@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,11 +146,12 @@ func TestPopulateCLICommands(t *testing.T) {
 
 	t.Run("SEARCH-based metrics", func(t *testing.T) {
 		queries, queryInfos := ms.buildBrokerMetricQueries("test-cluster", 86400)
-		populateCLICommands(queryInfos, queries, startTime, endTime)
+		populateCLICommands(queryInfos, queries, startTime, endTime, "us-east-1")
 
 		for _, info := range queryInfos {
 			assert.NotEmpty(t, info.AWSCLICommand, "CLI command should be populated for %s", info.MetricName)
 			assert.Contains(t, info.AWSCLICommand, "aws cloudwatch get-metric-data")
+			assert.Contains(t, info.AWSCLICommand, "--region us-east-1")
 			assert.Contains(t, info.AWSCLICommand, "--start-time 2025-03-10T00:00:00Z")
 			assert.Contains(t, info.AWSCLICommand, "--end-time 2026-03-10T00:00:00Z")
 			assert.Contains(t, info.AWSCLICommand, "--metric-data-queries")
@@ -165,7 +167,7 @@ func TestPopulateCLICommands(t *testing.T) {
 
 	t.Run("MetricStat-based metrics", func(t *testing.T) {
 		queries, queryInfos := ms.buildClusterMetricQueries("test-cluster", 86400)
-		populateCLICommands(queryInfos, queries, startTime, endTime)
+		populateCLICommands(queryInfos, queries, startTime, endTime, "us-east-1")
 
 		info := queryInfos[0]
 		assert.NotEmpty(t, info.AWSCLICommand)
@@ -180,27 +182,20 @@ func TestPopulateCLICommands(t *testing.T) {
 	})
 }
 
-// extractJSONFromCLICommand extracts the JSON array from the --metric-data-queries parameter
+// extractJSONFromCLICommand extracts the JSON array from the heredoc in the CLI command
 func extractJSONFromCLICommand(t *testing.T, cmd string) string {
 	t.Helper()
-	// Find the JSON between single quotes after --metric-data-queries
-	start := -1
-	for i := 0; i < len(cmd); i++ {
-		if i+len("--metric-data-queries '") <= len(cmd) && cmd[i:i+len("--metric-data-queries '")] == "--metric-data-queries '" {
-			start = i + len("--metric-data-queries '")
-			break
-		}
-	}
-	require.NotEqual(t, -1, start, "Should find --metric-data-queries in CLI command")
+	// Find the JSON between <<'QUERY' and QUERY delimiters
+	startMarker := "<<'QUERY'\n"
+	start := strings.Index(cmd, startMarker)
+	require.NotEqual(t, -1, start, "Should find <<'QUERY' in CLI command")
+	start += len(startMarker)
 
-	// Find the closing single quote
-	end := len(cmd) - 1
-	for end > start && cmd[end] != '\'' {
-		end--
-	}
-	require.Greater(t, end, start, "Should find closing quote")
+	endMarker := "\nQUERY\n"
+	end := strings.Index(cmd[start:], endMarker)
+	require.NotEqual(t, -1, end, "Should find QUERY delimiter")
 
-	return cmd[start:end]
+	return cmd[start : start+end]
 }
 
 func TestPopulateCLICommandsWithStorageQueries(t *testing.T) {
@@ -211,7 +206,7 @@ func TestPopulateCLICommandsWithStorageQueries(t *testing.T) {
 	// Local storage has 3 query entries (SEARCH + math + SUM), but the CLI command
 	// should still match via the SEARCH expression
 	queries, queryInfos := ms.buildLocalStorageUsageQuery("test-cluster", 86400, 500)
-	populateCLICommands(queryInfos, queries, startTime, endTime)
+	populateCLICommands(queryInfos, queries, startTime, endTime, "us-east-1")
 
 	info := queryInfos[0]
 	assert.NotEmpty(t, info.AWSCLICommand)
@@ -222,8 +217,10 @@ func TestPopulateCLICommandsWithStorageQueries(t *testing.T) {
 	var entries []map[string]any
 	err := json.Unmarshal([]byte(jsonStr), &entries)
 	require.NoError(t, err)
-	// Should contain the SEARCH query and its dependent math queries
-	assert.GreaterOrEqual(t, len(entries), 2)
+	// Should contain all 3 queries: SEARCH + math conversion + SUM aggregation
+	assert.Len(t, entries, 3)
+	// The final SUM query should have ReturnData: true
+	assert.Equal(t, true, entries[2]["ReturnData"])
 }
 
 // Ensure MetricService with nil client doesn't panic on query building (only on execution)
