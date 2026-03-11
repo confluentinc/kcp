@@ -8,6 +8,7 @@
 export const TAB_IDS = {
   CHART: 'chart',
   TABLE: 'table',
+  QUERY: 'query',
   JSON: 'json',
   CSV: 'csv',
 } as const

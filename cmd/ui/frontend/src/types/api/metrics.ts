@@ -22,12 +22,28 @@ export interface MetricAggregates {
 }
 
 /**
+ * Query info for an individual CloudWatch metric
+ */
+export interface MetricQueryInfo {
+  metric_name: string
+  namespace: string
+  dimensions: string
+  statistic: string
+  period: number
+  search_expression: string
+  math_expression: string
+  aws_cli_command: string
+  aggregation_note: string
+}
+
+/**
  * Metrics API response structure
  */
 export interface MetricsApiResponse {
   metadata: ApiMetadata
   results: MetricResult[]
   aggregates?: MetricAggregates
+  query_info?: MetricQueryInfo[]
 }
 
 /**
