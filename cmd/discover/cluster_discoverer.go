@@ -188,7 +188,7 @@ func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn str
 
 	cluster, err := cd.mskService.DescribeClusterV2(ctx, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster: %v", err)
 	}
 
 	return cluster, nil
@@ -199,7 +199,7 @@ func (cd *ClusterDiscoverer) getBootstrapBrokers(ctx context.Context, clusterArn
 
 	brokers, err := cd.mskService.GetBootstrapBrokers(ctx, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to scan brokers: %v", err)
+		return nil, fmt.Errorf("failed to scan brokers: %v", err)
 	}
 	return brokers, nil
 }
@@ -214,7 +214,7 @@ func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clus
 			slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 			return []kafkatypes.ClientVpcConnection{}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed listing client vpc connections: %v", err)
+		return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
 	}
 	return connections, nil
 }
@@ -224,7 +224,7 @@ func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterA
 
 	operations, err := cd.mskService.ListClusterOperationsV2(ctx, clusterArn, int32(100))
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed listing operations: %v", err)
+		return nil, fmt.Errorf("failed listing operations: %v", err)
 	}
 	return operations, nil
 }
@@ -239,7 +239,7 @@ func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn st
 			slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 			return []kafkatypes.NodeInfo{}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed listing nodes: %v", err)
+		return nil, fmt.Errorf("failed listing nodes: %v", err)
 	}
 
 	return nodes, nil
@@ -255,7 +255,7 @@ func (cd *ClusterDiscoverer) scanClusterScramSecrets(ctx context.Context, cluste
 			slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 			return []string{}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed listing secrets: %v", err)
+		return nil, fmt.Errorf("failed listing secrets: %v", err)
 	}
 
 	return secrets, nil
@@ -289,7 +289,7 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed to get compatible versions: %v", err)
+		return nil, fmt.Errorf("failed to get compatible versions: %v", err)
 	}
 	return versions, nil
 }
@@ -381,7 +381,7 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
+		return nil, fmt.Errorf("failed to get clusters: %v", err)
 	}
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)
@@ -443,10 +443,10 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypePlaintext:
 				authType = types.AuthTypeUnauthenticatedPlaintext
 			default:
-				return nil, fmt.Errorf("❌ Unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
+				return nil, fmt.Errorf("unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
 			}
 		default:
-			return nil, fmt.Errorf("❌ Unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
+			return nil, fmt.Errorf("unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
 		}
 
 		brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
