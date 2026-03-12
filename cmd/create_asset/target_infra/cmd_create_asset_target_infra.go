@@ -228,11 +228,11 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
-	slog.Info("🏁 generating target infrastructure")
+	slog.Info("🚀 generating target infrastructure")
 
 	// If state file is provided, extract vpc-id and region from it
 	if stateFile != "" {
-		slog.Info("📖 reading state file", "file", stateFile)
+		slog.Info("🔍 reading state file", "file", stateFile)
 
 		file, err := os.ReadFile(stateFile)
 		if err != nil {
@@ -279,11 +279,11 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		SubnetCidrRanges:    opts.SubnetCidrs,
 	}
 
-	slog.Info("📋 generating Terraform configuration")
+	slog.Info("🔍 generating Terraform configuration")
 	hclService := hcl.NewTargetInfraHCLService()
 	project := hclService.GenerateTerraformFiles(request)
 
-	slog.Info("📁 creating output directory", "directory", outputDir)
+	slog.Info("🔍 creating output directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}

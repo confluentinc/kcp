@@ -260,7 +260,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
-		slog.Info("ℹ️ no cluster link name provided, using default", "default", "kcp-msk-to-cc-link")
+		slog.Warn("⚠️ no cluster link name provided, using default", "default", "kcp-msk-to-cc-link")
 		opts.MigrationWizardRequest.ClusterLinkName = "kcp-msk-to-cc-link"
 	}
 

@@ -29,7 +29,7 @@ func NewMigrateTopicsAssetGenerator(opts MigrateTopicsOpts) *MigrateTopicsAssetG
 }
 
 func (mt *MigrateTopicsAssetGenerator) Run() error {
-	slog.Info("🏁 generating Terraform files for mirror topics!")
+	slog.Info("🚀 generating Terraform files for mirror topics!")
 
 	outputDir := mt.opts.OutputDir
 	if outputDir == "" {

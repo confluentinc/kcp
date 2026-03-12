@@ -352,7 +352,7 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 			visibility = "PRIVATE"
 		}
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
+			return nil, fmt.Errorf("No SASL/IAM brokers found in the cluster")
 		}
 	case AuthTypeSASLSCRAM:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
@@ -362,19 +362,19 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 			visibility = "PRIVATE"
 		}
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
+			return nil, fmt.Errorf("No SASL/SCRAM brokers found in the cluster")
 		}
 	case AuthTypeUnauthenticatedTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
 		visibility = "PRIVATE"
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated (TLS Encryption) brokers found in the cluster")
+			return nil, fmt.Errorf("No Unauthenticated (TLS Encryption) brokers found in the cluster")
 		}
 	case AuthTypeUnauthenticatedPlaintext:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
 		visibility = "PRIVATE"
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated (Plaintext) brokers found in the cluster")
+			return nil, fmt.Errorf("No Unauthenticated (Plaintext) brokers found in the cluster")
 		}
 	case AuthTypeTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
@@ -384,10 +384,10 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 			visibility = "PRIVATE"
 		}
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
+			return nil, fmt.Errorf("No TLS brokers found in the cluster")
 		}
 	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
 	}
 
 	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
@@ -424,7 +424,7 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
 		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
 	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
 	}
 
 	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)

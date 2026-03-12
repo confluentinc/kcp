@@ -39,7 +39,7 @@ func (u *Updater) Run() error {
 
 	// Step 1: Skip update check for dev versions unless --force is set
 	if (currentVersion == "" || currentVersion == build_info.DefaultDevVersion) && !u.opts.Force {
-		slog.Info("🤖 Development version detected, skipping update check. Use `--force` to install latest version.")
+		slog.Warn("⚠️ Development version detected, skipping update check. Use `--force` to install latest version.")
 		return nil
 	}
 
@@ -79,17 +79,17 @@ func (u *Updater) Run() error {
 		return nil
 	}
 
-	slog.Info(fmt.Sprintf("🎉 New version available: %s", latest.Version()))
+	slog.Info(fmt.Sprintf("✅ New version available: %s", latest.Version()))
 
 	// Step 5: If --check-only flag is set, just report available update and exit
 	if u.opts.CheckOnly {
-		slog.Info(fmt.Sprintf("💡 Update available from %s to %s. Run without --check-only to update.", currentVersion, latest.Version()))
+		slog.Info(fmt.Sprintf("Update available from %s to %s. Run without --check-only to update.", currentVersion, latest.Version()))
 		return nil
 	}
 
 	// Step 6: Ask for user confirmation unless --force flag is set
-	if !u.opts.Force && !u.askForConfirmation("🤔 Do you want to update now? (y/N): ") {
-		slog.Warn("🚫 Update aborted")
+	if !u.opts.Force && !u.askForConfirmation("Do you want to update now? (y/N): ") {
+		slog.Warn("⚠️ Update aborted")
 		return nil
 	}
 
