@@ -403,6 +403,8 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 		}
 	}
 
+	md.AddParagraph("To view cost and metrics reports, including the queries used to gather data, run `kcp report` or explore in `kcp ui`.")
+
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
 
