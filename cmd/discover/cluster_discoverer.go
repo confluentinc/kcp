@@ -61,8 +61,8 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool) (*types.DiscoveredCluster, error) {
-	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool, skipManagedConnectors bool) (*types.DiscoveredCluster, error) {
+	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics, skipManagedConnectors)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 	}, nil
 }
 
-func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
+func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool, skipManagedConnectors bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
 	awsClientInfo := types.AWSClientInformation{}
 	kafkaClientInfo := types.KafkaAdminClientInformation{}
 
@@ -106,39 +106,47 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 
 	connections, err := cd.scanClusterVpcConnections(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan VPC connections, continuing without VPC connection data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.ClientVpcConnections = connections
 	}
-	awsClientInfo.ClientVpcConnections = connections
 
 	operations, err := cd.scanClusterOperations(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan cluster operations, continuing without operations data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.ClusterOperations = operations
 	}
-	awsClientInfo.ClusterOperations = operations
 
 	nodes, err := cd.scanClusterNodes(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan cluster nodes, continuing without node data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.Nodes = nodes
 	}
-	awsClientInfo.Nodes = nodes
 
 	scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan SCRAM secrets, continuing without SCRAM secret data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.ScramSecrets = scramSecrets
 	}
-	awsClientInfo.ScramSecrets = scramSecrets
 
 	policy, err := cd.getClusterPolicy(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to get cluster policy, continuing without policy data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.Policy = kafka.GetClusterPolicyOutput{}
+	} else {
+		awsClientInfo.Policy = *policy
 	}
-	awsClientInfo.Policy = *policy
 
 	versions, err := cd.getCompatibleKafkaVersions(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to get compatible Kafka versions, continuing without version data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.CompatibleVersions = kafka.GetCompatibleKafkaVersionsOutput{}
+	} else {
+		awsClientInfo.CompatibleVersions = *versions
 	}
-	awsClientInfo.CompatibleVersions = *versions
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless {
 		slog.Warn("⚠️ Cluster networking not supported for MSK Serverless clusters, skipping networking scan")
@@ -150,11 +158,17 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
-	if err != nil {
-		return nil, nil, err
+	if skipManagedConnectors {
+		slog.Info("⏭️ skipping MSK Connect connector discovery")
+	} else {
+		connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
+		if err != nil {
+			slog.Warn("⚠️ failed to discover connectors, continuing without connector data", "clusterArn", clusterArn, "error", err)
+			awsClientInfo.Connectors = []types.ConnectorSummary{}
+		} else {
+			awsClientInfo.Connectors = connectors
+		}
 	}
-	awsClientInfo.Connectors = connectors
 
 	if !skipTopics {
 		topics, err := cd.discoverTopics(ctx, clusterArn)
@@ -174,7 +188,7 @@ func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn str
 
 	cluster, err := cd.mskService.DescribeClusterV2(ctx, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster: %v", err)
 	}
 
 	return cluster, nil
@@ -185,7 +199,7 @@ func (cd *ClusterDiscoverer) getBootstrapBrokers(ctx context.Context, clusterArn
 
 	brokers, err := cd.mskService.GetBootstrapBrokers(ctx, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to scan brokers: %v", err)
+		return nil, fmt.Errorf("failed to scan brokers: %v", err)
 	}
 	return brokers, nil
 }
@@ -200,7 +214,7 @@ func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clus
 			slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 			return []kafkatypes.ClientVpcConnection{}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed listing client vpc connections: %v", err)
+		return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
 	}
 	return connections, nil
 }
@@ -210,7 +224,7 @@ func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterA
 
 	operations, err := cd.mskService.ListClusterOperationsV2(ctx, clusterArn, int32(100))
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed listing operations: %v", err)
+		return nil, fmt.Errorf("failed listing operations: %v", err)
 	}
 	return operations, nil
 }
@@ -225,7 +239,7 @@ func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn st
 			slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 			return []kafkatypes.NodeInfo{}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed listing nodes: %v", err)
+		return nil, fmt.Errorf("failed listing nodes: %v", err)
 	}
 
 	return nodes, nil
@@ -241,7 +255,7 @@ func (cd *ClusterDiscoverer) scanClusterScramSecrets(ctx context.Context, cluste
 			slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 			return []string{}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed listing secrets: %v", err)
+		return nil, fmt.Errorf("failed listing secrets: %v", err)
 	}
 
 	return secrets, nil
@@ -275,7 +289,7 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed to get compatible versions: %v", err)
+		return nil, fmt.Errorf("failed to get compatible versions: %v", err)
 	}
 	return versions, nil
 }
@@ -367,7 +381,7 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
+		return nil, fmt.Errorf("failed to get clusters: %v", err)
 	}
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)
@@ -429,10 +443,10 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypePlaintext:
 				authType = types.AuthTypeUnauthenticatedPlaintext
 			default:
-				return nil, fmt.Errorf("❌ Unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
+				return nil, fmt.Errorf("unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
 			}
 		default:
-			return nil, fmt.Errorf("❌ Unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
+			return nil, fmt.Errorf("unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
 		}
 
 		brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
