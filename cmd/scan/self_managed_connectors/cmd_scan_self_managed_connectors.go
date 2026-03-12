@@ -129,7 +129,7 @@ func runScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 
 	scanner := NewSelfManagedConnectorsScanner(*opts)
 	if err := scanner.Run(); err != nil {
-		return fmt.Errorf("❌ failed to scan self-managed connectors: %v", err)
+		return fmt.Errorf("failed to scan self-managed connectors: %v", err)
 	}
 
 	return nil
@@ -137,7 +137,7 @@ func runScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 
 func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, error) {
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("❌ state file does not exist: %s", stateFile)
+		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
 	}
 
 	state, err := types.NewStateFromFile(stateFile)
@@ -158,7 +158,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 
 	_, err = utils.GetClusterByArn(state, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("❌ cluster not found in state file: %v", err)
+		return nil, fmt.Errorf("cluster not found in state file: %v", err)
 	}
 
 	opts := SelfManagedConnectorsScannerOpts{

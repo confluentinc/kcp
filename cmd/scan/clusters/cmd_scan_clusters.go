@@ -69,12 +69,12 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 func runScanClusters(cmd *cobra.Command, args []string) error {
 	opts, err := parseScanClustersOpts()
 	if err != nil {
-		return fmt.Errorf("❌ failed to parse scan clusters opts: %v", err)
+		return fmt.Errorf("failed to parse scan clusters opts: %v", err)
 	}
 
 	clustersScanner := NewClustersScanner(*opts)
 	if err := clustersScanner.Run(); err != nil {
-		return fmt.Errorf("❌ failed to scan clusters: %v", err)
+		return fmt.Errorf("failed to scan clusters: %v", err)
 	}
 
 	return nil
