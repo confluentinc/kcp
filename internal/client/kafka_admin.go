@@ -67,6 +67,15 @@ func WithTLSAuth(caCertFile string, clientCertFile string, clientKeyFile string)
 	}
 }
 
+// WithSASLPlainAuth configures SASL/PLAIN authentication (used for Confluent Cloud).
+func WithSASLPlainAuth(username, password string) AdminOption {
+	return func(config *AdminConfig) {
+		config.authType = types.AuthTypeSASLPlain
+		config.username = username
+		config.password = password
+	}
+}
+
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) {
 	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
@@ -86,6 +95,16 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	config.Net.SASL.Handshake = true
 	config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &XDGSCRAMClient{HashGeneratorFcn: SHA512} }
 	config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
+}
+
+func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string) {
+	slog.Info("configuring SASL/PLAIN authentication")
+	config.Net.TLS.Enable = true
+	config.Net.TLS.Config = &tls.Config{}
+	config.Net.SASL.Enable = true
+	config.Net.SASL.User = username
+	config.Net.SASL.Password = password
+	config.Net.SASL.Mechanism = sarama.SASLTypePlaintext
 }
 
 func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
@@ -485,6 +504,46 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 	}
 
 	return connectorStatuses, nil
+}
+
+// NewKafkaClient creates a sarama.Client (not a ClusterAdmin) for offset fetching.
+// Uses the same auth configuration options as NewKafkaAdmin.
+func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption) (sarama.Client, error) {
+	config := AdminConfig{
+		authType: types.AuthTypeIAM,
+	}
+	for _, opt := range opts {
+		opt(&config)
+	}
+
+	saramaConfig := sarama.NewConfig()
+	configureCommonSettings(saramaConfig, "kcp-cli", sarama.V2_6_0_0)
+
+	switch config.authType {
+	case types.AuthTypeIAM:
+		configureSASLTypeOAuthAuthentication(saramaConfig, region)
+	case types.AuthTypeSASLSCRAM:
+		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
+	case types.AuthTypeSASLPlain:
+		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password)
+	case types.AuthTypeUnauthenticatedTLS:
+		configureUnauthenticatedAuthentication(saramaConfig, true)
+	case types.AuthTypeUnauthenticatedPlaintext:
+		configureUnauthenticatedAuthentication(saramaConfig, false)
+	case types.AuthTypeTLS:
+		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile); err != nil {
+			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("auth type %v not supported", config.authType)
+	}
+
+	client, err := sarama.NewClient(brokerAddresses, saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka client: authType=%v brokerAddresses=%v error=%w", config.authType, brokerAddresses, err)
+	}
+
+	return client, nil
 }
 
 // NewKafkaAdmin creates a new Kafka admin client for the given broker addresses and region
