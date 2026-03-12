@@ -120,10 +120,9 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 
 	nodes, err := cd.scanClusterNodes(ctx, clusterArn)
 	if err != nil {
-		slog.Warn("⚠️ failed to scan cluster nodes, continuing without node data", "clusterArn", clusterArn, "error", err)
-	} else {
-		awsClientInfo.Nodes = nodes
+		return nil, nil, err
 	}
+	awsClientInfo.Nodes = nodes
 
 	scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
 	if err != nil {
