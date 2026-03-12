@@ -35,7 +35,7 @@ func NewIamAclsGenerator(opts MigrateIamAclsOpts) *IamAclsGenerator {
 }
 
 func (ig *IamAclsGenerator) Run() error {
-	slog.Info("🏁 generating Terraform files for IAM ACLs!", "principals", ig.opts.PrincipalArns)
+	slog.Info("🚀 generating Terraform files for IAM ACLs!", "principals", ig.opts.PrincipalArns)
 	ctx := context.Background()
 
 	iamClient, err := client.NewIAMClient()
@@ -46,7 +46,7 @@ func (ig *IamAclsGenerator) Run() error {
 	allAclsByPrincipal := make(map[string][]types.Acls)
 
 	for _, principalArn := range ig.opts.PrincipalArns {
-		slog.Info("📋 Retrieving IAM policies for principal", "principal", principalArn)
+		slog.Info("🔍 Retrieving IAM policies for principal", "principal", principalArn)
 		policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
 		if err != nil {
 			return fmt.Errorf("failed to get principal policies: %v", err)
@@ -114,7 +114,7 @@ func (ig *IamAclsGenerator) Run() error {
 		if err := ig.generateIamAuditReport(allAclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
-		slog.Info("📝 generated audit report", "path", reportPath)
+		slog.Info("✅ generated audit report", "path", reportPath)
 	}
 
 	totalAcls := 0
@@ -163,13 +163,13 @@ func (ig *IamAclsGenerator) extractKafkaPermissionsFromPrincipalPolicies(princip
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
-		slog.Info("📝 Processing attached policy", "policy", policy.PolicyName)
+		slog.Info("🔍 Processing attached policy", "policy", policy.PolicyName)
 		acls := ig.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	for _, policy := range policies.InlinePolicies {
-		slog.Info("📝 Processing inline policy", "policy", policy.PolicyName)
+		slog.Info("🔍 Processing inline policy", "policy", policy.PolicyName)
 		acls := ig.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}

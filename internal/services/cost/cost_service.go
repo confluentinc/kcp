@@ -25,7 +25,7 @@ func NewCostService(client *costexplorer.Client) *CostService {
 }
 
 func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, startDate time.Time, endDate time.Time, granularity costexplorertypes.Granularity, tags map[string][]string) (types.CostInformation, error) {
-	slog.Info("💰 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
+	slog.Info("🔍 getting AWS costs", "region", region, "start", startDate, "end", endDate, "granularity", granularity, "tags", tags)
 
 	startStr := aws.String(startDate.Format("2006-01-02"))
 	endStr := aws.String(endDate.Format("2006-01-02"))

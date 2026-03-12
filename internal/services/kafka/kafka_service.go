@@ -74,7 +74,7 @@ func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 
 	topics, err := ks.client.ListTopicsWithConfigs()
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list topics with configs: %v", err)
+		return nil, fmt.Errorf("Failed to list topics with configs: %v", err)
 	}
 
 	slog.Info("🔍 found topics", "count", len(topics))
@@ -105,7 +105,7 @@ func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, er
 
 	clusterMetadata, err := ks.client.GetClusterKafkaMetadata()
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe kafka cluster: %v", err)
+		return nil, fmt.Errorf("Failed to describe kafka cluster: %v", err)
 	}
 	return clusterMetadata, nil
 }
@@ -116,7 +116,7 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 
 	acls, err := ks.client.ListAcls()
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to list acls: %v", err)
+		return nil, fmt.Errorf("Failed to list acls: %v", err)
 	}
 
 	// Flatten the ACLs for easier processing
