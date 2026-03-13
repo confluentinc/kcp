@@ -71,10 +71,10 @@ func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.C
 
 func GetClusterByArn(state *types.State, clusterArn string) (*types.DiscoveredCluster, error) {
 	if state.MSKSources != nil {
-		for _, region := range state.MSKSources.Regions {
-			for _, cluster := range region.Clusters {
-				if cluster.Arn == clusterArn {
-					return &cluster, nil
+		for i := range state.MSKSources.Regions {
+			for j := range state.MSKSources.Regions[i].Clusters {
+				if state.MSKSources.Regions[i].Clusters[j].Arn == clusterArn {
+					return &state.MSKSources.Regions[i].Clusters[j], nil
 				}
 			}
 		}

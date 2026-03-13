@@ -241,10 +241,10 @@ func dedupDiscoveredClients(discoveredClients []DiscoveredClient) []DiscoveredCl
 
 func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 	if s.MSKSources != nil {
-		for _, region := range s.MSKSources.Regions {
-			for _, cluster := range region.Clusters {
-				if cluster.Arn == clusterArn {
-					return &cluster, nil
+		for i := range s.MSKSources.Regions {
+			for j := range s.MSKSources.Regions[i].Clusters {
+				if s.MSKSources.Regions[i].Clusters[j].Arn == clusterArn {
+					return &s.MSKSources.Regions[i].Clusters[j], nil
 				}
 			}
 		}
