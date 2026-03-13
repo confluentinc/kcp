@@ -374,9 +374,15 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 }
 
 func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
+	// TODO: this issues a second DescribeClusterV2 call for the same cluster. Consider
+	// refactoring to accept the already-fetched cluster from discoverAWSClientInformation
+	// to avoid the redundant API call.
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("❌ Failed to get clusters: %v", err)
+	}
+	if cluster.ClusterInfo == nil {
+		return nil, fmt.Errorf("DescribeClusterV2 returned nil ClusterInfo for %s", clusterArn)
 	}
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)

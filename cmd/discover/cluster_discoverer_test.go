@@ -131,3 +131,37 @@ func TestClusterDiscoverer_SkipMetrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, metricsCalled, "metric service should not be called when skipMetrics=true")
 }
+
+func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
+	// The first DescribeClusterV2 call (in discoverAWSClientInformation) returns a valid cluster.
+	// The second call (in discoverMetrics) returns nil ClusterInfo.
+	// Should return an error, not panic.
+	msk, ec2svc, metrics, connect := defaultStubs()
+
+	callCount := 0
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		callCount++
+		if callCount == 1 {
+			return buildFullProvisionedCluster(), nil
+		}
+		// Second call (discoverMetrics) returns nil ClusterInfo
+		return &kafka.DescribeClusterV2Output{ClusterInfo: nil}, nil
+	}
+	// EC2 needs to succeed for the first call to complete
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{{
+				SubnetId:         aws.String(subnetIds[0]),
+				VpcId:            aws.String("vpc-12345"),
+				AvailabilityZone: aws.String("us-east-1a"),
+				CidrBlock:        aws.String("10.0.0.0/24"),
+			}},
+		}, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, false /* skipMetrics=false */)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil ClusterInfo")
+}
