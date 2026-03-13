@@ -38,14 +38,23 @@ func NewClustersScanner(opts ClustersScannerOpts) *ClustersScanner {
 	}
 }
 
-func (cs *ClustersScanner) Run() error {
+// ScanOnly scans all clusters without persisting state or printing a summary.
+// Call Run() instead if you want persistence and summary output.
+func (cs *ClustersScanner) ScanOnly() error {
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {
 			if err := cs.scanCluster(regionAuth.Name, clusterAuth); err != nil {
-				slog.Info("⏭️ skipping cluster", "cluster", clusterAuth.Name, "error", err)
+				slog.Info("skipping cluster", "cluster", clusterAuth.Name, "error", err)
 				continue
 			}
 		}
+	}
+	return nil
+}
+
+func (cs *ClustersScanner) Run() error {
+	if err := cs.ScanOnly(); err != nil {
+		return err
 	}
 
 	if err := cs.State.PersistStateFile(cs.StateFile); err != nil {
