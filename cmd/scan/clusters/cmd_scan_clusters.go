@@ -172,14 +172,27 @@ func mergeResultsIntoState(state *types.State, result *sources.ScanResult) error
 // mergeMSKResults merges MSK scan results into state
 func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 	if state.MSKSources == nil {
-		state.MSKSources = &types.MSKSourcesState{
-			Regions: []types.DiscoveredRegion{},
+		return fmt.Errorf("no MSK sources in state; run 'kcp discover' before scanning MSK clusters")
+	}
+
+	// Index scanned results by ARN for O(1) lookup
+	scannedByARN := make(map[string]*types.KafkaAdminClientInformation, len(result.Clusters))
+	for i := range result.Clusters {
+		c := &result.Clusters[i]
+		scannedByARN[c.Identifier.UniqueID] = c.KafkaAdminInfo
+	}
+
+	// Apply results into state in-place
+	for i := range state.MSKSources.Regions {
+		for j := range state.MSKSources.Regions[i].Clusters {
+			arn := state.MSKSources.Regions[i].Clusters[j].Arn
+			if info, ok := scannedByARN[arn]; ok {
+				state.MSKSources.Regions[i].Clusters[j].KafkaAdminClientInformation = *info
+			}
 		}
 	}
 
-	// TODO: Implement MSK-specific merge logic
-	// For now, just log
-	slog.Info("merging MSK scan results", "clusters", len(result.Clusters))
+	slog.Info("merged MSK scan results", "clusters_scanned", len(result.Clusters))
 	return nil
 }
 
