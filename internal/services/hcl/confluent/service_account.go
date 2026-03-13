@@ -13,7 +13,7 @@ func GenerateServiceAccount(tfResourceName, name, description string, preventDes
 	serviceAccountBlock.Body().SetAttributeValue("description", cty.StringVal(description))
 	serviceAccountBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(serviceAccountBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(serviceAccountBlock, "prevent_destroy", preventDestroy)
 
 	return serviceAccountBlock
 }
@@ -26,7 +26,7 @@ func GenerateRoleBinding(tfResourceName, principal, roleName string, crnPattern 
 	roleBindingBlock.Body().SetAttributeRaw("crn_pattern", crnPattern)
 	roleBindingBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(roleBindingBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(roleBindingBlock, "prevent_destroy", preventDestroy)
 
 	return roleBindingBlock
 }

@@ -141,11 +141,12 @@ type TargetClusterWizardRequest struct {
 }
 
 type TerraformFiles struct {
-	MainTf           string `json:"main.tf"`
-	ProvidersTf      string `json:"providers.tf"`
-	VariablesTf      string `json:"variables.tf"`
-	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
-	OutputsTf        string `json:"outputs.tf"`
+	MainTf           string            `json:"main.tf"`
+	ProvidersTf      string            `json:"providers.tf"`
+	VariablesTf      string            `json:"variables.tf"`
+	InputsAutoTfvars string            `json:"inputs.auto.tfvars"`
+	OutputsTf        string            `json:"outputs.tf"`
+	PerPrincipalTf   map[string]string `json:"per_principal_tf,omitempty"`
 }
 
 type TerraformVariable struct {
@@ -210,6 +211,7 @@ type MigrateAclsRequest struct {
 	SelectedPrincipals        []string `json:"selected_principals"`
 	TargetClusterId           string   `json:"target_cluster_id"`
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
+	PreventDestroy            bool     `json:"prevent_destroy"`
 
 	MskRegion     string `json:"msk_region"`
 	MskClusterArn string `json:"msk_cluster_arn"`
