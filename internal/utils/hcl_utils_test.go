@@ -72,6 +72,21 @@ func TestCamelToScreamingSnake(t *testing.T) {
 			input:    "ClusterAction",
 			expected: "CLUSTER_ACTION",
 		},
+		{
+			name:     "already screaming snake - DESCRIBE_CONFIGS",
+			input:    "DESCRIBE_CONFIGS",
+			expected: "DESCRIBE_CONFIGS",
+		},
+		{
+			name:     "already screaming snake - ALTER_CONFIGS",
+			input:    "ALTER_CONFIGS",
+			expected: "ALTER_CONFIGS",
+		},
+		{
+			name:     "already screaming snake - IDEMPOTENT_WRITE",
+			input:    "IDEMPOTENT_WRITE",
+			expected: "IDEMPOTENT_WRITE",
+		},
 	}
 
 	for _, tt := range tests {
