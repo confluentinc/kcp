@@ -350,3 +350,72 @@ func TestGenerateMigrateAclsFiles_ResourceNameIncludesPrincipal(t *testing.T) {
 	resourceCount := strings.Count(content, `resource "confluent_kafka_acl"`)
 	assert.Equal(t, 3, resourceCount)
 }
+
+func TestGenerateMigrateAclsFiles_IAMSourcedOperations(t *testing.T) {
+	// Use operation values exactly as they appear in types.AclMap
+	request := types.MigrateAclsRequest{
+		SelectedPrincipals:        []string{"iam_user"},
+		TargetClusterId:           "lkc-abc123",
+		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
+		AclsByPrincipal: map[string][]types.Acls{
+			"iam_user": {
+				{
+					ResourceType:        "Cluster",
+					ResourceName:        "kafka-cluster",
+					ResourcePatternType: "LITERAL",
+					Principal:           "iam_user",
+					Host:                "*",
+					Operation:           "AlterConfigs",
+					PermissionType:      "ALLOW",
+				},
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "iam_user",
+					Host:                "*",
+					Operation:           "DescribeConfigs",
+					PermissionType:      "ALLOW",
+				},
+				{
+					ResourceType:        "Cluster",
+					ResourceName:        "kafka-cluster",
+					ResourcePatternType: "LITERAL",
+					Principal:           "iam_user",
+					Host:                "*",
+					Operation:           "IdempotentWrite",
+					PermissionType:      "ALLOW",
+				},
+				{
+					ResourceType:        "TransactionalId",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "iam_user",
+					Host:                "*",
+					Operation:           "Describe",
+					PermissionType:      "ALLOW",
+				},
+			},
+		},
+	}
+
+	service := NewMigrationScriptsHCLService()
+	files, err := service.GenerateMigrateAclsFiles(request)
+	require.NoError(t, err)
+
+	content := files.PerPrincipalTf["iam_user.tf"]
+
+	// Verify all IAM-sourced operations are correctly converted
+	assert.Contains(t, content, `"ALTER_CONFIGS"`)
+	assert.Contains(t, content, `"DESCRIBE_CONFIGS"`)
+	assert.Contains(t, content, `"IDEMPOTENT_WRITE"`)
+	assert.Contains(t, content, `"DESCRIBE"`)
+
+	// Verify no unconverted camelCase operations leaked through
+	assert.NotContains(t, content, `"AlterConfigs"`)
+	assert.NotContains(t, content, `"DescribeConfigs"`)
+	assert.NotContains(t, content, `"IdempotentWrite"`)
+
+	// Verify TransactionalId resource type is supported and included
+	assert.Contains(t, content, `"TRANSACTIONAL_ID"`)
+}
