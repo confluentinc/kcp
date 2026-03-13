@@ -9,6 +9,9 @@ type MigrationConfig struct {
 	// Gateway configuration
 	KubeConfigPath string `json:"kube_config_path"`
 
+	// Source cluster configuration
+	SourceClusterArn string `json:"source_cluster_arn"`
+
 	// Cluster link configuration
 	ClusterId           string   `json:"cluster_id"`
 	ClusterRestEndpoint string   `json:"cluster_rest_endpoint"`
@@ -30,6 +33,7 @@ type MigrationConfig struct {
 
 // MigrationConfigOpts contains options for creating a new migration config
 type MigrationConfigOpts struct {
+	SourceClusterArn    string
 	KubeConfigPath      string
 	ClusterId           string
 	ClusterRestEndpoint string
@@ -47,6 +51,7 @@ func NewMigrationConfig(migrationId string, opts MigrationConfigOpts) *Migration
 	return &MigrationConfig{
 		MigrationId:         migrationId,
 		CurrentState:        StateUninitialized,
+		SourceClusterArn:    opts.SourceClusterArn,
 		KubeConfigPath:      opts.KubeConfigPath,
 		ClusterId:           opts.ClusterId,
 		ClusterRestEndpoint: opts.ClusterRestEndpoint,

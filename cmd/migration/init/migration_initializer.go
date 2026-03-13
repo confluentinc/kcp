@@ -34,7 +34,7 @@ func (m *MigrationInitializer) Run() error {
 	config := m.opts.MigrationConfig
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
-	clusterLinkService := clusterlink.NewConfluentCloudService(&http.Client{})
+	clusterLinkService := clusterlink.NewConfluentCloudService(http.DefaultClient)
 	workflow := migration.NewMigrationWorkflow(gatewayService, clusterLinkService)
 
 	orchestrator := migration.NewMigrationOrchestrator(

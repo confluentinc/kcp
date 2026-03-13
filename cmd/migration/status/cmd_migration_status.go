@@ -1,7 +1,9 @@
 package status
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -90,69 +92,18 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 		interval = 60
 	}
 
-	// Parse credentials and find the source cluster
-	credentials, errs := types.NewCredentialsFromFile(credentialsFile)
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to parse credentials file: %v", errs[0])
-	}
-
-	clusterAuth, err := credentials.FindClusterByArn(sourceClusterArn)
-	if err != nil {
-		return err
-	}
-
-	authType, err := clusterAuth.GetSelectedAuthType()
-	if err != nil {
-		return fmt.Errorf("failed to determine auth type: %w", err)
-	}
-
-	// Extract region from ARN
-	region, err := utils.ExtractRegionFromArn(sourceClusterArn)
-	if err != nil {
-		return err
-	}
-
-	// Get MSK bootstrap brokers via AWS API
-	fmt.Printf("Discovering MSK bootstrap brokers...\n")
-	mskAwsClient, err := client.NewMSKClient(region, 8, 1)
-	if err != nil {
-		return fmt.Errorf("failed to create MSK API client: %w", err)
-	}
-
-	mskService := msk.NewMSKService(mskAwsClient)
 	ctx := cmd.Context()
-	bootstrapOutput, err := mskService.GetBootstrapBrokers(ctx, sourceClusterArn)
-	if err != nil {
-		return fmt.Errorf("failed to get bootstrap brokers: %w", err)
-	}
 
-	awsInfo := types.AWSClientInformation{BootstrapBrokers: *bootstrapOutput}
-	brokerAddresses, err := awsInfo.GetBootstrapBrokersForAuthType(authType)
+	srcOffset, region, err := createSourceOffset(ctx, credentialsFile, sourceClusterArn)
 	if err != nil {
 		return err
 	}
 
-	// Create source Kafka client (MSK)
-	fmt.Println("Connecting to source cluster (MSK)...")
-	sourceOpt := createAdminOption(authType, *clusterAuth)
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, sourceOpt)
+	dstOffset, err := createDestOffset(ccBootstrap, apiKey, apiSecret)
 	if err != nil {
-		return fmt.Errorf("failed to connect to source cluster: %w", err)
+		return err
 	}
-	defer sourceClient.Close()
-	fmt.Println("Source cluster connected.")
 
-	// Create destination Kafka client (CC) via SASL/PLAIN
-	fmt.Println("Connecting to destination cluster (Confluent Cloud)...")
-	ccBrokers := strings.Split(ccBootstrap, ",")
-	destClient, err := client.NewKafkaClient(ccBrokers, "", client.WithSASLPlainAuth(apiKey, apiSecret))
-	if err != nil {
-		return fmt.Errorf("failed to connect to destination cluster: %w", err)
-	}
-	defer destClient.Close()
-	fmt.Println("Destination cluster connected.")
-
-	// Cluster link config (existing)
 	clConfig := clusterlink.Config{
 		RestEndpoint: restEndpoint,
 		ClusterID:    clusterID,
@@ -162,9 +113,6 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 		Topics:       []string{},
 	}
 
-	srcOffset := offset.NewTopicOffset(sourceClient)
-	dstOffset := offset.NewTopicOffset(destClient)
-
 	clSvc := clusterlink.NewConfluentCloudService(http.DefaultClient)
 	m := newModel(srcOffset, dstOffset, clSvc, clConfig, region, interval)
 	p := newProgram(m)
@@ -173,6 +121,68 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("TUI: %w", err)
 	}
 	return nil
+}
+
+func createSourceOffset(ctx context.Context, credFile, clusterArn string) (*offset.TopicOffset, string, error) {
+	credentials, errs := types.NewCredentialsFromFile(credFile)
+	if len(errs) > 0 {
+		return nil, "", fmt.Errorf("failed to parse credentials file: %v", errs[0])
+	}
+
+	clusterAuth, err := credentials.FindClusterByArn(clusterArn)
+	if err != nil {
+		return nil, "", err
+	}
+
+	authType, err := clusterAuth.GetSelectedAuthType()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to determine auth type: %w", err)
+	}
+
+	region, err := utils.ExtractRegionFromArn(clusterArn)
+	if err != nil {
+		return nil, "", err
+	}
+
+	slog.Debug("discovering MSK bootstrap brokers")
+	mskAwsClient, err := client.NewMSKClient(region, 8, 1)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create MSK API client: %w", err)
+	}
+
+	mskService := msk.NewMSKService(mskAwsClient)
+	bootstrapOutput, err := mskService.GetBootstrapBrokers(ctx, clusterArn)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get bootstrap brokers: %w", err)
+	}
+
+	awsInfo := types.AWSClientInformation{BootstrapBrokers: *bootstrapOutput}
+	brokerAddresses, err := awsInfo.GetBootstrapBrokersForAuthType(authType)
+	if err != nil {
+		return nil, "", err
+	}
+
+	slog.Debug("connecting to source cluster (MSK)")
+	sourceOpt := createAdminOption(authType, *clusterAuth)
+	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, sourceOpt)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to connect to source cluster: %w", err)
+	}
+	slog.Debug("source cluster connected")
+
+	return offset.NewTopicOffset(sourceClient), region, nil
+}
+
+func createDestOffset(bootstrap, key, secret string) (*offset.TopicOffset, error) {
+	slog.Debug("connecting to destination cluster (Confluent Cloud)")
+	brokers := strings.Split(bootstrap, ",")
+	destClient, err := client.NewKafkaClient(brokers, "", client.WithSASLPlainAuth(key, secret))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)
+	}
+	slog.Debug("destination cluster connected")
+
+	return offset.NewTopicOffset(destClient), nil
 }
 
 // createAdminOption maps the auth type from credentials to the client option.

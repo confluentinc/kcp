@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 )
@@ -17,6 +18,8 @@ import (
 type MigrationWorkflow struct {
 	gatewayService     gateway.Service
 	clusterLinkService clusterlink.Service
+	sourceOffset       *offset.TopicOffset
+	destOffset         *offset.TopicOffset
 }
 
 func NewMigrationWorkflow(
@@ -26,6 +29,20 @@ func NewMigrationWorkflow(
 	return &MigrationWorkflow{
 		gatewayService:     gatewayService,
 		clusterLinkService: clusterLinkService,
+	}
+}
+
+func NewMigrationWorkflowWithOffsets(
+	gatewayService gateway.Service,
+	clusterLinkService clusterlink.Service,
+	sourceOffset *offset.TopicOffset,
+	destOffset *offset.TopicOffset,
+) *MigrationWorkflow {
+	return &MigrationWorkflow{
+		gatewayService:     gatewayService,
+		clusterLinkService: clusterLinkService,
+		sourceOffset:       sourceOffset,
+		destOffset:         destOffset,
 	}
 }
 
@@ -99,91 +116,63 @@ func (s *MigrationWorkflow) Initialize(
 	return nil
 }
 
-// CheckLags polls mirror topics until lag is below threshold
+// CheckLags polls source and destination offsets until lag is below threshold
 func (s *MigrationWorkflow) CheckLags(
 	ctx context.Context,
 	config *types.MigrationConfig,
 	lagThreshold int64,
 	clusterApiKey, clusterApiSecret string,
 ) error {
-	fmt.Printf("\n%s Checking mirror lag across %s (threshold: %s)\n\n",
+	fmt.Printf("\n%s Checking replication lag across %s (threshold: %s)\n\n",
 		color.CyanString("⏳"),
 		color.CyanString("%d topics", len(config.Topics)),
 		color.YellowString("%d", lagThreshold))
 
-	// Early exit if no topics to check
 	if len(config.Topics) == 0 {
 		fmt.Printf("%s No topics to check\n", color.GreenString("✔"))
 		return nil
 	}
 
-	// Build cluster link configuration for API calls
-	clusterLinkConfig := clusterlink.Config{
-		RestEndpoint: config.ClusterRestEndpoint,
-		ClusterID:    config.ClusterId,
-		LinkName:     config.ClusterLinkName,
-		APIKey:       clusterApiKey,
-		APISecret:    clusterApiSecret,
-	}
-
-	// Set up polling interval (check every 2 seconds)
 	pollInterval := 2 * time.Second
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	startTime := time.Now()
 
-	// Main polling loop
 	for {
-		// Check for context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		// Fetch current mirror topic status
-		mirrorTopics, err := s.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
-		if err != nil {
-			return fmt.Errorf("failed to list mirror topics: %w", err)
-		}
-
-		// Build a map of topics we care about
-		topicMap := make(map[string]bool)
-		for _, topic := range config.Topics {
-			topicMap[topic] = true
-		}
-
-		// Check total lag for all relevant mirror topics
 		allBelowThreshold := true
-		topicTotalLags := make(map[string]int)
+		topicTotalLags := make(map[string]int64)
 
-		for _, mirrorTopic := range mirrorTopics {
-			// Skip topics not in our migration list
-			if !topicMap[mirrorTopic.MirrorTopicName] {
-				continue
+		for _, topic := range config.Topics {
+			srcOffsets, err := s.sourceOffset.Get(topic)
+			if err != nil {
+				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+			}
+			dstOffsets, err := s.destOffset.Get(topic)
+			if err != nil {
+				return fmt.Errorf("failed to get dest offsets for %s: %w", topic, err)
 			}
 
-			totalLag := 0
-			for _, lag := range mirrorTopic.MirrorLags {
-				totalLag += lag.Lag
-			}
-
-			if totalLag > int(lagThreshold) {
+			lag := offset.ComputeTotalLag(srcOffsets, dstOffsets)
+			if lag > lagThreshold {
 				allBelowThreshold = false
-				topicTotalLags[mirrorTopic.MirrorTopicName] = totalLag
+				topicTotalLags[topic] = lag
 			}
 		}
 
-		// Success: all partition lags are below threshold
 		if allBelowThreshold {
-			fmt.Printf("\n%s All mirror topic lags below threshold (%d)\n",
+			fmt.Printf("\n%s All topic lags below threshold (%d)\n",
 				color.GreenString("✔"),
 				lagThreshold)
 			return nil
 		}
 
-		// Build sorted list of topic names with lag
 		lagTopics := make([]string, 0, len(topicTotalLags))
 		for topic := range topicTotalLags {
 			lagTopics = append(lagTopics, topic)
@@ -202,22 +191,20 @@ func (s *MigrationWorkflow) CheckLags(
 				color.YellowString("↳"),
 				color.WhiteString(topic),
 				color.CyanString("lag:"),
-				color.YellowString(formatLag(topicTotalLags[topic])))
+				color.YellowString(formatLag64(topicTotalLags[topic])))
 		}
 		fmt.Printf("\n")
 
-		// Wait for next poll interval or context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			// Continue polling
 		}
 	}
 }
 
-// formatLag formats an integer with comma separators (e.g. 21655 -> "21,655")
-func formatLag(n int) string {
+// formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655")
+func formatLag64(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {
 		return s
@@ -268,7 +255,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 	return nil
 }
 
-// PromoteTopics polls mirror topics and promotes those with zero lag
+// PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	slog.Debug("topic promotion process started")
 
@@ -283,59 +270,60 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 
 	pollInterval := 5 * time.Second
 
+	// Track which topics still need promotion
+	remaining := make(map[string]bool)
+	for _, topic := range config.Topics {
+		remaining[topic] = true
+	}
+
 	for {
-		// Check for context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		// Step 1: List all mirror topics
-		mirrorTopics, err := s.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
-		if err != nil {
-			return fmt.Errorf("failed to list mirror topics: %w", err)
-		}
-
-		// no mirror topics found, promotion is complete
-		if len(mirrorTopics) == 0 {
-			slog.Debug("no mirror topics found, promotion complete")
+		if len(remaining) == 0 {
+			slog.Debug("all topics promoted")
 			return nil
 		}
 
-		// Step 2: Get active mirror topics with zero lag
-		topicsToPromote := clusterlink.GetActiveTopicsWithZeroLag(mirrorTopics)
-
-		// Check completion condition: no active topics found
-		activeCount := clusterlink.CountActiveMirrorTopics(mirrorTopics)
-		if activeCount == 0 {
-			slog.Debug("no active mirror topics remaining, promotion complete")
-			return nil
-		}
-
-		// If no topics ready to promote (all have non-zero lag), wait and retry
-		if len(topicsToPromote) == 0 {
-			if clusterlink.HasActiveTopicsWithNonZeroLag(mirrorTopics) {
-				fmt.Printf("   ↳ Waiting for lag to reach zero (%d active topics)...\n",
-					activeCount)
-				slog.Debug("active topics found but lag is not zero, waiting before retry",
-					"activeTopics", activeCount, "pollInterval", pollInterval)
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(pollInterval):
-					continue
-				}
+		// Find topics at zero lag using direct offset comparison
+		var topicsToPromote []string
+		for topic := range remaining {
+			srcOffsets, err := s.sourceOffset.Get(topic)
+			if err != nil {
+				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
 			}
-			// No active topics with any lag status - we're done
-			slog.Debug("promotion complete, no more topics to promote")
-			return nil
+			dstOffsets, err := s.destOffset.Get(topic)
+			if err != nil {
+				return fmt.Errorf("failed to get dest offsets for %s: %w", topic, err)
+			}
+
+			lag := offset.ComputeTotalLag(srcOffsets, dstOffsets)
+			if lag == 0 {
+				topicsToPromote = append(topicsToPromote, topic)
+			}
+		}
+		sort.Strings(topicsToPromote)
+
+		if len(topicsToPromote) == 0 {
+			fmt.Printf("   ↳ Waiting for lag to reach zero (%d topics remaining)...\n",
+				len(remaining))
+			slog.Debug("no topics at zero lag yet, waiting",
+				"remaining", len(remaining), "pollInterval", pollInterval)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(pollInterval):
+				continue
+			}
 		}
 
-		// Step 3: Promote topics that are active and have zero lag
+		// Promote topics confirmed at zero lag
 		fmt.Printf("   %s %s confirmed at zero lag\n",
 			color.GreenString("✔"),
-			color.WhiteString("%d/%d topics", len(topicsToPromote), activeCount))
+			color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
 		for _, topic := range topicsToPromote {
 			fmt.Printf("   %s %s  %s %s\n",
 				color.GreenString("↳"),
@@ -351,7 +339,6 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
 		}
 
-		// Log promotion results
 		for _, topic := range promoteResponse.Data {
 			if topic.ErrorCode != 0 {
 				fmt.Printf("   %s Topic %s promotion error: %s\n",
@@ -363,16 +350,15 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			} else {
 				fmt.Printf("   %s %s promoted\n", color.GreenString("✔"), topic.MirrorTopicName)
 				slog.Debug("topic promotion initiated", "topic", topic.MirrorTopicName)
+				delete(remaining, topic.MirrorTopicName)
 			}
 		}
 
-		// Wait before checking again
 		slog.Debug("waiting for promotion to complete before next check", "pollInterval", pollInterval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(pollInterval):
-			// Continue to next iteration
 		}
 	}
 }

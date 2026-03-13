@@ -21,6 +21,7 @@ var (
 	passthroughCrName string
 	kubeConfigPath    string
 
+	sourceClusterArn    string
 	clusterId           string
 	clusterRestEndpoint string
 	clusterLinkName     string
@@ -55,6 +56,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
 	requiredFlags.StringVar(&passthroughCrName, "passthrough-cr-name", "", "Name of the passthrough gateway custom resource in Kubernetes.")
+	requiredFlags.StringVar(&sourceClusterArn, "source-cluster-arn", "", "ARN of the source MSK cluster.")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "Name of the cluster link on the destination cluster.")
@@ -93,6 +95,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 		return nil
 	})
 
+	migrationInitCmd.MarkFlagRequired("source-cluster-arn")
 	migrationInitCmd.MarkFlagRequired("k8s-namespace")
 	migrationInitCmd.MarkFlagRequired("passthrough-cr-name")
 	migrationInitCmd.MarkFlagRequired("cluster-id")
@@ -152,6 +155,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	config := &types.MigrationConfig{
 		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
+		SourceClusterArn:    sourceClusterArn,
 		K8sNamespace:        k8sNamespace,
 		PassthroughCrName:   passthroughCrName,
 		KubeConfigPath:      kubeConfigPathResolved,

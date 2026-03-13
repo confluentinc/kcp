@@ -15,6 +15,8 @@ var (
 	lagThreshold       int64
 	clusterApiKey      string
 	clusterApiSecret   string
+	credentialsFile    string
+	ccBootstrap        string
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -43,6 +45,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
+	requiredFlags.StringVar(&credentialsFile, "credentials-file", "", "Credentials YAML file for MSK cluster authentication.")
+	requiredFlags.StringVar(&ccBootstrap, "cc-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -68,6 +72,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
+	migrationExecuteCmd.MarkFlagRequired("credentials-file")
+	migrationExecuteCmd.MarkFlagRequired("cc-bootstrap")
 
 	return migrationExecuteCmd
 }
@@ -111,5 +117,7 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		LagThreshold:       lagThreshold,
 		ClusterApiKey:      clusterApiKey,
 		ClusterApiSecret:   clusterApiSecret,
+		CredentialsFile:    credentialsFile,
+		CCBootstrap:        ccBootstrap,
 	}
 }
