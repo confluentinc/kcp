@@ -114,7 +114,7 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&state, clusterArn)
+	cluster, err := state.GetClusterByArn(clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
