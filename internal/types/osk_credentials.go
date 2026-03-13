@@ -16,10 +16,11 @@ type OSKCredentials struct {
 
 // OSKClusterAuth contains authentication details for a single OSK cluster
 type OSKClusterAuth struct {
-	ID               string                `yaml:"id"`
-	BootstrapServers []string              `yaml:"bootstrap_servers"`
-	AuthMethod       AuthMethodConfig      `yaml:"auth_method"`
-	Metadata         OSKCredentialMetadata `yaml:"metadata,omitempty"`
+	ID                    string                `yaml:"id"`
+	BootstrapServers      []string              `yaml:"bootstrap_servers"`
+	AuthMethod            AuthMethodConfig      `yaml:"auth_method"`
+	InsecureSkipTLSVerify bool                  `yaml:"insecure_skip_tls_verify,omitempty"` // Only set true for test environments with self-signed certs
+	Metadata              OSKCredentialMetadata `yaml:"metadata,omitempty"`
 }
 
 // OSKCredentialMetadata allows users to add optional organizational metadata

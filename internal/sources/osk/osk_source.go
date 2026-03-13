@@ -192,6 +192,7 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 				clusterCreds.AuthMethod.SASLScram.Username,
 				clusterCreds.AuthMethod.SASLScram.Password,
 				clusterCreds.AuthMethod.SASLScram.Mechanism,
+				clusterCreds.InsecureSkipTLSVerify,
 			),
 		)
 	case types.AuthTypeUnauthenticatedTLS:

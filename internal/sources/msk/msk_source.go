@@ -168,6 +168,7 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 			clusterAuth.AuthMethod.SASLScram.Username,
 			clusterAuth.AuthMethod.SASLScram.Password,
 			clusterAuth.AuthMethod.SASLScram.Mechanism,
+			false, // MSK uses AWS-managed certificates; never skip TLS verification
 		))
 	case types.AuthTypeUnauthenticatedTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedTlsAuth())

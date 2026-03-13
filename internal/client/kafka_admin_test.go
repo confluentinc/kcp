@@ -250,7 +250,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLSCRAMAuth sets SASL/SCRAM auth",
-			option: WithSASLSCRAMAuth("test-user", "test-pass", "SHA256"),
+			option: WithSASLSCRAMAuth("test-user", "test-pass", "SHA256", false),
 			expectedConfig: AdminConfig{
 				authType:      types.AuthTypeSASLSCRAM,
 				username:      "test-user",
@@ -360,7 +360,7 @@ func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
 			username := "test-user"
 			password := "test-pass"
 
-			configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism)
+			configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, false)
 
 			// Verify SASL/SCRAM configuration
 			assert.True(t, config.Net.TLS.Enable)
@@ -538,7 +538,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9096"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass", "SHA256")},
+			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass", "SHA256", false)},
 			expectError:                     false,
 		},
 		{
@@ -631,7 +631,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	// Test that multiple options can be applied
 	opts := []AdminOption{
 		WithIAMAuth(),
-		WithSASLSCRAMAuth("user", "pass", "SHA256"), // This should override the IAM auth
+		WithSASLSCRAMAuth("user", "pass", "SHA256", false), // This should override the IAM auth
 	}
 
 	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0", opts...)
