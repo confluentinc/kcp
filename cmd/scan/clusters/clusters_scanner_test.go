@@ -34,13 +34,15 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 			name: "found cluster in region",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name: "us-east-1",
-							Clusters: []types.DiscoveredCluster{
-								{
-									Name: "test-cluster",
-									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.DiscoveredCluster{
+									{
+										Name: "test-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+									},
 								},
 							},
 						},
@@ -59,13 +61,15 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 			name: "no regions match",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name: "us-east-1",
-							Clusters: []types.DiscoveredCluster{
-								{
-									Name: "test-cluster",
-									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.DiscoveredCluster{
+									{
+										Name: "test-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+									},
 								},
 							},
 						},
@@ -82,13 +86,15 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 			name: "no clusters match",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name: "us-east-1",
-							Clusters: []types.DiscoveredCluster{
-								{
-									Name: "test-cluster",
-									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.DiscoveredCluster{
+									{
+										Name: "test-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+									},
 								},
 							},
 						},
@@ -120,11 +126,11 @@ func TestClustersScanner_getClusterFromDiscovery(t *testing.T) {
 				// Verify that the returned pointer points to the actual cluster in discovery
 				// This is important for mutation operations
 				found := false
-				for i, region := range tt.scanner.State.Regions {
+				for i, region := range tt.scanner.State.MSKSources.Regions {
 					if region.Name == tt.region {
 						for j, cluster := range region.Clusters {
 							if cluster.Arn == tt.clusterArn {
-								assert.Same(t, &tt.scanner.State.Regions[i].Clusters[j], gotCluster)
+								assert.Same(t, &tt.scanner.State.MSKSources.Regions[i].Clusters[j], gotCluster)
 								found = true
 								break
 							}
@@ -232,10 +238,12 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "getClusterFromDiscovery returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name:     "us-east-1",
-							Clusters: []types.DiscoveredCluster{},
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name:     "us-east-1",
+								Clusters: []types.DiscoveredCluster{},
+							},
 						},
 					},
 				},
@@ -251,13 +259,15 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "GetSelectedAuthType returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name: "us-east-1",
-							Clusters: []types.DiscoveredCluster{
-								{
-									Name: "test-cluster",
-									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.DiscoveredCluster{
+									{
+										Name: "test-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+									},
 								},
 							},
 						},
@@ -276,16 +286,18 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "GetBootstrapBrokersForAuthType returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name: "us-east-1",
-							Clusters: []types.DiscoveredCluster{
-								{
-									Name: "test-cluster",
-									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-									AWSClientInformation: types.AWSClientInformation{
-										BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
-											// Empty bootstrap brokers - will cause GetBootstrapBrokersForAuthType to fail
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.DiscoveredCluster{
+									{
+										Name: "test-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+										AWSClientInformation: types.AWSClientInformation{
+											BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+												// Empty bootstrap brokers - will cause GetBootstrapBrokersForAuthType to fail
+											},
 										},
 									},
 								},
@@ -308,22 +320,24 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 			name: "createKafkaAdmin returns error",
 			scanner: &ClustersScanner{
 				State: types.State{
-					Regions: []types.DiscoveredRegion{
-						{
-							Name: "us-east-1",
-							Clusters: []types.DiscoveredCluster{
-								{
-									Name: "test-cluster",
-									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
-									AWSClientInformation: types.AWSClientInformation{
-										BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
-											BootstrapBrokerStringSaslScram: aws.String("broker1:9092,broker2:9092"),
-										},
-										MskClusterConfig: kafkatypes.Cluster{
-											ClusterType: kafkatypes.ClusterTypeProvisioned,
-											Provisioned: &kafkatypes.Provisioned{
-												CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
-													KafkaVersion: aws.String("2.8.1"),
+					MSKSources: &types.MSKSourcesState{
+						Regions: []types.DiscoveredRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.DiscoveredCluster{
+									{
+										Name: "test-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+										AWSClientInformation: types.AWSClientInformation{
+											BootstrapBrokers: kafka.GetBootstrapBrokersOutput{
+												BootstrapBrokerStringSaslScram: aws.String("broker1:9092,broker2:9092"),
+											},
+											MskClusterConfig: kafkatypes.Cluster{
+												ClusterType: kafkatypes.ClusterTypeProvisioned,
+												Provisioned: &kafkatypes.Provisioned{
+													CurrentBrokerSoftwareInfo: &kafkatypes.BrokerSoftwareInfo{
+														KafkaVersion: aws.String("2.8.1"),
+													},
 												},
 											},
 										},
