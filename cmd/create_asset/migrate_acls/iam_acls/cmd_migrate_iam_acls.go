@@ -3,7 +3,6 @@ package iam_acls
 import (
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -19,7 +18,7 @@ var (
 	clusterArn                string
 	outputDir                 string
 	skipAuditReport           bool
-	preventDestroyStr         string
+	preventDestroy            bool
 	targetClusterId           string
 	targetClusterRestEndpoint string
 )
@@ -51,7 +50,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform ACL assets will be written to")
 	optionalFlags.BoolVar(&skipAuditReport, "skip-audit-report", false, "Skip generating an audit report of the converted ACLs")
-	optionalFlags.StringVar(&preventDestroyStr, "prevent-destroy", "true", "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources (true or false)")
+	optionalFlags.BoolVar(&preventDestroy, "prevent-destroy", true, "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources")
 	aclsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -131,11 +130,6 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 		}
 
 		principalArns = principals
-	}
-
-	preventDestroy, err := strconv.ParseBool(preventDestroyStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid value for --prevent-destroy: must be 'true' or 'false', got '%s'", preventDestroyStr)
 	}
 
 	opts := MigrateIamAclsOpts{
