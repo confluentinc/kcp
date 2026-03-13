@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMSKSource_getClusterFromDiscovery(t *testing.T) {
+func TestMSKSource_findClusterInState(t *testing.T) {
 	tests := []struct {
 		name        string
 		source      *MSKSource
@@ -100,7 +100,7 @@ func TestMSKSource_getClusterFromDiscovery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCluster, err := tt.source.getClusterFromDiscovery(tt.state, tt.region, tt.clusterArn)
+			gotCluster, err := tt.source.findClusterInState(tt.state, tt.region, tt.clusterArn)
 
 			if tt.wantErr {
 				assert.Error(t, err)

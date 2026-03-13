@@ -91,7 +91,7 @@ func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 }
 
 func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, opts sources.ScanOptions) (*sources.ClusterScanResult, error) {
-	discoveredCluster, err := s.getClusterFromDiscovery(opts.State, region, clusterAuth.Arn)
+	discoveredCluster, err := s.findClusterInState(opts.State, region, clusterAuth.Arn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster from discovery state: %v", err)
 	}
@@ -141,7 +141,7 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 	}, nil
 }
 
-func (s *MSKSource) getClusterFromDiscovery(state *types.State, region, clusterArn string) (*types.DiscoveredCluster, error) {
+func (s *MSKSource) findClusterInState(state *types.State, region, clusterArn string) (*types.DiscoveredCluster, error) {
 	if state.MSKSources == nil {
 		return nil, fmt.Errorf("no MSK sources found in state file")
 	}
