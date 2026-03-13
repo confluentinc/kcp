@@ -7,7 +7,7 @@ import (
 )
 
 // GenerateKafkaACL creates a Kafka ACL resource
-func GenerateKafkaACL(tfResourceName, resourceType, resourceName, patternType, principal, host, operation, permission, clusterIdRef, clusterRestEndpointRef, apiKeyIdRef, apiKeySecretRef string) *hclwrite.Block {
+func GenerateKafkaACL(tfResourceName, resourceType, resourceName, patternType, principal, host, operation, permission, clusterIdRef, clusterRestEndpointRef, apiKeyIdRef, apiKeySecretRef string, preventDestroy bool) *hclwrite.Block {
 	aclBlock := hclwrite.NewBlock("resource", []string{"confluent_kafka_acl", tfResourceName})
 
 	kafkaClusterBlock := hclwrite.NewBlock("kafka_cluster", nil)
@@ -31,7 +31,7 @@ func GenerateKafkaACL(tfResourceName, resourceType, resourceName, patternType, p
 	aclBlock.Body().AppendBlock(credentialsBlock)
 	aclBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(aclBlock, "prevent_destroy", true)
+	utils.GenerateLifecycleBlock(aclBlock, "prevent_destroy", preventDestroy)
 
 	return aclBlock
 }

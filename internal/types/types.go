@@ -211,6 +211,7 @@ type MigrateAclsRequest struct {
 	SelectedPrincipals        []string `json:"selected_principals"`
 	TargetClusterId           string   `json:"target_cluster_id"`
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
+	PreventDestroy            bool     `json:"prevent_destroy"`
 
 	MskRegion     string `json:"msk_region"`
 	MskClusterArn string `json:"msk_cluster_arn"`

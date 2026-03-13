@@ -238,6 +238,65 @@ func TestGenerateMigrateAclsFiles_FiltersUnsupportedResourceTypes(t *testing.T) 
 	assert.Equal(t, 2, resourceCount)
 }
 
+func TestGenerateMigrateAclsFiles_PreventDestroyTrue(t *testing.T) {
+	request := types.MigrateAclsRequest{
+		SelectedPrincipals:        []string{"user1"},
+		TargetClusterId:           "lkc-abc123",
+		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
+		PreventDestroy:            true,
+		AclsByPrincipal: map[string][]types.Acls{
+			"user1": {
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "User:user1",
+					Host:                "*",
+					Operation:           "Read",
+					PermissionType:      "ALLOW",
+				},
+			},
+		},
+	}
+
+	service := NewMigrationScriptsHCLService()
+	files, err := service.GenerateMigrateAclsFiles(request)
+	require.NoError(t, err)
+
+	content := files.PerPrincipalTf["user1.tf"]
+	assert.Contains(t, content, "prevent_destroy = true")
+}
+
+func TestGenerateMigrateAclsFiles_PreventDestroyFalse(t *testing.T) {
+	request := types.MigrateAclsRequest{
+		SelectedPrincipals:        []string{"user1"},
+		TargetClusterId:           "lkc-abc123",
+		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
+		PreventDestroy:            false,
+		AclsByPrincipal: map[string][]types.Acls{
+			"user1": {
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "User:user1",
+					Host:                "*",
+					Operation:           "Read",
+					PermissionType:      "ALLOW",
+				},
+			},
+		},
+	}
+
+	service := NewMigrationScriptsHCLService()
+	files, err := service.GenerateMigrateAclsFiles(request)
+	require.NoError(t, err)
+
+	content := files.PerPrincipalTf["user1.tf"]
+	assert.NotContains(t, content, "prevent_destroy = true")
+	assert.Contains(t, content, "prevent_destroy = false")
+}
+
 func TestGenerateMigrateAclsFiles_ResourceNameIncludesPrincipal(t *testing.T) {
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"my_service"},

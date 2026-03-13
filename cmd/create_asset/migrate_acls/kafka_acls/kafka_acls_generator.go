@@ -20,6 +20,7 @@ type MigrateKafkaAclsOpts struct {
 	TargetClusterRestEndpoint string
 	OutputDir                 string
 	SkipAuditReport           bool
+	PreventDestroy            bool
 }
 
 type KafkaAclsGenerator struct {
@@ -59,6 +60,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
 		TargetClusterRestEndpoint: kg.opts.TargetClusterRestEndpoint,
+		PreventDestroy:            kg.opts.PreventDestroy,
 		AclsByPrincipal:           aclsByPrincipal,
 	}
 

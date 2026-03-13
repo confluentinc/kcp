@@ -22,6 +22,7 @@ type MigrateIamAclsOpts struct {
 	TargetClusterRestEndpoint string
 	OutputDir                 string
 	SkipAuditReport           bool
+	PreventDestroy            bool
 }
 
 type IamAclsGenerator struct {
@@ -96,6 +97,7 @@ func (ig *IamAclsGenerator) Run() error {
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           ig.opts.TargetClusterId,
 		TargetClusterRestEndpoint: ig.opts.TargetClusterRestEndpoint,
+		PreventDestroy:            ig.opts.PreventDestroy,
 		AclsByPrincipal:           allAclsByPrincipal,
 	}
 

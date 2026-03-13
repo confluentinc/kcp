@@ -157,7 +157,7 @@ func (s *MigrationScriptsHCLService) generatePerPrincipalACLsTf(request types.Mi
 		serviceAccountResourceName := utils.FormatHclResourceName(principal)
 		rootBody.AppendUnstructuredTokens(utils.TokensForComment("// Migrated principal: " + principal))
 		rootBody.AppendNewline()
-		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal, true))
+		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal, request.PreventDestroy))
 		rootBody.AppendNewline()
 
 		aclIndex := 0
@@ -183,6 +183,7 @@ func (s *MigrationScriptsHCLService) generatePerPrincipalACLsTf(request types.Mi
 				"var.confluent_cloud_cluster_rest_endpoint",
 				"var.confluent_cloud_cluster_api_key",
 				"var.confluent_cloud_cluster_api_secret",
+				request.PreventDestroy,
 			))
 			rootBody.AppendNewline()
 			aclIndex++
