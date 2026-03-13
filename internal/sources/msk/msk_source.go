@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/kcp/internal/services/msk_scanner"
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -12,7 +13,6 @@ import (
 // MSKSource implements the Source interface for AWS MSK clusters
 type MSKSource struct {
 	credentials *types.Credentials
-	state       *types.State
 }
 
 // NewMSKSource creates a new MSK source
@@ -55,27 +55,54 @@ func (s *MSKSource) GetClusters() []sources.ClusterIdentifier {
 	return clusters
 }
 
-// Scan performs scanning of MSK clusters
-// This is a wrapper that will delegate to existing MSK scanning logic
+// Scan performs scanning of MSK clusters by delegating to ClustersScanner.
+// opts.State must be non-nil — it contains broker addresses populated by kcp discover.
 func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*sources.ScanResult, error) {
 	if s.credentials == nil {
 		return nil, fmt.Errorf("credentials not loaded")
 	}
+	if opts.State == nil {
+		return nil, fmt.Errorf("state is required for MSK scanning; run 'kcp discover' first")
+	}
 
 	slog.Info("starting MSK cluster scan")
 
-	// TODO: Delegate to existing MSK scanner in cmd/scan/clusters
-	// This will be implemented when we update the scan clusters command
+	scanner := msk_scanner.NewClustersScanner(msk_scanner.ClustersScannerOpts{
+		State:       *opts.State,
+		Credentials: *s.credentials,
+	})
 
+	if err := scanner.ScanOnly(); err != nil {
+		return nil, fmt.Errorf("MSK scan failed: %w", err)
+	}
+
+	// Translate scanner results into ScanResult
 	result := &sources.ScanResult{
 		SourceType: types.SourceTypeMSK,
 		Clusters:   make([]sources.ClusterScanResult, 0),
 	}
 
-	return result, nil
-}
+	if scanner.State.MSKSources != nil {
+		for _, region := range scanner.State.MSKSources.Regions {
+			for i := range region.Clusters {
+				cluster := &region.Clusters[i]
+				// Only include clusters that were actually scanned
+				if cluster.KafkaAdminClientInformation.ClusterID == "" {
+					continue
+				}
+				kafkaInfo := cluster.KafkaAdminClientInformation
+				result.Clusters = append(result.Clusters, sources.ClusterScanResult{
+					Identifier: sources.ClusterIdentifier{
+						Name:     cluster.Name,
+						UniqueID: cluster.Arn,
+					},
+					KafkaAdminInfo:     &kafkaInfo,
+					SourceSpecificData: cluster.AWSClientInformation,
+				})
+			}
+		}
+	}
 
-// SetState sets the existing state (for incremental scans)
-func (s *MSKSource) SetState(state *types.State) {
-	s.state = state
+	slog.Info("MSK scan complete", "scanned", len(result.Clusters))
+	return result, nil
 }

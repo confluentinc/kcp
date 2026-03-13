@@ -1,4 +1,4 @@
-package clusters
+package msk_scanner
 
 import (
 	"fmt"
@@ -205,7 +205,7 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 			})
 		}
 	}
-	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster availabe to prove this.
+	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster available to prove this.
 	if len(data) > 0 {
 		md.AddHeading("Topics", 2)
 		md.AddTable(headers, data)

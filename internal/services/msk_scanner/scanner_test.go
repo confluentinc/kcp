@@ -1,4 +1,4 @@
-package clusters
+package msk_scanner
 
 import (
 	"errors"
