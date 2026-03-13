@@ -112,6 +112,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	scanOpts := sources.ScanOptions{
 		SkipTopics: skipTopics,
 		SkipACLs:   skipACLs,
+		State:      state,
 	}
 
 	slog.Info("starting cluster scan", "source", sourceType)
