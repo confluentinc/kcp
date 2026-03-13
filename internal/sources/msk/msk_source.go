@@ -70,6 +70,8 @@ func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 	scanner := msk_scanner.NewClustersScanner(msk_scanner.ClustersScannerOpts{
 		State:       *opts.State,
 		Credentials: *s.credentials,
+		SkipTopics:  opts.SkipTopics,
+		SkipACLs:    opts.SkipACLs,
 	})
 
 	if err := scanner.ScanOnly(); err != nil {

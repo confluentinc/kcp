@@ -22,12 +22,16 @@ type ClustersScanner struct {
 	StateFile   string
 	State       types.State
 	Credentials types.Credentials
+	SkipTopics  bool
+	SkipACLs    bool
 }
 
 type ClustersScannerOpts struct {
 	StateFile   string
 	State       types.State
 	Credentials types.Credentials
+	SkipTopics  bool
+	SkipACLs    bool
 }
 
 func NewClustersScanner(opts ClustersScannerOpts) *ClustersScanner {
@@ -35,6 +39,8 @@ func NewClustersScanner(opts ClustersScannerOpts) *ClustersScanner {
 		StateFile:   opts.StateFile,
 		State:       opts.State,
 		Credentials: opts.Credentials,
+		SkipTopics:  opts.SkipTopics,
+		SkipACLs:    opts.SkipACLs,
 	}
 }
 
@@ -97,6 +103,8 @@ func (cs *ClustersScanner) scanCluster(region string, clusterAuth types.ClusterA
 	kafkaService := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
 		AuthType:   authType,
 		ClusterArn: clusterAuth.Arn,
+		SkipTopics: cs.SkipTopics,
+		SkipACLs:   cs.SkipACLs,
 	})
 
 	if err := cs.scanKafkaResources(discoveredCluster, kafkaService); err != nil {
