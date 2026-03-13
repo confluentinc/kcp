@@ -22,38 +22,63 @@ func NewMetricService(client *cloudwatch.Client) *MetricService {
 	return &MetricService{client: client}
 }
 
-// ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
-func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("🏗️ processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+// buildProvisionedMetadata extracts cluster metadata from a provisioned cluster,
+// with nil guards for all optional AWS fields. Safe to call without a CloudWatch client.
+// followerFetching comes from the IsFetchFromFollowerEnabled check done before this call.
+func buildProvisionedMetadata(cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow, followerFetching bool) types.MetricMetadata {
+	clusterName := aws.ToString(cluster.ClusterName)
 
-	if cluster.Provisioned == nil {
-		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
-	}
-
-	brokerAZDistribution := aws.String(string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution))
-	kafkaVersion := aws.ToString(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
 	enhancedMonitoring := string(cluster.Provisioned.EnhancedMonitoring)
-	numberOfBrokerNodes := int(*cluster.Provisioned.NumberOfBrokerNodes)
-	instanceType := aws.ToString(cluster.Provisioned.BrokerNodeGroupInfo.InstanceType)
 	tieredStorage := cluster.Provisioned.StorageMode == kafkatypes.StorageModeTiered
 
-	brokerType := getBrokerType(instanceType)
+	brokerAZDistribution := ""
+	instanceType := ""
+	if cluster.Provisioned.BrokerNodeGroupInfo != nil {
+		brokerAZDistribution = string(cluster.Provisioned.BrokerNodeGroupInfo.BrokerAZDistribution)
+		instanceType = aws.ToString(cluster.Provisioned.BrokerNodeGroupInfo.InstanceType)
+	} else {
+		slog.Warn("BrokerNodeGroupInfo is nil, AZ distribution and instance type unavailable", "cluster", clusterName)
+	}
 
-	metricsMetadata := types.MetricMetadata{
+	numberOfBrokerNodes := 0
+	if cluster.Provisioned.NumberOfBrokerNodes != nil {
+		numberOfBrokerNodes = int(*cluster.Provisioned.NumberOfBrokerNodes)
+	} else {
+		slog.Warn("NumberOfBrokerNodes is nil, defaulting to 0", "cluster", clusterName)
+	}
+
+	kafkaVersion := ""
+	if cluster.Provisioned.CurrentBrokerSoftwareInfo != nil {
+		kafkaVersion = aws.ToString(cluster.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
+	} else {
+		slog.Warn("CurrentBrokerSoftwareInfo is nil, KafkaVersion unavailable", "cluster", clusterName)
+	}
+
+	return types.MetricMetadata{
 		ClusterType:          string(cluster.ClusterType),
-		BrokerAzDistribution: *brokerAZDistribution,
+		BrokerAzDistribution: brokerAZDistribution,
 		NumberOfBrokerNodes:  numberOfBrokerNodes,
 		KafkaVersion:         kafkaVersion,
 		EnhancedMonitoring:   enhancedMonitoring,
 		StartDate:            timeWindow.StartTime,
 		EndDate:              timeWindow.EndTime,
 		Period:               timeWindow.Period,
-
-		FollowerFetching: followerFetching,
-		InstanceType:     instanceType,
-		TieredStorage:    tieredStorage,
-		BrokerType:       brokerType,
+		InstanceType:         instanceType,
+		TieredStorage:        tieredStorage,
+		BrokerType:           getBrokerType(instanceType),
+		FollowerFetching:     followerFetching,
 	}
+}
+
+// ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
+func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
+	slog.Info("processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+
+	if cluster.Provisioned == nil {
+		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
+	}
+
+	metricsMetadata := buildProvisionedMetadata(cluster, timeWindow, followerFetching)
 
 	brokerQueries := ms.buildBrokerMetricQueries(*cluster.ClusterName, timeWindow.Period)
 	brokerQueryResult, err := ms.executeMetricQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime)
@@ -73,14 +98,24 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	}
 
 	// for express brokers there is no storage info
-	if brokerType == types.BrokerTypeExpress {
+	if metricsMetadata.BrokerType == types.BrokerTypeExpress {
 		return &types.ClusterMetrics{
 			MetricMetadata: metricsMetadata,
 			Results:        append(brokerQueryResult.MetricDataResults, clusterQueryResult.MetricDataResults...),
 		}, nil
 	}
 
-	clusterVolumeSizeGB := int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
+	// Guard the EBS volume size nil chain — express brokers already returned above,
+	// but standard brokers may have configurations without EBS info.
+	clusterVolumeSizeGB := 0
+	if cluster.Provisioned.BrokerNodeGroupInfo != nil &&
+		cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo != nil &&
+		cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo != nil &&
+		cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize != nil {
+		clusterVolumeSizeGB = int(*cluster.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
+	} else {
+		slog.Warn("EBS volume size unavailable, local storage metrics may be inaccurate", "cluster", aws.ToString(cluster.ClusterName))
+	}
 	localStorageQuery := ms.buildLocalStorageUsageQuery(*cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
 	storageQueryResult, err := ms.executeMetricQuery(ctx, localStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
