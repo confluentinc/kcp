@@ -185,6 +185,12 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 		if authMethod.SASLScram.Password == "" {
 			return fmt.Errorf("sasl_scram password is required")
 		}
+		switch authMethod.SASLScram.Mechanism {
+		case "", "SHA256", "SHA512", "SCRAM-SHA-256", "SCRAM-SHA-512":
+			// valid
+		default:
+			return fmt.Errorf("unsupported sasl_scram mechanism %q: must be SHA256, SHA512, SCRAM-SHA-256, or SCRAM-SHA-512", authMethod.SASLScram.Mechanism)
+		}
 
 	case AuthTypeTLS:
 		if authMethod.TLS == nil {
