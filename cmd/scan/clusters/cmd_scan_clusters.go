@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/sources"
@@ -67,10 +68,10 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate credentials file naming convention
-	if sourceType == "msk" && credentialsFile != "msk-credentials.yaml" {
+	if sourceType == "msk" && filepath.Base(credentialsFile) != "msk-credentials.yaml" {
 		slog.Warn("credentials file should be named 'msk-credentials.yaml' for MSK sources", "file", credentialsFile)
 	}
-	if sourceType == "osk" && credentialsFile != "osk-credentials.yaml" {
+	if sourceType == "osk" && filepath.Base(credentialsFile) != "osk-credentials.yaml" {
 		slog.Warn("credentials file should be named 'osk-credentials.yaml' for OSK sources", "file", credentialsFile)
 	}
 
