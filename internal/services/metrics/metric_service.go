@@ -73,7 +73,7 @@ func buildProvisionedMetadata(cluster kafkatypes.Cluster, timeWindow types.Cloud
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
 func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+	slog.Info("🔍 processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 
 	if cluster.Provisioned == nil {
 		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
@@ -180,7 +180,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
 func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("processing serverless cluster with topic aggregation", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+	slog.Info("🔍 processing serverless cluster with topic aggregation", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 
 	if cluster.Serverless == nil {
 		return nil, fmt.Errorf("cluster %s has no serverless configuration", aws.ToString(cluster.ClusterName))
