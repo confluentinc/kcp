@@ -31,7 +31,7 @@ func GenerateKafkaACL(tfResourceName, resourceType, resourceName, patternType, p
 	aclBlock.Body().AppendBlock(credentialsBlock)
 	aclBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(aclBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(aclBlock, "prevent_destroy", preventDestroy)
 
 	return aclBlock
 }
