@@ -31,6 +31,8 @@ type stubMSKService struct {
 	getTopicsWithConfigsFn       func(ctx context.Context, clusterArn string) ([]types.TopicDetails, error)
 }
 
+// DescribeClusterV2 default returns an empty output with ClusterInfo == nil.
+// Wire describeClusterV2Fn in any test that exercises discoverAWSClientInformation.
 func (s *stubMSKService) DescribeClusterV2(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
 	if s.describeClusterV2Fn != nil {
 		return s.describeClusterV2Fn(ctx, clusterArn)
@@ -124,16 +126,7 @@ func (s *stubEC2Service) DescribeSubnets(ctx context.Context, subnetIds []string
 	if s.describeSubnetsFn != nil {
 		return s.describeSubnetsFn(ctx, subnetIds)
 	}
-	return &ec2.DescribeSubnetsOutput{
-		Subnets: []ec2types.Subnet{
-			{
-				SubnetId:         aws.String("subnet-default"),
-				VpcId:            aws.String("vpc-default"),
-				AvailabilityZone: aws.String("us-east-1a"),
-				CidrBlock:        aws.String("10.0.0.0/24"),
-			},
-		},
-	}, nil
+	return &ec2.DescribeSubnetsOutput{Subnets: []ec2types.Subnet{}}, nil
 }
 
 // ── stubMSKConnectService ──────────────────────────────────────────────────────
