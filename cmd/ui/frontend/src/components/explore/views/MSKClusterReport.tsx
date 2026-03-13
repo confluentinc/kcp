@@ -7,18 +7,29 @@ import { ClusterClients } from '../clusters/ClusterClients'
 import { formatDate } from '@/lib/formatters'
 import { Tabs } from '@/components/common/Tabs'
 import { ClusterConfigurationSection } from '../clusters/ClusterConfigurationSection'
-import type { Cluster, Region } from '@/types'
 import { CLUSTER_REPORT_TABS } from '@/constants'
 import type { ClusterReportTab } from '@/types'
 import { getClusterArn } from '@/lib/clusterUtils'
+import { useSelectedCluster, useRegions } from '@/stores/store'
 
-interface ClusterReportProps {
-  cluster: Cluster
-  regionName: string
-  regionData?: Pick<Region, 'configurations'>
-}
+export const MSKClusterReport = () => {
+  const selectedClusterData = useSelectedCluster()
+  const regions = useRegions()
 
-export const ClusterReport = ({ cluster, regionName, regionData }: ClusterReportProps) => {
+  if (!selectedClusterData) {
+    return (
+      <div className="p-6">
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-lg p-4">
+          <p className="text-red-800 dark:text-red-200">
+            Cluster not found. Please select a cluster from the sidebar.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const { cluster, regionName } = selectedClusterData
+  const regionData = regions.find((r) => r.name === regionName)
   const [activeTab, setActiveTab] = useState<ClusterReportTab>(CLUSTER_REPORT_TABS.CLUSTER)
 
   const mskConfig = cluster.aws_client_information?.msk_cluster_config
