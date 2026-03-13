@@ -284,7 +284,7 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 }
 
 func (cd *ClusterDiscoverer) scanNetworkingInfo(ctx context.Context, cluster *kafka.DescribeClusterV2Output, nodes []kafkatypes.NodeInfo) (types.ClusterNetworking, error) {
-	if cluster.ClusterInfo.Provisioned == nil || cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo == nil {
+	if cluster.ClusterInfo == nil || cluster.ClusterInfo.Provisioned == nil || cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo == nil {
 		return types.ClusterNetworking{}, fmt.Errorf("cluster has no broker node group info, cannot determine networking")
 	}
 	subnetIds := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets
