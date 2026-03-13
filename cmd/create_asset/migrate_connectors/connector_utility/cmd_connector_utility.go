@@ -101,7 +101,7 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 	clustersByArn := make(map[string]*types.DiscoveredCluster)
 
 	if clusterArn != "" {
-		cluster, err := utils.GetClusterByArn(&state, clusterArn)
+		cluster, err := state.GetClusterByArn(clusterArn)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
@@ -115,15 +115,17 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 		}
 		clustersByArn[clusterArn] = cluster
 	} else {
-		for _, region := range state.Regions {
-			for i := range region.Clusters {
-				cluster := &region.Clusters[i]
-				// Include cluster if it has any connectors (MSK Connect or self-managed)
-				hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
-					(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
-						len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
-				if hasConnectors {
-					clustersByArn[cluster.Arn] = cluster
+		if state.MSKSources != nil {
+			for _, region := range state.MSKSources.Regions {
+				for i := range region.Clusters {
+					cluster := &region.Clusters[i]
+					// Include cluster if it has any connectors (MSK Connect or self-managed)
+					hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
+						(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
+							len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
+					if hasConnectors {
+						clustersByArn[cluster.Arn] = cluster
+					}
 				}
 			}
 		}

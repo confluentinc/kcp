@@ -164,6 +164,8 @@ func TestDiscoverer_getAvailableClusterAuthOptions(t *testing.T) {
 			case types.AuthTypeSASLSCRAM:
 				assert.NotNil(t, result.AuthMethod.SASLScram)
 				assert.Equal(t, tt.expectedUse, result.AuthMethod.SASLScram.Use)
+				// Verify that MSK credentials are set to SHA512 mechanism
+				assert.Equal(t, "SHA512", result.AuthMethod.SASLScram.Mechanism, "MSK SASL/SCRAM should use SHA512")
 			case types.AuthTypeUnauthenticatedTLS:
 				assert.NotNil(t, result.AuthMethod.UnauthenticatedTLS)
 				assert.Equal(t, tt.expectedUse, result.AuthMethod.UnauthenticatedTLS.Use)
