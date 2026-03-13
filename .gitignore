@@ -70,3 +70,6 @@ scratch/
 test/docker/certs/*
 !test/docker/certs/.gitkeep
 .worktrees/
+
+# Claude-generated implementation plans (local only, not part of the codebase)
+docs/plans/
