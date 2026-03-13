@@ -351,8 +351,8 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 	// Calculate column widths from header labels and data
 	nameW := len("TOPIC NAME")
 	statusW := len("STATUS")
-	sourceW := len("SOURCE")
-	destW := len("DESTINATION")
+	sourceW := len("SOURCE_OFFSET")
+	destW := len("DESTINATION_OFFSET")
 	lagW := len("LAG")
 
 	var totalLagVal int64
@@ -391,9 +391,9 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 	b.WriteString("   ")
 	b.WriteString(headerStyle.Render(padRight("STATUS", statusW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("SOURCE", sourceW)))
+	b.WriteString(headerStyle.Render(padLeft("SOURCE_OFFSET", sourceW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("DESTINATION", destW)))
+	b.WriteString(headerStyle.Render(padLeft("DESTINATION_OFFSET", destW)))
 	b.WriteString("   ")
 	b.WriteString(headerStyle.Render(padLeft("LAG", lagW)))
 	b.WriteString("\n")
@@ -477,7 +477,7 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 						pLag = 0
 					}
 
-					line := fmt.Sprintf("      %s   src: %s   dst: %s   lag: %s",
+					line := fmt.Sprintf("      %s   source: %s   destination: %s   lag: %s",
 						padRight(pnStr, partNumW),
 						padLeft(formatLag64(srcVal), partSrcW),
 						padLeft(formatLag64(dstVal), partDstW),
