@@ -3,22 +3,25 @@ package offset
 import (
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 
 	"github.com/IBM/sarama"
 )
 
-// TopicOffsets holds per-partition LEO for a topic.
-type TopicOffsets struct {
-	Topic  string
-	Source map[int32]int64
-	Dest   map[int32]int64
+// TopicOffset provides offset operations against a Kafka cluster.
+type TopicOffset struct {
+	client sarama.Client
 }
 
-// GetTopicOffsets fetches the log end offset (LEO) for every partition of a topic.
+// NewTopicOffset creates a TopicOffset backed by the given Kafka client.
+func NewTopicOffset(client sarama.Client) *TopicOffset {
+	return &TopicOffset{client: client}
+}
+
+// Get fetches the log end offset (LEO) for every partition of a topic.
 // Requests are batched by leader broker for efficiency.
-func GetTopicOffsets(client sarama.Client, topic string) (map[int32]int64, error) {
-	partitions, err := client.Partitions(topic)
+func (t *TopicOffset) Get(topic string) (map[int32]int64, error) {
+	partitions, err := t.client.Partitions(topic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get partitions for topic %q: %w", topic, err)
 	}
@@ -27,7 +30,7 @@ func GetTopicOffsets(client sarama.Client, topic string) (map[int32]int64, error
 
 	brokerPartitions := make(map[*sarama.Broker][]int32)
 	for _, p := range partitions {
-		leader, err := client.Leader(topic, p)
+		leader, err := t.client.Leader(topic, p)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get leader for %s/%d: %w", topic, p, err)
 		}
@@ -64,19 +67,18 @@ func GetTopicOffsets(client sarama.Client, topic string) (map[int32]int64, error
 	return offsets, nil
 }
 
-// TopicExists checks whether a topic exists on the cluster by refreshing metadata.
-func TopicExists(client sarama.Client, topic string) (bool, error) {
-	if err := client.RefreshMetadata(); err != nil {
+// Exists checks whether a topic exists on the cluster by refreshing metadata.
+func (t *TopicOffset) Exists(topic string) (bool, error) {
+	if err := t.client.RefreshMetadata(); err != nil {
 		return false, fmt.Errorf("failed to refresh metadata: %w", err)
 	}
-	topics, err := client.Topics()
+	topics, err := t.client.Topics()
 	if err != nil {
 		return false, fmt.Errorf("failed to list topics: %w", err)
 	}
-	for _, t := range topics {
-		if t == topic {
-			return true, nil
-		}
+
+	if slices.Contains(topics, topic) {
+		return true, nil
 	}
 	return false, nil
 }
@@ -95,7 +97,7 @@ func SortedPartitionIDs(src, dst map[int32]int64) []int32 {
 	for p := range seen {
 		ids = append(ids, p)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids
 }
 

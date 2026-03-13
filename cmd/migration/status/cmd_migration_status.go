@@ -2,11 +2,13 @@ package status
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/msk"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -29,7 +31,7 @@ func NewMigrationStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show migration lag comparing source and destination offsets",
-		Long:  "Interactive TUI that compares source (MSK) and destination (CC) Kafka offsets alongside cluster link mirror topic lag. Requires credentials for both source and destination clusters.",
+		Long:  "Interactive TUI that compares source (MSK) and destination (CC) Kafka offsets to show real-time migration lag per topic and partition. Requires credentials for both source and destination clusters.",
 		Example: `  kcp migration status --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx
   All flags can be provided via environment variables (uppercase, with underscores).`,
 		SilenceErrors: true,
@@ -63,14 +65,14 @@ func NewMigrationStatusCmd() *cobra.Command {
 		return nil
 	})
 
-	_ = cmd.MarkFlagRequired("rest-endpoint")
-	_ = cmd.MarkFlagRequired("cluster-id")
-	_ = cmd.MarkFlagRequired("cluster-link-name")
-	_ = cmd.MarkFlagRequired("cluster-api-key")
-	_ = cmd.MarkFlagRequired("cluster-api-secret")
-	_ = cmd.MarkFlagRequired("credentials-file")
-	_ = cmd.MarkFlagRequired("source-cluster-arn")
-	_ = cmd.MarkFlagRequired("cc-bootstrap")
+	cmd.MarkFlagRequired("cluster-id")
+	cmd.MarkFlagRequired("rest-endpoint")
+	cmd.MarkFlagRequired("cluster-link-name")
+	cmd.MarkFlagRequired("cluster-api-key")
+	cmd.MarkFlagRequired("cluster-api-secret")
+	cmd.MarkFlagRequired("credentials-file")
+	cmd.MarkFlagRequired("source-cluster-arn")
+	cmd.MarkFlagRequired("cc-bootstrap")
 
 	return cmd
 }
@@ -160,8 +162,11 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 		Topics:       []string{},
 	}
 
-	clSvc := clusterlink.NewConfluentCloudService(nil)
-	m := newModel(sourceClient, destClient, clSvc, clConfig, region, interval)
+	srcOffset := offset.NewTopicOffset(sourceClient)
+	dstOffset := offset.NewTopicOffset(destClient)
+
+	clSvc := clusterlink.NewConfluentCloudService(http.DefaultClient)
+	m := newModel(srcOffset, dstOffset, clSvc, clConfig, region, interval)
 	p := newProgram(m)
 	_, err = p.Run()
 	if err != nil {

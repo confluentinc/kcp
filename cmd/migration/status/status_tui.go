@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/sarama"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -33,8 +32,8 @@ type topicOffsetData struct {
 }
 
 type model struct {
-	sourceClient   sarama.Client
-	destClient     sarama.Client
+	sourceOffsets  *offset.TopicOffset
+	destOffsets    *offset.TopicOffset
 	clService      clusterlink.Service
 	clConfig       clusterlink.Config
 	region         string
@@ -50,10 +49,10 @@ type model struct {
 	height         int
 }
 
-func newModel(sourceClient, destClient sarama.Client, clSvc clusterlink.Service, clCfg clusterlink.Config, region string, pollSeconds int) model {
+func newModel(sourceOffsets, destOffsets *offset.TopicOffset, clSvc clusterlink.Service, clCfg clusterlink.Config, region string, pollSeconds int) model {
 	return model{
-		sourceClient: sourceClient,
-		destClient:   destClient,
+		sourceOffsets: sourceOffsets,
+		destOffsets:   destOffsets,
 		clService:    clSvc,
 		clConfig:     clCfg,
 		region:       region,
@@ -70,7 +69,7 @@ func newProgram(m model) *tea.Program {
 // --- Init ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchCmd(m.sourceClient, m.destClient, m.clService, m.clConfig), tea.WindowSize())
+	return tea.Batch(fetchCmd(m.sourceOffsets, m.destOffsets, m.clService, m.clConfig), tea.WindowSize())
 }
 
 // --- Update ---
@@ -88,7 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if !m.loading {
 				m.loading = true
-				return m, fetchCmd(m.sourceClient, m.destClient, m.clService, m.clConfig)
+				return m, fetchCmd(m.sourceOffsets, m.destOffsets, m.clService, m.clConfig)
 			}
 			return m, nil
 		case "+", "=":
@@ -137,7 +136,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
-		return m, fetchCmd(m.sourceClient, m.destClient, m.clService, m.clConfig)
+		return m, fetchCmd(m.sourceOffsets, m.destOffsets, m.clService, m.clConfig)
 	}
 
 	return m, nil
@@ -150,7 +149,6 @@ const (
 	confluentNavy    = "#172B4D"
 	confluentBlue    = "#1993D1"
 	confluentLtBlue  = "#6CB4EE"
-	confluentTeal    = "#17B8A6"
 	confluentSlate   = "#8B9CB6"
 	confluentMutedFg = "#7B8CA5"
 	confluentGreen   = "#2ECC71"
@@ -196,15 +194,6 @@ var (
 
 	lagPositiveStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(confluentAmber))
-
-	diffZeroStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(confluentGreen))
-
-	diffNonZeroStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(confluentRed))
-
-	warningStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(confluentAmber))
 
 	indicatorRunning = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(confluentBlue)).
@@ -320,11 +309,11 @@ func (m model) View() string {
 
 // topicRow holds pre-computed values for a single topic row.
 type topicRow struct {
-	name      string
-	status    string
-	offsetLag int64
-	clLag     int
-	diff      int64
+	name   string
+	status string
+	source int64
+	dest   int64
+	lag    int64
 }
 
 func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffsetData, showPartitions bool) string {
@@ -343,27 +332,30 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 	// Pre-compute row data
 	rows := make([]topicRow, len(sorted))
 	for i, t := range sorted {
-		clLag := totalCLLag(t)
-		oLag := totalOffsetLag(t.MirrorTopicName, offsets)
+		od := offsets[t.MirrorTopicName]
+		var src, dst, lag int64
+		if od != nil {
+			src = sumOffsets(od.sourceOffsets)
+			dst = sumOffsets(od.destOffsets)
+			lag = totalOffsetLag(od)
+		}
 		rows[i] = topicRow{
-			name:      t.MirrorTopicName,
-			status:    t.MirrorStatus,
-			offsetLag: oLag,
-			clLag:     clLag,
-			diff:      oLag - int64(clLag),
+			name:   t.MirrorTopicName,
+			status: t.MirrorStatus,
+			source: src,
+			dest:   dst,
+			lag:    lag,
 		}
 	}
 
 	// Calculate column widths from header labels and data
 	nameW := len("TOPIC NAME")
 	statusW := len("STATUS")
-	offsetLagW := len("OFFSET LAG")
-	clLagW := len("CL LAG")
-	diffW := len("DIFF")
+	sourceW := len("SOURCE")
+	destW := len("DESTINATION")
+	lagW := len("LAG")
 
-	var totalOffsetLagVal int64
-	var totalCLLagVal int
-	var totalDiffVal int64
+	var totalLagVal int64
 
 	for _, r := range rows {
 		if len(r.name) > nameW {
@@ -372,40 +364,24 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 		if len(r.status) > statusW {
 			statusW = len(r.status)
 		}
-		olStr := formatLag64(r.offsetLag)
-		if len(olStr) > offsetLagW {
-			offsetLagW = len(olStr)
+		if w := len(formatLag64(r.source)); w > sourceW {
+			sourceW = w
 		}
-		clStr := formatLag(r.clLag)
-		if len(clStr) > clLagW {
-			clLagW = len(clStr)
+		if w := len(formatLag64(r.dest)); w > destW {
+			destW = w
 		}
-		dStr := formatDiff(r.diff)
-		if len(dStr) > diffW {
-			diffW = len(dStr)
+		if w := len(formatLag64(r.lag)); w > lagW {
+			lagW = w
 		}
-		totalOffsetLagVal += r.offsetLag
-		totalCLLagVal += r.clLag
-		totalDiffVal += r.diff
+		totalLagVal += r.lag
 	}
 
-	// Also account for total row widths
-	totalOLStr := formatLag64(totalOffsetLagVal)
-	if len(totalOLStr) > offsetLagW {
-		offsetLagW = len(totalOLStr)
+	totalLagStr := formatLag64(totalLagVal)
+	if len(totalLagStr) > lagW {
+		lagW = len(totalLagStr)
 	}
-	totalCLStr := formatLag(totalCLLagVal)
-	if len(totalCLStr) > clLagW {
-		clLagW = len(totalCLStr)
-	}
-	totalDiffStr := formatDiff(totalDiffVal)
-	if len(totalDiffStr) > diffW {
-		diffW = len(totalDiffStr)
-	}
-
-	// Also account for "Total:" label width against nameW
-	if len("Total:") > nameW {
-		nameW = len("Total:")
+	if len("Total Lag:") > nameW {
+		nameW = len("Total Lag:")
 	}
 
 	// Header
@@ -415,11 +391,11 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 	b.WriteString("   ")
 	b.WriteString(headerStyle.Render(padRight("STATUS", statusW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("OFFSET LAG", offsetLagW)))
+	b.WriteString(headerStyle.Render(padLeft("SOURCE", sourceW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("CL LAG", clLagW)))
+	b.WriteString(headerStyle.Render(padLeft("DESTINATION", destW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("DIFF", diffW)))
+	b.WriteString(headerStyle.Render(padLeft("LAG", lagW)))
 	b.WriteString("\n")
 
 	// Separator
@@ -428,133 +404,103 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 	b.WriteString("   ")
 	b.WriteString(headerStyle.Render(strings.Repeat("─", statusW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(strings.Repeat("─", offsetLagW)))
+	b.WriteString(headerStyle.Render(strings.Repeat("─", sourceW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(strings.Repeat("─", clLagW)))
+	b.WriteString(headerStyle.Render(strings.Repeat("─", destW)))
 	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(strings.Repeat("─", diffW)))
+	b.WriteString(headerStyle.Render(strings.Repeat("─", lagW)))
 	b.WriteString("\n")
 
 	// Pre-compute partition column widths if needed
-	var partNumW, partSrcW, partDstW, partLagW, partCLW, partDiffW int
+	var partNumW, partSrcW, partDstW, partLagW int
 	if showPartitions {
-		partNumW = 2 // minimum "P0"
+		partNumW = 2
 		partSrcW = 1
 		partDstW = 1
 		partLagW = 1
-		partCLW = 1
-		partDiffW = 1
 		for _, t := range sorted {
 			od := offsets[t.MirrorTopicName]
-			for _, p := range t.MirrorLags {
-				pnStr := fmt.Sprintf("P%d", p.Partition)
-				if len(pnStr) > partNumW {
-					partNumW = len(pnStr)
+			if od == nil {
+				continue
+			}
+			for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destOffsets) {
+				if w := len(fmt.Sprintf("P%d", p)); w > partNumW {
+					partNumW = w
 				}
-				clStr := formatLag(p.Lag)
-				if len(clStr) > partCLW {
-					partCLW = len(clStr)
+				srcVal := od.sourceOffsets[p]
+				dstVal := od.destOffsets[p]
+				pLag := srcVal - dstVal
+				if pLag < 0 {
+					pLag = 0
 				}
-				if od != nil {
-					srcVal := od.sourceOffsets[int32(p.Partition)]
-					dstVal := od.destOffsets[int32(p.Partition)]
-					pLag := srcVal - dstVal
-					pDiff := pLag - int64(p.Lag)
-					srcStr := formatLag64(srcVal)
-					dstStr := formatLag64(dstVal)
-					lagStr := formatLag64(pLag)
-					diffStr := formatDiff(pDiff)
-					if len(srcStr) > partSrcW {
-						partSrcW = len(srcStr)
-					}
-					if len(dstStr) > partDstW {
-						partDstW = len(dstStr)
-					}
-					if len(lagStr) > partLagW {
-						partLagW = len(lagStr)
-					}
-					if len(diffStr) > partDiffW {
-						partDiffW = len(diffStr)
-					}
+				if w := len(formatLag64(srcVal)); w > partSrcW {
+					partSrcW = w
+				}
+				if w := len(formatLag64(dstVal)); w > partDstW {
+					partDstW = w
+				}
+				if w := len(formatLag64(pLag)); w > partLagW {
+					partLagW = w
 				}
 			}
 		}
 	}
 
 	// Data rows
-	for i, r := range rows {
-		olStr := formatLag64(r.offsetLag)
-		clStr := formatLag(r.clLag)
-		dStr := formatDiff(r.diff)
+	for _, r := range rows {
+		srcStr := formatLag64(r.source)
+		dstStr := formatLag64(r.dest)
+		lagStr := formatLag64(r.lag)
 
 		b.WriteString("  ")
 		b.WriteString(padRight(r.name, nameW))
 		b.WriteString("   ")
 		b.WriteString(padRight(styledStatus(r.status), statusW+statusStyleExtraWidth(r.status)))
 		b.WriteString("   ")
-		b.WriteString(padLeftStyled(styledLag64(r.offsetLag, olStr), offsetLagW, len(olStr)))
+		b.WriteString(padLeft(srcStr, sourceW))
 		b.WriteString("   ")
-		b.WriteString(padLeftStyled(styledLag(r.clLag, clStr), clLagW, len(clStr)))
+		b.WriteString(padLeft(dstStr, destW))
 		b.WriteString("   ")
-		b.WriteString(padLeftStyled(styledDiff(r.diff, dStr), diffW, len(dStr)))
-		if absDiff(r.diff) > 5 {
-			b.WriteString("  ")
-			b.WriteString(warningStyle.Render("!"))
-		}
+		b.WriteString(padLeftStyled(styledLag64(r.lag, lagStr), lagW, len(lagStr)))
 		b.WriteString("\n")
 
 		// Partition detail rows
-		if showPartitions && len(sorted[i].MirrorLags) > 0 {
-			parts := make([]clusterlink.MirrorLag, len(sorted[i].MirrorLags))
-			copy(parts, sorted[i].MirrorLags)
-			sort.Slice(parts, func(a, c int) bool {
-				return parts[a].Partition < parts[c].Partition
-			})
+		if showPartitions {
 			od := offsets[r.name]
-			for _, p := range parts {
-				pnStr := fmt.Sprintf("P%d", p.Partition)
-				var srcVal, dstVal, pLag, pDiff int64
-				if od != nil {
-					srcVal = od.sourceOffsets[int32(p.Partition)]
-					dstVal = od.destOffsets[int32(p.Partition)]
-					pLag = srcVal - dstVal
-					pDiff = pLag - int64(p.Lag)
-				}
-				srcStr := formatLag64(srcVal)
-				dstStr := formatLag64(dstVal)
-				lagStr := formatLag64(pLag)
-				clLagStr := formatLag(p.Lag)
-				diffStr := formatDiff(pDiff)
+			if od != nil {
+				for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destOffsets) {
+					pnStr := fmt.Sprintf("P%d", p)
+					srcVal := od.sourceOffsets[p]
+					dstVal := od.destOffsets[p]
+					pLag := srcVal - dstVal
+					if pLag < 0 {
+						pLag = 0
+					}
 
-				line := fmt.Sprintf("      %s   src: %s   dst: %s    lag: %s      cl: %s   %s",
-					padRight(pnStr, partNumW),
-					padLeft(srcStr, partSrcW),
-					padLeft(dstStr, partDstW),
-					padLeft(lagStr, partLagW),
-					padLeft(clLagStr, partCLW),
-					padLeft(diffStr, partDiffW),
-				)
-				b.WriteString(partitionStyle.Render(line))
-				b.WriteString("\n")
+					line := fmt.Sprintf("      %s   src: %s   dst: %s   lag: %s",
+						padRight(pnStr, partNumW),
+						padLeft(formatLag64(srcVal), partSrcW),
+						padLeft(formatLag64(dstVal), partDstW),
+						padLeft(formatLag64(pLag), partLagW),
+					)
+					b.WriteString(partitionStyle.Render(line))
+					b.WriteString("\n")
+				}
 			}
 		}
 	}
 
 	// Total row
 	b.WriteString("\n  ")
-	b.WriteString(padRight("Total:", nameW))
+	b.WriteString(padRight("Total Lag:", nameW))
 	b.WriteString("   ")
-	b.WriteString(strings.Repeat(" ", statusW)) // empty status column
+	b.WriteString(strings.Repeat(" ", statusW))
 	b.WriteString("   ")
-	b.WriteString(padLeftStyled(styledLag64(totalOffsetLagVal, totalOLStr), offsetLagW, len(totalOLStr)))
+	b.WriteString(strings.Repeat(" ", sourceW))
 	b.WriteString("   ")
-	b.WriteString(padLeftStyled(styledLag(totalCLLagVal, totalCLStr), clLagW, len(totalCLStr)))
+	b.WriteString(strings.Repeat(" ", destW))
 	b.WriteString("   ")
-	b.WriteString(padLeftStyled(styledDiff(totalDiffVal, totalDiffStr), diffW, len(totalDiffStr)))
-	if absDiff(totalDiffVal) > 5 {
-		b.WriteString("  ")
-		b.WriteString(warningStyle.Render("!"))
-	}
+	b.WriteString(padLeftStyled(styledLag64(totalLagVal, totalLagStr), lagW, len(totalLagStr)))
 	b.WriteString("\n")
 
 	return b.String()
@@ -562,19 +508,15 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 
 // --- Helpers ---
 
-func totalCLLag(t clusterlink.MirrorTopic) int {
-	total := 0
-	for _, l := range t.MirrorLags {
-		total += l.Lag
+func sumOffsets(offsets map[int32]int64) int64 {
+	var total int64
+	for _, v := range offsets {
+		total += v
 	}
 	return total
 }
 
-func totalOffsetLag(topicName string, offsets map[string]*topicOffsetData) int64 {
-	od := offsets[topicName]
-	if od == nil {
-		return 0
-	}
+func totalOffsetLag(od *topicOffsetData) int64 {
 	var total int64
 	for partition, srcOffset := range od.sourceOffsets {
 		dstOffset := od.destOffsets[partition]
@@ -584,36 +526,6 @@ func totalOffsetLag(topicName string, offsets map[string]*topicOffsetData) int64
 		}
 	}
 	return total
-}
-
-func formatLag(lag int) string {
-	if lag == 0 {
-		return "0"
-	}
-	negative := lag < 0
-	if negative {
-		lag = -lag
-	}
-	s := fmt.Sprintf("%d", lag)
-	n := len(s)
-	if n <= 3 {
-		if negative {
-			return "-" + s
-		}
-		return s
-	}
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (n-i)%3 == 0 {
-			result.WriteByte(',')
-		}
-		result.WriteRune(c)
-	}
-	r := result.String()
-	if negative {
-		return "-" + r
-	}
-	return r
 }
 
 func formatLag64(lag int64) string {
@@ -646,37 +558,6 @@ func formatLag64(lag int64) string {
 	return r
 }
 
-func formatDiff(diff int64) string {
-	if diff == 0 {
-		return "0"
-	}
-	prefix := "+"
-	if diff < 0 {
-		prefix = "-"
-		diff = -diff
-	}
-	s := fmt.Sprintf("%d", diff)
-	n := len(s)
-	if n <= 3 {
-		return prefix + s
-	}
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (n-i)%3 == 0 {
-			result.WriteByte(',')
-		}
-		result.WriteRune(c)
-	}
-	return prefix + result.String()
-}
-
-func absDiff(d int64) int64 {
-	if d < 0 {
-		return -d
-	}
-	return d
-}
-
 func styledStatus(status string) string {
 	switch strings.ToUpper(status) {
 	case "ACTIVE":
@@ -696,25 +577,11 @@ func statusStyleExtraWidth(status string) int {
 	return len(styled) - len(status)
 }
 
-func styledLag(lag int, lagStr string) string {
-	if lag > 0 {
-		return lagPositiveStyle.Render(lagStr)
-	}
-	return lagZeroStyle.Render(lagStr)
-}
-
 func styledLag64(lag int64, lagStr string) string {
 	if lag > 0 {
 		return lagPositiveStyle.Render(lagStr)
 	}
 	return lagZeroStyle.Render(lagStr)
-}
-
-func styledDiff(diff int64, diffStr string) string {
-	if diff == 0 {
-		return diffZeroStyle.Render(diffStr)
-	}
-	return diffNonZeroStyle.Render(diffStr)
 }
 
 func padRight(s string, width int) string {
@@ -741,7 +608,7 @@ func padLeftStyled(styled string, width int, visibleLen int) string {
 
 // --- Commands ---
 
-func fetchCmd(sourceClient, destClient sarama.Client, clSvc clusterlink.Service, clCfg clusterlink.Config) tea.Cmd {
+func fetchCmd(srcOffset, dstOffset *offset.TopicOffset, clSvc clusterlink.Service, clCfg clusterlink.Config) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -755,11 +622,11 @@ func fetchCmd(sourceClient, destClient sarama.Client, clSvc clusterlink.Service,
 		// Get offsets for each mirror topic
 		topicOffsets := make(map[string]*topicOffsetData)
 		for _, t := range topics {
-			srcOffsets, err := offset.GetTopicOffsets(sourceClient, t.MirrorTopicName)
+			srcOffsets, err := srcOffset.Get(t.MirrorTopicName)
 			if err != nil {
 				return fetchResultMsg{err: fmt.Errorf("source offsets for %s: %w", t.MirrorTopicName, err)}
 			}
-			dstOffsets, err := offset.GetTopicOffsets(destClient, t.MirrorTopicName)
+			dstOffsets, err := dstOffset.Get(t.MirrorTopicName)
 			if err != nil {
 				return fetchResultMsg{err: fmt.Errorf("dest offsets for %s: %w", t.MirrorTopicName, err)}
 			}
