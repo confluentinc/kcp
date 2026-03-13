@@ -15,13 +15,13 @@ func GenerateKafkaACL(tfResourceName, resourceType, resourceName, patternType, p
 	aclBlock.Body().AppendBlock(kafkaClusterBlock)
 	aclBlock.Body().AppendNewline()
 
-	aclBlock.Body().SetAttributeValue("resource_type", cty.StringVal(utils.CamelToScreamingSnake(resourceType)))
+	aclBlock.Body().SetAttributeValue("resource_type", cty.StringVal(resourceType))
 	aclBlock.Body().SetAttributeValue("resource_name", cty.StringVal(resourceName))
-	aclBlock.Body().SetAttributeValue("pattern_type", cty.StringVal(utils.CamelToScreamingSnake(patternType)))
+	aclBlock.Body().SetAttributeValue("pattern_type", cty.StringVal(patternType))
 	aclBlock.Body().SetAttributeRaw("principal", utils.TokensForStringTemplate(principal))
 	aclBlock.Body().SetAttributeValue("host", cty.StringVal(host))
-	aclBlock.Body().SetAttributeValue("operation", cty.StringVal(utils.CamelToScreamingSnake(operation)))
-	aclBlock.Body().SetAttributeValue("permission", cty.StringVal(utils.CamelToScreamingSnake(permission)))
+	aclBlock.Body().SetAttributeValue("operation", cty.StringVal(operation))
+	aclBlock.Body().SetAttributeValue("permission", cty.StringVal(permission))
 	aclBlock.Body().SetAttributeRaw("rest_endpoint", utils.TokensForResourceReference(clusterRestEndpointRef))
 	aclBlock.Body().AppendNewline()
 

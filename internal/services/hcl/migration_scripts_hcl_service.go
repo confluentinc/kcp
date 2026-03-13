@@ -168,17 +168,20 @@ func (s *MigrationScriptsHCLService) generatePerPrincipalACLsTf(request types.Mi
 			}
 
 			operationSnake := utils.CamelToScreamingSnake(acl.Operation)
+			resourceTypeSnake := utils.CamelToScreamingSnake(acl.ResourceType)
+			patternTypeSnake := utils.CamelToScreamingSnake(acl.ResourcePatternType)
+			permissionSnake := utils.CamelToScreamingSnake(acl.PermissionType)
 			tfResourceName := utils.FormatHclResourceName(fmt.Sprintf("%s_%s_%s_%s_%d", principal, acl.PermissionType, acl.ResourceType, operationSnake, aclIndex))
 
 			rootBody.AppendBlock(confluent.GenerateKafkaACL(
 				tfResourceName,
-				acl.ResourceType,
+				resourceTypeSnake,
 				acl.ResourceName,
-				acl.ResourcePatternType,
+				patternTypeSnake,
 				fmt.Sprintf("User:${confluent_service_account.%s.id}", serviceAccountResourceName),
 				acl.Host,
-				acl.Operation,
-				acl.PermissionType,
+				operationSnake,
+				permissionSnake,
 				"var.confluent_cloud_cluster_id",
 				"var.confluent_cloud_cluster_rest_endpoint",
 				"var.confluent_cloud_cluster_api_key",
