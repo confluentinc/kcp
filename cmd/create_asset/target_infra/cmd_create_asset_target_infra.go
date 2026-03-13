@@ -23,10 +23,12 @@ var (
 	environmentName     string
 	environmentId       string
 
-	needsClusterStr string
-	clusterName     string
-	clusterId       string
-	clusterType     string
+	needsClusterStr     string
+	clusterName         string
+	clusterId           string
+	clusterType         string
+	clusterAvailability string
+	clusterCku          int
 
 	awsRegion string
 
@@ -34,21 +36,26 @@ var (
 	vpcId               string
 	subnetCidrs         []string
 
+	preventDestroyStr string
+
 	outputDir string
 )
 
 type TargetInfraOpts struct {
-	NeedsEnvironment bool
-	EnvironmentName  string
-	EnvironmentId    string
-	NeedsCluster     bool
-	ClusterName      string
-	ClusterId        string
-	ClusterType      string
-	AwsRegion        string
-	NeedsPrivateLink bool
-	VpcId            string
-	SubnetCidrs      []string
+	NeedsEnvironment    bool
+	EnvironmentName     string
+	EnvironmentId       string
+	NeedsCluster        bool
+	ClusterName         string
+	ClusterId           string
+	ClusterType         string
+	ClusterAvailability string
+	ClusterCku          int
+	AwsRegion           string
+	NeedsPrivateLink    bool
+	PreventDestroy      bool
+	VpcId               string
+	SubnetCidrs         []string
 }
 
 func NewTargetInfraCmd() *cobra.Command {
@@ -91,6 +98,9 @@ func NewTargetInfraCmd() *cobra.Command {
 	clusterFlags.StringVar(&clusterName, "cluster-name", "", "Name for new cluster (required when --needs-cluster=true)")
 	clusterFlags.StringVar(&clusterId, "cluster-id", "", "ID of existing cluster (required when --needs-cluster=false)")
 	clusterFlags.StringVar(&clusterType, "cluster-type", "", "Cluster type (e.g. 'dedicated' or 'enterprise')")
+	clusterFlags.StringVar(&clusterAvailability, "cluster-availability", "SINGLE_ZONE", "Cluster availability zone type ('SINGLE_ZONE' or 'MULTI_ZONE')")
+	clusterFlags.IntVar(&clusterCku, "cluster-cku", 1, "Number of CKUs for dedicated clusters (MULTI_ZONE requires >= 2)")
+	clusterFlags.StringVar(&preventDestroyStr, "prevent-destroy", "true", "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources (true or false)")
 	targetInfraCmd.Flags().AddFlagSet(clusterFlags)
 	groups[clusterFlags] = "Target Cluster"
 
@@ -154,6 +164,11 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid value for --needs-private-link: must be 'true' or 'false', got '%s'", needsPrivateLinkStr)
 	}
 
+	_, err = strconv.ParseBool(preventDestroyStr)
+	if err != nil {
+		return fmt.Errorf("invalid value for --prevent-destroy: must be 'true' or 'false', got '%s'", preventDestroyStr)
+	}
+
 	// Validate state file or manual configuration
 	if stateFile != "" {
 		// When using state file, cluster-arn is required
@@ -188,6 +203,15 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		if clusterType == "" {
 			return fmt.Errorf("required flag `--cluster-type` not set when `--needs-cluster=true`")
 		}
+		if clusterAvailability != "SINGLE_ZONE" && clusterAvailability != "MULTI_ZONE" {
+			return fmt.Errorf("invalid value for --cluster-availability: must be 'SINGLE_ZONE' or 'MULTI_ZONE', got '%s'", clusterAvailability)
+		}
+		if clusterCku < 1 {
+			return fmt.Errorf("invalid value for --cluster-cku: must be >= 1, got %d", clusterCku)
+		}
+		if clusterAvailability == "MULTI_ZONE" && clusterCku < 2 {
+			return fmt.Errorf("invalid value for --cluster-cku: MULTI_ZONE availability requires >= 2 CKUs, got %d", clusterCku)
+		}
 	} else {
 		if clusterId == "" {
 			return fmt.Errorf("required flag `--cluster-id` not set when `--needs-cluster=false`")
@@ -204,11 +228,11 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
-	slog.Info("🏁 generating target infrastructure")
+	slog.Info("🚀 generating target infrastructure")
 
 	// If state file is provided, extract vpc-id and region from it
 	if stateFile != "" {
-		slog.Info("📖 reading state file", "file", stateFile)
+		slog.Info("🔍 reading state file", "file", stateFile)
 
 		file, err := os.ReadFile(stateFile)
 		if err != nil {
@@ -240,23 +264,26 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 	}
 
 	request := types.TargetClusterWizardRequest{
-		AwsRegion:        opts.AwsRegion,
-		NeedsEnvironment: opts.NeedsEnvironment,
-		EnvironmentName:  opts.EnvironmentName,
-		EnvironmentId:    opts.EnvironmentId,
-		NeedsCluster:     opts.NeedsCluster,
-		ClusterName:      opts.ClusterName,
-		ClusterType:      opts.ClusterType,
-		NeedsPrivateLink: opts.NeedsPrivateLink,
-		VpcId:            opts.VpcId,
-		SubnetCidrRanges: opts.SubnetCidrs,
+		AwsRegion:           opts.AwsRegion,
+		NeedsEnvironment:    opts.NeedsEnvironment,
+		EnvironmentName:     opts.EnvironmentName,
+		EnvironmentId:       opts.EnvironmentId,
+		NeedsCluster:        opts.NeedsCluster,
+		ClusterName:         opts.ClusterName,
+		ClusterType:         opts.ClusterType,
+		ClusterAvailability: opts.ClusterAvailability,
+		ClusterCku:          opts.ClusterCku,
+		NeedsPrivateLink:    opts.NeedsPrivateLink,
+		PreventDestroy:      opts.PreventDestroy,
+		VpcId:               opts.VpcId,
+		SubnetCidrRanges:    opts.SubnetCidrs,
 	}
 
-	slog.Info("📋 generating Terraform configuration")
+	slog.Info("🔍 generating Terraform configuration")
 	hclService := hcl.NewTargetInfraHCLService()
 	project := hclService.GenerateTerraformFiles(request)
 
-	slog.Info("📁 creating output directory", "directory", outputDir)
+	slog.Info("🔍 creating output directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
@@ -286,17 +313,25 @@ func parseTargetInfraOpts() (*TargetInfraOpts, error) {
 		return nil, fmt.Errorf("invalid value for --needs-private-link: %w", err)
 	}
 
+	preventDestroy, err := strconv.ParseBool(preventDestroyStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for --prevent-destroy: %w", err)
+	}
+
 	return &TargetInfraOpts{
-		NeedsEnvironment: needsEnvironment,
-		EnvironmentName:  environmentName,
-		EnvironmentId:    environmentId,
-		NeedsCluster:     needsCluster,
-		ClusterName:      clusterName,
-		ClusterId:        clusterId,
-		ClusterType:      clusterType,
-		AwsRegion:        awsRegion,
-		NeedsPrivateLink: needsPrivateLink,
-		VpcId:            vpcId,
-		SubnetCidrs:      subnetCidrs,
+		NeedsEnvironment:    needsEnvironment,
+		EnvironmentName:     environmentName,
+		EnvironmentId:       environmentId,
+		NeedsCluster:        needsCluster,
+		ClusterName:         clusterName,
+		ClusterId:           clusterId,
+		ClusterType:         clusterType,
+		ClusterAvailability: clusterAvailability,
+		ClusterCku:          clusterCku,
+		AwsRegion:           awsRegion,
+		NeedsPrivateLink:    needsPrivateLink,
+		PreventDestroy:      preventDestroy,
+		VpcId:               vpcId,
+		SubnetCidrs:         subnetCidrs,
 	}, nil
 }

@@ -6,6 +6,17 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+func GenerateSecurityGroupIngressRule(tfResourceName string, port int, sourceSecurityGroupRef string, securityGroupRef string) *hclwrite.Block {
+	ruleBlock := hclwrite.NewBlock("resource", []string{"aws_security_group_rule", tfResourceName})
+	ruleBlock.Body().SetAttributeValue("type", cty.StringVal("ingress"))
+	ruleBlock.Body().SetAttributeValue("from_port", cty.NumberIntVal(int64(port)))
+	ruleBlock.Body().SetAttributeValue("to_port", cty.NumberIntVal(int64(port)))
+	ruleBlock.Body().SetAttributeValue("protocol", cty.StringVal("tcp"))
+	ruleBlock.Body().SetAttributeRaw("source_security_group_id", utils.TokensForResourceReference(sourceSecurityGroupRef))
+	ruleBlock.Body().SetAttributeRaw("security_group_id", utils.TokensForResourceReference(securityGroupRef))
+	return ruleBlock
+}
+
 func GenerateSecurityGroup(tfResourceName string, ingressPorts []int, egressPorts []int, vpcIdVarName string) *hclwrite.Block {
 	securityGroupBlock := hclwrite.NewBlock("resource", []string{"aws_security_group", tfResourceName})
 	securityGroupBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))

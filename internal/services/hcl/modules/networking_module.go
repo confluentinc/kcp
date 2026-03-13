@@ -45,6 +45,19 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			},
 			Condition: nil,
 		},
+		{
+			Name: "existing_private_link_vpce_id",
+			Definition: types.TerraformVariable{
+				Name:        "existing_private_link_vpce_id",
+				Description: "ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.ExistingPrivateLinkVpceId
+			},
+			Condition: nil,
+		},
 	}
 }
 
@@ -117,15 +130,6 @@ var NetworkingModuleOutputs = []ModuleOutputDefinition{
 			Description: "IDs of the security groups for the jump cluster (including setup host) instances.",
 			Sensitive:   false,
 			Value:       "aws_security_group.security_group.id",
-		},
-	},
-	{
-		Name: "private_link_security_group_id",
-		Definition: types.TerraformOutput{
-			Name:        "private_link_security_group_id",
-			Description: "ID of the security group for the private link connection.",
-			Sensitive:   false,
-			Value:       "aws_security_group.private_link_security_group.id",
 		},
 	},
 }

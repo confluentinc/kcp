@@ -167,7 +167,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'save_step_data',
             },
             {
-              target: 'private_link_existing_question',
+              target: 'private_link_internet_gateway_question',
               guard: 'use_jump_clusters',
               actions: 'save_step_data',
             }
@@ -332,189 +332,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
-      private_link_existing_question: {
-        meta: {
-          title: 'Private Migration | Private Link',
-          description: 'AWS VPCs allow only one private hosted zone per domain per VPC. Therefore, KCP needs to know if a Private Link connection already exists to the Confluent Cloud cluster.',
-          schema: {
-            type: 'object',
-            properties: {
-              has_existing_private_link: {
-                type: 'boolean',
-                title: 'Do you have a currently established Private Link connection to the Confluent Cloud cluster?',
-                oneOf: [
-                  { title: 'Yes', const: true },
-                  { title: 'No', const: false },
-                ],
-              },
-            },
-            required: ['has_existing_private_link'],
-          },
-          uiSchema: {
-            has_existing_private_link: {
-              'ui:widget': 'radio',
-            },
-          },
-        },
-        on: {
-          NEXT: {
-            target: 'private_link_subnets_question',
-            actions: 'save_step_data',
-          },
-          BACK: {
-            target: 'private_migration_method_question',
-            actions: 'undo_save_step_data',
-          },
-        },
-      },
-      private_link_subnets_question: {
-        meta: {
-          title: 'Private Migration | Private Link - Subnets',
-          description: 'When setting up a private link between Confluent Cloud and AWS, subnets need to be specified to establish the connection.',
-          schema: {
-            type: 'object',
-            properties: {
-              reuse_existing_subnets: {
-                type: 'boolean',
-                title: 'Do you want to reuse existing subnets for setting up a private link to Confluent Cloud?',
-                oneOf: [
-                  { title: 'Yes', const: true },
-                  { title: 'No', const: false },
-                ],
-              },
-            },
-            required: ['reuse_existing_subnets'],
-          },
-          uiSchema: {
-            reuse_existing_subnets: {
-              'ui:widget': 'radio',
-            },
-          },
-        },
-        on: {
-          NEXT: [
-            {
-              target: 'private_link_reuse_existing_subnets',
-              guard: 'reuse_existing_subnets',
-              actions: 'save_step_data',
-            },
-            {
-              target: 'private_link_create_new_subnets',
-              guard: 'create_new_subnets',
-              actions: 'save_step_data',
-            },
-          ],
-          BACK: {
-            target: 'private_link_existing_question',
-            actions: 'undo_save_step_data',
-          },
-        },
-      },
-      private_link_reuse_existing_subnets: {
-        meta: {
-          title: 'Private Migration | Private Link - Reuse Existing Subnets',
-          description: 'Reuse the existing subnets from your MSK cluster for setting up the private link between Confluent Cloud and the AWS VPC.',
-          schema: {
-            type: 'object',
-            properties: {
-              vpc_id: {
-                type: 'string',
-                title: 'VPC ID',
-                default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
-              },
-              private_link_existing_subnet_ids: {
-                type: 'array',
-                title: 'Existing subnet IDs',
-                description: 'Retrieved from the statefile, these can be modified to other existing subnet IDs in the MSK VPC.',
-                items: {
-                  type: 'string',
-                },
-                minItems: 3,
-                maxItems: 3,
-                default: cluster?.aws_client_information?.cluster_networking?.subnet_ids?.slice(0, 3) || 
-                cluster?.aws_client_information?.cluster_networking?.subnets?.slice(0, 3).map(s => s.subnet_id) ||
-                ['failed to retrieve existing subnet IDs from statefile.', '', ''],
-              },
-            },
-            required: ['vpc_id', 'private_link_existing_subnet_ids'],
-          },
-          uiSchema: {
-            vpc_id: {
-              'ui:disabled': true,
-            },
-            private_link_existing_subnet_ids: {
-              'ui:placeholder': 'e.g., subnet-xxxx,subnet-xxxx,subnet-xxxx',
-              'ui:options': {
-                addable: false,
-                orderable: false,
-                removable: false,
-              },
-            },
-          },
-        },
-        on: {
-          NEXT: {
-            target: 'private_link_internet_gateway_question',
-            actions: 'save_step_data',
-          },
-          BACK: {
-            target: 'private_link_subnets_question',
-            actions: 'undo_save_step_data',
-          },
-        },
-      },
-      private_link_create_new_subnets: {
-        meta: {
-          title: 'Private Migration | Private Link - New Subnets',
-          description: 'Create new subnets for setting up the private link between Confluent Cloud and the AWS VPC.',
-          schema: {
-            type: 'object',
-            properties: {
-              vpc_id: {
-                type: 'string',
-                title: 'VPC ID',
-                default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
-              },
-              private_link_new_subnets_cidr: {
-                type: 'array',
-                title: 'New subnet CIDR ranges',
-                items: {
-                  type: 'string',
-                },
-                minItems: 3,
-                maxItems: 3,
-                default: ['', '', ''],
-              },
-            },
-            required: ['vpc_id', 'private_link_new_subnets_cidr'],
-          },
-          uiSchema: {
-            vpc_id: {
-              'ui:disabled': true,
-            },
-            private_link_new_subnets_cidr: {
-              items: {
-                'ui:placeholder': 'e.g., 10.0.1.0/24',
-              },
-              'ui:options': {
-                addable: false,
-                orderable: false,
-                removable: false,
-              },
-            },
-          },
-        },
-        on: {
-          NEXT: {
-            target: 'private_link_internet_gateway_question',
-            actions: 'save_step_data',
-          },
-          BACK: {
-            target: 'private_link_subnets_question',
-            actions: 'undo_save_step_data',
-          },
-        },
-      },
       private_link_internet_gateway_question: {
         meta: {
           title: 'Private Migration | Private Link - Internet Gateway',
@@ -544,18 +361,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             target: 'jump_cluster_networking_inputs',
             actions: 'save_step_data',
           },
-          BACK: [
-            {
-              target: 'private_link_create_new_subnets',
-              guard: 'came_from_private_link_create_new_subnets',
-              actions: 'undo_save_step_data',
-            },
-            {
-              target: 'private_link_reuse_existing_subnets',
-              guard: 'came_from_private_link_reuse_existing_subnets',
-              actions: 'undo_save_step_data',
-            },
-          ]
+          BACK: {
+            target: 'private_migration_method_question',
+            actions: 'undo_save_step_data',
+          },
         },
       },
       jump_cluster_networking_inputs: {
@@ -569,6 +378,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 type: 'string',
                 title: 'VPC ID',
                 default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
+              },
+              existing_private_link_vpce_id: {
+                type: 'string',
+                title: 'Existing Private Link VPC Endpoint ID',
+                description: 'The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.',
               },
               jump_cluster_instance_type: {
                 type: 'string',
@@ -596,11 +410,14 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 description: 'The subnet CIDR range for EC2 instance that will provision the jump cluster instances.',
               }
             },
-            required: ['vpc_id', 'jump_cluster_instance_type', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'jump_cluster_setup_host_subnet_cidr'],
+            required: ['vpc_id', 'existing_private_link_vpce_id', 'jump_cluster_instance_type', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'jump_cluster_setup_host_subnet_cidr'],
             },
           uiSchema: {
             vpc_id: {
               'ui:disabled': true,
+            },
+            existing_private_link_vpce_id: {
+              'ui:placeholder': 'e.g., vpce-xxxxxxxxxxxxxxxxx',
             },
             jump_cluster_instance_type: {
               'ui:placeholder': 'e.g., m5.large',
@@ -903,18 +720,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       },
       use_external_outbound_cluster_linking: ({ event }) => {
         return event.data?.use_jump_clusters === false
-      },
-      reuse_existing_subnets: ({ event }) => {
-        return event.data?.reuse_existing_subnets === true
-      },
-      create_new_subnets: ({ event }) => {
-        return event.data?.reuse_existing_subnets === false
-      },
-      came_from_private_link_create_new_subnets: ({ context }) => {
-        return context.previousStep === 'private_link_create_new_subnets'
-      },
-      came_from_private_link_reuse_existing_subnets: ({ context }) => {
-        return context.previousStep === 'private_link_reuse_existing_subnets'
       },
       came_from_public_cluster_link_inputs: ({ context }) => {
         return context.previousStep === 'public_cluster_link_inputs'

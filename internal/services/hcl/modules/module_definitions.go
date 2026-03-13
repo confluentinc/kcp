@@ -69,7 +69,6 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
-		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
 	} else {
 		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
@@ -92,7 +91,6 @@ func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardReque
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
-		allVars = append(allVars, GetMigrationInfraPrivateLinkVariables()...)
 	} else {
 		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
@@ -211,8 +209,6 @@ func GetModuleVariableName(moduleName string, varName string) string {
 		variables = toVariableDefinitions(GetJumpClusterVariables())
 	case "networking":
 		variables = toVariableDefinitions(GetNetworkingVariables())
-	case "private_link_connection":
-		variables = toVariableDefinitions(GetMigrationInfraPrivateLinkVariables())
 	case "cluster_link":
 		variables = toVariableDefinitions(GetClusterLinkVariables())
 	case "confluent_cloud":

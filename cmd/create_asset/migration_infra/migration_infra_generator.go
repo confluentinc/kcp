@@ -33,18 +33,18 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 }
 
 func (mi *MigrationInfraAssetGenerator) Run() error {
-	slog.Info("🏁 generating migration infrastructure", "targetType", mi.migrationType)
+	slog.Info("🚀 generating migration infrastructure", "targetType", mi.migrationType)
 
 	outputDir := mi.outputDir
 	if outputDir == "" {
 		outputDir = "migration-infra"
 	}
-	slog.Info("📁 creating migration-infra directory", "directory", outputDir)
+	slog.Info("🔍 creating migration-infra directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create migration-infra directory: %w", err)
 	}
 
-	slog.Info("📋 generating Terraform configuration")
+	slog.Info("🔍 generating Terraform configuration")
 	hclService := hcl.NewMigrationInfraHCLService()
 	project := hclService.GenerateTerraformModules(mi.MigrationWizardRequest)
 
@@ -76,6 +76,20 @@ func (mi *MigrationInfraAssetGenerator) buildTerraformProject(outputDir string, 
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
 		slog.Info("✅ wrote root variables.tf")
+	}
+
+	if project.OutputsTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "outputs.tf"), []byte(project.OutputsTf), 0644); err != nil {
+			return fmt.Errorf("failed to write outputs.tf: %w", err)
+		}
+		slog.Info("✅ wrote root outputs.tf")
+	}
+
+	if project.ReadmeMd != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte(project.ReadmeMd), 0644); err != nil {
+			return fmt.Errorf("failed to write README.md: %w", err)
+		}
+		slog.Info("✅ wrote README.md")
 	}
 
 	if project.InputsAutoTfvars != "" {

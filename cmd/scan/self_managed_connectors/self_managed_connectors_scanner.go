@@ -101,14 +101,14 @@ func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectT
 
 func (s *SelfManagedConnectorsScanner) Run() error {
 	if s.client == nil {
-		return fmt.Errorf("❌ Connect API client not initialized")
+		return fmt.Errorf("Connect API client not initialized")
 	}
 
 	slog.Info(fmt.Sprintf("🚀 starting self-managed connector scan for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn)))
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
-		return fmt.Errorf("❌ failed to list connectors: %v", err)
+		return fmt.Errorf("failed to list connectors: %v", err)
 	}
 
 	slog.Info(fmt.Sprintf("🔍 found %d connectors", len(connectorNames)))
@@ -131,11 +131,11 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	slog.Info(fmt.Sprintf("✅ successfully retrieved connector details for %d connectors", len(connectors)))
 
 	if err := s.updateStateWithConnectors(connectors); err != nil {
-		return fmt.Errorf("❌ failed to update state: %v", err)
+		return fmt.Errorf("failed to update state: %v", err)
 	}
 
 	if err := s.State.PersistStateFile(s.StateFile); err != nil {
-		return fmt.Errorf("❌ failed to save state file: %v", err)
+		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
 	slog.Info(fmt.Sprintf("✅ self-managed connector scan complete for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn)))

@@ -42,16 +42,16 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 }
 
 func (bh *BastionHostAssetGenerator) Run() error {
-	slog.Info("🏁 generating bastion host environment assets")
+	slog.Info("🚀 generating bastion host environment assets")
 
 	outputDir := filepath.Join("bastion_host")
-	slog.Info("📁 creating bastion host directory", "directory", outputDir)
+	slog.Info("🔍 creating bastion host directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create bastion host directory: %w", err)
 	}
 
 	assetsDir := "assets"
-	slog.Info("📋 copying assets to target directory", "from", assetsDir, "to", outputDir)
+	slog.Info("🔍 copying assets to target directory", "from", assetsDir, "to", outputDir)
 	if err := bh.copyFiles(assetsDir, outputDir); err != nil {
 		return fmt.Errorf("failed to copy bastion host files: %w", err)
 	}
