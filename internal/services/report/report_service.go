@@ -116,6 +116,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 		Metadata:   regionCosts.Metadata,
 		Results:    filteredCosts,
 		Aggregates: aggregates,
+		QueryInfo:  regionCosts.QueryInfo,
 	}, nil
 }
 
@@ -176,6 +177,7 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 		Metadata:   targetCluster.ClusterMetrics.Metadata,
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,
+		QueryInfo:  targetCluster.ClusterMetrics.QueryInfo,
 	}, nil
 }
 
@@ -239,6 +241,7 @@ func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regi
 		Metadata:   targetCluster.ClusterMetrics.Metadata,
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,
+		QueryInfo:  targetCluster.ClusterMetrics.QueryInfo,
 	}, nil
 }
 
@@ -459,8 +462,9 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 	}
 
 	return types.ProcessedRegionCosts{
-		Metadata: region.Costs.CostMetadata,
-		Results:  processedCosts,
+		Metadata:  region.Costs.CostMetadata,
+		Results:   processedCosts,
+		QueryInfo: region.Costs.QueryInfo,
 	}
 }
 
@@ -515,8 +519,9 @@ func (rs *ReportService) flattenMetrics(cluster types.DiscoveredCluster) types.P
 	}
 
 	return types.ProcessedClusterMetrics{
-		Metrics:  processedMetrics,
-		Metadata: cluster.ClusterMetrics.MetricMetadata,
+		Metrics:   processedMetrics,
+		Metadata:  cluster.ClusterMetrics.MetricMetadata,
+		QueryInfo: cluster.ClusterMetrics.QueryInfo,
 	}
 }
 

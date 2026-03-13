@@ -33,7 +33,7 @@ func NewKafkaAclsGenerator(opts MigrateKafkaAclsOpts) *KafkaAclsGenerator {
 }
 
 func (kg *KafkaAclsGenerator) Run() error {
-	slog.Info("🏁 generating Terraform files for Kafka ACLs!")
+	slog.Info("🚀 generating Terraform files for Kafka ACLs!")
 
 	outputDir := kg.opts.OutputDir
 	if outputDir == "" {
@@ -54,7 +54,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 	for principal := range aclsByPrincipal {
 		principalNames = append(principalNames, principal)
 	}
-	
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
@@ -77,7 +77,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		if err := kg.generateKafkaAuditReport(aclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
-		slog.Info("📝 generated audit report", "path", reportPath)
+		slog.Info("✅ generated audit report", "path", reportPath)
 	}
 
 	totalAcls := 0
@@ -213,4 +213,3 @@ func addAclSectionForKafkaPrincipal(md *markdown.Markdown, acls []types.Acls) {
 
 	md.AddTable(headers, tableData)
 }
-

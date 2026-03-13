@@ -90,7 +90,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 
 	costInformation, err := rd.costService.GetCostsForTimeRange(ctx, region, startDate, endDate, granularity, tagsMap)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to get AWS costs: %v", err)
+		return nil, fmt.Errorf("failed to get AWS costs: %v", err)
 	}
 
 	return &costInformation, nil

@@ -33,18 +33,18 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 }
 
 func (mi *MigrationInfraAssetGenerator) Run() error {
-	slog.Info("🏁 generating migration infrastructure", "targetType", mi.migrationType)
+	slog.Info("🚀 generating migration infrastructure", "targetType", mi.migrationType)
 
 	outputDir := mi.outputDir
 	if outputDir == "" {
 		outputDir = "migration-infra"
 	}
-	slog.Info("📁 creating migration-infra directory", "directory", outputDir)
+	slog.Info("🔍 creating migration-infra directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create migration-infra directory: %w", err)
 	}
 
-	slog.Info("📋 generating Terraform configuration")
+	slog.Info("🔍 generating Terraform configuration")
 	hclService := hcl.NewMigrationInfraHCLService()
 	project := hclService.GenerateTerraformModules(mi.MigrationWizardRequest)
 
