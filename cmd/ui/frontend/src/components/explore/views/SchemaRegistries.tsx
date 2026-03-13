@@ -1,32 +1,9 @@
 import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
+import { useSchemaRegistries } from '@/stores/store'
 
-interface SchemaVersion {
-  schema: string
-  id: number
-  subject: string
-  version: number
-  schemaType?: string
-}
-
-interface SchemaSubject {
-  name: string
-  schema_type: string
-  versions: SchemaVersion[]
-  latest_schema: SchemaVersion
-}
-
-interface SchemaRegistry {
-  type: string
-  url: string
-  subjects: SchemaSubject[]
-}
-
-interface SchemaRegistriesProps {
-  schemaRegistries: SchemaRegistry[]
-}
-
-export const SchemaRegistries = ({ schemaRegistries }: SchemaRegistriesProps) => {
+export const SchemaRegistries = () => {
+  const schemaRegistries = useSchemaRegistries()
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set())
   const [expandedVersions, setExpandedVersions] = useState<Set<string>>(new Set())
 

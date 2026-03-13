@@ -14,11 +14,15 @@ type KafkaService struct {
 	client     client.KafkaAdmin
 	authType   types.AuthType
 	clusterArn string
+	skipTopics bool
+	skipACLs   bool
 }
 
 type KafkaServiceOpts struct {
 	AuthType   types.AuthType
 	ClusterArn string
+	SkipTopics bool
+	SkipACLs   bool
 }
 
 func NewKafkaService(kafkaAdmin client.KafkaAdmin, opts KafkaServiceOpts) *KafkaService {
@@ -26,6 +30,8 @@ func NewKafkaService(kafkaAdmin client.KafkaAdmin, opts KafkaServiceOpts) *Kafka
 		client:     kafkaAdmin,
 		authType:   opts.AuthType,
 		clusterArn: opts.ClusterArn,
+		skipTopics: opts.SkipTopics,
+		skipACLs:   opts.SkipACLs,
 	}
 }
 
@@ -40,11 +46,14 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 	kafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := ks.scanClusterTopics()
-	if err != nil {
-		return nil, err
+	var topics []types.TopicDetails
+	if !ks.skipTopics {
+		topics, err = ks.scanClusterTopics()
+		if err != nil {
+			return nil, err
+		}
+		kafkaAdminClientInformation.SetTopics(topics)
 	}
-	kafkaAdminClientInformation.SetTopics(topics)
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterType == kafkatypes.ClusterTypeServerless {
@@ -52,11 +61,13 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 		return kafkaAdminClientInformation, nil
 	}
 
-	acls, err := ks.scanKafkaAcls()
-	if err != nil {
-		return nil, err
+	if !ks.skipACLs {
+		acls, err := ks.scanKafkaAcls()
+		if err != nil {
+			return nil, err
+		}
+		kafkaAdminClientInformation.Acls = acls
 	}
-	kafkaAdminClientInformation.Acls = acls
 
 	connectors, err := ks.scanSelfManagedConnectors(topics)
 	if err != nil {
