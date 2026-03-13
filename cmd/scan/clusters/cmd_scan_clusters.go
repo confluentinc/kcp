@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/sources"
@@ -139,11 +140,12 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// loadOrCreateState loads existing state or creates a new one
+// loadOrCreateState loads existing state or creates a new one.
+// Only creates a new state when the file does not exist — all other errors
+// (corrupt JSON, permission denied, etc.) are returned to the caller to
+// avoid silently discarding an existing state file.
 func loadOrCreateState(stateFilePath string) (*types.State, error) {
-	state, err := types.NewStateFromFile(stateFilePath)
-	if err != nil {
-		// File doesn't exist - create new state
+	if _, err := os.Stat(stateFilePath); os.IsNotExist(err) {
 		slog.Info("creating new state file", "file", stateFilePath)
 		return &types.State{
 			MSKSources:       &types.MSKSourcesState{Regions: []types.DiscoveredRegion{}},
@@ -152,6 +154,11 @@ func loadOrCreateState(stateFilePath string) (*types.State, error) {
 			KcpBuildInfo:     types.KcpBuildInfo{},
 			Timestamp:        time.Now(),
 		}, nil
+	}
+
+	state, err := types.NewStateFromFile(stateFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load state file: %w", err)
 	}
 	slog.Info("loaded existing state file", "file", stateFilePath)
 	return state, nil
