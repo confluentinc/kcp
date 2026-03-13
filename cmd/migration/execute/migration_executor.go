@@ -117,8 +117,7 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Top
 	}
 
 	slog.Debug("connecting to source cluster (MSK)")
-	sourceOpt := createAdminOption(authType, *clusterAuth)
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, sourceOpt)
+	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, *clusterAuth))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
 	}
@@ -139,19 +138,3 @@ func (m *MigrationExecutor) createDestOffset() (*offset.TopicOffset, error) {
 	return offset.NewTopicOffset(destClient), nil
 }
 
-func createAdminOption(authType types.AuthType, clusterAuth types.ClusterAuth) client.AdminOption {
-	switch authType {
-	case types.AuthTypeIAM:
-		return client.WithIAMAuth()
-	case types.AuthTypeSASLSCRAM:
-		return client.WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password)
-	case types.AuthTypeUnauthenticatedTLS:
-		return client.WithUnauthenticatedTlsAuth()
-	case types.AuthTypeUnauthenticatedPlaintext:
-		return client.WithUnauthenticatedPlaintextAuth()
-	case types.AuthTypeTLS:
-		return client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
-	default:
-		return client.WithIAMAuth()
-	}
-}

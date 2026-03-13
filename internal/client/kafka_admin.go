@@ -76,6 +76,24 @@ func WithSASLPlainAuth(username, password string) AdminOption {
 	}
 }
 
+// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
+func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+	switch authType {
+	case types.AuthTypeIAM:
+		return WithIAMAuth()
+	case types.AuthTypeSASLSCRAM:
+		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password)
+	case types.AuthTypeUnauthenticatedTLS:
+		return WithUnauthenticatedTlsAuth()
+	case types.AuthTypeUnauthenticatedPlaintext:
+		return WithUnauthenticatedPlaintextAuth()
+	case types.AuthTypeTLS:
+		return WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
+	default:
+		return WithIAMAuth()
+	}
+}
+
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) {
 	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
