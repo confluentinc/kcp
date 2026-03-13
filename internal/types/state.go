@@ -55,13 +55,6 @@ type State struct {
 	Timestamp        time.Time                   `json:"timestamp"`
 }
 
-// Validate checks that the state file has valid structure
-func (s *State) Validate() error {
-	// Allow both to be nil for fresh initialization
-	// This validation is primarily for detecting legacy state files when loading from disk
-	return nil
-}
-
 func NewStateFrom(fromState *State) *State {
 	// Always create with fresh metadata for the current discovery run
 	workingState := &State{
@@ -117,11 +110,6 @@ func NewStateFromFile(stateFile string) (*State, error) {
 	var state State
 	if err := json.Unmarshal(file, &state); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
-	}
-
-	// Validate state file format
-	if err := state.Validate(); err != nil {
-		return nil, err
 	}
 
 	return &state, nil
