@@ -10,7 +10,17 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "type-check:watch": "tsc --noEmit --watch",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pretest:e2e": "cd ../../.. && make build",
+    "pretest:e2e:ui": "cd ../../.. && make build",
+    "pretest:e2e:debug": "cd ../../.. && make build",
+    "pretest:e2e:headed": "cd ../../.. && make build",
+    "pretest:e2e:slow": "cd ../../.. && make build",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:slow": "PWTEST_SLOW=1 playwright test --headed"
   },
   "dependencies": {
     "@radix-ui/react-popover": "^1.1.15",
@@ -40,6 +50,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
+    "@playwright/test": "^1.58.2",
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
