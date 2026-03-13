@@ -29,6 +29,16 @@ func NewMetricService(client *cloudwatch.Client) *MetricService {
 func buildProvisionedMetadata(cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow, followerFetching bool) types.MetricMetadata {
 	clusterName := aws.ToString(cluster.ClusterName)
 
+	if cluster.Provisioned == nil {
+		slog.Warn("Provisioned config is nil, returning empty metadata", "cluster", clusterName)
+		return types.MetricMetadata{
+			ClusterType: string(cluster.ClusterType),
+			StartDate:   timeWindow.StartTime,
+			EndDate:     timeWindow.EndTime,
+			Period:      timeWindow.Period,
+		}
+	}
+
 	enhancedMonitoring := string(cluster.Provisioned.EnhancedMonitoring)
 	tieredStorage := cluster.Provisioned.StorageMode == kafkatypes.StorageModeTiered
 

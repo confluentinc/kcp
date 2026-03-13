@@ -102,6 +102,18 @@ func TestBuildProvisionedMetadata(t *testing.T) {
 		assert.Equal(t, 0, meta.NumberOfBrokerNodes)
 	})
 
+	t.Run("nil Provisioned returns empty metadata without panic", func(t *testing.T) {
+		cluster := kafkatypes.Cluster{
+			ClusterName: aws.String("test-cluster"),
+			ClusterType: kafkatypes.ClusterTypeProvisioned,
+			Provisioned: nil,
+		}
+		meta := buildProvisionedMetadata(cluster, timeWindow, false)
+		assert.Equal(t, 0, meta.NumberOfBrokerNodes)
+		assert.Empty(t, meta.KafkaVersion)
+		assert.Empty(t, meta.InstanceType)
+	})
+
 	t.Run("express broker type detected from instance type prefix", func(t *testing.T) {
 		cluster := kafkatypes.Cluster{
 			ClusterName: aws.String("test-cluster"),
