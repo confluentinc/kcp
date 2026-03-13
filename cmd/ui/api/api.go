@@ -470,14 +470,16 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 	}
 
 	var targetCluster *types.DiscoveredCluster
-	for _, region := range state.Regions {
-		if region.Name != req.MskRegion {
-			continue
-		}
-		for i := range region.Clusters {
-			if region.Clusters[i].Arn == req.MskClusterArn {
-				targetCluster = &region.Clusters[i]
-				break
+	if state.MSKSources != nil {
+		for _, region := range state.MSKSources.Regions {
+			if region.Name != req.MskRegion {
+				continue
+			}
+			for i := range region.Clusters {
+				if region.Clusters[i].Arn == req.MskClusterArn {
+					targetCluster = &region.Clusters[i]
+					break
+				}
 			}
 		}
 	}
