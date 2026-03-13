@@ -20,6 +20,7 @@ type MigrateKafkaAclsOpts struct {
 	TargetClusterRestEndpoint string
 	OutputDir                 string
 	SkipAuditReport           bool
+	PreventDestroy            bool
 }
 
 type KafkaAclsGenerator struct {
@@ -59,6 +60,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
 		TargetClusterRestEndpoint: kg.opts.TargetClusterRestEndpoint,
+		PreventDestroy:            kg.opts.PreventDestroy,
 		AclsByPrincipal:           aclsByPrincipal,
 	}
 
@@ -95,28 +97,35 @@ func (kg *KafkaAclsGenerator) writeTerraformFiles(outputDir string, files types.
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-		slog.Info("✅ wrote main.tf")
+		slog.Info("wrote main.tf")
+	}
+
+	for fileName, content := range files.PerPrincipalTf {
+		if err := os.WriteFile(filepath.Join(outputDir, fileName), []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", fileName, err)
+		}
+		slog.Info("wrote per-principal file", "file", fileName)
 	}
 
 	if files.ProvidersTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
 			return fmt.Errorf("failed to write providers.tf: %w", err)
 		}
-		slog.Info("✅ wrote providers.tf")
+		slog.Info("wrote providers.tf")
 	}
 
 	if files.VariablesTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
-		slog.Info("✅ wrote variables.tf")
+		slog.Info("wrote variables.tf")
 	}
 
 	if files.InputsAutoTfvars != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(files.InputsAutoTfvars), 0644); err != nil {
 			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
 		}
-		slog.Info("✅ wrote inputs.auto.tfvars")
+		slog.Info("wrote inputs.auto.tfvars")
 	}
 
 	return nil
