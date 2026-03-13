@@ -72,7 +72,7 @@ func buildProvisionedMetadata(cluster kafkatypes.Cluster, timeWindow types.Cloud
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
 func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("processing provisioned cluster", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+	slog.Info("processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 
 	if cluster.Provisioned == nil {
 		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
@@ -80,18 +80,18 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 
 	metricsMetadata := buildProvisionedMetadata(cluster, timeWindow, followerFetching)
 
-	brokerQueries := ms.buildBrokerMetricQueries(*cluster.ClusterName, timeWindow.Period)
+	brokerQueries := ms.buildBrokerMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
 	brokerQueryResult, err := ms.executeMetricQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
-	clientConnectionQueries := ms.buildClientConnectionQueries(*cluster.ClusterName, timeWindow.Period)
+	clientConnectionQueries := ms.buildClientConnectionQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
 	clientConnectionQueryResult, err := ms.executeMetricQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
 
-	clusterQueries := ms.buildClusterMetricQueries(*cluster.ClusterName, timeWindow.Period)
+	clusterQueries := ms.buildClusterMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
 	clusterQueryResult, err := ms.executeMetricQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
@@ -116,13 +116,13 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	} else {
 		slog.Warn("EBS volume size unavailable, local storage metrics may be inaccurate", "cluster", aws.ToString(cluster.ClusterName))
 	}
-	localStorageQuery := ms.buildLocalStorageUsageQuery(*cluster.ClusterName, timeWindow.Period, clusterVolumeSizeGB)
+	localStorageQuery := ms.buildLocalStorageUsageQuery(aws.ToString(cluster.ClusterName), timeWindow.Period, clusterVolumeSizeGB)
 	storageQueryResult, err := ms.executeMetricQuery(ctx, localStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
 	}
 
-	remoteStorageQuery := ms.buildRemoteStorageUsageQuery(*cluster.ClusterName, timeWindow.Period)
+	remoteStorageQuery := ms.buildRemoteStorageUsageQuery(aws.ToString(cluster.ClusterName), timeWindow.Period)
 	remoteStorageQueryResult, err := ms.executeMetricQuery(ctx, remoteStorageQuery, timeWindow.StartTime, timeWindow.EndTime)
 	if err != nil {
 		return nil, err
