@@ -126,7 +126,7 @@ func TestClusterDiscoverer_SkipMetrics(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true /* skipMetrics */)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true /* skipTopics */, true /* skipMetrics */)
 
 	require.NoError(t, err)
 	assert.False(t, metricsCalled, "metric service should not be called when skipMetrics=true")

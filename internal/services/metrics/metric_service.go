@@ -144,7 +144,7 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 
 // ProcessServerlessCluster processes metrics for serverless aggregated across all topics in a cluster
 func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster kafkatypes.Cluster, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", *cluster.ClusterName, "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+	slog.Info("☁️ processing serverless cluster with topic aggregation", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
 
 	if cluster.Serverless == nil {
 		return nil, fmt.Errorf("cluster %s has no serverless configuration", aws.ToString(cluster.ClusterName))
@@ -158,7 +158,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	}
 
 	// Build metric queries for all topics with aggregation
-	queries := ms.buildServerlessMetricQueries(*cluster.ClusterName, timeWindow.Period)
+	queries := ms.buildServerlessMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
 
 	// Execute the metric query
 	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
