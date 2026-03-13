@@ -27,13 +27,13 @@ type flashDoneMsg struct{}
 // --- Model ---
 
 type topicOffsetData struct {
-	sourceOffsets map[int32]int64
-	destOffsets   map[int32]int64
+	sourceOffsets      map[int32]int64
+	destinationOffsets map[int32]int64
 }
 
 type model struct {
-	sourceOffsets  *offset.TopicOffset
-	destOffsets    *offset.TopicOffset
+	sourceOffset       *offset.Service
+	destinationOffset  *offset.Service
 	clService      clusterlink.Service
 	clConfig       clusterlink.Config
 	region         string
@@ -49,10 +49,10 @@ type model struct {
 	height         int
 }
 
-func newModel(sourceOffsets, destOffsets *offset.TopicOffset, clSvc clusterlink.Service, clCfg clusterlink.Config, region string, pollSeconds int) model {
+func newModel(sourceOffset, destinationOffset *offset.Service, clSvc clusterlink.Service, clCfg clusterlink.Config, region string, pollSeconds int) model {
 	return model{
-		sourceOffsets: sourceOffsets,
-		destOffsets:   destOffsets,
+		sourceOffset:      sourceOffset,
+		destinationOffset: destinationOffset,
 		clService:    clSvc,
 		clConfig:     clCfg,
 		region:       region,
@@ -69,7 +69,7 @@ func newProgram(m model) *tea.Program {
 // --- Init ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchCmd(m.sourceOffsets, m.destOffsets, m.clService, m.clConfig), tea.WindowSize())
+	return tea.Batch(fetchCmd(m.sourceOffset, m.destinationOffset, m.clService, m.clConfig), tea.WindowSize())
 }
 
 // --- Update ---
@@ -87,7 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if !m.loading {
 				m.loading = true
-				return m, fetchCmd(m.sourceOffsets, m.destOffsets, m.clService, m.clConfig)
+				return m, fetchCmd(m.sourceOffset, m.destinationOffset, m.clService, m.clConfig)
 			}
 			return m, nil
 		case "+", "=":
@@ -136,7 +136,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
-		return m, fetchCmd(m.sourceOffsets, m.destOffsets, m.clService, m.clConfig)
+		return m, fetchCmd(m.sourceOffset, m.destinationOffset, m.clService, m.clConfig)
 	}
 
 	return m, nil
@@ -336,7 +336,7 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 		var src, dst, lag int64
 		if od != nil {
 			src = sumOffsets(od.sourceOffsets)
-			dst = sumOffsets(od.destOffsets)
+			dst = sumOffsets(od.destinationOffsets)
 			lag = totalOffsetLag(od)
 		}
 		rows[i] = topicRow{
@@ -423,12 +423,12 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 			if od == nil {
 				continue
 			}
-			for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destOffsets) {
+			for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destinationOffsets) {
 				if w := len(fmt.Sprintf("P%d", p)); w > partNumW {
 					partNumW = w
 				}
 				srcVal := od.sourceOffsets[p]
-				dstVal := od.destOffsets[p]
+				dstVal := od.destinationOffsets[p]
 				pLag := srcVal - dstVal
 				if pLag < 0 {
 					pLag = 0
@@ -468,10 +468,10 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 		if showPartitions {
 			od := offsets[r.name]
 			if od != nil {
-				for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destOffsets) {
+				for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destinationOffsets) {
 					pnStr := fmt.Sprintf("P%d", p)
 					srcVal := od.sourceOffsets[p]
-					dstVal := od.destOffsets[p]
+					dstVal := od.destinationOffsets[p]
 					pLag := srcVal - dstVal
 					if pLag < 0 {
 						pLag = 0
@@ -518,9 +518,9 @@ func sumOffsets(offsets map[int32]int64) int64 {
 
 func totalOffsetLag(od *topicOffsetData) int64 {
 	var total int64
-	for partition, srcOffset := range od.sourceOffsets {
-		dstOffset := od.destOffsets[partition]
-		lag := srcOffset - dstOffset
+	for partition, sourceOffset := range od.sourceOffsets {
+		destinationOffset := od.destinationOffsets[partition]
+		lag := sourceOffset - destinationOffset
 		if lag > 0 {
 			total += lag
 		}
@@ -608,7 +608,7 @@ func padLeftStyled(styled string, width int, visibleLen int) string {
 
 // --- Commands ---
 
-func fetchCmd(srcOffset, dstOffset *offset.TopicOffset, clSvc clusterlink.Service, clCfg clusterlink.Config) tea.Cmd {
+func fetchCmd(sourceOffset, destinationOffset *offset.Service, clSvc clusterlink.Service, clCfg clusterlink.Config) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -622,17 +622,17 @@ func fetchCmd(srcOffset, dstOffset *offset.TopicOffset, clSvc clusterlink.Servic
 		// Get offsets for each mirror topic
 		topicOffsets := make(map[string]*topicOffsetData)
 		for _, t := range topics {
-			srcOffsets, err := srcOffset.Get(t.MirrorTopicName)
+			sourceOffsets, err := sourceOffset.Get(t.MirrorTopicName)
 			if err != nil {
 				return fetchResultMsg{err: fmt.Errorf("source offsets for %s: %w", t.MirrorTopicName, err)}
 			}
-			dstOffsets, err := dstOffset.Get(t.MirrorTopicName)
+			destinationOffsets, err := destinationOffset.Get(t.MirrorTopicName)
 			if err != nil {
 				return fetchResultMsg{err: fmt.Errorf("dest offsets for %s: %w", t.MirrorTopicName, err)}
 			}
 			topicOffsets[t.MirrorTopicName] = &topicOffsetData{
-				sourceOffsets: srcOffsets,
-				destOffsets:   dstOffsets,
+				sourceOffsets:      sourceOffsets,
+				destinationOffsets: destinationOffsets,
 			}
 		}
 

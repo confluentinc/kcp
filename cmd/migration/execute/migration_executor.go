@@ -49,14 +49,14 @@ func (m *MigrationExecutor) Run() error {
 	}
 
 	// Create destination Kafka client (CC)
-	destOffset, err := m.createDestOffset()
+	destinationOffset, err := m.createDestinationOffset()
 	if err != nil {
 		return err
 	}
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(http.DefaultClient)
-	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destOffset)
+	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
@@ -75,7 +75,7 @@ func (m *MigrationExecutor) Run() error {
 	return nil
 }
 
-func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.TopicOffset, error) {
+func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Service, error) {
 	config := m.opts.MigrationConfig
 
 	credentials, errs := types.NewCredentialsFromFile(m.opts.CredentialsFile)
@@ -123,10 +123,10 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Top
 	}
 	slog.Debug("source cluster connected")
 
-	return offset.NewTopicOffset(sourceClient), nil
+	return offset.NewOffsetService(sourceClient), nil
 }
 
-func (m *MigrationExecutor) createDestOffset() (*offset.TopicOffset, error) {
+func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.CCBootstrap, ",")
 	destClient, err := client.NewKafkaClient(ccBrokers, "", client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret))
@@ -135,6 +135,6 @@ func (m *MigrationExecutor) createDestOffset() (*offset.TopicOffset, error) {
 	}
 	slog.Debug("destination cluster connected")
 
-	return offset.NewTopicOffset(destClient), nil
+	return offset.NewOffsetService(destClient), nil
 }
 

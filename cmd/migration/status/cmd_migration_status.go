@@ -94,12 +94,12 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	srcOffset, region, err := createSourceOffset(ctx, credentialsFile, sourceClusterArn)
+	sourceOffset, region, err := createSourceOffset(ctx, credentialsFile, sourceClusterArn)
 	if err != nil {
 		return err
 	}
 
-	dstOffset, err := createDestOffset(ccBootstrap, apiKey, apiSecret)
+	destinationOffset, err := createDestinationOffset(ccBootstrap, apiKey, apiSecret)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	clSvc := clusterlink.NewConfluentCloudService(http.DefaultClient)
-	m := newModel(srcOffset, dstOffset, clSvc, clConfig, region, interval)
+	m := newModel(sourceOffset, destinationOffset, clSvc, clConfig, region, interval)
 	p := newProgram(m)
 	_, err = p.Run()
 	if err != nil {
@@ -123,7 +123,7 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func createSourceOffset(ctx context.Context, credFile, clusterArn string) (*offset.TopicOffset, string, error) {
+func createSourceOffset(ctx context.Context, credFile, clusterArn string) (*offset.Service, string, error) {
 	credentials, errs := types.NewCredentialsFromFile(credFile)
 	if len(errs) > 0 {
 		return nil, "", fmt.Errorf("failed to parse credentials file: %v", errs[0])
@@ -169,10 +169,10 @@ func createSourceOffset(ctx context.Context, credFile, clusterArn string) (*offs
 	}
 	slog.Debug("source cluster connected")
 
-	return offset.NewTopicOffset(sourceClient), region, nil
+	return offset.NewOffsetService(sourceClient), region, nil
 }
 
-func createDestOffset(bootstrap, key, secret string) (*offset.TopicOffset, error) {
+func createDestinationOffset(bootstrap, key, secret string) (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	brokers := strings.Split(bootstrap, ",")
 	destClient, err := client.NewKafkaClient(brokers, "", client.WithSASLPlainAuth(key, secret))
@@ -181,6 +181,6 @@ func createDestOffset(bootstrap, key, secret string) (*offset.TopicOffset, error
 	}
 	slog.Debug("destination cluster connected")
 
-	return offset.NewTopicOffset(destClient), nil
+	return offset.NewOffsetService(destClient), nil
 }
 

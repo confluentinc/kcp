@@ -18,8 +18,8 @@ import (
 type MigrationWorkflow struct {
 	gatewayService     gateway.Service
 	clusterLinkService clusterlink.Service
-	sourceOffset       *offset.TopicOffset
-	destOffset         *offset.TopicOffset
+	sourceOffset       *offset.Service
+	destinationOffset  *offset.Service
 }
 
 func NewMigrationWorkflow(
@@ -35,14 +35,14 @@ func NewMigrationWorkflow(
 func NewMigrationWorkflowWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-	sourceOffset *offset.TopicOffset,
-	destOffset *offset.TopicOffset,
+	sourceOffset *offset.Service,
+	destinationOffset *offset.Service,
 ) *MigrationWorkflow {
 	return &MigrationWorkflow{
 		gatewayService:     gatewayService,
 		clusterLinkService: clusterLinkService,
 		sourceOffset:       sourceOffset,
-		destOffset:         destOffset,
+		destinationOffset:  destinationOffset,
 	}
 }
 
@@ -150,16 +150,16 @@ func (s *MigrationWorkflow) CheckLags(
 		topicTotalLags := make(map[string]int64)
 
 		for _, topic := range config.Topics {
-			srcOffsets, err := s.sourceOffset.Get(topic)
+			sourceOffsets, err := s.sourceOffset.Get(topic)
 			if err != nil {
 				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
 			}
-			dstOffsets, err := s.destOffset.Get(topic)
+			destinationOffsets, err := s.destinationOffset.Get(topic)
 			if err != nil {
-				return fmt.Errorf("failed to get dest offsets for %s: %w", topic, err)
+				return fmt.Errorf("failed to get destination offsets for %s: %w", topic, err)
 			}
 
-			lag := offset.ComputeTotalLag(srcOffsets, dstOffsets)
+			lag := offset.ComputeTotalLag(sourceOffsets, destinationOffsets)
 			if lag > lagThreshold {
 				allBelowThreshold = false
 				topicTotalLags[topic] = lag
@@ -291,16 +291,16 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 		// Find topics at zero lag using direct offset comparison
 		var topicsToPromote []string
 		for topic := range remaining {
-			srcOffsets, err := s.sourceOffset.Get(topic)
+			sourceOffsets, err := s.sourceOffset.Get(topic)
 			if err != nil {
 				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
 			}
-			dstOffsets, err := s.destOffset.Get(topic)
+			destinationOffsets, err := s.destinationOffset.Get(topic)
 			if err != nil {
-				return fmt.Errorf("failed to get dest offsets for %s: %w", topic, err)
+				return fmt.Errorf("failed to get destination offsets for %s: %w", topic, err)
 			}
 
-			lag := offset.ComputeTotalLag(srcOffsets, dstOffsets)
+			lag := offset.ComputeTotalLag(sourceOffsets, destinationOffsets)
 			if lag == 0 {
 				topicsToPromote = append(topicsToPromote, topic)
 			}

@@ -8,19 +8,19 @@ import (
 	"github.com/IBM/sarama"
 )
 
-// TopicOffset provides offset operations against a Kafka cluster.
-type TopicOffset struct {
+// Service provides offset operations against a Kafka cluster.
+type Service struct {
 	client sarama.Client
 }
 
-// NewTopicOffset creates a TopicOffset backed by the given Kafka client.
-func NewTopicOffset(client sarama.Client) *TopicOffset {
-	return &TopicOffset{client: client}
+// NewOffsetService creates a Service backed by the given Kafka client.
+func NewOffsetService(client sarama.Client) *Service {
+	return &Service{client: client}
 }
 
 // Get fetches the log end offset (LEO) for every partition of a topic.
 // Requests are batched by leader broker for efficiency.
-func (t *TopicOffset) Get(topic string) (map[int32]int64, error) {
+func (t *Service) Get(topic string) (map[int32]int64, error) {
 	partitions, err := t.client.Partitions(topic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get partitions for topic %q: %w", topic, err)
@@ -68,7 +68,7 @@ func (t *TopicOffset) Get(topic string) (map[int32]int64, error) {
 }
 
 // Exists checks whether a topic exists on the cluster by refreshing metadata.
-func (t *TopicOffset) Exists(topic string) (bool, error) {
+func (t *Service) Exists(topic string) (bool, error) {
 	if err := t.client.RefreshMetadata(); err != nil {
 		return false, fmt.Errorf("failed to refresh metadata: %w", err)
 	}
