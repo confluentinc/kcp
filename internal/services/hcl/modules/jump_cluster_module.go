@@ -219,7 +219,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			Name: "cluster_link_name",
 			Definition: types.TerraformVariable{
 				Name:        "cluster_link_name",
-				Description: "Name of the cluster links between between MSK and Confluent Cloud through the jump cluster.",
+				Description: "Name of the cluster links that will be created between MSK and Confluent Cloud through the jump cluster.",
 				Sensitive:   false,
 				Type:        "string",
 			},
