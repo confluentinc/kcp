@@ -12,13 +12,14 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// Confluent Cloud supported ACL resource types
-// https://docs.confluent.io/cloud/current/security/access-control/acls/overview.html#resources
+// Confluent Cloud supported ACL resource types.
+// Keys are lowercase to match against strings.ToLower(acl.ResourceType) for case-insensitive comparison.
+// https://docs.confluent.io/cloud/current/security/access-control/acl.html#acl-resources-and-operations-for-ccloud-summary
 var supportedACLResourceTypes = map[string]bool{
 	"topic":           true,
 	"group":           true,
 	"cluster":         true,
-	"transactionalid": true,
+	"transactionalid": true, // matches strings.ToLower("TransactionalId") — no underscore
 }
 
 type MigrationScriptsHCLService struct {
