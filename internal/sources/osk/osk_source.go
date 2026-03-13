@@ -2,13 +2,13 @@ package osk
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
+	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -90,10 +90,6 @@ func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 		}
 
 		result.Clusters = append(result.Clusters, *clusterResult)
-		slog.Info("successfully scanned OSK cluster",
-			"id", clusterCreds.ID,
-			"topics", len(clusterResult.KafkaAdminInfo.Topics.Details),
-			"acls", len(clusterResult.KafkaAdminInfo.Acls))
 	}
 
 	// If ALL clusters failed, return error
@@ -132,32 +128,31 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 		"auth_type", authType,
 		"bootstrap_servers", clusterCreds.BootstrapServers)
 
-	// Create Kafka Admin client using the same pattern as MSK scanner
 	kafkaAdmin, err := s.createKafkaAdmin(clusterCreds, authType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
 	defer kafkaAdmin.Close()
 
-	// Scan Kafka resources
-	kafkaAdminInfo, err := s.scanKafkaResources(kafkaAdmin, opts)
+	kafkaService := kafkaservice.NewKafkaService(kafkaAdmin, kafkaservice.KafkaServiceOpts{
+		AuthType:   authType,
+		ClusterArn: clusterCreds.ID,
+		SkipTopics: opts.SkipTopics,
+		SkipACLs:   opts.SkipACLs,
+	})
+
+	// OSK clusters are always provisioned (never serverless)
+	kafkaAdminInfo, err := kafkaService.ScanKafkaResources(kafkatypes.ClusterTypeProvisioned)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan Kafka resources: %w", err)
 	}
 
-	// Populate metadata
 	metadata := types.OSKClusterMetadata{
 		Environment: clusterCreds.Metadata.Environment,
 		Location:    clusterCreds.Metadata.Location,
 		Labels:      clusterCreds.Metadata.Labels,
 		LastScanned: time.Now(),
 	}
-
-	slog.Info("successfully scanned OSK cluster",
-		"cluster", clusterCreds.ID,
-		"cluster_id", kafkaAdminInfo.ClusterID,
-		"topics", len(kafkaAdminInfo.Topics.Details),
-		"acls", len(kafkaAdminInfo.Acls))
 
 	return &sources.ClusterScanResult{
 		Identifier: sources.ClusterIdentifier{
@@ -238,191 +233,3 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 	return kafkaAdmin, nil
 }
 
-// scanKafkaResources scans Kafka topics and ACLs using the Kafka Admin API
-func (s *OSKSource) scanKafkaResources(kafkaAdmin client.KafkaAdmin, opts sources.ScanOptions) (*types.KafkaAdminClientInformation, error) {
-	kafkaAdminInfo := &types.KafkaAdminClientInformation{}
-
-	// Get cluster metadata including cluster ID
-	clusterMetadata, err := kafkaAdmin.GetClusterKafkaMetadata()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster metadata: %w", err)
-	}
-	kafkaAdminInfo.ClusterID = clusterMetadata.ClusterID
-
-	// Scan topics unless skipped
-	if !opts.SkipTopics {
-		topics, err := s.scanTopics(kafkaAdmin)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan topics: %w", err)
-		}
-		kafkaAdminInfo.SetTopics(topics)
-	}
-
-	// Scan ACLs unless skipped
-	if !opts.SkipACLs {
-		acls, err := s.scanACLs(kafkaAdmin)
-		if err != nil {
-			// Log warning but continue - ACLs might not be accessible
-			slog.Warn("failed to scan ACLs, continuing without ACL data", "error", err)
-			kafkaAdminInfo.Acls = []types.Acls{}
-		} else {
-			kafkaAdminInfo.Acls = acls
-		}
-	}
-
-	// Scan for self-managed connectors
-	if !opts.SkipTopics && kafkaAdminInfo.Topics != nil {
-		connectors, err := s.scanSelfManagedConnectors(kafkaAdmin, kafkaAdminInfo.Topics.Details)
-		if err != nil {
-			slog.Warn("failed to scan self-managed connectors", "error", err)
-		} else {
-			kafkaAdminInfo.SetSelfManagedConnectors(connectors)
-		}
-	}
-
-	return kafkaAdminInfo, nil
-}
-
-// scanTopics scans for topics in the Kafka cluster
-func (s *OSKSource) scanTopics(kafkaAdmin client.KafkaAdmin) ([]types.TopicDetails, error) {
-	slog.Info("scanning for cluster topics")
-
-	topics, err := kafkaAdmin.ListTopicsWithConfigs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list topics with configs: %w", err)
-	}
-
-	slog.Info("found topics", "count", len(topics))
-
-	var topicDetails []types.TopicDetails
-	for topicName, topic := range topics {
-		configurations := make(map[string]*string)
-		for key, valuePtr := range topic.ConfigEntries {
-			if valuePtr != nil {
-				configurations[key] = valuePtr
-			}
-		}
-
-		topicDetails = append(topicDetails, types.TopicDetails{
-			Name:              topicName,
-			Partitions:        int(topic.NumPartitions),
-			ReplicationFactor: int(topic.ReplicationFactor),
-			Configurations:    configurations,
-		})
-	}
-
-	return topicDetails, nil
-}
-
-// scanACLs scans for Kafka ACLs in the cluster
-func (s *OSKSource) scanACLs(kafkaAdmin client.KafkaAdmin) ([]types.Acls, error) {
-	slog.Info("scanning for kafka acls")
-
-	acls, err := kafkaAdmin.ListAcls()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list acls: %w", err)
-	}
-
-	// Flatten the ACLs for easier processing
-	var flattenedAcls []types.Acls
-	for _, resourceAcl := range acls {
-		for _, acl := range resourceAcl.Acls {
-			flattenedAcl := types.Acls{
-				ResourceType:        resourceAcl.ResourceType.String(),
-				ResourceName:        resourceAcl.ResourceName,
-				ResourcePatternType: resourceAcl.ResourcePatternType.String(),
-				Principal:           acl.Principal,
-				Host:                acl.Host,
-				Operation:           acl.Operation.String(),
-				PermissionType:      acl.PermissionType.String(),
-			}
-			flattenedAcls = append(flattenedAcls, flattenedAcl)
-		}
-	}
-
-	return flattenedAcls, nil
-}
-
-// scanSelfManagedConnectors scans for self-managed Kafka Connect connectors
-func (s *OSKSource) scanSelfManagedConnectors(kafkaAdmin client.KafkaAdmin, topics []types.TopicDetails) ([]types.SelfManagedConnector, error) {
-	const (
-		configTopicName = "connect-configs"
-		statusTopicName = "connect-status"
-		keyPrefix       = "connector-"
-	)
-
-	// Check if connect-configs topic exists
-	existingTopics := make(map[string]bool)
-	for _, topic := range topics {
-		existingTopics[topic.Name] = true
-	}
-
-	if !existingTopics[configTopicName] {
-		slog.Debug("skipping connector scan, connect-configs topic does not exist")
-		return []types.SelfManagedConnector{}, nil
-	}
-
-	slog.Info("found connect-configs topic, attempting to read connector configurations")
-	connectorConfigs, err := kafkaAdmin.GetAllMessagesWithKeyFilter(configTopicName, keyPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read connector configurations: %w", err)
-	}
-
-	var connectorStatuses map[string]string
-	if existingTopics[statusTopicName] {
-		slog.Info("found connect-status topic, attempting to read connector status information")
-		connectorStatuses, err = kafkaAdmin.GetConnectorStatusMessages(statusTopicName)
-		if err != nil {
-			slog.Warn("failed to read connector status information", "error", err)
-			connectorStatuses = make(map[string]string)
-		}
-	} else {
-		connectorStatuses = make(map[string]string)
-	}
-
-	// Parse connector configurations (same logic as kafka_service.go)
-	connectors := []types.SelfManagedConnector{}
-	for connectorKey, configJSON := range connectorConfigs {
-		var rawConfig map[string]any
-		if err := json.Unmarshal([]byte(configJSON), &rawConfig); err != nil {
-			slog.Warn("failed to parse connector config JSON", "connector", connectorKey, "error", err)
-			continue
-		}
-
-		var configMap map[string]any
-		if properties, ok := rawConfig["properties"].(map[string]any); ok {
-			configMap = properties
-		}
-
-		// Remove the "connector-" prefix from the key to get the connector name
-		connectorName := connectorKey
-		if len(connectorKey) > len(keyPrefix) && connectorKey[:len(keyPrefix)] == keyPrefix {
-			connectorName = connectorKey[len(keyPrefix):]
-		}
-
-		connector := types.SelfManagedConnector{
-			Name:   connectorName,
-			Config: configMap,
-		}
-
-		// Try to retrieve connector status
-		if statusJSON, exists := connectorStatuses[connectorName]; exists {
-			var statusMap map[string]any
-			if err := json.Unmarshal([]byte(statusJSON), &statusMap); err != nil {
-				slog.Warn("failed to parse connector status JSON", "connector", connectorName, "error", err)
-			} else {
-				if state, ok := statusMap["state"].(string); ok {
-					connector.State = state
-				}
-				if connectHost, ok := statusMap["worker_id"].(string); ok {
-					connector.ConnectHost = connectHost
-				}
-			}
-		}
-
-		connectors = append(connectors, connector)
-	}
-
-	slog.Info("successfully read connector configurations", "count", len(connectors))
-	return connectors, nil
-}

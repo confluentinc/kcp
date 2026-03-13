@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/confluentinc/kcp/internal/services/msk_scanner"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/client"
+	kafkaservice "github.com/confluentinc/kcp/internal/services/kafka"
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // MSKSource implements the Source interface for AWS MSK clusters
@@ -55,7 +58,7 @@ func (s *MSKSource) GetClusters() []sources.ClusterIdentifier {
 	return clusters
 }
 
-// Scan performs scanning of MSK clusters by delegating to ClustersScanner.
+// Scan performs scanning of all MSK clusters.
 // opts.State must be non-nil — it contains broker addresses populated by kcp discover.
 func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*sources.ScanResult, error) {
 	if s.credentials == nil {
@@ -67,44 +70,116 @@ func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 
 	slog.Info("starting MSK cluster scan")
 
-	scanner := msk_scanner.NewClustersScanner(msk_scanner.ClustersScannerOpts{
-		State:       *opts.State,
-		Credentials: *s.credentials,
-		SkipTopics:  opts.SkipTopics,
-		SkipACLs:    opts.SkipACLs,
-	})
-
-	if err := scanner.ScanOnly(); err != nil {
-		return nil, fmt.Errorf("MSK scan failed: %w", err)
-	}
-
-	// Translate scanner results into ScanResult
 	result := &sources.ScanResult{
 		SourceType: types.SourceTypeMSK,
 		Clusters:   make([]sources.ClusterScanResult, 0),
 	}
 
-	if scanner.State.MSKSources != nil {
-		for _, region := range scanner.State.MSKSources.Regions {
-			for i := range region.Clusters {
-				cluster := &region.Clusters[i]
-				// Only include clusters that were actually scanned
-				if cluster.KafkaAdminClientInformation.ClusterID == "" {
-					continue
-				}
-				kafkaInfo := cluster.KafkaAdminClientInformation
-				result.Clusters = append(result.Clusters, sources.ClusterScanResult{
-					Identifier: sources.ClusterIdentifier{
-						Name:     cluster.Name,
-						UniqueID: cluster.Arn,
-					},
-					KafkaAdminInfo:     &kafkaInfo,
-					SourceSpecificData: cluster.AWSClientInformation,
-				})
+	for _, regionAuth := range s.credentials.Regions {
+		for _, clusterAuth := range regionAuth.Clusters {
+			clusterResult, err := s.scanCluster(regionAuth.Name, clusterAuth, opts)
+			if err != nil {
+				slog.Info("skipping cluster", "cluster", clusterAuth.Name, "error", err)
+				continue
 			}
+			result.Clusters = append(result.Clusters, *clusterResult)
 		}
 	}
 
 	slog.Info("MSK scan complete", "scanned", len(result.Clusters))
 	return result, nil
+}
+
+func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, opts sources.ScanOptions) (*sources.ClusterScanResult, error) {
+	discoveredCluster, err := s.getClusterFromDiscovery(opts.State, region, clusterAuth.Arn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster from discovery state: %v", err)
+	}
+
+	authType, err := clusterAuth.GetSelectedAuthType()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine auth type for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
+	}
+
+	slog.Info(fmt.Sprintf("starting broker scan for %s using %s authentication", clusterAuth.Arn, authType))
+
+	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get broker addresses for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
+	}
+
+	clientBrokerEncryptionInTransit := utils.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
+	kafkaVersion := utils.GetKafkaVersion(discoveredCluster.AWSClientInformation)
+
+	kafkaAdmin, err := createKafkaAdmin(authType, brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, clusterAuth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
+	}
+
+	ks := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
+		AuthType:   authType,
+		ClusterArn: clusterAuth.Arn,
+		SkipTopics: opts.SkipTopics,
+		SkipACLs:   opts.SkipACLs,
+	})
+
+	clusterType := discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType
+	kafkaAdminInfo, err := ks.ScanKafkaResources(clusterType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan Kafka resources: %v", err)
+	}
+
+	slog.Info(fmt.Sprintf("broker scan complete for %s", clusterAuth.Arn))
+
+	return &sources.ClusterScanResult{
+		Identifier: sources.ClusterIdentifier{
+			Name:     discoveredCluster.Name,
+			UniqueID: clusterAuth.Arn,
+		},
+		KafkaAdminInfo:     kafkaAdminInfo,
+		SourceSpecificData: discoveredCluster.AWSClientInformation,
+	}, nil
+}
+
+func (s *MSKSource) getClusterFromDiscovery(state *types.State, region, clusterArn string) (*types.DiscoveredCluster, error) {
+	if state.MSKSources == nil {
+		return nil, fmt.Errorf("no MSK sources found in state file")
+	}
+	for i, currentRegion := range state.MSKSources.Regions {
+		if currentRegion.Name == region {
+			for j, currentCluster := range currentRegion.Clusters {
+				if currentCluster.Arn == clusterArn {
+					return &state.MSKSources.Regions[i].Clusters[j], nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("cluster %s not found in region %s", clusterArn, region)
+}
+
+func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterAuth types.ClusterAuth) (*client.KafkaAdmin, error) {
+	var kafkaAdmin client.KafkaAdmin
+	var err error
+	switch authType {
+	case types.AuthTypeIAM:
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
+	case types.AuthTypeSASLSCRAM:
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(
+			clusterAuth.AuthMethod.SASLScram.Username,
+			clusterAuth.AuthMethod.SASLScram.Password,
+			clusterAuth.AuthMethod.SASLScram.Mechanism,
+		))
+	case types.AuthTypeUnauthenticatedTLS:
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedTlsAuth())
+	case types.AuthTypeUnauthenticatedPlaintext:
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedPlaintextAuth())
+	case types.AuthTypeTLS:
+		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey))
+	default:
+		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
+	}
+	return &kafkaAdmin, nil
 }
