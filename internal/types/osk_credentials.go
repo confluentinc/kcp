@@ -2,9 +2,9 @@ package types
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/goccy/go-yaml"
 )
@@ -144,26 +144,21 @@ func (c *OSKCredentials) WriteToFile(filePath string) error {
 	return nil
 }
 
-// isValidBootstrapServer checks if a bootstrap server string is valid (host:port format)
+// isValidBootstrapServer checks if a bootstrap server string is valid (host:port format).
+// Supports hostnames, IPv4, and bracketed IPv6 addresses (e.g. [::1]:9092).
 func isValidBootstrapServer(server string) bool {
-	parts := strings.Split(server, ":")
-	if len(parts) != 2 {
+	host, port, err := net.SplitHostPort(server)
+	if err != nil {
 		return false
 	}
-
-	host := parts[0]
-	port := parts[1]
-
 	if host == "" || port == "" {
 		return false
 	}
-
-	// Validate port is numeric
-	if _, err := strconv.Atoi(port); err != nil {
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
 		return false
 	}
-
-	return true
+	return portNum > 0 && portNum <= 65535
 }
 
 // validateAuthMethodConfig validates auth method specific configuration
