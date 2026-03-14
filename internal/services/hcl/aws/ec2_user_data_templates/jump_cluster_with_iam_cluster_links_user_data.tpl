@@ -16,7 +16,7 @@ cd /home/ec2-user/
 # Create MSK -> CP cluster link
 #
 echo "auto.create.mirror.topics.enable=true
-bootstrap.servers=${msk_cluster_bootstrap_brokers}
+bootstrap.servers=${source_cluster_bootstrap_brokers}
 security.protocol=SASL_SSL
 sasl.mechanism=AWS_MSK_IAM
 sasl.jaas.config=software.amazon.msk.auth.iam.IAMLoginModule required;
@@ -38,7 +38,7 @@ cat > /home/ec2-user/topic-filters.json << 'FILTERS'
 }
 FILTERS
 
-kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --topic-filters-json-file /home/ec2-user/topic-filters.json --config-file client.properties
+kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${source_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --topic-filters-json-file /home/ec2-user/topic-filters.json --config-file client.properties
 
 #
 # Create CP -> CC destination cluster link
