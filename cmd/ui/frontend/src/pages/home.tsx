@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { TCOInputs as TCOInputsPage } from '@/components/tco/TCOInputsPage'
 import { Sidebar } from '@/components/explore/Sidebar'
 import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
@@ -32,6 +32,30 @@ export const Home = () => {
   const clearSelection = useAppStore((state) => state.clearSelection)
   const selectSummary = useAppStore((state) => state.selectSummary)
 
+  // Check for pre-loaded state on mount
+  useEffect(() => {
+    const checkPreloadedState = async () => {
+      try {
+        // Backend falls back to "default" session if session-specific state not found
+        const response = await apiClient.state.getState(sessionId)
+
+        if (response && response.sources) {
+          setKcpState(response)
+
+          // Auto-select summary view if we have MSK sources with regions
+          const mskSource = response.sources.find((s: any) => s.type === 'msk' && s.msk_data !== undefined)
+          if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
+            selectSummary()
+          }
+        }
+      } catch {
+        // No pre-loaded state, user will upload manually
+      }
+    }
+
+    checkPreloadedState()
+  }, [sessionId, setKcpState, selectSummary])
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -46,25 +70,26 @@ export const Home = () => {
         const content = e.target?.result as string
         const parsed = JSON.parse(content) as StateUploadRequest
 
-        // Validate that we have a Discovery object with regions
-        if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
+        // Validate that we have a State object with sources (msk_sources or osk_sources)
+        if (parsed && typeof parsed === 'object' && ('msk_sources' in parsed || 'osk_sources' in parsed)) {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
           // Set the entire processed state in one action
-          if (result && result.regions) {
+          if (result && result.sources) {
             setKcpState(result)
             setIsProcessing(false)
 
-            // Auto-select summary view if we have regions
-            if (result.regions.length > 0) {
+            // Auto-select summary view if we have MSK sources with regions
+            const mskSource = result.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+            if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
               selectSummary()
             }
           } else {
             throw new Error('Invalid response format from server')
           }
         } else {
-          throw new Error('Invalid file format. Expected a KCP state file with regions.')
+          throw new Error('Invalid file format. Expected a KCP state file with msk_sources or osk_sources.')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to process file')

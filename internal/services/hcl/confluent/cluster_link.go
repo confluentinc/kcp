@@ -27,18 +27,18 @@ SASL/SCRAM only supports the 'SCRAM-SHA-512' mechanism.
 Error: error creating Cluster Link: 401 Unauthorized: Unable to validate cluster link due to error: Client SASL mechanism
 'PLAIN' not enabled in the server, enabled mechanisms are [SCRAM-SHA-512]
 */
-func GenerateClusterLinkResource(tfResourceName, mskClusterIdVarName, targetClusterIdVarName, targetClusterRestEndpointVarName, clusterLinkNameVarName, mskSaslScramBootstrapServersVarName, mskSaslScramUsernameVarName, mskSaslScramPasswordVarName string) *hclwrite.Block {
+func GenerateClusterLinkResource(tfResourceName, sourceClusterIdVarName, targetClusterIdVarName, targetClusterRestEndpointVarName, clusterLinkNameVarName, sourceSaslScramBootstrapServersVarName, sourceSaslScramUsernameVarName, sourceSaslScramPasswordVarName string) *hclwrite.Block {
 	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", tfResourceName})
 
 	triggersMap := map[string]hclwrite.Tokens{
-		"source_cluster_id":            utils.TokensForVarReference(mskClusterIdVarName),
+		"source_cluster_id":            utils.TokensForVarReference(sourceClusterIdVarName),
 		"destination_cluster_id":       utils.TokensForVarReference(targetClusterIdVarName),
-		"bootstrap_servers":            utils.TokensForVarReference(mskSaslScramBootstrapServersVarName),
+		"bootstrap_servers":            utils.TokensForVarReference(sourceSaslScramBootstrapServersVarName),
 		"basic_auth_credentials":       utils.TokensForResourceReference("local.basic_auth_credentials"),
 		"target_cluster_rest_endpoint": utils.TokensForVarReference(targetClusterRestEndpointVarName),
 		"link_name":                    utils.TokensForVarReference(clusterLinkNameVarName),
-		"msk_sasl_scram_username":      utils.TokensForVarReference(mskSaslScramUsernameVarName),
-		"msk_sasl_scram_password":      utils.TokensForVarReference(mskSaslScramPasswordVarName),
+		"source_sasl_scram_username":   utils.TokensForVarReference(sourceSaslScramUsernameVarName),
+		"source_sasl_scram_password":   utils.TokensForVarReference(sourceSaslScramPasswordVarName),
 	}
 	resourceBlock.Body().SetAttributeRaw("triggers", utils.TokensForMap(triggersMap))
 
@@ -105,7 +105,7 @@ func generateCreateClusterLinkCurlCommand(triggersMap map[string]hclwrite.Tokens
       },
       {
         "name": "sasl.jaas.config",
-        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${self.triggers.msk_sasl_scram_username}\" password=\"${self.triggers.msk_sasl_scram_password}\";"
+        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${self.triggers.source_sasl_scram_username}\" password=\"${self.triggers.source_sasl_scram_password}\";"
       }
     ]
   }'`
