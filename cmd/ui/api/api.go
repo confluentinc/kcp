@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +24,8 @@ type ReportService interface {
 }
 
 type UICmdOpts struct {
-	Port string
+	Port      string
+	StateFile string
 }
 
 type UI struct {
@@ -36,7 +40,7 @@ type UI struct {
 }
 
 func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
-	return &UI{
+	ui := &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
 		migrationInfraHCLService:   migrationInfraHCLService,
@@ -45,6 +49,24 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCL
 		port:   opts.Port,
 		states: make(map[string]*types.State),
 	}
+
+	// Pre-load state file if provided
+	if opts.StateFile != "" {
+		data, err := os.ReadFile(opts.StateFile)
+		if err != nil {
+			slog.Error("Failed to read state file", "path", opts.StateFile, "error", err)
+		} else {
+			var state types.State
+			if err := json.Unmarshal(data, &state); err != nil {
+				slog.Error("Failed to parse state file", "path", opts.StateFile, "error", err)
+			} else {
+				ui.states["default"] = &state
+				slog.Info("Pre-loaded state file", "path", opts.StateFile)
+			}
+		}
+	}
+
+	return ui
 }
 
 // getStateBySession extracts the sessionId from the request and retrieves the corresponding state
@@ -79,6 +101,22 @@ func (ui *UI) Run() error {
 			"service":   "kcp-ui",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		})
+	})
+
+	// Get pre-loaded state endpoint
+	e.GET("/state", func(c echo.Context) error {
+		sessionId := c.QueryParam("sessionId")
+		if sessionId == "" {
+			sessionId = "default"
+		}
+		ui.statesMutex.RLock()
+		state, exists := ui.states[sessionId]
+		ui.statesMutex.RUnlock()
+		if !exists {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
+		}
+		processedState := ui.reportService.ProcessState(*state)
+		return c.JSON(http.StatusOK, processedState)
 	})
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
@@ -324,7 +362,7 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	}
 	// This might be missing depending on the MskJumpClusterAuthType.
 	// if req.MskSaslScramBootstrapServers == "" {
-	// 	missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	// 	missingFields = append(missingFields, "sourceSaslScramBootstrapServers")
 	// }
 	if req.TargetRestEndpoint == "" {
 		missingFields = append(missingFields, "targetRestEndpoint")
