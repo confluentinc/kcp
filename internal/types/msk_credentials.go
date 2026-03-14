@@ -64,7 +64,7 @@ func (c *Credentials) WriteToFile(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal YAML: %w", err)
 	}
-	if err := os.WriteFile(filePath, yamlData, 0644); err != nil {
+	if err := os.WriteFile(filePath, yamlData, 0600); err != nil {
 		return fmt.Errorf("failed to write YAML file: %w", err)
 	}
 	return nil
