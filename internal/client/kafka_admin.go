@@ -83,6 +83,9 @@ func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) 
 
 func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, insecureSkipTLSVerify bool) error {
 	slog.Info("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
+	if insecureSkipTLSVerify {
+		slog.Warn("TLS certificate verification is disabled - this should only be used in test environments with self-signed certificates")
+	}
 	config.Net.TLS.Enable = true
 	config.Net.TLS.Config = &tls.Config{
 		InsecureSkipVerify: insecureSkipTLSVerify, //nolint:gosec // Only true when explicitly set in credentials for test environments
