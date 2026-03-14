@@ -89,11 +89,20 @@ uninstall:
 fmt:
 	gofmt -s -w .
 
-# Run tests
-test: build-frontend
-	@echo "🧪 Running tests..."
-	@echo "=================="
-	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Tests failed with exit code $$exit_code"; else echo "✅ All tests passed!"; fi; exit $$exit_code'
+# Run all tests (Go unit tests + Playwright E2E tests)
+test: test-go test-e2e
+
+# Run Go unit tests only
+test-go: build-frontend
+	@echo "🧪 Running Go tests..."
+	@echo "======================"
+	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Go tests failed with exit code $$exit_code"; else echo "✅ All Go tests passed!"; fi; exit $$exit_code'
+
+# Run Playwright E2E tests (builds everything first)
+test-e2e: build
+	@echo "🧪 Running Playwright E2E tests..."
+	@echo "==================================="
+	@cd cmd/ui/frontend && npx playwright test --reporter=line; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Playwright tests failed with exit code $$exit_code"; else echo "✅ All Playwright tests passed!"; fi; exit $$exit_code
 
 # Run tests with coverage - beautiful terminal output
 test-cov:
