@@ -102,7 +102,7 @@ test-go: build-frontend
 test-e2e: build
 	@echo "🧪 Running Playwright E2E tests..."
 	@echo "==================================="
-	@cd cmd/ui/frontend && npx playwright test --reporter=line; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Playwright tests failed with exit code $$exit_code"; else echo "✅ All Playwright tests passed!"; fi; exit $$exit_code
+	@cd cmd/ui/frontend && npx playwright test --reporter=list; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Playwright tests failed with exit code $$exit_code"; else echo "✅ All Playwright tests passed!"; fi; exit $$exit_code
 
 # Run tests with coverage - beautiful terminal output
 test-cov:
