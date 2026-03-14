@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import type { Cluster, Region, SourceType } from '@/types'
+import type { Cluster, ProcessedOSKCluster, Region, SourceType } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
 import type { ProcessedState, SchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
@@ -740,6 +740,27 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
   }
 
   return null
+}
+
+// Utility function to get OSK cluster data by cluster ID
+export const getOSKClusterDataById = (clusterId: string): ProcessedOSKCluster | null => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState || !clusterId) {
+    return null
+  }
+
+  // Find the OSK source
+  const oskSource = kcpState.sources.find(
+    (s) => s.type === 'osk' && s.osk_data !== undefined
+  )
+
+  if (!oskSource?.osk_data?.clusters) {
+    return null
+  }
+
+  return oskSource.osk_data.clusters.find((c) => c.id === clusterId) || null
 }
 
 // Utility function to get all schema registries from state
