@@ -230,16 +230,16 @@ The frontend provides a web UI for visualizing state files, generating TCO repor
 
 ### Migration Types
 
-The tool supports 6 migration infrastructure types (configured via `kcp create-asset migration-infra --type N`):
+The tool supports 4 migration infrastructure types (configured via `kcp create-asset migration-infra --type N`):
 
-- **Type 1**: Public MSK with SASL/SCRAM cluster link
-- **Type 2**: Private MSK with external outbound cluster link (SASL/SCRAM)
-- **Type 3**: Private MSK with jump cluster, reusing existing subnets (SASL/SCRAM)
-- **Type 4**: Private MSK with jump cluster, reusing existing subnets (IAM)
-- **Type 5**: Private MSK with jump cluster, new subnets (SASL/SCRAM)
-- **Type 6**: Private MSK with jump cluster, new subnets (IAM)
+- **Type 1**: Public source endpoints with SASL/SCRAM cluster link
+- **Type 2**: Private source with external outbound cluster link (SASL/SCRAM)
+- **Type 3**: Private source with jump cluster (SASL/SCRAM)
+- **Type 4**: Private source with jump cluster (IAM) — MSK only
 
-Jump clusters are Confluent Platform brokers that bridge MSK and Confluent Cloud.
+Types 1-3 support both MSK and OSK sources. Type 4 is MSK-only (IAM is an AWS-specific auth method).
+
+Jump clusters are Confluent Platform brokers that bridge the source Kafka cluster and Confluent Cloud.
 
 ## Key Implementation Patterns
 
