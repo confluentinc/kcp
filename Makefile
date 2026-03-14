@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend
+.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-down test-integration-osk test-all-envs test-certs-generate
 
 # Build the frontend
 build-frontend:
@@ -89,11 +89,20 @@ uninstall:
 fmt:
 	gofmt -s -w .
 
-# Run tests
-test: build-frontend
-	@echo "🧪 Running tests..."
-	@echo "=================="
-	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Tests failed with exit code $$exit_code"; else echo "✅ All tests passed!"; fi; exit $$exit_code'
+# Run all tests (Go unit tests + Playwright E2E tests)
+test: test-go test-e2e
+
+# Run Go unit tests only
+test-go: build-frontend
+	@echo "🧪 Running Go tests..."
+	@echo "======================"
+	@bash -c 'go test -v ./...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Go tests failed with exit code $$exit_code"; else echo "✅ All Go tests passed!"; fi; exit $$exit_code'
+
+# Run Playwright E2E tests (builds everything first)
+test-e2e: build
+	@echo "🧪 Running Playwright E2E tests..."
+	@echo "==================================="
+	@cd cmd/ui/frontend && npx playwright test --reporter=list; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ Playwright tests failed with exit code $$exit_code"; else echo "✅ All Playwright tests passed!"; fi; exit $$exit_code
 
 # Run tests with coverage - beautiful terminal output
 test-cov:
@@ -115,4 +124,73 @@ test-cov:
 test-cov-ui:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
+
+# Docker Compose test environments
+test-env-up-plaintext:
+	@echo "Starting plaintext Kafka test environment (ZooKeeper-based)..."
+	docker-compose -f test/docker/docker-compose-plaintext.yml up -d
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9092
+	@bash test/docker/scripts/setup-test-data.sh localhost:9092
+
+test-env-up-kraft:
+	@echo "Starting KRaft Kafka test environment (no ZooKeeper)..."
+	docker-compose -f test/docker/docker-compose-kraft.yml up -d
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9095
+	@bash test/docker/scripts/setup-test-data.sh localhost:9095
+
+test-env-up-sasl:
+	@echo "Starting SASL/SCRAM Kafka test environment..."
+	docker-compose -f test/docker/docker-compose-sasl.yml up -d
+	@echo "Waiting for SASL cluster to be ready (this may take 30-40 seconds)..."
+	@sleep 30
+	@bash test/docker/scripts/setup-test-data-sasl.sh
+	@echo "SASL environment is ready on port 9093"
+
+test-certs-generate:
+	@echo "Generating TLS certificates for testing..."
+	@bash test/docker/scripts/generate-certs.sh
+
+test-env-up-tls: test-certs-generate
+	@echo "Starting TLS/mTLS Kafka test environment..."
+	docker-compose -f test/docker/docker-compose-tls.yml up -d
+	@echo "Waiting for TLS cluster to be ready..."
+	@sleep 20
+	@bash test/docker/scripts/setup-test-data-tls.sh
+	@echo "TLS environment is ready on port 9094"
+
+test-env-down:
+	@echo "Stopping all test environments..."
+	docker-compose -f test/docker/docker-compose-plaintext.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-kraft.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-sasl.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-tls.yml down -v 2>/dev/null || true
+
+test-integration-osk: test-env-up-plaintext
+	@echo "Running OSK integration tests (ZooKeeper mode)..."
+	TEST_KAFKA_BOOTSTRAP=localhost:9092 go test -tags=integration ./cmd/scan/clusters/... -v
+	$(MAKE) test-env-down
+	@echo "Running OSK integration tests (KRaft mode)..."
+	$(MAKE) test-env-up-kraft
+	TEST_KAFKA_BOOTSTRAP=localhost:9095 go test -tags=integration ./cmd/scan/clusters/... -v
+	$(MAKE) test-env-down
+
+test-all-envs:
+	@echo "Testing OSK scanning against all Kafka configurations..."
+	@echo "\n=== Testing ZooKeeper-based cluster (Plaintext) ==="
+	$(MAKE) test-env-up-plaintext
+	./kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-plaintext.yaml --state-file test-state-plaintext.json
+	$(MAKE) test-env-down
+	@echo "\n=== Testing KRaft-based cluster (Plaintext) ==="
+	$(MAKE) test-env-up-kraft
+	./kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-kraft.yaml --state-file test-state-kraft.json
+	$(MAKE) test-env-down
+	@echo "\n=== Testing SASL/SCRAM authentication ==="
+	$(MAKE) test-env-up-sasl
+	./kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-sasl.yaml --state-file test-state-sasl.json
+	$(MAKE) test-env-down
+	@echo "\n=== Testing TLS/mTLS authentication ==="
+	$(MAKE) test-env-up-tls
+	./kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-tls.yaml --state-file test-state-tls.json
+	$(MAKE) test-env-down
+	@echo "\n✅ All environment tests passed!"
 

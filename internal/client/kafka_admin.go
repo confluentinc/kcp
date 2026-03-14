@@ -17,14 +17,16 @@ import (
 
 // AdminConfig holds the configuration for creating a Kafka admin client
 type AdminConfig struct {
-	authType        types.AuthType
-	username        string
-	password        string
-	awsAccessKey    string
-	awsAccessSecret string
-	caCertFile      string
-	clientCertFile  string
-	clientKeyFile   string
+	authType              types.AuthType
+	username              string
+	password              string
+	saslMechanism         string
+	insecureSkipTLSVerify bool
+	awsAccessKey          string
+	awsAccessSecret       string
+	caCertFile            string
+	clientCertFile        string
+	clientKeyFile         string
 }
 
 // AdminOption is a function type for configuring the Kafka admin client
@@ -37,12 +39,15 @@ func WithIAMAuth() AdminOption {
 	}
 }
 
-// WithSASLSCRAMAuth configures the admin client to use SASL/SCRAM authentication
-func WithSASLSCRAMAuth(username, password string) AdminOption {
+// WithSASLSCRAMAuth configures the admin client to use SASL/SCRAM authentication.
+// Set insecureSkipTLSVerify to true only in test environments with self-signed certificates.
+func WithSASLSCRAMAuth(username, password, mechanism string, insecureSkipTLSVerify bool) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeSASLSCRAM
 		config.username = username
 		config.password = password
+		config.saslMechanism = mechanism
+		config.insecureSkipTLSVerify = insecureSkipTLSVerify
 	}
 }
 
@@ -76,16 +81,34 @@ func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) 
 	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
 }
 
-func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string) {
-	slog.Info("🔍 configuring SASL/SCRAM authentication")
+func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, insecureSkipTLSVerify bool) error {
+	slog.Info("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{
+		InsecureSkipVerify: insecureSkipTLSVerify, //nolint:gosec // Only true when explicitly set in credentials for test environments
+	}
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
 	config.Net.SASL.Handshake = true
-	config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &XDGSCRAMClient{HashGeneratorFcn: SHA512} }
-	config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
+
+	// Default to SHA256 for OSK clusters (most common in open source)
+	// MSK credentials are explicitly set to SHA512 during discovery (AWS MSK requirement)
+	switch mechanism {
+	case "", "SHA256", "SCRAM-SHA-256":
+		config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+			return &XDGSCRAMClient{HashGeneratorFcn: SHA256}
+		}
+		config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA256
+	case "SHA512", "SCRAM-SHA-512":
+		config.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+			return &XDGSCRAMClient{HashGeneratorFcn: SHA512}
+		}
+		config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
+	default:
+		return fmt.Errorf("unsupported SASL mechanism %q: must be SHA256, SHA512, SCRAM-SHA-256, or SCRAM-SHA-512", mechanism)
+	}
+	return nil
 }
 
 func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
@@ -511,7 +534,9 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	case types.AuthTypeIAM:
 		configureSASLTypeOAuthAuthentication(saramaConfig, region)
 	case types.AuthTypeSASLSCRAM:
-		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
+		if err := configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure SASL/SCRAM authentication: %w", err)
+		}
 	case types.AuthTypeUnauthenticatedTLS:
 		configureUnauthenticatedAuthentication(saramaConfig, true)
 	case types.AuthTypeUnauthenticatedPlaintext:

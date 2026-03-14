@@ -239,7 +239,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to parse statefile JSON: %w", err)
 		}
 
-		cluster, err := utils.GetClusterByArn(&state, clusterArn)
+		cluster, err := state.GetClusterByArn(clusterArn)
 		if err != nil {
 			return fmt.Errorf("failed to get cluster: %w", err)
 		}

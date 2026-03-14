@@ -14,6 +14,8 @@ import (
 var (
 	stateFile                 string
 	clusterArn                string
+	sourceType                string
+	oskClusterId              string
 	targetClusterId           string
 	targetClusterRestEndpoint string
 	outputDir                 string
@@ -35,12 +37,19 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to convert ACLs from.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
 	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	aclsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	sourceFlags := pflag.NewFlagSet("source", pflag.ExitOnError)
+	sourceFlags.SortFlags = false
+	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or osk).")
+	sourceFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to convert ACLs from (required when --source-type is msk).")
+	sourceFlags.StringVar(&oskClusterId, "cluster-id", "", "The ID of the OSK cluster to convert ACLs from (required when --source-type is osk).")
+	aclsCmd.Flags().AddFlagSet(sourceFlags)
+	groups[sourceFlags] = "Source Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
@@ -53,8 +62,8 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	aclsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Optional Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, sourceFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Source Flags", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -69,7 +78,6 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	})
 
 	aclsCmd.MarkFlagRequired("state-file")
-	aclsCmd.MarkFlagRequired("cluster-arn")
 	aclsCmd.MarkFlagRequired("target-cluster-id")
 	aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
@@ -109,18 +117,41 @@ func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&state, clusterArn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	var kafkaAdminInfo *types.KafkaAdminClientInformation
+	var clusterName string
+
+	switch sourceType {
+	case "msk":
+		if clusterArn == "" {
+			return nil, fmt.Errorf("--cluster-arn is required when --source-type is msk")
+		}
+		cluster, err := state.GetClusterByArn(clusterArn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cluster: %w", err)
+		}
+		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
+		clusterName = cluster.Name
+	case "osk":
+		if oskClusterId == "" {
+			return nil, fmt.Errorf("--cluster-id is required when --source-type is osk")
+		}
+		cluster, err := state.GetOSKClusterByID(oskClusterId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
+		}
+		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
+		clusterName = cluster.ID
+	default:
+		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
 	}
 
-	if len(cluster.KafkaAdminClientInformation.Acls) == 0 {
-		return nil, fmt.Errorf("cluster %s has no ACLs within the state file: %s", cluster.Name, stateFile)
+	if len(kafkaAdminInfo.Acls) == 0 {
+		return nil, fmt.Errorf("cluster %s has no ACLs within the state file: %s", clusterName, stateFile)
 	}
 
 	opts := MigrateKafkaAclsOpts{
-		ClusterName:               cluster.Name,
-		KafkaAcls:                 cluster.KafkaAdminClientInformation.Acls,
+		ClusterName:               clusterName,
+		KafkaAcls:                 kafkaAdminInfo.Acls,
 		TargetClusterId:           targetClusterId,
 		TargetClusterRestEndpoint: targetClusterRestEndpoint,
 		OutputDir:                 outputDir,

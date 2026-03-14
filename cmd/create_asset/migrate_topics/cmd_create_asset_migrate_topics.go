@@ -16,6 +16,8 @@ import (
 var (
 	stateFile                 string
 	clusterArn                string
+	sourceType                string
+	oskClusterId              string
 	targetClusterId           string
 	targetClusterRestEndpoint string
 	clusterLinkName           string
@@ -39,6 +41,8 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration scripts for.")
+	requiredFlags.StringVar(&sourceType, "source-type", "msk", "Source type: 'msk' or 'osk'")
+	requiredFlags.StringVar(&oskClusterId, "cluster-id", "", "The OSK cluster ID from credentials file (required for --source-type osk)")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
 	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link that was created as part of the migration (e.g., msk-to-cc-migration-link).")
@@ -114,15 +118,37 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&state, clusterArn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	var kafkaAdminInfo *types.KafkaAdminClientInformation
+
+	switch sourceType {
+	case "msk":
+		if clusterArn == "" {
+			return nil, fmt.Errorf("--cluster-arn is required when --source-type is msk")
+		}
+		cluster, err := state.GetClusterByArn(clusterArn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cluster: %w", err)
+		}
+		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
+	case "osk":
+		if oskClusterId == "" {
+			return nil, fmt.Errorf("--cluster-id is required when --source-type is osk")
+		}
+		cluster, err := state.GetOSKClusterByID(oskClusterId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
+		}
+		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
+	default:
+		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
 	}
 
 	var mirrorTopics []string
-	for _, topic := range cluster.KafkaAdminClientInformation.Topics.Details {
-		if !strings.HasPrefix(topic.Name, "__") || slices.Contains(internalTopicsToInclude, topic.Name) {
-			mirrorTopics = append(mirrorTopics, topic.Name)
+	if kafkaAdminInfo.Topics != nil {
+		for _, topic := range kafkaAdminInfo.Topics.Details {
+			if !strings.HasPrefix(topic.Name, "__") || slices.Contains(internalTopicsToInclude, topic.Name) {
+				mirrorTopics = append(mirrorTopics, topic.Name)
+			}
 		}
 	}
 

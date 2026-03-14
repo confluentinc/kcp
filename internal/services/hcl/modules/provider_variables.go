@@ -72,10 +72,10 @@ func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWiza
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskRegion
+				return request.SourceRegion
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return !request.HasPublicMskEndpoints
+				return !request.HasPublicEndpoints
 			},
 		},
 	}
