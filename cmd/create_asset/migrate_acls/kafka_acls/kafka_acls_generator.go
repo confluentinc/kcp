@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type MigrateKafkaAclsOpts struct {
@@ -20,6 +20,7 @@ type MigrateKafkaAclsOpts struct {
 	TargetClusterRestEndpoint string
 	OutputDir                 string
 	SkipAuditReport           bool
+	PreventDestroy            bool
 }
 
 type KafkaAclsGenerator struct {
@@ -46,7 +47,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 
 	aclsByPrincipal := make(map[string][]types.Acls)
 	for _, acl := range kg.opts.KafkaAcls {
-		principal := cleanPrincipalName(acl.Principal)
+		principal := utils.CleanPrincipalName(acl.Principal)
 		aclsByPrincipal[principal] = append(aclsByPrincipal[principal], acl)
 	}
 
@@ -59,6 +60,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
 		TargetClusterRestEndpoint: kg.opts.TargetClusterRestEndpoint,
+		PreventDestroy:            kg.opts.PreventDestroy,
 		AclsByPrincipal:           aclsByPrincipal,
 	}
 
@@ -68,7 +70,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		return fmt.Errorf("failed to generate Terraform files: %w", err)
 	}
 
-	if err := kg.writeTerraformFiles(outputDir, terraformFiles); err != nil {
+	if err := utils.WriteTerraformFiles(outputDir, terraformFiles); err != nil {
 		return fmt.Errorf("failed to write Terraform files: %w", err)
 	}
 
@@ -88,52 +90,6 @@ func (kg *KafkaAclsGenerator) Run() error {
 	slog.Info("✅ Kafka ACLs Terraform files generated", "directory", outputDir, "principals", len(aclsByPrincipal), "acls", totalAcls)
 
 	return nil
-}
-
-func (kg *KafkaAclsGenerator) writeTerraformFiles(outputDir string, files types.TerraformFiles) error {
-	if files.MainTf != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
-			return fmt.Errorf("failed to write main.tf: %w", err)
-		}
-		slog.Info("✅ wrote main.tf")
-	}
-
-	if files.ProvidersTf != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
-			return fmt.Errorf("failed to write providers.tf: %w", err)
-		}
-		slog.Info("✅ wrote providers.tf")
-	}
-
-	if files.VariablesTf != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
-			return fmt.Errorf("failed to write variables.tf: %w", err)
-		}
-		slog.Info("✅ wrote variables.tf")
-	}
-
-	if files.InputsAutoTfvars != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(files.InputsAutoTfvars), 0644); err != nil {
-			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
-		}
-		slog.Info("✅ wrote inputs.auto.tfvars")
-	}
-
-	return nil
-}
-
-// cleanPrincipalName cleans the principal name for use in Terraform resources
-func cleanPrincipalName(principal string) string {
-	name := strings.TrimPrefix(principal, "User:")
-
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, "@", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "/", "_")
-	name = strings.ReplaceAll(name, "\\", "_")
-
-	return strings.ToLower(name)
 }
 
 func (kg *KafkaAclsGenerator) generateKafkaAuditReport(aclsByPrincipal map[string][]types.Acls, filePath string) error {

@@ -19,7 +19,7 @@ func GenerateEnvironmentResource(tfResourceName, envVarName string, preventDestr
 	environmentBlock.Body().AppendBlock(streamGovernanceBlock)
 	environmentBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(environmentBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(environmentBlock, "prevent_destroy", preventDestroy)
 
 	return environmentBlock
 }

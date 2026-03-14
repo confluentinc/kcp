@@ -91,7 +91,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 
 	baseFlags := pflag.NewFlagSet("base", pflag.ExitOnError)
 	baseFlags.SortFlags = false
-	baseFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link for the migration.")
+	baseFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link that will be created as part of the migration.")
 	baseFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID.")
 	baseFlags.StringVar(&targetRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint.")
 	migrationInfraCmd.Flags().AddFlagSet(baseFlags)

@@ -15,7 +15,7 @@ export const targetClusterProperties = () => ({
   },
   cluster_link_name: {
     type: 'string' as const,
-    title: 'Confluent Cloud Cluster Link Name',
+    title: 'Cluster Link Name (created during migration)',
   },
 })
 

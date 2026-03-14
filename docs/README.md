@@ -1470,7 +1470,7 @@ This command generates the required Terraform to provision your migration enviro
 
 **Base Migration Flags**:
 
-- `--cluster-link-name`: The name of the cluster link for the migration.
+- `--cluster-link-name`: The name of the cluster link that will be created as part of the migration.
 - `--target-cluster-id`: The Confluent Cloud cluster ID.
 - `--target-rest-endpoint`: The Confluent Cloud cluster REST endpoint.
 
@@ -1597,7 +1597,7 @@ This command generates migration scripts that mirror topics from MSK to Confluen
 - `--cluster-arn`: The ARN of the MSK cluster to create migration scripts for.
 - `--target-cluster-id`: The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).
 - `--target-cluster-rest-endpoint`: The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).
-- `--target-cluster-link-name`: The name of the cluster link (e.g., msk-to-cc-migration-link).
+- `--target-cluster-link-name`: The name of the cluster link that was created as part of the migration (e.g., msk-to-cc-migration-link).
 
 **Optional Arguments**:
 

@@ -12,6 +12,14 @@ import (
 )
 
 var specialCharsRegex = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+var camelBoundaryRegex = regexp.MustCompile(`([a-z])([A-Z])`)
+
+// CamelToScreamingSnake converts camelCase or PascalCase strings to SCREAMING_SNAKE_CASE.
+// e.g. "DescribeConfigs" -> "DESCRIBE_CONFIGS", "Read" -> "READ"
+func CamelToScreamingSnake(s string) string {
+	snake := camelBoundaryRegex.ReplaceAllString(s, "${1}_${2}")
+	return strings.ToUpper(snake)
+}
 
 // FormatHclResourceName ensures that resources are all 'snake_case' and only contains alphanumeric characters and underscores.
 func FormatHclResourceName(resourceName string) string {

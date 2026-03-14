@@ -31,7 +31,7 @@ func GenerateSchemaRegistryAPIKey(tfResourceName, envVarName, serviceAccountIdRe
 	apiKeyBlock.Body().AppendBlock(managedResourceBlock)
 	apiKeyBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(apiKeyBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(apiKeyBlock, "prevent_destroy", preventDestroy)
 
 	return apiKeyBlock
 }
@@ -67,7 +67,7 @@ func GenerateKafkaAPIKey(tfResourceName, envVarName, serviceAccountIdRef, servic
 	apiKeyBlock.Body().SetAttributeValue("disable_wait_for_ready", cty.BoolVal(true))
 	apiKeyBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(apiKeyBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(apiKeyBlock, "prevent_destroy", preventDestroy)
 
 	apiKeyBlock.Body().SetAttributeRaw("depends_on", utils.TokensForList([]string{
 		dependsOnRoleBindingRef,

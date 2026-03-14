@@ -36,7 +36,7 @@ var (
 	vpcId               string
 	subnetCidrs         []string
 
-	preventDestroyStr string
+	preventDestroy bool
 
 	outputDir string
 )
@@ -100,7 +100,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	clusterFlags.StringVar(&clusterType, "cluster-type", "", "Cluster type (e.g. 'dedicated' or 'enterprise')")
 	clusterFlags.StringVar(&clusterAvailability, "cluster-availability", "SINGLE_ZONE", "Cluster availability zone type ('SINGLE_ZONE' or 'MULTI_ZONE')")
 	clusterFlags.IntVar(&clusterCku, "cluster-cku", 1, "Number of CKUs for dedicated clusters (MULTI_ZONE requires >= 2)")
-	clusterFlags.StringVar(&preventDestroyStr, "prevent-destroy", "true", "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources (true or false)")
+	clusterFlags.BoolVar(&preventDestroy, "prevent-destroy", true, "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources")
 	targetInfraCmd.Flags().AddFlagSet(clusterFlags)
 	groups[clusterFlags] = "Target Cluster"
 
@@ -162,11 +162,6 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 	needsPrivateLink, err := strconv.ParseBool(needsPrivateLinkStr)
 	if err != nil {
 		return fmt.Errorf("invalid value for --needs-private-link: must be 'true' or 'false', got '%s'", needsPrivateLinkStr)
-	}
-
-	_, err = strconv.ParseBool(preventDestroyStr)
-	if err != nil {
-		return fmt.Errorf("invalid value for --prevent-destroy: must be 'true' or 'false', got '%s'", preventDestroyStr)
 	}
 
 	// Validate state file or manual configuration
@@ -311,11 +306,6 @@ func parseTargetInfraOpts() (*TargetInfraOpts, error) {
 	needsPrivateLink, err := strconv.ParseBool(needsPrivateLinkStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid value for --needs-private-link: %w", err)
-	}
-
-	preventDestroy, err := strconv.ParseBool(preventDestroyStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid value for --prevent-destroy: %w", err)
 	}
 
 	return &TargetInfraOpts{
