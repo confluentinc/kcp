@@ -241,6 +241,21 @@ func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
 }
 
+// GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
+func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
+	if s.OSKSources == nil {
+		return nil, fmt.Errorf("no OSK sources in state file")
+	}
+
+	for i := range s.OSKSources.Clusters {
+		if s.OSKSources.Clusters[i].ID == id {
+			return &s.OSKSources.Clusters[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("OSK cluster with ID '%s' not found in state file", id)
+}
+
 type DiscoveredRegion struct {
 	Name           string                                      `json:"name"`
 	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
@@ -544,6 +559,7 @@ type SelfManagedConnectors struct {
 
 type KafkaAdminClientInformation struct {
 	ClusterID             string                 `json:"cluster_id"`
+	DiscoveredBrokers     []string               `json:"discovered_brokers,omitempty"`
 	Topics                *Topics                `json:"topics"`
 	Acls                  []Acls                 `json:"acls"`
 	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`

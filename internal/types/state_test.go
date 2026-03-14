@@ -829,3 +829,66 @@ func TestProcessedSource_TypeDiscrimination(t *testing.T) {
 		t.Error("OSKData should not be nil for OSK source")
 	}
 }
+
+func TestGetOSKClusterByID_Found(t *testing.T) {
+	state := &State{
+		OSKSources: &OSKSourcesState{
+			Clusters: []OSKDiscoveredCluster{
+				{
+					ID:               "my-kafka",
+					BootstrapServers: []string{"broker1:9092", "broker2:9092"},
+					KafkaAdminClientInformation: KafkaAdminClientInformation{
+						ClusterID: "abc-123",
+					},
+				},
+			},
+		},
+	}
+
+	cluster, err := state.GetOSKClusterByID("my-kafka")
+	if err != nil {
+		t.Fatalf("GetOSKClusterByID() error = %v, want nil", err)
+	}
+	if cluster.ID != "my-kafka" {
+		t.Errorf("GetOSKClusterByID() ID = %q, want %q", cluster.ID, "my-kafka")
+	}
+	if cluster.KafkaAdminClientInformation.ClusterID != "abc-123" {
+		t.Errorf("GetOSKClusterByID() ClusterID = %q, want %q", cluster.KafkaAdminClientInformation.ClusterID, "abc-123")
+	}
+	if len(cluster.BootstrapServers) != 2 {
+		t.Errorf("GetOSKClusterByID() BootstrapServers length = %d, want 2", len(cluster.BootstrapServers))
+	}
+	if len(cluster.BootstrapServers) >= 1 && cluster.BootstrapServers[0] != "broker1:9092" {
+		t.Errorf("GetOSKClusterByID() BootstrapServers[0] = %q, want %q", cluster.BootstrapServers[0], "broker1:9092")
+	}
+	if len(cluster.BootstrapServers) >= 2 && cluster.BootstrapServers[1] != "broker2:9092" {
+		t.Errorf("GetOSKClusterByID() BootstrapServers[1] = %q, want %q", cluster.BootstrapServers[1], "broker2:9092")
+	}
+}
+
+func TestGetOSKClusterByID_NotFound(t *testing.T) {
+	state := &State{
+		OSKSources: &OSKSourcesState{
+			Clusters: []OSKDiscoveredCluster{
+				{ID: "my-kafka"},
+			},
+		},
+	}
+
+	_, err := state.GetOSKClusterByID("nonexistent")
+	if err == nil {
+		t.Error("GetOSKClusterByID() error = nil, want error")
+	}
+	if err != nil && !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("GetOSKClusterByID() error should contain 'nonexistent', got: %v", err)
+	}
+}
+
+func TestGetOSKClusterByID_NilOSKSources(t *testing.T) {
+	state := &State{}
+
+	_, err := state.GetOSKClusterByID("my-kafka")
+	if err == nil {
+		t.Error("GetOSKClusterByID() error = nil, want error")
+	}
+}
