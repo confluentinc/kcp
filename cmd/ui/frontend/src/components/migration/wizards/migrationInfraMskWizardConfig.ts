@@ -1,5 +1,6 @@
 import type { WizardConfig } from './types'
 import { getClusterDataByArn } from '@/stores/store'
+import { targetClusterProperties, targetClusterUiSchema, jumpClusterTargetProperties, jumpClusterTargetUiSchema } from './sharedWizardSchemas'
 
 export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardConfig => {
   const cluster = getClusterDataByArn(clusterArn)
@@ -81,18 +82,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
           schema: {
             type: 'object',
             properties: {
-              target_cluster_id: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster ID'
-              },
-              target_rest_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster REST Endpoint'
-              },
-              cluster_link_name: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Link Name'
-              },
+              ...targetClusterProperties(),
               source_cluster_id: {
                 type: 'string',
                 title: 'MSK Cluster ID',
@@ -107,15 +97,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers'],
           },
           uiSchema: {
-            target_cluster_id: {
-              'ui:placeholder': 'e.g., lkc-xxxxxx',
-            },
-            target_rest_endpoint: {
-              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
-            },
-            cluster_link_name: {
-              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
-            },
+            ...targetClusterUiSchema(),
             source_cluster_id: {
               'ui:disabled': true,
             },
@@ -185,22 +167,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
           schema: {
             type: 'object',
             properties: {
-              cluster_link_name: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Link Name',
-              },
-              target_environment_id: {
-                type: 'string',
-                title: 'Confluent Cloud Environment ID',
-              },
-              target_cluster_id: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster ID',
-              },
-              target_rest_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster REST Endpoint',
-              },
+              ...targetClusterProperties(),
+              ...jumpClusterTargetProperties(),
               ext_outbound_subnet_id: {
                 type: 'string',
                 title: 'Subnet ID',
@@ -276,18 +244,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'source_region', 'vpc_id', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'aws_kafka_brokers'],
           },
           uiSchema: {
-            cluster_link_name: {
-              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
-            },
-            target_environment_id: {
-              'ui:placeholder': 'e.g., env-xxxxxx',
-            },
-            target_cluster_id: {
-              'ui:placeholder': 'e.g., lkc-xxxxxx',
-            },
-            target_rest_endpoint: {
-              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
-            },
+            ...targetClusterUiSchema(),
+            ...jumpClusterTargetUiSchema(),
             ext_outbound_subnet_id: {
               'ui:placeholder': 'e.g., subnet-xxxxxx',
             },
@@ -379,11 +337,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'VPC ID',
                 default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
               },
-              existing_private_link_vpce_id: {
-                type: 'string',
-                title: 'Existing Private Link VPC Endpoint ID',
-                description: 'The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.',
-              },
+              ...jumpClusterTargetProperties(),
               jump_cluster_instance_type: {
                 type: 'string',
                 title: 'Instance Type',
@@ -416,9 +370,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             vpc_id: {
               'ui:disabled': true,
             },
-            existing_private_link_vpce_id: {
-              'ui:placeholder': 'e.g., vpce-xxxxxxxxxxxxxxxxx',
-            },
+            ...jumpClusterTargetUiSchema(),
             jump_cluster_instance_type: {
               'ui:placeholder': 'e.g., m5.large',
             },
@@ -514,26 +466,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
-              target_environment_id: {
-                type: 'string',
-                title: 'Confluent Cloud Environment ID',
-              },
-              target_cluster_id: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster ID'
-              },
-              target_rest_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster REST Endpoint'
-              },
-              target_bootstrap_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Bootstrap Endpoint'
-              },
-              cluster_link_name: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Link Name'
-              },
+              ...targetClusterProperties(),
+              ...jumpClusterTargetProperties(),
             },
             required: ['source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'source_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
           },
@@ -547,21 +481,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             source_region: {
               'ui:disabled': true,
             },
-            target_environment_id: {
-              'ui:placeholder': 'e.g., env-xxxxxx',
-            },
-            target_cluster_id: {
-              'ui:placeholder': 'e.g., lkc-xxxxxx',
-            },
-            target_rest_endpoint: {
-              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
-            },
-            target_bootstrap_endpoint: {
-              'ui:placeholder': 'e.g., xxx.xxx.aws.confluent.cloud:9092',
-            },
-            cluster_link_name: {
-              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
-            },
+            ...targetClusterUiSchema(),
+            ...jumpClusterTargetUiSchema(),
           },
         },
         on: {
@@ -597,26 +518,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
-              target_environment_id: {
-                type: 'string',
-                title: 'Confluent Cloud Environment ID'
-              },
-              target_cluster_id: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster ID'
-              },
-              target_rest_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster REST Endpoint'
-              },
-              target_bootstrap_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Bootstrap Endpoint'
-              },
-              cluster_link_name: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Link Name'
-              },
+              ...targetClusterProperties(),
+              ...jumpClusterTargetProperties(),
               jump_cluster_iam_auth_role_name: {
                 type: 'string',
                 title: 'Instance Role Name',
@@ -635,21 +538,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             source_region: {
               'ui:disabled': true,
             },
-            target_environment_id: {
-              'ui:placeholder': 'e.g., env-xxxxxx',
-            },
-            target_cluster_id: {
-              'ui:placeholder': 'e.g., lkc-xxxxxx',
-            },
-            target_rest_endpoint: {
-              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
-            },
-            target_bootstrap_endpoint: {
-              'ui:placeholder': 'e.g., xxx.xxx.aws.confluent.cloud:9092',
-            },
-            cluster_link_name: {
-              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
-            },
+            ...targetClusterUiSchema(),
+            ...jumpClusterTargetUiSchema(),
             jump_cluster_iam_auth_role_name: {
               'uiwidget': 'input',
             },
