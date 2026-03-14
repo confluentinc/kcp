@@ -36,20 +36,14 @@ export const Home = () => {
   useEffect(() => {
     const checkPreloadedState = async () => {
       try {
-        // Try session-specific state first, then default
-        let response
-        try {
-          response = await apiClient.state.getState(sessionId)
-        } catch {
-          // If session-specific fails, try default
-          response = await apiClient.state.getState('default')
-        }
+        // Backend falls back to "default" session if session-specific state not found
+        const response = await apiClient.state.getState(sessionId)
 
         if (response && response.sources) {
           setKcpState(response)
 
           // Auto-select summary view if we have MSK sources with regions
-          const mskSource = response.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+          const mskSource = response.sources.find((s: any) => s.type === 'msk' && s.msk_data !== undefined)
           if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
             selectSummary()
           }
