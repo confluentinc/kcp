@@ -158,8 +158,17 @@ test-env-up-tls: test-certs-generate
 	@bash test/docker/scripts/setup-test-data-tls.sh
 	@echo "TLS environment is ready on port 9094"
 
+test-env-up-schema-registry: test-env-up-plaintext
+	@echo "Starting Schema Registry test environments..."
+	docker-compose -f test/docker/docker-compose-schema-registry.yml up -d
+	@bash test/docker/scripts/setup-test-schemas.sh
+	@echo "Schema Registry environments are ready"
+	@echo "  Unauthenticated: http://localhost:8081"
+	@echo "  Basic Auth:      http://localhost:8082 (user: schemauser, pass: schemapass)"
+
 test-env-down:
 	@echo "Stopping all test environments..."
+	docker-compose -f test/docker/docker-compose-schema-registry.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-plaintext.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-kraft.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-sasl.yml down -v 2>/dev/null || true
