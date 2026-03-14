@@ -6,7 +6,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
   const cluster = getOSKClusterDataById(clusterId)
 
   const bootstrapServers = cluster?.bootstrap_servers?.join(',') || ''
-  const kafkaClusterId = (cluster?.kafka_admin_client_information as any)?.cluster_id || ''
+  const kafkaClusterId = cluster?.kafka_admin_client_information?.cluster_id || ''
 
   // Build broker data from bootstrap servers for external outbound path
   const sourceKafkaBrokers = (cluster?.bootstrap_servers || []).map((server: string, index: number) => {
