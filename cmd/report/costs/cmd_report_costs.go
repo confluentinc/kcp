@@ -129,7 +129,7 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 	}
 
 	if startDate == nil && endDate == nil {
-		if len(state.Regions) == 0 {
+		if state.MSKSources == nil || len(state.MSKSources.Regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")
 		}
 		// default to the last 31 days.  Ensures a period of 30 full days ending on the previous day, since end date is exclusive in cloudwatch API.
@@ -141,8 +141,10 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 
 	if len(regions) == 0 {
 		// retrieve all regions from state file
-		for _, region := range state.Regions {
-			regions = append(regions, region.Name)
+		if state.MSKSources != nil {
+			for _, region := range state.MSKSources.Regions {
+				regions = append(regions, region.Name)
+			}
 		}
 		if len(regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")
