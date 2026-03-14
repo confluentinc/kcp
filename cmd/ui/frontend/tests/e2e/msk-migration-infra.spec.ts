@@ -3,30 +3,24 @@ import { test, expect } from '@playwright/test'
 test.describe('MSK Migration Infrastructure Wizard', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // Wait for pre-loaded state - tabs only render once kcpState is loaded
     await page.waitForSelector('nav button', { timeout: 10000 })
-    // Navigate to Migrate tab
     await page.locator('nav button:has-text("Migrate")').click()
-    // Wait for the Migration Assets page with MSK section
     await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
   })
 
   test('Public path - pre-populated fields are disabled', async ({ page }) => {
-    // Click MSK cluster to expand it
     await page.locator('text=kcp-playground').click()
     await page.waitForTimeout(500)
 
-    // Click Generate Terraform for Migration Infrastructure (2nd phase card)
-    const generateButtons = page.locator('button:has-text("Generate Terraform")')
-    await generateButtons.nth(1).click()
+    await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    // Select "Yes" for public brokers
-    await page.locator('label:has-text("Yes")').click()
+    // Select "Yes" for public brokers (index 0)
+    await page.locator('#root_has_public_brokers-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Source cluster ID and bootstrap servers should be pre-populated and disabled
+    // Source fields should be pre-populated and disabled
     const clusterIdInput = page.locator('#root_source_cluster_id')
     await expect(clusterIdInput).toBeVisible()
     await expect(clusterIdInput).toBeDisabled()
@@ -57,13 +51,13 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    // Select private
-    await page.locator('label:has-text("No")').click()
+    // Select private (index 1 = No)
+    await page.locator('#root_has_public_brokers-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Select External Outbound
-    await page.locator('label:has-text("External Outbound")').click()
+    // Select External Outbound (index 1 = "No, use external outbound cluster linking")
+    await page.locator('#root_use_jump_clusters-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -89,21 +83,30 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    // Private -> Jump Cluster
-    await page.locator('label:has-text("No")').click()
+    // Private (index 1 = No)
+    await page.locator('#root_has_public_brokers-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    await page.locator('label:has-text("Jump Cluster")').click()
+    // Jump Cluster (index 0 = Yes)
+    await page.locator('#root_use_jump_clusters-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Internet gateway
-    await page.locator('label:has-text("No")').click()
+    // Internet gateway - No (index 1)
+    await page.locator('#root_has_existing_internet_gateway-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Networking inputs - click next (fields pre-populated from MSK state)
+    // Networking inputs - fill required fields not pre-populated
+    // vpc_id, instance_type, storage are pre-populated from MSK state
+    // but existing_private_link_vpce_id, broker CIDRs, setup host CIDR need filling
+    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_0', '10.0.1.0/24')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_1', '10.0.2.0/24')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_2', '10.0.3.0/24')
+    await page.fill('#root_jump_cluster_setup_host_subnet_cidr', '10.0.255.0/24')
+
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -111,8 +114,8 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await expect(page.locator('label:has-text("SASL/SCRAM")')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('label:has-text("IAM")')).toBeVisible()
 
-    // Select SASL/SCRAM
-    await page.locator('label:has-text("SASL/SCRAM")').click()
+    // Select SASL/SCRAM (index 0)
+    await page.locator('#root_jump_cluster_auth_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -122,7 +125,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.fill('#root_target_rest_endpoint', 'https://msk-test.confluent.cloud:443')
     await page.fill('#root_target_bootstrap_endpoint', 'pkc-msk-test.confluent.cloud:9092')
     await page.fill('#root_cluster_link_name', 'msk-jump-sasl-link')
-    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
+    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test456')
 
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
@@ -140,26 +143,33 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    // Private -> Jump Cluster
-    await page.locator('label:has-text("No")').click()
+    // Private (index 1 = No)
+    await page.locator('#root_has_public_brokers-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    await page.locator('label:has-text("Jump Cluster")').click()
+    // Jump Cluster (index 0 = Yes)
+    await page.locator('#root_use_jump_clusters-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Internet gateway
-    await page.locator('label:has-text("No")').click()
+    // Internet gateway - No (index 1)
+    await page.locator('#root_has_existing_internet_gateway-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Networking
+    // Networking - fill required fields
+    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_0', '10.0.1.0/24')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_1', '10.0.2.0/24')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_2', '10.0.3.0/24')
+    await page.fill('#root_jump_cluster_setup_host_subnet_cidr', '10.0.255.0/24')
+
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Select IAM auth
-    await page.locator('label:has-text("IAM")').click()
+    // Select IAM auth (index 1)
+    await page.locator('#root_jump_cluster_auth_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -172,7 +182,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.fill('#root_target_rest_endpoint', 'https://msk-test.confluent.cloud:443')
     await page.fill('#root_target_bootstrap_endpoint', 'pkc-msk-test.confluent.cloud:9092')
     await page.fill('#root_cluster_link_name', 'msk-jump-iam-link')
-    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
+    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test456')
     await page.fill('#root_jump_cluster_iam_auth_role_name', 'msk-cluster-link-role')
 
     await page.locator('button[type="submit"]').click()

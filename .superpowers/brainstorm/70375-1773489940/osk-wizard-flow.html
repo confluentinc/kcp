@@ -1,0 +1,99 @@
+<h2>OSK Migration Infrastructure Wizard Flow</h2>
+<p class="subtitle">The OSK wizard is simpler than MSK — no IAM path, no auto-populated AWS data. Which flow feels right?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Minimal Flow (3 steps)</h3>
+      <p>Ask migration type upfront, then collect all fields in one form, then confirm.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">Step 1 → Step 2 → Step 3</div>
+        <div class="mockup-body" style="font-size: 13px; line-height: 1.6;">
+          <div style="display: flex; gap: 24px;">
+            <div style="flex: 1; padding: 12px; border: 1px solid #333; border-radius: 8px;">
+              <strong>Step 1: Migration Type</strong><br>
+              <span style="color: #888;">Choose Type 1, 2, or 3</span><br><br>
+              ○ Type 1 - Cluster Link (Public)<br>
+              ○ Type 2 - External Outbound (Private)<br>
+              ○ Type 3 - Jump Cluster (Private)
+            </div>
+            <div style="flex: 1; padding: 12px; border: 1px solid #333; border-radius: 8px;">
+              <strong>Step 2: Configuration</strong><br>
+              <span style="color: #888;">All fields on one page (varies by type)</span><br><br>
+              ┌ VPC ID ─────────────┐<br>
+              ┌ Region ─────────────┐<br>
+              ┌ Cluster Link Name ──┐<br>
+              ┌ Target Cluster ID ──┐<br>
+              ┌ Target REST Endpoint┐<br>
+              <span style="color: #666;">+ Type-specific fields...</span>
+            </div>
+            <div style="flex: 1; padding: 12px; border: 1px solid #333; border-radius: 8px;">
+              <strong>Step 3: Confirm</strong><br>
+              <span style="color: #888;">Review and generate</span><br><br>
+              Migration Type: Type 1<br>
+              VPC: vpc-abc123<br>
+              Region: us-east-1<br>
+              Cluster Link: osk-to-cc<br>
+              ...<br><br>
+              <div style="background: #2563eb; color: white; padding: 6px 16px; border-radius: 4px; display: inline-block;">Generate Terraform</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Guided Flow (matches MSK pattern, 4-5 steps)</h3>
+      <p>Same question-by-question approach as MSK wizard, but with OSK-specific paths. Feels familiar if user has done MSK migrations.</p>
+      <div class="mockup" style="margin-top: 12px;">
+        <div class="mockup-header">Step 1 → Step 2 → Step 3 → Step 4 → Step 5</div>
+        <div class="mockup-body" style="font-size: 13px; line-height: 1.6;">
+          <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px; padding: 10px; border: 1px solid #333; border-radius: 8px;">
+              <strong>1. Public/Private?</strong><br>
+              <span style="color: #888;">Same first question as MSK</span><br><br>
+              ○ Public endpoints<br>
+              ○ Private endpoints
+            </div>
+            <div style="flex: 1; min-width: 140px; padding: 10px; border: 1px solid #333; border-radius: 8px;">
+              <strong>2. (If private) Method?</strong><br>
+              <span style="color: #888;">Jump cluster or external outbound</span><br><br>
+              ○ External Outbound<br>
+              ○ Jump Cluster
+            </div>
+            <div style="flex: 1; min-width: 140px; padding: 10px; border: 1px solid #333; border-radius: 8px;">
+              <strong>3. AWS Details</strong><br>
+              <span style="color: #888;">VPC, region, networking</span><br><br>
+              ┌ VPC ID ──────┐<br>
+              ┌ Region ──────┐<br>
+              <span style="color: #666;">+ type fields</span>
+            </div>
+            <div style="flex: 1; min-width: 140px; padding: 10px; border: 1px solid #333; border-radius: 8px;">
+              <strong>4. Target Cluster</strong><br>
+              <span style="color: #888;">Confluent Cloud details</span><br><br>
+              ┌ Cluster ID ──┐<br>
+              ┌ REST Endpoint┐<br>
+              ┌ Link Name ───┐
+            </div>
+            <div style="flex: 1; min-width: 140px; padding: 10px; border: 1px solid #333; border-radius: 8px;">
+              <strong>5. Confirm</strong><br>
+              <span style="color: #888;">Review & generate</span><br><br>
+              Summary...<br><br>
+              <span style="background: #2563eb; color: white; padding: 4px 12px; border-radius: 4px;">Generate</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 24px;">
+  <h3>Key difference</h3>
+  <p><strong>Option A</strong> is faster — fewer clicks, everything on one page. Better for users who know what they want.</p>
+  <p><strong>Option B</strong> is more guided — consistent with the MSK wizard experience. Better for users unfamiliar with the migration types.</p>
+</div>

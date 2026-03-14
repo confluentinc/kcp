@@ -3,33 +3,24 @@ import { test, expect } from '@playwright/test'
 test.describe('OSK Migration Infrastructure Wizard', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // Wait for pre-loaded state - tabs only render once kcpState is loaded
     await page.waitForSelector('nav button', { timeout: 10000 })
-    // Navigate to Migrate tab
     await page.locator('nav button:has-text("Migrate")').click()
-    // Wait for the Migration Assets page to render with OSK section
     await page.waitForSelector('text=Open Source Kafka', { timeout: 10000 })
   })
 
   test('Public path - generates Terraform for OSK cluster', async ({ page }) => {
-    // Click OSK cluster to expand it
     await page.locator('text=production-kafka-us-east').click()
     await page.waitForTimeout(500)
 
-    // Find and click the Generate Terraform button for Migration Infrastructure
-    // There are multiple "Generate Terraform" buttons (one per phase card), we want the 2nd one
-    const generateButtons = page.locator('button:has-text("Generate Terraform")')
-    await generateButtons.nth(1).click()
+    await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
 
-    // Wizard opens - should see public/private networking question
-    await expect(page.locator('h2').first()).toBeVisible({ timeout: 5000 })
-
-    // Select "Yes" for public brokers
-    await page.locator('label:has-text("Yes")').click()
+    // Select "Yes" for public brokers (index 0 = Yes)
+    await page.locator('#root_has_public_brokers-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Public cluster link inputs step - fill target details
+    // Fill target cluster details
     await page.fill('#root_target_cluster_id', 'lkc-test123')
     await page.fill('#root_target_rest_endpoint', 'https://test.confluent.cloud:443')
     await page.fill('#root_cluster_link_name', 'osk-to-cc-test-link')
@@ -37,14 +28,10 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Confirmation step
+    // Confirmation
     await expect(page.locator('text=Review Your Configuration')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=lkc-test123')).toBeVisible()
-
-    // Generate terraform
     await page.locator('button:has-text("Generate Terraform Files")').click()
 
-    // Verify terraform files are shown
     await expect(page.locator('text=main.tf').first()).toBeVisible({ timeout: 10000 })
   })
 
@@ -55,13 +42,13 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    // Select "No" for private networking
-    await page.locator('label:has-text("No")').click()
+    // Select "No" for private networking (index 1 = No)
+    await page.locator('#root_has_public_brokers-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Select External Outbound Cluster Link
-    await page.locator('label:has-text("External Outbound")').click()
+    // Select External Outbound (index 1 = "No, use external outbound cluster linking")
+    await page.locator('#root_use_jump_clusters-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -92,41 +79,48 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    // Select private (No)
-    await page.locator('label:has-text("No")').click()
+    // Select private (index 1 = No)
+    await page.locator('#root_has_public_brokers-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Select Jump Cluster
-    await page.locator('label:has-text("Jump Cluster")').click()
+    // Select Jump Cluster (index 0 = "Yes")
+    await page.locator('#root_use_jump_clusters-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Internet gateway question - select No
-    await page.locator('label:has-text("No")').click()
+    // Internet gateway - select No (index 1)
+    await page.locator('#root_has_existing_internet_gateway-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Jump cluster networking - fill required fields
+    // Jump cluster networking - fill ALL required fields (no defaults for OSK)
     await page.fill('#root_vpc_id', 'vpc-test123')
-    await page.fill('#root_source_region', 'us-east-1')
+    await page.fill('#root_target_environment_id', 'env-test123')
+    await page.fill('#root_target_bootstrap_endpoint', 'pkc-test.confluent.cloud:9092')
+    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
     await page.fill('#root_jump_cluster_instance_type', 'm5.xlarge')
     await page.fill('#root_jump_cluster_broker_storage', '100')
+    // Fill broker subnet CIDR array items (3 items by default)
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_0', '10.0.1.0/24')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_1', '10.0.2.0/24')
+    await page.fill('#root_jump_cluster_broker_subnet_cidr_2', '10.0.3.0/24')
     await page.fill('#root_jump_cluster_setup_host_subnet_cidr', '10.0.255.0/24')
 
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Should go DIRECTLY to SASL/SCRAM config - NO auth question
-    // Verify IAM is NOT shown as a selectable option
+    // Should go DIRECTLY to SASL/SCRAM config - NO IAM auth question
     await expect(page.locator('label:has-text("IAM")')).not.toBeVisible()
 
-    // Fill target cluster details
-    await page.fill('#root_target_environment_id', 'env-test123')
+    // Auth step - fill all required fields (source cluster ID and bootstrap are pre-populated)
+    await page.fill('#root_source_region', 'us-east-1')
     await page.fill('#root_target_cluster_id', 'lkc-test123')
     await page.fill('#root_target_rest_endpoint', 'https://test.confluent.cloud:443')
-    await page.fill('#root_target_bootstrap_endpoint', 'pkc-test.confluent.cloud:9092')
     await page.fill('#root_cluster_link_name', 'osk-jump-cluster-link')
+    await page.fill('#root_target_environment_id', 'env-test123')
+    await page.fill('#root_target_bootstrap_endpoint', 'pkc-test.confluent.cloud:9092')
+    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test456')
 
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)

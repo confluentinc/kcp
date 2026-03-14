@@ -433,7 +433,7 @@ export const createMigrationInfraOskWizardConfig = (clusterKey: string): WizardC
               'ui:disabled': !!bootstrapServers,
             },
             source_region: {
-              'ui:disabled': true,
+              'ui:placeholder': 'e.g., us-east-1',
             },
             ...targetClusterUiSchema(),
             cluster_link_name: {
