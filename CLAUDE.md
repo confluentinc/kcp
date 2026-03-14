@@ -55,16 +55,22 @@ make install
 # Format code
 make fmt
 
-# Run all tests (requires frontend to be built first)
+# Run all tests (Go unit tests + Playwright E2E tests)
 make test
 
-# Run tests with coverage
+# Run Go unit tests only
+make test-go
+
+# Run Playwright E2E tests only (builds frontend + Go binary first)
+make test-e2e
+
+# Run tests with coverage (Go only)
 make test-cov
 
-# Run tests with coverage HTML viewer
+# Run tests with coverage HTML viewer (Go only)
 make test-cov-ui
 
-# Run tests for a specific package
+# Run tests for a specific Go package
 go test ./cmd/scan/clusters -v
 go test ./internal/sources/osk -v
 
@@ -75,9 +81,18 @@ make clean
 ## Testing
 
 ### Unit Tests
-- All tests require the frontend to be built first (`make build-frontend`)
+- All Go tests require the frontend to be built first (`make build-frontend`)
 - Tests will fail with "pattern all:dist: no matching files found" if frontend is not built
-- Run with `make test` or `go test ./...`
+- Run with `make test-go` or `go test ./...`
+
+### Playwright E2E Tests
+- Tests are in `cmd/ui/frontend/tests/e2e/`
+- Playwright config starts `kcp ui` with `--state-file` to pre-load test data
+- Test fixtures in `cmd/ui/frontend/tests/e2e/fixtures/`
+- Run with `make test-e2e` or from `cmd/ui/frontend`: `npx playwright test`
+- Interactive UI mode: `cd cmd/ui/frontend && npx playwright test --ui`
+- Headed mode (visible browser): `cd cmd/ui/frontend && npx playwright test --headed`
+- Debug a test: `cd cmd/ui/frontend && npx playwright test -g "test name" --debug`
 
 ### OSK Integration Tests
 
