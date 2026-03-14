@@ -46,6 +46,13 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 	kafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
+	// Store discovered broker addresses
+	brokerAddrs := make([]string, 0, len(clusterMetadata.Brokers))
+	for _, broker := range clusterMetadata.Brokers {
+		brokerAddrs = append(brokerAddrs, broker.Addr())
+	}
+	kafkaAdminClientInformation.DiscoveredBrokers = brokerAddrs
+
 	var topics []types.TopicDetails
 	if !ks.skipTopics {
 		topics, err = ks.scanClusterTopics()

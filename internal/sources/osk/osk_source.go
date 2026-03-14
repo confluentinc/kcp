@@ -154,11 +154,16 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 		LastScanned: time.Now(),
 	}
 
+	bootstrapServers := clusterCreds.BootstrapServers
+	if len(kafkaAdminInfo.DiscoveredBrokers) > 0 {
+		bootstrapServers = kafkaAdminInfo.DiscoveredBrokers
+	}
+
 	return &sources.ClusterScanResult{
 		Identifier: sources.ClusterIdentifier{
 			Name:             clusterCreds.ID,
 			UniqueID:         clusterCreds.ID,
-			BootstrapServers: clusterCreds.BootstrapServers,
+			BootstrapServers: bootstrapServers,
 		},
 		KafkaAdminInfo:     kafkaAdminInfo,
 		SourceSpecificData: metadata,
