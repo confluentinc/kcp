@@ -511,26 +511,27 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 		})
 	}
 
-	var targetCluster *types.DiscoveredCluster
-	if state.MSKSources != nil {
-		for _, region := range state.MSKSources.Regions {
-			if region.Name != req.MskRegion {
-				continue
-			}
-			for i := range region.Clusters {
-				if region.Clusters[i].Arn == req.MskClusterArn {
-					targetCluster = &region.Clusters[i]
-					break
-				}
-			}
+	// Look up cluster ACLs based on source type
+	var allAcls []types.Acls
+	switch req.SourceType {
+	case "osk":
+		oskCluster, err := state.GetOSKClusterByID(req.ClusterId)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "Cluster not found",
+				"message": fmt.Sprintf("OSK cluster '%s' not found: %v", req.ClusterId, err),
+			})
 		}
-	}
-
-	if targetCluster == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "Cluster not found",
-			"message": fmt.Sprintf("No cluster found with ARN %s in region %s", req.MskClusterArn, req.MskRegion),
-		})
+		allAcls = oskCluster.KafkaAdminClientInformation.Acls
+	default: // "msk" or empty (backward compat)
+		cluster, err := state.GetClusterByArn(req.ClusterId)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "Cluster not found",
+				"message": fmt.Sprintf("MSK cluster '%s' not found: %v", req.ClusterId, err),
+			})
+		}
+		allAcls = cluster.KafkaAdminClientInformation.Acls
 	}
 
 	selectedPrincipalsSet := make(map[string]bool)
@@ -539,7 +540,7 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 	}
 
 	aclsByPrincipal := make(map[string][]types.Acls)
-	for _, acl := range targetCluster.KafkaAdminClientInformation.Acls {
+	for _, acl := range allAcls {
 		if selectedPrincipalsSet[acl.Principal] {
 			aclsByPrincipal[acl.Principal] = append(aclsByPrincipal[acl.Principal], acl)
 		}

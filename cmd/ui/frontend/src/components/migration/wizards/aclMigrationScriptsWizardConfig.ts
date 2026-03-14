@@ -1,5 +1,5 @@
 import type { WizardConfig } from './types'
-import { getClusterDataBySourceType, getClusterDataByArn } from '@/stores/store'
+import { getClusterDataBySourceType } from '@/stores/store'
 
 interface Acl {
   ResourceType: string
@@ -13,8 +13,6 @@ interface Acl {
 
 export const createAclMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
   const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
-  // For MSK-specific hidden fields (region, ARN), look up full MSK cluster data
-  const mskCluster = sourceType === 'msk' ? getClusterDataByArn(clusterKey) : null
 
   const acls: Acl[] = clusterData?.kafka_admin_client_information?.acls || []
 
@@ -82,15 +80,15 @@ export const createAclMigrationScriptsWizardConfig = (clusterKey: string, source
           schema: {
             type: 'object',
             properties: {
-              msk_region: {
+              source_type: {
                 type: 'string',
-                title: 'MSK Region',
-                default: mskCluster?.region || ''
+                title: 'Source Type',
+                default: sourceType,
               },
-              msk_cluster_arn: {
+              cluster_id: {
                 type: 'string',
-                title: 'MSK Cluster ARN',
-                default: mskCluster?.arn || ''
+                title: 'Cluster ID',
+                default: clusterKey,
               },
               selected_principals: {
                 type: 'array',
@@ -114,11 +112,11 @@ export const createAclMigrationScriptsWizardConfig = (clusterKey: string, source
                 enum: principalEnumValues,
               },
             },
-            msk_region: {
+            source_type: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            msk_cluster_arn: {
+            cluster_id: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },

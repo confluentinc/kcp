@@ -213,8 +213,8 @@ type MigrateAclsRequest struct {
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
 	PreventDestroy            bool     `json:"prevent_destroy"`
 
-	MskRegion     string `json:"msk_region"`
-	MskClusterArn string `json:"msk_cluster_arn"`
+	SourceType string `json:"source_type"`
+	ClusterId  string `json:"cluster_id"`
 
 	// This is not sent by the UI payload but instead built by the API service before being passed on to the HCL service.
 	AclsByPrincipal map[string][]Acls `json:"-"`
