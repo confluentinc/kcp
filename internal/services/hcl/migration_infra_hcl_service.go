@@ -21,7 +21,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	if request.HasPublicMskEndpoints {
+	if request.HasPublicEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
 
@@ -78,7 +78,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				OutputsTf:   mi.generateJumpClustersOutputsTf(),
 				VersionsTf:  mi.generateJumpClustersVersionsTf(),
 				AdditionalFiles: map[string]string{
-					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType),
+					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.JumpClusterAuthType),
 				},
 			},
 			{
@@ -171,13 +171,13 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForClusterLink() stri
 func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 	ccClusterKeyVarName := modules.GetModuleVariableName("cluster_link", "confluent_cloud_cluster_api_key")
 	ccClusterSecretVarName := modules.GetModuleVariableName("cluster_link", "confluent_cloud_cluster_api_secret")
-	mskClusterIdVarName := modules.GetModuleVariableName("cluster_link", "msk_cluster_id")
+	sourceClusterIdVarName := modules.GetModuleVariableName("cluster_link", "source_cluster_id")
 	targetClusterIdVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_id")
 	targetClusterRestEndpointVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_rest_endpoint")
 	clusterLinkVarName := modules.GetModuleVariableName("cluster_link", "cluster_link_name")
-	mskSaslScramBootstrapServersVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_bootstrap_servers")
-	mskSaslScramUsernameVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_username")
-	mskSaslScramPasswordVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_password")
+	sourceSaslScramBootstrapServersVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_bootstrap_servers")
+	sourceSaslScramUsernameVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_username")
+	sourceSaslScramPasswordVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_password")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -190,13 +190,13 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 
 	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(
 		"confluent_cluster_link",
-		mskClusterIdVarName,
+		sourceClusterIdVarName,
 		targetClusterIdVarName,
 		targetClusterRestEndpointVarName,
 		clusterLinkVarName,
-		mskSaslScramBootstrapServersVarName,
-		mskSaslScramUsernameVarName,
-		mskSaslScramPasswordVarName,
+		sourceSaslScramBootstrapServersVarName,
+		sourceSaslScramUsernameVarName,
+		sourceSaslScramPasswordVarName,
 	))
 	rootBody.AppendNewline()
 
@@ -324,10 +324,10 @@ You will be prompted for the following credentials during ` + "`terraform apply`
 | ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
 | ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	if request.JumpClusterAuthType == "sasl_scram" {
 		credentialsSection += `
-| ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
-| ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
+| ` + "`source_sasl_scram_username`" + ` | SASL/SCRAM username for source Kafka cluster authentication |
+| ` + "`source_sasl_scram_password`" + ` | SASL/SCRAM password for source Kafka cluster authentication |`
 	}
 
 	return `# Migration Infrastructure - Jump Cluster Setup
@@ -422,7 +422,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	if request.JumpClusterAuthType == "sasl_scram" {
 		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
 	} else {
 		return aws.GenerateJumpClusterSaslIamSetupHostUserDataTpl()
@@ -463,8 +463,8 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	targetRestEndpointVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_rest_endpoint")
 	targetApiKeyVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_api_key")
 	targetApiSecretVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_api_secret")
-	mskClusterIdVarName := modules.GetModuleVariableName("jump_cluster", "msk_cluster_id")
-	mskBootstrapBrokersVarName := modules.GetModuleVariableName("jump_cluster", "msk_cluster_bootstrap_brokers")
+	sourceClusterIdVarName := modules.GetModuleVariableName("jump_cluster", "source_cluster_id")
+	sourceBootstrapBrokersVarName := modules.GetModuleVariableName("jump_cluster", "source_cluster_bootstrap_brokers")
 	clusterLinkNameVarName := modules.GetModuleVariableName("jump_cluster", "cluster_link_name")
 
 	f := hclwrite.NewEmptyFile()
@@ -478,9 +478,9 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	}))
 	rootBody.AppendNewline()
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
-		mskSaslScramUsernameVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_username")
-		mskSaslScramPasswordVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_password")
+	if request.JumpClusterAuthType == "sasl_scram" {
+		sourceSaslScramUsernameVarName := modules.GetModuleVariableName("jump_cluster", "source_sasl_scram_username")
+		sourceSaslScramPasswordVarName := modules.GetModuleVariableName("jump_cluster", "source_sasl_scram_password")
 
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
@@ -498,10 +498,10 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(targetRestEndpointVarName),
 				"confluent_cloud_cluster_key":                utils.TokensForVarReference(targetApiKeyVarName),
 				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(targetApiSecretVarName),
-				"msk_cluster_id":                             utils.TokensForVarReference(mskClusterIdVarName),
-				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(mskBootstrapBrokersVarName),
-				"msk_sasl_scram_username":                    utils.TokensForVarReference(mskSaslScramUsernameVarName),
-				"msk_sasl_scram_password":                    utils.TokensForVarReference(mskSaslScramPasswordVarName),
+				"source_cluster_id":                          utils.TokensForVarReference(sourceClusterIdVarName),
+				"source_cluster_bootstrap_brokers":           utils.TokensForVarReference(sourceBootstrapBrokersVarName),
+				"source_sasl_scram_username":                 utils.TokensForVarReference(sourceSaslScramUsernameVarName),
+				"source_sasl_scram_password":                 utils.TokensForVarReference(sourceSaslScramPasswordVarName),
 				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
 			},
 			aws.OptionalBlocksConfig{
@@ -534,8 +534,8 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(targetRestEndpointVarName),
 				"confluent_cloud_cluster_key":                utils.TokensForVarReference(targetApiKeyVarName),
 				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(targetApiSecretVarName),
-				"msk_cluster_id":                             utils.TokensForVarReference(mskClusterIdVarName),
-				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(mskBootstrapBrokersVarName),
+				"source_cluster_id":                          utils.TokensForVarReference(sourceClusterIdVarName),
+				"source_cluster_bootstrap_brokers":           utils.TokensForVarReference(sourceBootstrapBrokersVarName),
 				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
 			},
 			aws.OptionalBlocksConfig{
@@ -729,8 +729,8 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
 
-	mskClusterLinkPrivateLinkVars := modules.GetMskPrivateClusterLinkVariables()
-	for _, varDef := range mskClusterLinkPrivateLinkVars {
+	privateClusterLinkVars := modules.GetPrivateClusterLinkVariables()
+	for _, varDef := range privateClusterLinkVars {
 		if varDef.Condition != nil && !varDef.Condition(request) {
 			continue
 		}
@@ -799,10 +799,10 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 	targetClusterRestEndpointVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_rest_endpoint")
 	targetClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_id")
 	clusterLinkNameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "cluster_link_name")
-	mskClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_cluster_id")
-	mskClusterBootstrapBrokersVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_cluster_bootstrap_servers")
-	mskSaslScramUsernameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_sasl_scram_username")
-	mskSaslScramPasswordVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_sasl_scram_password")
+	sourceClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_cluster_id")
+	sourceClusterBootstrapBrokersVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_cluster_bootstrap_servers")
+	sourceSaslScramUsernameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_sasl_scram_username")
+	sourceSaslScramPasswordVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_sasl_scram_password")
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -825,15 +825,15 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 		"create-external-outbound-cluster-link.tpl",
 		false,
 		map[string]hclwrite.Tokens{
-			"target_cluster_api_key":        utils.TokensForVarReference(targetClusterApiKeyVarName),
-			"target_cluster_api_secret":     utils.TokensForVarReference(targetClusterApiSecretVarName),
-			"target_cluster_rest_endpoint":  utils.TokensForVarReference(targetClusterRestEndpointVarName),
-			"target_cluster_id":             utils.TokensForVarReference(targetClusterIdVarName),
-			"cluster_link_name":             utils.TokensForVarReference(clusterLinkNameVarName),
-			"msk_cluster_id":                utils.TokensForVarReference(mskClusterIdVarName),
-			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(mskClusterBootstrapBrokersVarName),
-			"msk_sasl_scram_username":       utils.TokensForVarReference(mskSaslScramUsernameVarName),
-			"msk_sasl_scram_password":       utils.TokensForVarReference(mskSaslScramPasswordVarName),
+			"target_cluster_api_key":          utils.TokensForVarReference(targetClusterApiKeyVarName),
+			"target_cluster_api_secret":       utils.TokensForVarReference(targetClusterApiSecretVarName),
+			"target_cluster_rest_endpoint":    utils.TokensForVarReference(targetClusterRestEndpointVarName),
+			"target_cluster_id":               utils.TokensForVarReference(targetClusterIdVarName),
+			"cluster_link_name":               utils.TokensForVarReference(clusterLinkNameVarName),
+			"source_cluster_id":               utils.TokensForVarReference(sourceClusterIdVarName),
+			"source_cluster_bootstrap_brokers": utils.TokensForVarReference(sourceClusterBootstrapBrokersVarName),
+			"source_sasl_scram_username":      utils.TokensForVarReference(sourceSaslScramUsernameVarName),
+			"source_sasl_scram_password":      utils.TokensForVarReference(sourceSaslScramPasswordVarName),
 		},
 		nil,
 	))
