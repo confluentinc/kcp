@@ -31,6 +31,9 @@ services:
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_password.txt
       KAFKA_SSL_CLIENT_AUTH: required
       KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ''
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS;User:CN=kafka-client,OU=Test,O=Test,L=San Francisco,ST=CA,C=US'
     command: >
       bash -c "
         # Format storage

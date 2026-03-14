@@ -20,6 +20,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS'
     command: >
       bash -c "
         kafka-storage format -t MkU3OEVBNTcwNTJENDM2Qk -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
