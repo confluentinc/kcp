@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Unauthenticated Schema Registry (port 8081)
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry
+    container_name: kcp-test-schema-registry
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: 'http://0.0.0.0:8081'
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry-unauth
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas_unauth
+
+  # Basic Auth Schema Registry (port 8082)
+  schema-registry-basic-auth:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry-basic-auth
+    container_name: kcp-test-schema-registry-basic-auth
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./configs/schema-registry-jaas.conf:/etc/schema-registry/jaas.conf:ro
+      - ./configs/schema-registry-basic-auth.properties:/etc/schema-registry/basic-auth.properties:ro
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry-basic-auth
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: 'http://0.0.0.0:8082'
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry-basic-auth
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas_basic_auth
+      SCHEMA_REGISTRY_AUTHENTICATION_METHOD: BASIC
+      SCHEMA_REGISTRY_AUTHENTICATION_ROLES: admin,developer
+      SCHEMA_REGISTRY_AUTHENTICATION_REALM: SchemaRegistryProps
+      SCHEMA_REGISTRY_OPTS: -Djava.security.auth.login.config=/etc/schema-registry/jaas.conf
+
+# Join the plaintext Kafka network so we can reach the broker
+networks:
+  default:
+    name: docker_default
+    external: true

@@ -12,6 +12,7 @@ import {
 
 interface MigrationScriptsSelectionProps {
     clusterArn: string
+    sourceType: 'msk' | 'osk'
     onComplete: (wizardType: WizardType) => void
     onClose: () => void
     hasGeneratedFiles?: (wizardType: WizardType) => boolean
@@ -20,6 +21,7 @@ interface MigrationScriptsSelectionProps {
 
 export const MigrationScriptsSelection = ({
     clusterArn,
+    sourceType,
     onComplete,
     onClose,
     hasGeneratedFiles,
@@ -54,11 +56,11 @@ export const MigrationScriptsSelection = ({
         const getWizardConfig = () => {
             switch (selectedWizardType) {
                 case WIZARD_TYPES.MIGRATE_ACLS:
-                    return createAclMigrationScriptsWizardConfig(clusterArn)
+                    return createAclMigrationScriptsWizardConfig(clusterArn, sourceType)
                 case WIZARD_TYPES.MIGRATE_SCHEMAS:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
                 case WIZARD_TYPES.MIGRATE_TOPICS:
-                    return createMirrorTopicsMigrationScriptsWizardConfig(clusterArn)
+                    return createMirrorTopicsMigrationScriptsWizardConfig(clusterArn, sourceType)
                 default:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
             }

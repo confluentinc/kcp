@@ -90,8 +90,14 @@ make clean
 # Format go code
 make fmt
 
-# Run tests
+# Run all tests (Go unit tests + Playwright E2E tests)
 make test
+
+# Run Go unit tests only
+make test-go
+
+# Run Playwright E2E tests only (builds frontend + Go binary first)
+make test-e2e
 
 # Run tests with coverage
 make test-cov
@@ -99,5 +105,30 @@ make test-cov
 # Run tests with coverage and open UI coverage browser
 make test-cov-ui
 ```
+
+### Playwright E2E Tests
+
+The frontend includes Playwright end-to-end tests for the web UI. These test the migration infrastructure wizards, cluster views, and state loading.
+
+```bash
+cd cmd/ui/frontend
+
+# Run all E2E tests
+npx playwright test
+
+# Run with visible browser
+npx playwright test --headed
+
+# Run with Playwright UI (interactive test runner)
+npx playwright test --ui
+
+# Run a specific test file
+npx playwright test tests/e2e/osk-migration-infra.spec.ts
+
+# Debug a specific test
+npx playwright test -g "Public path" --debug
+```
+
+Test fixtures are in `cmd/ui/frontend/tests/e2e/fixtures/`. The Playwright config starts `kcp ui` with `--state-file` to pre-load test data automatically.
 
 
