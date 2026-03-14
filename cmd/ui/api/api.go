@@ -109,7 +109,7 @@ func (ui *UI) Run() error {
 		if sessionId == "" {
 			sessionId = "default"
 		}
-		ui.statesMutex.RLock()
+		ui.statesMutex.Lock()
 		state, exists := ui.states[sessionId]
 		// Fall back to "default" session if specific session not found
 		if !exists && sessionId != "default" {
@@ -117,16 +117,10 @@ func (ui *UI) Run() error {
 			if exists {
 				// Copy default state to the requesting session so subsequent
 				// requests (uploads, asset generation) work with this session ID
-				ui.statesMutex.RUnlock()
-				ui.statesMutex.Lock()
 				ui.states[sessionId] = state
-				ui.statesMutex.Unlock()
-			} else {
-				ui.statesMutex.RUnlock()
 			}
-		} else {
-			ui.statesMutex.RUnlock()
 		}
+		ui.statesMutex.Unlock()
 		if !exists {
 			return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
 		}
