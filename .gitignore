@@ -2,6 +2,9 @@
 .idea/
 .vscode
 
+# Superpowers brainstorm artifacts
+.superpowers/
+
 # Local .terraform directories
 **/.terraform/*
 
