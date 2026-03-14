@@ -221,7 +221,7 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 	var describeConfigsResources []*sarama.ConfigResource
 
 	if len(metadataResp.Topics) == 0 && len(metadataResp.Brokers) > 0 {
-		slog.Warn("⚠️ no topics found in metadata response, this")
+		slog.Warn("⚠️ no topics found in metadata response, this cluster may have no user topics or the client may lack permissions")
 	}
 
 	for _, topic := range metadataResp.Topics {
