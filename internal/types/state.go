@@ -90,7 +90,11 @@ func NewStateFrom(fromState *State) *State {
 
 		// Copy existing OSK data or initialize empty
 		if fromState.OSKSources != nil {
-			workingState.OSKSources = fromState.OSKSources
+			oskSources := &OSKSourcesState{
+				Clusters: make([]OSKDiscoveredCluster, len(fromState.OSKSources.Clusters)),
+			}
+			copy(oskSources.Clusters, fromState.OSKSources.Clusters)
+			workingState.OSKSources = oskSources
 		} else {
 			workingState.OSKSources = &OSKSourcesState{
 				Clusters: []OSKDiscoveredCluster{},
