@@ -72,7 +72,7 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 	} else {
 		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
-		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
+		allVars = append(allVars, GetPrivateClusterLinkVariables()...)
 		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
 
@@ -94,7 +94,7 @@ func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardReque
 	} else {
 		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
-		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
+		allVars = append(allVars, GetPrivateClusterLinkVariables()...)
 		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
 
@@ -217,8 +217,8 @@ func GetModuleVariableName(moduleName string, varName string) string {
 		variables = toVariableDefinitions(GetTargetClusterPrivateLinkVariables())
 	case "ext_outbound_cluster_link":
 		variables = toVariableDefinitions(GetExternalOutboundClusterLinkingVariables())
-	case "msk_private_cluster_link":
-		variables = toVariableDefinitions(GetMskPrivateClusterLinkVariables())
+	case "private_cluster_link":
+		variables = toVariableDefinitions(GetPrivateClusterLinkVariables())
 	default:
 		return "<variable not found>"
 	}

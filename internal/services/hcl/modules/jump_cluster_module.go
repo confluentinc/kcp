@@ -156,10 +156,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_cluster_id",
+			Name: "source_cluster_id",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_id",
-				Description: "ID of the MSK cluster that data will be migrated to.",
+				Name:        "source_cluster_id",
+				Description: "ID of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
@@ -169,10 +169,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			Condition: nil,
 		},
 		{
-			Name: "msk_cluster_bootstrap_brokers",
+			Name: "source_cluster_bootstrap_brokers",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_bootstrap_brokers",
-				Description: "Bootstrap brokers of the MSK cluster that data will be migrated to.",
+				Name:        "source_cluster_bootstrap_brokers",
+				Description: "Bootstrap brokers of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
@@ -186,10 +186,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			Condition: nil,
 		},
 		{
-			Name: "msk_sasl_scram_username",
+			Name: "source_sasl_scram_username",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_username",
-				Description: "SASL SCRAM username of the MSK cluster that data will be migrated to.",
+				Name:        "source_sasl_scram_username",
+				Description: "SASL SCRAM username of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
@@ -201,10 +201,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			},
 		},
 		{
-			Name: "msk_sasl_scram_password",
+			Name: "source_sasl_scram_password",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_password",
-				Description: "SASL SCRAM password of the MSK cluster that data will be migrated to.",
+				Name:        "source_sasl_scram_password",
+				Description: "SASL SCRAM password of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
@@ -219,7 +219,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			Name: "cluster_link_name",
 			Definition: types.TerraformVariable{
 				Name:        "cluster_link_name",
-				Description: "Name of the cluster links between between MSK and Confluent Cloud through the jump cluster.",
+				Description: "Name of the cluster links between the source Kafka cluster and Confluent Cloud through the jump cluster.",
 				Sensitive:   false,
 				Type:        "string",
 			},

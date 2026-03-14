@@ -5,10 +5,10 @@ import "github.com/confluentinc/kcp/internal/types"
 func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
-			Name: "msk_sasl_scram_username",
+			Name: "source_sasl_scram_username",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_username",
-				Description: "MSK SASL SCRAM Username",
+				Name:        "source_sasl_scram_username",
+				Description: "SASL SCRAM Username for the source Kafka cluster",
 				Sensitive:   false,
 				Type:        "string",
 			},
@@ -19,10 +19,10 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_sasl_scram_password",
+			Name: "source_sasl_scram_password",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_password",
-				Description: "MSK SASL SCRAM Password",
+				Name:        "source_sasl_scram_password",
+				Description: "SASL SCRAM Password for the source Kafka cluster",
 				Sensitive:   true,
 				Type:        "string",
 			},
@@ -103,10 +103,10 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_cluster_id",
+			Name: "source_cluster_id",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_id",
-				Description: "The ID of the source MSK cluster that data will be migrated from.",
+				Name:        "source_cluster_id",
+				Description: "The ID of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
@@ -117,10 +117,10 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_sasl_scram_bootstrap_servers",
+			Name: "source_sasl_scram_bootstrap_servers",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_bootstrap_servers",
-				Description: "The SASL/SCRAM bootstrap servers of the source MSK cluster that data will be migrated from.",
+				Name:        "source_sasl_scram_bootstrap_servers",
+				Description: "The SASL/SCRAM bootstrap servers of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},

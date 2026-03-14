@@ -103,10 +103,10 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_cluster_id",
+			Name: "source_cluster_id",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_id",
-				Description: "ID of the source MSK cluster that data will be migrated from.",
+				Name:        "source_cluster_id",
+				Description: "ID of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
@@ -117,10 +117,10 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_cluster_bootstrap_servers",
+			Name: "source_cluster_bootstrap_servers",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_bootstrap_servers",
-				Description: "Bootstrap brokers of the MSK cluster that data will be migrated to.",
+				Name:        "source_cluster_bootstrap_servers",
+				Description: "Bootstrap brokers of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
@@ -131,10 +131,10 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_sasl_scram_username",
+			Name: "source_sasl_scram_username",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_username",
-				Description: "SASL SCRAM username of the source MSK cluster that data will be migrated from.",
+				Name:        "source_sasl_scram_username",
+				Description: "SASL SCRAM username of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
@@ -145,10 +145,10 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_sasl_scram_password",
+			Name: "source_sasl_scram_password",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_password",
-				Description: "SASL SCRAM password of the source MSK cluster that data will be migrated from.",
+				Name:        "source_sasl_scram_password",
+				Description: "SASL SCRAM password of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
