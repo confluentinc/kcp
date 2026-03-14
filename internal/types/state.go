@@ -570,6 +570,9 @@ type KafkaAdminClientInformation struct {
 }
 
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
+	if c.Topics == nil {
+		return TopicSummary{}
+	}
 	return CalculateTopicSummaryFromDetails(c.Topics.Details)
 }
 
