@@ -111,7 +111,7 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskClusterId
+				return request.SourceClusterId
 			},
 			Condition:        nil,
 			FromModuleOutput: "",
@@ -125,7 +125,7 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskSaslScramBootstrapServers
+				return request.SourceSaslScramBootstrapServers
 			},
 			Condition:        nil,
 			FromModuleOutput: "",

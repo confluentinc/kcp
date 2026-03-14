@@ -244,7 +244,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.HasPublicMskEndpoints {
+	if req.HasPublicEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",
@@ -286,8 +286,8 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	if req.ClusterLinkName == "" {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
-	if req.MskSaslScramBootstrapServers == "" {
-		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	if req.SourceSaslScramBootstrapServers == "" {
+		missingFields = append(missingFields, "sourceSaslScramBootstrapServers")
 	}
 
 	if len(missingFields) > 0 {
@@ -316,8 +316,8 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	if req.JumpClusterSetupHostSubnetCidr == "" {
 		missingFields = append(missingFields, "jumpClusterSetupHostSubnetCidr")
 	}
-	if req.MskJumpClusterAuthType == "" {
-		missingFields = append(missingFields, "mskJumpClusterAuthType")
+	if req.JumpClusterAuthType == "" {
+		missingFields = append(missingFields, "jumpClusterAuthType")
 	}
 	if req.TargetClusterId == "" {
 		missingFields = append(missingFields, "targetClusterId")
@@ -349,11 +349,11 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	if req.VpcId == "" {
 		missingFields = append(missingFields, "vpcId")
 	}
-	if req.MskRegion == "" {
-		missingFields = append(missingFields, "mskRegion")
+	if req.SourceRegion == "" {
+		missingFields = append(missingFields, "sourceRegion")
 	}
-	if req.MskClusterId == "" {
-		missingFields = append(missingFields, "mskClusterId")
+	if req.SourceClusterId == "" {
+		missingFields = append(missingFields, "sourceClusterId")
 	}
 	if req.ExtOutboundSecurityGroupId == "" {
 		missingFields = append(missingFields, "extOutboundSecurityGroupId")

@@ -15,7 +15,7 @@ func GetMskPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardR
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskRegion
+				return request.SourceRegion
 			},
 			Condition:        nil,
 			FromModuleOutput: "",

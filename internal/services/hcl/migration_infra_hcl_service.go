@@ -21,7 +21,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	if request.HasPublicMskEndpoints {
+	if request.HasPublicEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
 
@@ -78,7 +78,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				OutputsTf:   mi.generateJumpClustersOutputsTf(),
 				VersionsTf:  mi.generateJumpClustersVersionsTf(),
 				AdditionalFiles: map[string]string{
-					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType),
+					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.JumpClusterAuthType),
 				},
 			},
 			{
@@ -324,7 +324,7 @@ You will be prompted for the following credentials during ` + "`terraform apply`
 | ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
 | ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	if request.JumpClusterAuthType == "sasl_scram" {
 		credentialsSection += `
 | ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
 | ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
@@ -422,7 +422,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	if request.JumpClusterAuthType == "sasl_scram" {
 		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
 	} else {
 		return aws.GenerateJumpClusterSaslIamSetupHostUserDataTpl()
@@ -478,7 +478,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	}))
 	rootBody.AppendNewline()
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	if request.JumpClusterAuthType == "sasl_scram" {
 		mskSaslScramUsernameVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_username")
 		mskSaslScramPasswordVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_password")
 

@@ -163,7 +163,7 @@ type TerraformOutput struct {
 }
 
 type MigrationWizardRequest struct {
-	HasPublicMskEndpoints bool `json:"has_public_msk_brokers"`
+	HasPublicEndpoints bool `json:"has_public_brokers"`
 
 	VpcId string `json:"vpc_id"`
 
@@ -181,17 +181,17 @@ type MigrationWizardRequest struct {
 	JumpClusterBrokerSubnetCidr    []string `json:"jump_cluster_broker_subnet_cidr"`
 	JumpClusterSetupHostSubnetCidr string   `json:"jump_cluster_setup_host_subnet_cidr"`
 
-	MskJumpClusterAuthType       string `json:"msk_jump_cluster_auth_type"`
-	MskClusterId                 string `json:"msk_cluster_id"`
-	JumpClusterIamAuthRoleName   string `json:"jump_cluster_iam_auth_role_name"`
-	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
-	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
-	MskRegion                    string `json:"msk_region"`
-	TargetEnvironmentId          string `json:"target_environment_id"`
-	TargetClusterId              string `json:"target_cluster_id"`
-	TargetRestEndpoint           string `json:"target_rest_endpoint"`
-	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
-	ClusterLinkName              string `json:"cluster_link_name"`
+	JumpClusterAuthType              string `json:"jump_cluster_auth_type"`
+	SourceClusterId                  string `json:"source_cluster_id"`
+	JumpClusterIamAuthRoleName       string `json:"jump_cluster_iam_auth_role_name"`
+	SourceSaslScramBootstrapServers  string `json:"source_sasl_scram_bootstrap_servers"`
+	SourceSaslIamBootstrapServers    string `json:"source_sasl_iam_bootstrap_servers"`
+	SourceRegion                     string `json:"source_region"`
+	TargetEnvironmentId              string `json:"target_environment_id"`
+	TargetClusterId                  string `json:"target_cluster_id"`
+	TargetRestEndpoint               string `json:"target_rest_endpoint"`
+	TargetBootstrapEndpoint          string `json:"target_bootstrap_endpoint"`
+	ClusterLinkName                  string `json:"cluster_link_name"`
 }
 
 type ExtOutboundClusterKafkaBroker struct {

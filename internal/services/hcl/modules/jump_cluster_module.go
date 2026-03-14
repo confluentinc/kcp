@@ -71,7 +71,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				return request.JumpClusterIamAuthRoleName
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.MskJumpClusterAuthType == "iam"
+				return request.JumpClusterAuthType == "iam"
 			},
 		},
 		{
@@ -164,7 +164,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskClusterId
+				return request.SourceClusterId
 			},
 			Condition: nil,
 		},
@@ -177,10 +177,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				if request.MskJumpClusterAuthType == "sasl_scram" {
-					return request.MskSaslScramBootstrapServers
+				if request.JumpClusterAuthType == "sasl_scram" {
+					return request.SourceSaslScramBootstrapServers
 				} else {
-					return request.MskSaslIamBootstrapServers
+					return request.SourceSaslIamBootstrapServers
 				}
 			},
 			Condition: nil,
@@ -197,7 +197,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				return "" // User prompted for value at Terraform apply.
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.MskJumpClusterAuthType == "sasl_scram"
+				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
 		{
@@ -212,7 +212,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				return "" // User prompted for value at Terraform apply.
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.MskJumpClusterAuthType == "sasl_scram"
+				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
 		{

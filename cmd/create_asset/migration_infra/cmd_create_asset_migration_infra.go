@@ -115,10 +115,10 @@ func NewMigrationInfraCmd() *cobra.Command {
 		groupNames := []string{"Required Flags", "Optional Flags", "Base Migration Flags", "Type Two Flags", "Type Three Flags", "Type Four Flags"}
 
 		/*
-			Type 1 = `HasPublicMskEndpoints` = true
-			Type 2 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false
-			Type 3 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = SASL/SCRAM
-			Type 4 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = IAM
+			Type 1 = `HasPublicEndpoints` = true
+			Type 2 = `HasPublicEndpoints` = false | `UseJumpClusters` = false
+			Type 3 = `HasPublicEndpoints` = false | `UseJumpClusters` = true | `JumpClusterAuthType` = SASL/SCRAM
+			Type 4 = `HasPublicEndpoints` = false | `UseJumpClusters` = true | `JumpClusterAuthType` = IAM
 
 			`HasExistingInternetGateway` does not require new branching as it does not require new inputs from the user. Instead
 			it just uses a data source for the existing internet gateway instead of creating a new one.
@@ -242,9 +242,9 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		MigrationWizardRequest: types.MigrationWizardRequest{
 			HasExistingInternetGateway: existingInternetGateway,
 
-			VpcId:        vpcId,
-			MskRegion:    region,
-			MskClusterId: mskClusterId,
+			VpcId:           vpcId,
+			SourceRegion:    region,
+			SourceClusterId: mskClusterId,
 
 			ClusterLinkName:    clusterLinkName,
 			TargetClusterId:    targetClusterId,
@@ -266,13 +266,13 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 
 	switch targetType {
 	case types.PublicMskEndpoints:
-		opts.MigrationWizardRequest.HasPublicMskEndpoints = true
+		opts.MigrationWizardRequest.HasPublicEndpoints = true
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
-		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.SourceSaslScramBootstrapServers = bootstrapBrokers
 
 	case types.ExternalOutboundClusterLink:
-		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
+		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
 		opts.MigrationWizardRequest.ExtOutboundSubnetId = extOutboundSubnetId
@@ -296,7 +296,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			}
 		}
 
-		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.SourceSaslScramBootstrapServers = bootstrapBrokers
 
 		extOutboundBrokers, err := buildExtOutboundBrokers(cluster)
 		if err != nil {
@@ -305,7 +305,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.ExtOutboundBrokers = extOutboundBrokers
 
 	case types.JumpClusterSaslScram:
-		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
+		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = true
 
 		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
@@ -329,11 +329,11 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.JumpClusterInstanceType = jumpClusterInstanceType
 		opts.MigrationWizardRequest.JumpClusterBrokerStorage = jumpClusterBrokerStorage
 
-		opts.MigrationWizardRequest.MskJumpClusterAuthType = "sasl_scram"
-		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.JumpClusterAuthType = "sasl_scram"
+		opts.MigrationWizardRequest.SourceSaslScramBootstrapServers = bootstrapBrokers
 
 	case types.JumpClusterIam:
-		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
+		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = true
 
 		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
@@ -357,8 +357,8 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.JumpClusterInstanceType = jumpClusterInstanceType
 		opts.MigrationWizardRequest.JumpClusterBrokerStorage = jumpClusterBrokerStorage
 
-		opts.MigrationWizardRequest.MskJumpClusterAuthType = "iam"
-		opts.MigrationWizardRequest.MskSaslIamBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.JumpClusterAuthType = "iam"
+		opts.MigrationWizardRequest.SourceSaslIamBootstrapServers = bootstrapBrokers
 		opts.MigrationWizardRequest.JumpClusterIamAuthRoleName = jumpClusterIamAuthRoleName
 	}
 
