@@ -5,7 +5,7 @@ import { Package } from 'lucide-react'
 import {
   Wizard,
   createTargetInfraWizardConfig,
-  createMigrationInfraWizardConfig,
+  createMigrationInfraMskWizardConfig,
 } from '@/components/migration/wizards'
 import type { Cluster, WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
@@ -229,7 +229,7 @@ export const MigrationAssets = () => {
               )}
               {wizardType === WIZARD_TYPES.MIGRATION_INFRA && (
                 <Wizard
-                  config={createMigrationInfraWizardConfig(clusterArn)}
+                  config={createMigrationInfraMskWizardConfig(clusterArn)}
                   clusterKey={clusterArn}
                   wizardType={wizardType}
                   onComplete={() => {

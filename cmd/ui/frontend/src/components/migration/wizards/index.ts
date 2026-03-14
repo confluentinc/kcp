@@ -12,7 +12,7 @@ export { useWizardData } from './hooks/useWizardData.ts'
 export { createWizardMachine } from './factory/createWizardMachine.ts'
 
 export { createTargetInfraWizardConfig } from './targetInfraWizardConfig.ts'
-export { createMigrationInfraWizardConfig } from './migrationInfraWizardConfig.ts'
+export { createMigrationInfraMskWizardConfig } from './migrationInfraMskWizardConfig.ts'
 export { createAclMigrationScriptsWizardConfig } from './aclMigrationScriptsWizardConfig.ts'
 export { createMirrorTopicsMigrationScriptsWizardConfig } from './mirrorTopicsMigrationScriptsWizardConfig.ts'
 export { createSchemaRegistryMigrationScriptsWizardConfig } from './schemaRegistryMigrationScriptsWizardConfig.ts'

@@ -1,7 +1,7 @@
 import type { WizardConfig } from './types'
 import { getClusterDataByArn } from '@/stores/store'
 
-export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConfig => {
+export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardConfig => {
   const cluster = getClusterDataByArn(clusterArn)
 
   const instanceType = cluster?.metrics?.metadata?.instance_type || 'kafka.m5.xlarge'
@@ -42,7 +42,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           schema: {
             type: 'object',
             properties: {
-              has_public_msk_brokers: {
+              has_public_brokers: {
                 type: 'boolean',
                 title: 'Are your MSK brokers publicly accessible?',
                 oneOf: [
@@ -51,10 +51,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 ],
               },
             },
-            required: ['has_public_msk_brokers'],
+            required: ['has_public_brokers'],
           },
           uiSchema: {
-            has_public_msk_brokers: {
+            has_public_brokers: {
               'ui:widget': 'radio',
             },
           },
@@ -63,7 +63,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           NEXT: [
             {
               target: 'public_cluster_link_inputs',
-              guard: 'has_public_msk_brokers',
+              guard: 'has_public_brokers',
               actions: 'save_step_data',
             },
             {
@@ -93,18 +93,18 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 type: 'string',
                 title: 'Confluent Cloud Cluster Link Name'
               },
-              msk_cluster_id: {
+              source_cluster_id: {
                 type: 'string',
                 title: 'MSK Cluster ID',
                 default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
               },
-              msk_sasl_scram_bootstrap_servers: {
+              source_sasl_scram_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringPublicSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (public) from statefile.'
               },
             },
-            required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'msk_cluster_id', 'msk_sasl_scram_bootstrap_servers'],
+            required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers'],
           },
           uiSchema: {
             target_cluster_id: {
@@ -116,10 +116,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             cluster_link_name: {
               'ui:placeholder': 'e.g., msk-to-cc-migration-link',
             },
-            msk_cluster_id: {
+            source_cluster_id: {
               'ui:disabled': true,
             },
-            msk_sasl_scram_bootstrap_servers: {
+            source_sasl_scram_bootstrap_servers: {
               'ui:disabled': true,
             },
           },
@@ -213,17 +213,17 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 description: 'MSK cluster security group ID is used by default for the external outbound cluster linking.',
                 default: cluster?.aws_client_information?.cluster_networking?.security_groups?.[0] || 'failed to retrieve security group ID from statefile.'
               },
-              msk_region: {
+              source_region: {
                 type: 'string',
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
               },
-              msk_cluster_id: {
+              source_cluster_id: {
                 type: 'string',
                 title: 'MSK Cluster ID',
                 default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
               },
-              msk_sasl_scram_bootstrap_servers: {
+              source_sasl_scram_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (public) from statefile.'
@@ -273,7 +273,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 }
               }
             },
-            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'msk_region', 'vpc_id', 'msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'aws_kafka_brokers'],
+            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'source_region', 'vpc_id', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'aws_kafka_brokers'],
           },
           uiSchema: {
             cluster_link_name: {
@@ -294,15 +294,15 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             ext_outbound_security_group_id: {
               'ui:placeholder': 'e.g., sg-xxxxxx',
             },
-            msk_region: {
+            source_region: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            msk_cluster_id: {
+            source_cluster_id: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            msk_sasl_scram_bootstrap_servers: {
+            source_sasl_scram_bootstrap_servers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
@@ -440,7 +440,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
         },
         on: {
           NEXT: {
-            target: 'msk_jump_cluster_authentication_question',
+            target: 'jump_cluster_authentication_question',
             actions: 'save_step_data',
           },
           BACK: {
@@ -449,14 +449,14 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
-      msk_jump_cluster_authentication_question: {
+      jump_cluster_authentication_question: {
         meta: {
           title: 'Private Migration | Jump Cluster - Authentication',
           description: 'How will the jump cluster authenticate to the MSK cluster?',
           schema: {
             type: 'object',
             properties: {
-              msk_jump_cluster_auth_type: {
+              jump_cluster_auth_type: {
                 type: 'string',
                 title: 'MSK Jump Cluster Authentication Type',
                 oneOf: [
@@ -465,10 +465,10 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 ],
               },
             },
-            required: ['msk_jump_cluster_auth_type'],
+            required: ['jump_cluster_auth_type'],
           },
           uiSchema: {
-            msk_jump_cluster_auth_type: {
+            jump_cluster_auth_type: {
               'ui:widget': 'radio',
             }
           },
@@ -476,13 +476,13 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
         on: {
           NEXT: [
             {
-              target: 'msk_jump_cluster_authentication_sasl_scram',
-              guard: 'selected_msk_jump_cluster_authentication_sasl_scram',
+              target: 'jump_cluster_authentication_sasl_scram',
+              guard: 'selected_jump_cluster_authentication_sasl_scram',
               actions: 'save_step_data',
             },
             {
-              target: 'msk_jump_cluster_authentication_iam',
-              guard: 'selected_msk_jump_cluster_authentication_iam',
+              target: 'jump_cluster_authentication_iam',
+              guard: 'selected_jump_cluster_authentication_iam',
               actions: 'save_step_data',
             },
           ],
@@ -492,24 +492,24 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
-      msk_jump_cluster_authentication_sasl_scram: {
+      jump_cluster_authentication_sasl_scram: {
         meta: {
           title: 'Private Migration | Jump Cluster - Authentication (SASL/SCRAM)',
           description: 'How will the jump cluster authenticate to the MSK cluster?',
           schema: {
             type: 'object',
             properties: {
-              msk_cluster_id: {
+              source_cluster_id: {
                 type: 'string',
                 title: 'MSK Cluster ID',
                 default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
               },
-              msk_sasl_scram_bootstrap_servers: {
+              source_sasl_scram_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (private) from statefile.'
               },
-              msk_region: {
+              source_region: {
                 type: 'string',
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
@@ -535,16 +535,16 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'Confluent Cloud Cluster Link Name'
               },
             },
-            required: ['msk_cluster_id', 'msk_sasl_scram_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
+            required: ['source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'source_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
           },
           uiSchema: {
-            msk_cluster_id: {
+            source_cluster_id: {
               'ui:disabled': true,
             },
-            msk_sasl_scram_bootstrap_servers: {
+            source_sasl_scram_bootstrap_servers: {
               'ui:disabled': true,
             },
-            msk_region: {
+            source_region: {
               'ui:disabled': true,
             },
             target_environment_id: {
@@ -570,29 +570,29 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             actions: 'save_step_data',
           },
           BACK: {
-            target: 'msk_jump_cluster_authentication_question',
+            target: 'jump_cluster_authentication_question',
             actions: 'undo_save_step_data',
           },
         },
       },
-      msk_jump_cluster_authentication_iam: {
+      jump_cluster_authentication_iam: {
         meta: {
           title: 'Private Migration | Jump Cluster - Authentication (IAM)',
           description: 'How will the jump cluster authenticate to the MSK cluster?',
           schema: {
             type: 'object',
             properties: {
-              msk_cluster_id: {
+              source_cluster_id: {
                 type: 'string',
                 title: 'MSK Cluster ID',
                 default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
               },
-              msk_sasl_iam_bootstrap_servers: {
+              source_sasl_iam_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslIam || 'failed to retrieve MSK IAM bootstrap servers (private) from statefile.'
               },
-              msk_region: {
+              source_region: {
                 type: 'string',
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.'
@@ -623,16 +623,16 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 description: 'The name of the pre-configured IAM role that will be used to authenticate the cluster link between MSK and the jump cluster.'
               },
             },
-            required: ['msk_cluster_id', 'msk_sasl_iam_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
+            required: ['source_cluster_id', 'source_sasl_iam_bootstrap_servers', 'source_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name', 'jump_cluster_iam_auth_role_name'],
           },
           uiSchema: {
-            msk_cluster_id: {
+            source_cluster_id: {
               'ui:disabled': true,
             },
-            msk_sasl_iam_bootstrap_servers: {
+            source_sasl_iam_bootstrap_servers: {
               'ui:disabled': true,
             },
-            msk_region: {
+            source_region: {
               'ui:disabled': true,
             },
             target_environment_id: {
@@ -661,7 +661,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             actions: 'save_step_data',
           },
           BACK: {
-            target: 'msk_jump_cluster_authentication_question',
+            target: 'jump_cluster_authentication_question',
             actions: 'undo_save_step_data',
           },
         },
@@ -687,13 +687,13 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'undo_save_step_data',
             },
             {
-              target: 'msk_jump_cluster_authentication_sasl_scram',
-              guard: 'came_from_msk_jump_cluster_authentication_sasl_scram',
+              target: 'jump_cluster_authentication_sasl_scram',
+              guard: 'came_from_jump_cluster_authentication_sasl_scram',
               actions: 'undo_save_step_data',
             },
             {
-              target: 'msk_jump_cluster_authentication_iam',
-              guard: 'came_from_msk_jump_cluster_authentication_iam',
+              target: 'jump_cluster_authentication_iam',
+              guard: 'came_from_jump_cluster_authentication_iam',
               actions: 'undo_save_step_data',
             },
           ]
@@ -709,11 +709,11 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
     },
 
     guards: {
-      has_public_msk_brokers: ({ event}) => {
-        return event.data?.has_public_msk_brokers === true
+      has_public_brokers: ({ event}) => {
+        return event.data?.has_public_brokers === true
       },
       has_private_cc_endpoints: ({ event}) => {
-        return event.data?.has_public_msk_brokers === false
+        return event.data?.has_public_brokers === false
       },
       use_jump_clusters: ({ event }) => {
         return event.data?.use_jump_clusters === true
@@ -724,20 +724,20 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       came_from_public_cluster_link_inputs: ({ context }) => {
         return context.previousStep === 'public_cluster_link_inputs'
       },
-      selected_msk_jump_cluster_authentication_sasl_scram: ({ event }) => {
-        return event.data?.msk_jump_cluster_auth_type === 'sasl_scram'
+      selected_jump_cluster_authentication_sasl_scram: ({ event }) => {
+        return event.data?.jump_cluster_auth_type === 'sasl_scram'
       },
-      selected_msk_jump_cluster_authentication_iam: ({ event }) => {
-        return event.data?.msk_jump_cluster_auth_type === 'iam'
+      selected_jump_cluster_authentication_iam: ({ event }) => {
+        return event.data?.jump_cluster_auth_type === 'iam'
       },
       came_from_external_outbound_cluster_linking_inputs: ({ context }) => {
         return context.previousStep === 'external_outbound_cluster_linking_inputs'
       },
-      came_from_msk_jump_cluster_authentication_sasl_scram: ({ context }) => {
-        return context.previousStep === 'msk_jump_cluster_authentication_sasl_scram'
+      came_from_jump_cluster_authentication_sasl_scram: ({ context }) => {
+        return context.previousStep === 'jump_cluster_authentication_sasl_scram'
       },
-      came_from_msk_jump_cluster_authentication_iam: ({ context }) => {
-        return context.previousStep === 'msk_jump_cluster_authentication_iam'
+      came_from_jump_cluster_authentication_iam: ({ context }) => {
+        return context.previousStep === 'jump_cluster_authentication_iam'
       },
     },
     actions: {
