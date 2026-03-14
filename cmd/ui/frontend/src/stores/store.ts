@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import type { Cluster, ProcessedOSKCluster, Region, SourceType } from '@/types'
+import type { Cluster, ProcessedOSKCluster, Region, SourceType, KafkaAdminInfo } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
 import type { ProcessedState, SchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
@@ -768,7 +768,7 @@ export const getOSKClusterDataById = (clusterId: string): ProcessedOSKCluster | 
 export const getClusterDataBySourceType = (
   sourceType: 'msk' | 'osk',
   clusterKey: string
-): { kafka_admin_client_information: any; name: string } | null => {
+): { kafka_admin_client_information: KafkaAdminInfo; name: string } | null => {
   if (sourceType === 'msk') {
     const cluster = getClusterDataByArn(clusterKey)
     if (cluster) {
