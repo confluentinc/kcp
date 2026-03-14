@@ -8,8 +8,6 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
   const topicNames = topics.filter((topic: any) => !topic.name.startsWith('__')).map((topic: any) => topic.name)
   const topicEnumValues = topicNames.length > 0 ? topicNames : ['No topics available']
 
-  console.log(topicEnumValues)
-
   return {
     id: 'mirror-topics-migration-scripts-wizard',
     title: 'Mirror Topics Migration Scripts Wizard',
