@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-down test-integration-osk test-all-envs test-certs-generate
+.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-down test-integration-osk test-all-envs test-certs-generate
 
 # Build the frontend
 build-frontend:

@@ -39,5 +39,5 @@ services:
 # Join the plaintext Kafka network so we can reach the broker
 networks:
   default:
-    name: docker_default
+    name: kcp-test-network
     external: true
