@@ -201,7 +201,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'VPC ID',
                 default: cluster?.aws_client_information?.cluster_networking?.vpc_id || 'failed to retrieve VPC ID from statefile.'
               },
-              aws_kafka_brokers: {
+              source_kafka_brokers: {
                 type: 'array',
                 title: 'AWS Kafka Brokers',
                 default: awsKafkaBrokers.length > 0 ? awsKafkaBrokers : undefined,
@@ -241,7 +241,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 }
               }
             },
-            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'source_region', 'vpc_id', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'aws_kafka_brokers'],
+            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'source_region', 'vpc_id', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'source_kafka_brokers'],
           },
           uiSchema: {
             ...targetClusterUiSchema(),
@@ -268,7 +268,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            aws_kafka_brokers: {
+            source_kafka_brokers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
               'ui:options': {

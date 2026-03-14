@@ -171,7 +171,7 @@ type MigrationWizardRequest struct {
 	UseJumpClusters            bool                            `json:"use_jump_clusters"`
 	ExtOutboundSecurityGroupId string                          `json:"ext_outbound_security_group_id"`
 	ExtOutboundSubnetId        string                          `json:"ext_outbound_subnet_id"`
-	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"aws_kafka_brokers"`
+	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"source_kafka_brokers"`
 
 	ExistingPrivateLinkVpceId string `json:"existing_private_link_vpce_id"`
 

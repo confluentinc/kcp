@@ -8,6 +8,18 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
   const bootstrapServers = cluster?.bootstrap_servers?.join(',') || ''
   const kafkaClusterId = (cluster?.kafka_admin_client_information as any)?.cluster_id || ''
 
+  // Build broker data from bootstrap servers for external outbound path
+  const sourceKafkaBrokers = (cluster?.bootstrap_servers || []).map((server: string, index: number) => {
+    const parts = server.split(':')
+    const host = parts[0] || server
+    const port = parseInt(parts[1] || '9092', 10)
+    return {
+      broker_id: `osk-broker-${index}`,
+      subnet_id: '',
+      endpoints: [{ host, port, ip: '' }],
+    }
+  })
+
   return {
     id: 'migration-infra-osk-wizard',
     title: 'OSK Migration Infrastructure Wizard',
@@ -185,9 +197,10 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 type: 'string',
                 title: 'VPC ID',
               },
-              aws_kafka_brokers: {
+              source_kafka_brokers: {
                 type: 'array',
                 title: 'Kafka Brokers',
+                default: sourceKafkaBrokers.length > 0 ? sourceKafkaBrokers : undefined,
                 items: {
                   type: 'object',
                   properties: {
@@ -224,7 +237,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 },
               },
             },
-            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'source_region', 'vpc_id', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'aws_kafka_brokers'],
+            required: ['cluster_link_name', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'ext_outbound_subnet_id', 'ext_outbound_security_group_id', 'source_region', 'vpc_id', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers', 'source_kafka_brokers'],
           },
           uiSchema: {
             ...targetClusterUiSchema(),
@@ -252,7 +265,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
             vpc_id: {
               'ui:placeholder': 'e.g., vpc-xxxxxxxx',
             },
-            aws_kafka_brokers: {
+            source_kafka_brokers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
               'ui:options': {
