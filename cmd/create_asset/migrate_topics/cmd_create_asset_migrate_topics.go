@@ -15,9 +15,8 @@ import (
 
 var (
 	stateFile                 string
-	clusterArn                string
+	clusterId                 string
 	sourceType                string
-	oskClusterId              string
 	targetClusterId           string
 	targetClusterRestEndpoint string
 	clusterLinkName           string
@@ -39,10 +38,9 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	// Required flags.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration scripts for.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&sourceType, "source-type", "msk", "Source type: 'msk' or 'osk'")
-	requiredFlags.StringVar(&oskClusterId, "cluster-id", "", "The OSK cluster ID from credentials file (required for --source-type osk)")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
 	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link that was created as part of the migration (e.g., msk-to-cc-migration-link).")
@@ -75,10 +73,10 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	})
 
 	migrationCmd.MarkFlagRequired("state-file")
-	migrationCmd.MarkFlagRequired("cluster-arn")
+	migrationCmd.MarkFlagRequired("cluster-id")
 	migrationCmd.MarkFlagRequired("target-cluster-id")
-	migrationCmd.MarkFlagRequired("target-cluster-rest-endpoint")
-	migrationCmd.MarkFlagRequired("target-cluster-link-name")
+	migrationCmd.MarkFlagRequired("target-rest-endpoint")
+	migrationCmd.MarkFlagRequired("cluster-link-name")
 
 	return migrationCmd
 }
@@ -122,19 +120,13 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 
 	switch sourceType {
 	case "msk":
-		if clusterArn == "" {
-			return nil, fmt.Errorf("--cluster-arn is required when --source-type is msk")
-		}
-		cluster, err := state.GetClusterByArn(clusterArn)
+		cluster, err := state.GetClusterByArn(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
 		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
 	case "osk":
-		if oskClusterId == "" {
-			return nil, fmt.Errorf("--cluster-id is required when --source-type is osk")
-		}
-		cluster, err := state.GetOSKClusterByID(oskClusterId)
+		cluster, err := state.GetOSKClusterByID(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
 		}

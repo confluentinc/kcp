@@ -13,9 +13,8 @@ import (
 
 var (
 	stateFile                 string
-	clusterArn                string
+	clusterId                 string
 	sourceType                string
-	oskClusterId              string
 	targetClusterId           string
 	targetClusterRestEndpoint string
 	outputDir                 string
@@ -46,8 +45,7 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	sourceFlags := pflag.NewFlagSet("source", pflag.ExitOnError)
 	sourceFlags.SortFlags = false
 	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or osk).")
-	sourceFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to convert ACLs from (required when --source-type is msk).")
-	sourceFlags.StringVar(&oskClusterId, "cluster-id", "", "The ID of the OSK cluster to convert ACLs from (required when --source-type is osk).")
+	sourceFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
 	aclsCmd.Flags().AddFlagSet(sourceFlags)
 	groups[sourceFlags] = "Source Flags"
 
@@ -78,6 +76,7 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	})
 
 	aclsCmd.MarkFlagRequired("state-file")
+	aclsCmd.MarkFlagRequired("cluster-id")
 	aclsCmd.MarkFlagRequired("target-cluster-id")
 	aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
@@ -122,20 +121,14 @@ func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
 
 	switch sourceType {
 	case "msk":
-		if clusterArn == "" {
-			return nil, fmt.Errorf("--cluster-arn is required when --source-type is msk")
-		}
-		cluster, err := state.GetClusterByArn(clusterArn)
+		cluster, err := state.GetClusterByArn(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
 		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
 		clusterName = cluster.Name
 	case "osk":
-		if oskClusterId == "" {
-			return nil, fmt.Errorf("--cluster-id is required when --source-type is osk")
-		}
-		cluster, err := state.GetOSKClusterByID(oskClusterId)
+		cluster, err := state.GetOSKClusterByID(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
 		}

@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	stateFile  string
-	clusterArn string
+	stateFile       string
+	sourceClusterId string
 
 	needsEnvironmentStr string
 	environmentName     string
@@ -73,7 +73,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	stateFileFlags := pflag.NewFlagSet("statefile", pflag.ExitOnError)
 	stateFileFlags.SortFlags = false
 	stateFileFlags.StringVar(&stateFile, "state-file", "", "Path to kcp state file (if provided, vpc-id and aws-region are extracted from state)")
-	stateFileFlags.StringVar(&clusterArn, "cluster-arn", "", "MSK cluster ARN (required when --state-file is provided)")
+	stateFileFlags.StringVar(&sourceClusterId, "source-cluster-id", "", "The ARN of the MSK cluster (required when --state-file is provided).")
 	targetInfraCmd.Flags().AddFlagSet(stateFileFlags)
 	groups[stateFileFlags] = "State File (Optional)"
 
@@ -166,9 +166,9 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 
 	// Validate state file or manual configuration
 	if stateFile != "" {
-		// When using state file, cluster-arn is required
-		if clusterArn == "" {
-			return fmt.Errorf("required flag `--cluster-arn` not set when `--state-file` is provided")
+		// When using state file, source-cluster-id is required
+		if sourceClusterId == "" {
+			return fmt.Errorf("required flag `--source-cluster-id` not set when `--state-file` is provided")
 		}
 		// vpc-id and aws-region will be extracted from state file
 	} else {
@@ -239,7 +239,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to parse statefile JSON: %w", err)
 		}
 
-		cluster, err := state.GetClusterByArn(clusterArn)
+		cluster, err := state.GetClusterByArn(sourceClusterId)
 		if err != nil {
 			return fmt.Errorf("failed to get cluster: %w", err)
 		}

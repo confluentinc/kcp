@@ -13,9 +13,8 @@ import (
 
 var (
 	stateFile       string
-	clusterArn      string
+	clusterId       string
 	sourceType      string
-	oskClusterId    string
 	ccClusterId     string
 	ccEnvironmentId string
 	ccApiKey        string
@@ -48,8 +47,7 @@ func NewMigrateSelfManagedConnectorsCmd() *cobra.Command {
 	sourceFlags := pflag.NewFlagSet("source", pflag.ExitOnError)
 	sourceFlags.SortFlags = false
 	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or osk).")
-	sourceFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the cluster to migrate connectors from (required when --source-type is msk).")
-	sourceFlags.StringVar(&oskClusterId, "cluster-id", "", "The ID of the OSK cluster to migrate connectors from (required when --source-type is osk).")
+	sourceFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(sourceFlags)
 	groups[sourceFlags] = "Source Flags"
 
@@ -78,6 +76,7 @@ func NewMigrateSelfManagedConnectorsCmd() *cobra.Command {
 	})
 
 	selfManagedConnectorsCmd.MarkFlagRequired("state-file")
+	selfManagedConnectorsCmd.MarkFlagRequired("cluster-id")
 	selfManagedConnectorsCmd.MarkFlagRequired("cc-environment-id")
 	selfManagedConnectorsCmd.MarkFlagRequired("cc-cluster-id")
 	selfManagedConnectorsCmd.MarkFlagRequired("cc-api-key")
@@ -123,10 +122,7 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 
 	switch sourceType {
 	case "msk":
-		if clusterArn == "" {
-			return nil, fmt.Errorf("--cluster-arn is required when --source-type is msk")
-		}
-		cluster, err := state.GetClusterByArn(clusterArn)
+		cluster, err := state.GetClusterByArn(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
@@ -137,10 +133,7 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 			outputDir = fmt.Sprintf("%s-connectors", cluster.Name)
 		}
 	case "osk":
-		if oskClusterId == "" {
-			return nil, fmt.Errorf("--cluster-id is required when --source-type is osk")
-		}
-		cluster, err := state.GetOSKClusterByID(oskClusterId)
+		cluster, err := state.GetOSKClusterByID(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
 		}

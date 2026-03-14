@@ -19,7 +19,6 @@ import (
 
 var (
 	stateFile          string
-	clusterArn         string
 	migrationInfraType string
 	clusterLinkName    string
 
@@ -64,19 +63,13 @@ func NewMigrationInfraCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk' (required)")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
 	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options.")
 	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	mskFlags := pflag.NewFlagSet("msk", pflag.ExitOnError)
-	mskFlags.SortFlags = false
-	mskFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to create migration infrastructure for. (required for MSK)")
-	migrationInfraCmd.Flags().AddFlagSet(mskFlags)
-	groups[mskFlags] = "MSK Flags"
-
 	oskFlags := pflag.NewFlagSet("osk", pflag.ExitOnError)
 	oskFlags.SortFlags = false
-	oskFlags.StringVar(&clusterId, "cluster-id", "", "The ID of the OSK cluster as defined in the credentials file. (required for OSK)")
 	oskFlags.StringVar(&oskVpcId, "vpc-id", "", "The VPC ID where the OSK cluster resides. (required for OSK)")
 	oskFlags.StringVar(&oskRegion, "region", "", "The AWS region where the OSK cluster's VPC resides. (required for OSK)")
 	migrationInfraCmd.Flags().AddFlagSet(oskFlags)
@@ -131,8 +124,8 @@ func NewMigrationInfraCmd() *cobra.Command {
 	groups[typeFourFlags] = "Type Four Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		flagOrder := []*pflag.FlagSet{requiredFlags, mskFlags, oskFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
-		groupNames := []string{"Required Flags", "MSK Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two Flags", "Type Three Flags", "Type Four Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, oskFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
+		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two Flags", "Type Three Flags", "Type Four Flags"}
 
 		/*
 			Type 1 = `HasPublicEndpoints` = true
@@ -169,6 +162,7 @@ Refer to the kcp docs for more information on each migration type.
 
 	migrationInfraCmd.MarkFlagRequired("state-file")
 	migrationInfraCmd.MarkFlagRequired("source-type")
+	migrationInfraCmd.MarkFlagRequired("cluster-id")
 	migrationInfraCmd.MarkFlagRequired("type")
 	migrationInfraCmd.MarkFlagRequired("cluster-link-name")
 	migrationInfraCmd.MarkFlagRequired("target-cluster-id")
@@ -216,13 +210,8 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 func runMigrationInfra(cmd *cobra.Command, args []string) error {
 	switch sourceType {
 	case "msk":
-		if clusterArn == "" {
-			return fmt.Errorf("--cluster-arn is required when --source-type is msk")
-		}
+		// clusterId is validated by MarkFlagRequired
 	case "osk":
-		if clusterId == "" {
-			return fmt.Errorf("--cluster-id is required when --source-type is osk")
-		}
 		if oskVpcId == "" {
 			return fmt.Errorf("--vpc-id is required when --source-type is osk")
 		}
@@ -274,7 +263,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := state.GetClusterByArn(clusterArn)
+	cluster, err := state.GetClusterByArn(clusterId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}

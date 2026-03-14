@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	stateFile  string
-	clusterArn string
-	outputDir  string
+	stateFile string
+	clusterId string
+	outputDir string
 )
 
 func NewConnectorUtilityCmd() *cobra.Command {
@@ -37,7 +37,7 @@ func NewConnectorUtilityCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to generate the connector configs JSON from.")
+	optionalFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster to generate the connector configs JSON from.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the connector configs JSON will be written to")
 	connectorUtilityCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
@@ -100,8 +100,8 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 
 	clustersByArn := make(map[string]*types.DiscoveredCluster)
 
-	if clusterArn != "" {
-		cluster, err := state.GetClusterByArn(clusterArn)
+	if clusterId != "" {
+		cluster, err := state.GetClusterByArn(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
@@ -113,7 +113,7 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 		if !hasConnectors {
 			return nil, fmt.Errorf("no connectors found for cluster %s in %s. The cluster exists but has no MSK Connect or self-managed connectors", cluster.Name, stateFile)
 		}
-		clustersByArn[clusterArn] = cluster
+		clustersByArn[clusterId] = cluster
 	} else {
 		if state.MSKSources != nil {
 			for _, region := range state.MSKSources.Regions {
