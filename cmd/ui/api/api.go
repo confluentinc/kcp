@@ -424,13 +424,8 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
 
-	var conditionalErrors []string
-
 	if len(missingFields) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
-	}
-	if len(conditionalErrors) > 0 {
-		return fmt.Errorf("invalid configuration: %s", strings.Join(conditionalErrors, "; "))
 	}
 
 	return nil
