@@ -2,9 +2,7 @@ import type { WizardConfig } from './types'
 import { getOSKClusterDataById } from '@/stores/store'
 import { targetClusterProperties, targetClusterUiSchema, jumpClusterTargetProperties, jumpClusterTargetUiSchema } from './sharedWizardSchemas'
 
-export const createMigrationInfraOskWizardConfig = (clusterKey: string): WizardConfig => {
-  // clusterKey format is "osk:<clusterId>", strip prefix
-  const clusterId = clusterKey.startsWith('osk:') ? clusterKey.slice(4) : clusterKey
+export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardConfig => {
   const cluster = getOSKClusterDataById(clusterId)
 
   const bootstrapServers = cluster?.bootstrap_servers?.join(',') || ''

@@ -763,6 +763,26 @@ export const getOSKClusterDataById = (clusterId: string): ProcessedOSKCluster | 
   return oskSource.osk_data.clusters.find((c) => c.id === clusterId) || null
 }
 
+// Unified cluster data lookup by source type and cluster key
+// Returns the kafka_admin_client_information which is shared between MSK and OSK
+export const getClusterDataBySourceType = (
+  sourceType: 'msk' | 'osk',
+  clusterKey: string
+): { kafka_admin_client_information: any; name: string } | null => {
+  if (sourceType === 'msk') {
+    const cluster = getClusterDataByArn(clusterKey)
+    if (cluster) {
+      return { kafka_admin_client_information: cluster.kafka_admin_client_information, name: cluster.name }
+    }
+  } else if (sourceType === 'osk') {
+    const cluster = getOSKClusterDataById(clusterKey)
+    if (cluster) {
+      return { kafka_admin_client_information: cluster.kafka_admin_client_information, name: cluster.id }
+    }
+  }
+  return null
+}
+
 // Utility function to get all schema registries from state
 export const getAllSchemaRegistries = (): SchemaRegistry[] => {
   const state = useAppStore.getState()

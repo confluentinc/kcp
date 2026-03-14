@@ -76,7 +76,7 @@ export const MigrationAssets = () => {
           setExpandedCluster(firstClusterArn)
         }
       } else if (hasOskClusters) {
-        setExpandedCluster(`osk:${oskClusters[0].id}`)
+        setExpandedCluster(oskClusters[0].id)
       }
     }
   }, [hasAnyClusters, hasMskClusters, hasOskClusters, expandedCluster, setExpandedCluster, mskClusters, oskClusters])
@@ -118,18 +118,15 @@ export const MigrationAssets = () => {
 
   // OSK handler factories
   const handleCreateTargetInfrastructureOsk = (clusterId: string, clusterName: string) => {
-    const clusterKey = `osk:${clusterId}`
-    openWizard(WIZARD_TYPES.TARGET_INFRA, clusterName, clusterKey, 'osk', null, '')
+    openWizard(WIZARD_TYPES.TARGET_INFRA, clusterName, clusterId, 'osk', null, '')
   }
 
   const handleCreateMigrationInfrastructureOsk = (clusterId: string, clusterName: string) => {
-    const clusterKey = `osk:${clusterId}`
-    openWizard(WIZARD_TYPES.MIGRATION_INFRA, clusterName, clusterKey, 'osk', null, '')
+    openWizard(WIZARD_TYPES.MIGRATION_INFRA, clusterName, clusterId, 'osk', null, '')
   }
 
   const handleCreateMigrationScriptsOsk = (clusterId: string, clusterName: string) => {
-    const clusterKey = `osk:${clusterId}`
-    openWizard(WIZARD_TYPES.MIGRATION_SCRIPTS, clusterName, clusterKey, 'osk', null, '')
+    openWizard(WIZARD_TYPES.MIGRATION_SCRIPTS, clusterName, clusterId, 'osk', null, '')
   }
 
   const handleCloseWizard = () => {
@@ -259,7 +256,7 @@ export const MigrationAssets = () => {
               </h2>
               <div className="space-y-4">
                 {oskClusters.map((oskCluster) => {
-                  const clusterKey = `osk:${oskCluster.id}`
+                  const clusterKey = oskCluster.id
                   const clusterName = oskCluster.id
                   const isExpanded = expandedCluster === clusterKey
 
@@ -317,7 +314,7 @@ export const MigrationAssets = () => {
             >
               {wizardType === WIZARD_TYPES.TARGET_INFRA && (
                 <Wizard
-                  config={createTargetInfraWizardConfig(wizardClusterKey)}
+                  config={createTargetInfraWizardConfig(wizardClusterKey, selectedClusterForWizard.sourceType)}
                   clusterKey={wizardClusterKey}
                   wizardType={wizardType}
                   onComplete={() => {
@@ -348,6 +345,7 @@ export const MigrationAssets = () => {
               {wizardType === WIZARD_TYPES.MIGRATION_SCRIPTS && (
                 <MigrationScriptsSelection
                   clusterArn={wizardClusterKey}
+                  sourceType={selectedClusterForWizard.sourceType}
                   onComplete={handleMigrationScriptsComplete}
                   onClose={handleCloseWizard}
                   hasGeneratedFiles={(wizardType) => !!getTerraformFiles(wizardClusterKey, wizardType)}

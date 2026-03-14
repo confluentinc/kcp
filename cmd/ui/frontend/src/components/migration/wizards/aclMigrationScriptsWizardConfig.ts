@@ -1,5 +1,5 @@
 import type { WizardConfig } from './types'
-import { getClusterDataByArn } from '@/stores/store'
+import { getClusterDataBySourceType, getClusterDataByArn } from '@/stores/store'
 
 interface Acl {
   ResourceType: string
@@ -11,10 +11,12 @@ interface Acl {
   PermissionType: string
 }
 
-export const createAclMigrationScriptsWizardConfig = (clusterArn: string): WizardConfig => {
-  const cluster = getClusterDataByArn(clusterArn)
+export const createAclMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+  const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
+  // For MSK-specific hidden fields (region, ARN), look up full MSK cluster data
+  const mskCluster = sourceType === 'msk' ? getClusterDataByArn(clusterKey) : null
 
-  const acls: Acl[] = cluster?.kafka_admin_client_information?.acls || []
+  const acls: Acl[] = clusterData?.kafka_admin_client_information?.acls || []
 
   // Build a map of principal -> ACLs
   const principalAclsMap: Record<string, Acl[]> = {}
@@ -76,19 +78,19 @@ export const createAclMigrationScriptsWizardConfig = (clusterArn: string): Wizar
       acl_principal_selection: {
         meta: {
           title: 'ACL Migration | Select Principals',
-          description: `Select the principals you wish to migrate along with their ACLs to Confluent Cloud from ${cluster?.name}.`,
+          description: `Select the principals you wish to migrate along with their ACLs to Confluent Cloud from ${clusterData?.name}.`,
           schema: {
             type: 'object',
             properties: {
               msk_region: {
                 type: 'string',
                 title: 'MSK Region',
-                default: cluster?.region || 'failed to retrieve AWS region from statefile.'
+                default: mskCluster?.region || ''
               },
               msk_cluster_arn: {
                 type: 'string',
                 title: 'MSK Cluster ARN',
-                default: cluster?.arn || 'failed to retrieve MSK cluster ARN from statefile.'
+                default: mskCluster?.arn || ''
               },
               selected_principals: {
                 type: 'array',
