@@ -25,9 +25,9 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'cd ../../.. && ./kcp ui --port 5556',
+    command: 'cd ../../.. && make build && ./kcp ui --port 5556 --state-file cmd/ui/frontend/tests/e2e/fixtures/state-migration.json',
     url: 'http://localhost:5556',
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000, // Give server 60s to start
+    timeout: 120_000, // Give server 120s to build and start
   },
 })

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { TCOInputs as TCOInputsPage } from '@/components/tco/TCOInputsPage'
 import { Sidebar } from '@/components/explore/Sidebar'
 import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
@@ -31,6 +31,36 @@ export const Home = () => {
   const setError = useAppStore((state) => state.setError)
   const clearSelection = useAppStore((state) => state.clearSelection)
   const selectSummary = useAppStore((state) => state.selectSummary)
+
+  // Check for pre-loaded state on mount
+  useEffect(() => {
+    const checkPreloadedState = async () => {
+      try {
+        // Try session-specific state first, then default
+        let response
+        try {
+          response = await apiClient.state.getState(sessionId)
+        } catch {
+          // If session-specific fails, try default
+          response = await apiClient.state.getState('default')
+        }
+
+        if (response && response.sources) {
+          setKcpState(response)
+
+          // Auto-select summary view if we have MSK sources with regions
+          const mskSource = response.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+          if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
+            selectSummary()
+          }
+        }
+      } catch {
+        // No pre-loaded state, user will upload manually
+      }
+    }
+
+    checkPreloadedState()
+  }, [sessionId, setKcpState, selectSummary])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
