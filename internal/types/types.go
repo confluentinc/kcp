@@ -93,7 +93,7 @@ type ConnectTlsAuth struct {
 type MigrationType int
 
 const (
-	PublicMskEndpoints          MigrationType = 1
+	PublicSourceEndpoints          MigrationType = 1
 	ExternalOutboundClusterLink MigrationType = 2
 	JumpClusterSaslScram        MigrationType = 3
 	JumpClusterIam              MigrationType = 4
@@ -101,7 +101,7 @@ const (
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
+	case PublicSourceEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
 		return true
 	default:
 		return false

@@ -182,7 +182,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	}
 
 	switch targetType {
-	case types.PublicMskEndpoints:
+	case types.PublicSourceEndpoints:
 		// No additional flag requirements.
 
 	case types.ExternalOutboundClusterLink:
@@ -308,7 +308,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	switch targetType {
-	case types.PublicMskEndpoints:
+	case types.PublicSourceEndpoints:
 		opts.MigrationWizardRequest.HasPublicEndpoints = true
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
@@ -453,7 +453,7 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	switch targetType {
-	case types.PublicMskEndpoints:
+	case types.PublicSourceEndpoints:
 		opts.MigrationWizardRequest.HasPublicEndpoints = true
 		opts.MigrationWizardRequest.UseJumpClusters = false
 		opts.MigrationWizardRequest.SourceSaslScramBootstrapServers = bootstrapServers
@@ -530,7 +530,7 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 	var authMethod string
 
 	switch migrationType {
-	case types.PublicMskEndpoints:
+	case types.PublicSourceEndpoints:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
 		authMethod = "public SASL/SCRAM"
 	case types.ExternalOutboundClusterLink:
