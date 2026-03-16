@@ -32,7 +32,7 @@ func (ms *MSKService) GetBootstrapBrokers(ctx context.Context, clusterArn string
 		ClusterArn: &clusterArn,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to get bootstrap brokers: %v", err)
+		return nil, fmt.Errorf("Failed to get bootstrap brokers: %v", err)
 	}
 	return brokers, nil
 }
@@ -89,7 +89,7 @@ func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
 		}
-		return nil, fmt.Errorf("❌ Failed to get compatible versions: %v", err)
+		return nil, fmt.Errorf("Failed to get compatible versions: %v", err)
 	}
 	return versions, nil
 }
@@ -114,7 +114,7 @@ func (ms *MSKService) DescribeClusterV2(ctx context.Context, clusterArn string) 
 		ClusterArn: &clusterArn,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("Failed to describe cluster: %v", err)
 	}
 	return cluster, nil
 }
@@ -134,7 +134,7 @@ func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn s
 				slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 				return []kafkatypes.ClientVpcConnection{}, nil
 			}
-			return nil, fmt.Errorf("❌ Failed listing client vpc connections: %v", err)
+			return nil, fmt.Errorf("Failed listing client vpc connections: %v", err)
 		}
 		connections = append(connections, output.ClientVpcConnections...)
 		if output.NextToken == nil {
@@ -157,7 +157,7 @@ func (ms *MSKService) ListClusterOperationsV2(ctx context.Context, clusterArn st
 			NextToken:  nextToken,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("❌ Failed listing operations: %v", err)
+			return nil, fmt.Errorf("Failed listing operations: %v", err)
 		}
 		operations = append(operations, output.ClusterOperationInfoList...)
 		if output.NextToken == nil {
@@ -184,7 +184,7 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResul
 				slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 				return []kafkatypes.NodeInfo{}, nil
 			}
-			return nil, fmt.Errorf("❌ Failed listing nodes: %v", err)
+			return nil, fmt.Errorf("Failed listing nodes: %v", err)
 		}
 		nodes = append(nodes, output.NodeInfoList...)
 		if output.NextToken == nil {
@@ -211,7 +211,7 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, m
 				slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 				return []string{}, nil
 			}
-			return nil, fmt.Errorf("❌ Failed listing secrets: %v", err)
+			return nil, fmt.Errorf("Failed listing secrets: %v", err)
 		}
 		secrets = append(secrets, output.SecretArnList...)
 		if output.NextToken == nil {
@@ -236,7 +236,7 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 			NextToken:  nextToken,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("❌ Failed to list clusters: %v", err)
+			return nil, fmt.Errorf("Failed to list clusters: %v", err)
 		}
 
 		clusterInfoList = append(clusterInfoList, listClustersOutput.ClusterInfoList...)
@@ -247,7 +247,7 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 		nextToken = listClustersOutput.NextToken
 	}
 
-	slog.Info("✨ found clusters", "count", len(clusterInfoList))
+	slog.Info("✅ found clusters", "count", len(clusterInfoList))
 
 	return clusterInfoList, nil
 }
@@ -282,7 +282,7 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 		nextToken = output.NextToken
 	}
 
-	slog.Info("✨ found configurations", "count", len(configurations))
+	slog.Info("✅ found configurations", "count", len(configurations))
 
 	return configurations, nil
 }
@@ -312,7 +312,7 @@ func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResu
 		nextToken = output.NextToken
 	}
 
-	slog.Info("✨ found topics", "count", len(topics))
+	slog.Info("✅ found topics", "count", len(topics))
 	return topics, nil
 }
 
@@ -408,7 +408,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 		}
 	}
 
-	slog.Info("✨ discovered topics", "count", len(topicDetails))
+	slog.Info("✅ discovered topics", "count", len(topicDetails))
 	return topicDetails, nil
 }
 

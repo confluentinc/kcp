@@ -18,6 +18,7 @@ var (
 	targetClusterRestEndpoint string
 	outputDir                 string
 	skipAuditReport           bool
+	preventDestroy            bool
 )
 
 func NewConvertKafkaAclsCmd() *cobra.Command {
@@ -45,6 +46,7 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform ACL assets will be written to")
 	optionalFlags.BoolVar(&skipAuditReport, "skip-audit-report", false, "Skip generating an audit report of the converted ACLs")
+	optionalFlags.BoolVar(&preventDestroy, "prevent-destroy", true, "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources")
 	aclsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -123,6 +125,7 @@ func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
 		TargetClusterRestEndpoint: targetClusterRestEndpoint,
 		OutputDir:                 outputDir,
 		SkipAuditReport:           skipAuditReport,
+		PreventDestroy:            preventDestroy,
 	}
 
 	return &opts, nil

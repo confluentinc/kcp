@@ -95,10 +95,10 @@ type ConnectTlsAuth struct {
 type MigrationType int
 
 const (
-	PublicMskEndpoints                       MigrationType = 1
-	ExternalOutboundClusterLink              MigrationType = 2
-	JumpClusterSaslScram MigrationType = 3
-	JumpClusterIam       MigrationType = 4
+	PublicMskEndpoints          MigrationType = 1
+	ExternalOutboundClusterLink MigrationType = 2
+	JumpClusterSaslScram        MigrationType = 3
+	JumpClusterIam              MigrationType = 4
 )
 
 func (m MigrationType) IsValid() bool {
@@ -127,27 +127,28 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	AwsRegion        string   `json:"aws_region"`
-	NeedsEnvironment bool     `json:"needs_environment"`
-	EnvironmentName  string   `json:"environment_name"`
-	EnvironmentId    string   `json:"environment_id"`
-	NeedsCluster     bool     `json:"needs_cluster"`
-	ClusterName      string   `json:"cluster_name"`
-	ClusterType         string `json:"cluster_type"`
-	ClusterAvailability string `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
-	ClusterCku          int    `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
-	NeedsPrivateLink    bool   `json:"needs_private_link"`
-	PreventDestroy      bool   `json:"prevent_destroy"`
-	VpcId            string   `json:"vpc_id"`
-	SubnetCidrRanges []string `json:"subnet_cidr_ranges"`
+	AwsRegion           string   `json:"aws_region"`
+	NeedsEnvironment    bool     `json:"needs_environment"`
+	EnvironmentName     string   `json:"environment_name"`
+	EnvironmentId       string   `json:"environment_id"`
+	NeedsCluster        bool     `json:"needs_cluster"`
+	ClusterName         string   `json:"cluster_name"`
+	ClusterType         string   `json:"cluster_type"`
+	ClusterAvailability string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
+	ClusterCku          int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
+	NeedsPrivateLink    bool     `json:"needs_private_link"`
+	PreventDestroy      bool     `json:"prevent_destroy"`
+	VpcId               string   `json:"vpc_id"`
+	SubnetCidrRanges    []string `json:"subnet_cidr_ranges"`
 }
 
 type TerraformFiles struct {
-	MainTf           string `json:"main.tf"`
-	ProvidersTf      string `json:"providers.tf"`
-	VariablesTf      string `json:"variables.tf"`
-	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
-	OutputsTf        string `json:"outputs.tf"`
+	MainTf           string            `json:"main.tf"`
+	ProvidersTf      string            `json:"providers.tf"`
+	VariablesTf      string            `json:"variables.tf"`
+	InputsAutoTfvars string            `json:"inputs.auto.tfvars"`
+	OutputsTf        string            `json:"outputs.tf"`
+	PerPrincipalTf   map[string]string `json:"per_principal_tf,omitempty"`
 }
 
 type TerraformVariable struct {
@@ -212,6 +213,7 @@ type MigrateAclsRequest struct {
 	SelectedPrincipals        []string `json:"selected_principals"`
 	TargetClusterId           string   `json:"target_cluster_id"`
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
+	PreventDestroy            bool     `json:"prevent_destroy"`
 
 	MskRegion     string `json:"msk_region"`
 	MskClusterArn string `json:"msk_cluster_arn"`

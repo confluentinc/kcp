@@ -101,7 +101,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	for _, connector := range mc.Connectors {
 		translatedConfig, warnings, err := mc.translateConnectorConfig(connector)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("❌ Failed to translate connector %s: %v", connector.Name, err))
+			slog.Warn(fmt.Sprintf("⚠️ Failed to translate connector %s: %v", connector.Name, err))
 			continue
 		}
 

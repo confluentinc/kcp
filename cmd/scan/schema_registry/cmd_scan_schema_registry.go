@@ -86,24 +86,24 @@ func preRunScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 	opts, err := parseScanSchemaRegistryOpts()
 	if err != nil {
-		return fmt.Errorf("❌ failed to parse scan schema registry opts: %v", err)
+		return fmt.Errorf("failed to parse scan schema registry opts: %v", err)
 	}
 
 	authOption, err := getAuthOptionFromFlags()
 	if err != nil {
-		return fmt.Errorf("❌ failed to get auth option: %v", err)
+		return fmt.Errorf("failed to get auth option: %v", err)
 	}
 
 	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, authOption)
 	if err != nil {
-		return fmt.Errorf("❌ failed to create schema registry client: %v", err)
+		return fmt.Errorf("failed to create schema registry client: %v", err)
 	}
 
 	schemaRegistryService := schema_registry.NewSchemaRegistryService(schemaRegistryClient)
 
 	schemaRegistryScanner := NewSchemaRegistryScanner(schemaRegistryService, *opts)
 	if err := schemaRegistryScanner.Run(); err != nil {
-		return fmt.Errorf("❌ failed to scan schema registry: %v", err)
+		return fmt.Errorf("failed to scan schema registry: %v", err)
 	}
 
 	slog.Info("✅ successfully scanned schema registry")

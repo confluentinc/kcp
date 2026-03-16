@@ -28,10 +28,10 @@ func NewReverseProxyAssetGenerator(opts ReverseProxyOpts) *ReverseProxyAssetGene
 }
 
 func (rp *ReverseProxyAssetGenerator) Run() error {
-	slog.Info("🏁 generating reverse proxy assets")
+	slog.Info("🚀 generating reverse proxy assets")
 
 	outputDir := "reverse_proxy"
-	slog.Info("📁 creating reverse proxy directory", "directory", outputDir)
+	slog.Info("🔍 creating reverse proxy directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create reverse proxy directory: %w", err)
 	}

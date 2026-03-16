@@ -3,6 +3,7 @@ package costs
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -113,6 +114,9 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 	for _, regionData := range regionCostData {
 		r.addRegionSection(md, regionData.Region, regionData)
 	}
+
+	// Add query details section at the end
+	r.addQueryDetails(md, regionCostData)
 
 	return md
 }
@@ -311,6 +315,80 @@ func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedR
 	}
 
 	return totals
+}
+
+func (r *CostReporter) addQueryDetails(md *markdown.Markdown, regionCostData []types.ProcessedRegionCosts) {
+	// Return early if no region data
+	if len(regionCostData) == 0 {
+		return
+	}
+
+	// Get query info from first region (query shape is identical across regions)
+	queryInfo := regionCostData[0].QueryInfo
+
+	// Collect all region names
+	var regionNames []string
+	for _, regionData := range regionCostData {
+		regionNames = append(regionNames, regionData.Region)
+	}
+
+	// Add heading
+	md.AddHeading("Query Details", 2)
+
+	// Add time range
+	md.AddParagraph(fmt.Sprintf("**Time Range:** %s to %s",
+		queryInfo.TimePeriod.Start,
+		queryInfo.TimePeriod.End))
+
+	// Add granularity
+	md.AddParagraph(fmt.Sprintf("**Granularity:** %s", queryInfo.Granularity))
+
+	// Add services as bullet list
+	if len(queryInfo.Services) > 0 {
+		md.AddParagraph("**Services:**")
+		md.AddList(queryInfo.Services)
+	}
+
+	// Add regions
+	md.AddParagraph(fmt.Sprintf("**Regions:** %s", strings.Join(regionNames, ", ")))
+
+	// Add group by
+	if len(queryInfo.GroupBy) > 0 {
+		md.AddParagraph(fmt.Sprintf("**Group By:** %s", strings.Join(queryInfo.GroupBy, ", ")))
+	}
+
+	// Add metrics as bullet list
+	if len(queryInfo.Metrics) > 0 {
+		md.AddParagraph("**Metrics:**")
+		md.AddList(queryInfo.Metrics)
+	}
+
+	// Add tags if present
+	if len(queryInfo.Tags) > 0 {
+		var tagPairs []string
+		for key, values := range queryInfo.Tags {
+			tagPairs = append(tagPairs, fmt.Sprintf("%s=%s", key, strings.Join(values, ",")))
+		}
+		md.AddParagraph(fmt.Sprintf("**Tags:** %s", strings.Join(tagPairs, ", ")))
+	}
+
+	// Add AWS CLI command as code block
+	if queryInfo.AWSCLICommand != "" {
+		md.AddCodeBlock(queryInfo.AWSCLICommand, "bash")
+	}
+
+	// Add console URL
+	if queryInfo.ConsoleURL != "" {
+		md.AddParagraph(fmt.Sprintf("**AWS Console:** [Open in Cost Explorer](%s)", queryInfo.ConsoleURL))
+	}
+
+	// Add aggregation note in italics
+	if queryInfo.AggregationNote != "" {
+		md.AddParagraph(fmt.Sprintf("*%s*", queryInfo.AggregationNote))
+	}
+
+	// Add separator
+	md.AddParagraph("---")
 }
 
 func (r *CostReporter) formatCurrency(value *float64) string {

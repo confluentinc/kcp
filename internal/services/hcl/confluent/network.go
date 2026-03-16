@@ -25,7 +25,7 @@ func GenerateNetworkResource(tfResourceName, regionVarName, environmentIdRef str
 	networkBlock.Body().AppendBlock(dnsConfigBlock)
 	networkBlock.Body().AppendNewline()
 
-	utils.GenerateLifecycleBlock(networkBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(networkBlock, "prevent_destroy", preventDestroy)
 
 	return networkBlock
 }
