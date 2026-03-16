@@ -91,6 +91,7 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 // ValidateGatewayCRs validates that the initial, fenced, and switchover gateway CRs are consistent
 func (s *K8sService) ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error {
 	// TODO: implement cross-CR validation
+	slog.Warn("gateway CR validation not yet implemented, skipping")
 	return nil
 }
 
@@ -397,40 +398,3 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// GatewayResource represents the Kubernetes Gateway CRD structure
-type GatewayResource struct {
-	Spec GatewaySpec `yaml:"spec"`
-}
-
-type GatewaySpec struct {
-	StreamingDomains []StreamingDomain `yaml:"streamingDomains"`
-	Routes           []Route           `yaml:"routes"`
-}
-
-type StreamingDomain struct {
-	Name string `yaml:"name"`
-}
-
-type Route struct {
-	Name            string          `yaml:"name"`
-	StreamingDomain StreamingDomain `yaml:"streamingDomain"`
-	Security        Security        `yaml:"security"`
-}
-
-type Security struct {
-	Auth    string  `yaml:"auth"`
-	Client  Client  `yaml:"client"`
-	Cluster Cluster `yaml:"cluster"`
-}
-
-type Client struct {
-	Authentication Authentication `yaml:"authentication"`
-}
-
-type Cluster struct {
-	Authentication Authentication `yaml:"authentication"`
-}
-
-type Authentication struct {
-	Type string `yaml:"type"`
-}

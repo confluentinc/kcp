@@ -18,6 +18,11 @@ func NewOffsetService(client sarama.Client) *Service {
 	return &Service{client: client}
 }
 
+// Close closes the underlying Kafka client.
+func (t *Service) Close() error {
+	return t.client.Close()
+}
+
 // Get fetches the log end offset (LEO) for every partition of a topic.
 // Requests are batched by leader broker for efficiency.
 func (t *Service) Get(topic string) (map[int32]int64, error) {

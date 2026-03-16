@@ -98,11 +98,13 @@ func runMigrationStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer sourceOffset.Close()
 
 	destinationOffset, err := createDestinationOffset(ccBootstrap, apiKey, apiSecret)
 	if err != nil {
 		return err
 	}
+	defer destinationOffset.Close()
 
 	clConfig := clusterlink.Config{
 		RestEndpoint: restEndpoint,

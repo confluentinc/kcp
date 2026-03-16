@@ -47,12 +47,14 @@ func (m *MigrationExecutor) Run() error {
 	if err != nil {
 		return err
 	}
+	defer sourceOffset.Close()
 
 	// Create destination Kafka client (CC)
 	destinationOffset, err := m.createDestinationOffset()
 	if err != nil {
 		return err
 	}
+	defer destinationOffset.Close()
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(http.DefaultClient)

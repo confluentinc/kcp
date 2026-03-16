@@ -3,7 +3,7 @@ package list
 import (
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -54,10 +54,7 @@ func (ml *MigrationLister) Run() error {
 	// We'll use the migration ID timestamp if available, otherwise just reverse order
 	sortedMigrations := make([]types.MigrationConfig, len(migrations))
 	copy(sortedMigrations, migrations)
-	sort.SliceStable(sortedMigrations, func(i, j int) bool {
-		// Reverse order (newest first)
-		return i > j
-	})
+	slices.Reverse(sortedMigrations)
 
 	// Display each migration
 	for idx, migration := range sortedMigrations {

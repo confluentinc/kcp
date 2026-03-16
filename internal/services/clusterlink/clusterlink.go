@@ -278,7 +278,7 @@ func HasActiveTopicsWithNonZeroLag(mirrors []MirrorTopic) bool {
 			continue
 		}
 		for _, lag := range mirror.MirrorLags {
-			slog.Info("mirror topic", "topic", mirror.MirrorTopicName, "lag", lag.Lag, "partition", lag.Partition)
+			slog.Debug("mirror topic", "topic", mirror.MirrorTopicName, "lag", lag.Lag, "partition", lag.Partition)
 			if lag.Lag != 0 {
 				return true
 			}

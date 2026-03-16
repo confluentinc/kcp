@@ -10,7 +10,7 @@ import (
 )
 
 func NewMigrationCmd() *cobra.Command {
-	migraitonCmd := &cobra.Command{
+	migrationCmd := &cobra.Command{
 		Use:           "migration",
 		Short:         "Commands for migrating using CPC Gateway.",
 		Long:          "Commands for migrating using CPC Gateway.",
@@ -18,12 +18,12 @@ func NewMigrationCmd() *cobra.Command {
 		Args:          cobra.NoArgs,
 	}
 
-	migraitonCmd.AddCommand(
+	migrationCmd.AddCommand(
 		i.NewMigrationInitCmd(),
 		execute.NewMigrationExecuteCmd(),
 		status.NewMigrationStatusCmd(),
 		list.NewMigrationListCmd(),
 	)
 
-	return migraitonCmd
+	return migrationCmd
 }

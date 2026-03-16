@@ -90,7 +90,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
 	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
-		return fmt.Errorf("migration state file not found: %s\nRun 'kcp migration init' to create a new migration first", migrationStateFile)
+		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
 
 	// Get MigrationConfig by ID with two-level error handling

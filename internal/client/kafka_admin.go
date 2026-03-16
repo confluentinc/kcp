@@ -90,6 +90,7 @@ func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) 
 	case types.AuthTypeTLS:
 		return WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
 	default:
+		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
 		return WithIAMAuth()
 	}
 }

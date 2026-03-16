@@ -3,7 +3,6 @@ package init
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -49,8 +48,5 @@ func (m *MigrationInitializer) Run() error {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 
-	slog.Info("migration initialized",
-		"migrationId", config.MigrationId,
-		"currentState", config.CurrentState)
 	return nil
 }
