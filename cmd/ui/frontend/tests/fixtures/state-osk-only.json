@@ -1,0 +1,65 @@
+{
+  "msk_sources": {
+    "regions": []
+  },
+  "osk_sources": {
+    "clusters": [
+      {
+        "id": "prod-kafka-cluster",
+        "bootstrap_servers": [
+          "broker1.example.com:9092",
+          "broker2.example.com:9092"
+        ],
+        "kafka_admin_client_information": {
+          "topics": {
+            "summary": {
+              "topics": 5,
+              "total_partitions": 15,
+              "internal_topics": 1,
+              "compact_topics": 2
+            },
+            "details": [
+              {
+                "name": "orders",
+                "partitions": 3,
+                "replication_factor": 2,
+                "configurations": {
+                  "cleanup.policy": "delete"
+                }
+              }
+            ]
+          },
+          "acls": [
+            {
+              "ResourceType": "TOPIC",
+              "ResourceName": "orders",
+              "ResourcePatternType": "LITERAL",
+              "Principal": "User:alice",
+              "Host": "*",
+              "Operation": "READ",
+              "PermissionType": "ALLOW"
+            }
+          ]
+        },
+        "discovered_clients": [],
+        "metadata": {
+          "environment": "production",
+          "location": "datacenter-1",
+          "kafka_version": "3.6.0",
+          "labels": {
+            "team": "platform",
+            "cost-center": "engineering"
+          },
+          "last_scanned": "2026-03-06T10:00:00Z"
+        }
+      }
+    ]
+  },
+  "schema_registries": [],
+  "kcp_build_info": {
+    "version": "dev",
+    "commit": "abc123",
+    "date": "2026-03-06"
+  },
+  "timestamp": "2026-03-06T10:00:00Z"
+}
