@@ -18,7 +18,7 @@ cd /home/ec2-user/
 echo "auto.create.mirror.topics.enable=true
 bootstrap.servers=${source_cluster_bootstrap_brokers}
 security.protocol=SASL_SSL
-sasl.mechanism=SCRAM-SHA-512
+sasl.mechanism=${source_sasl_scram_mechanism}
 sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required \
   username=\"${source_sasl_scram_username}\" \
   password=\"${source_sasl_scram_password}\";" > /home/ec2-user/client.properties

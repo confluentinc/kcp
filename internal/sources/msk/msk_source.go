@@ -129,6 +129,11 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 		return nil, fmt.Errorf("failed to scan Kafka resources: %v", err)
 	}
 
+	// Store the SASL mechanism used to connect (if applicable)
+	if authType == types.AuthTypeSASLSCRAM && clusterAuth.AuthMethod.SASLScram != nil {
+		kafkaAdminInfo.SaslMechanism = types.NormalizeSaslMechanism(clusterAuth.AuthMethod.SASLScram.Mechanism)
+	}
+
 	slog.Info(fmt.Sprintf("broker scan complete for %s", clusterAuth.Arn))
 
 	return &sources.ClusterScanResult{

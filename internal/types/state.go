@@ -298,6 +298,11 @@ func (c *KafkaAdminClientInformation) MergeFrom(other KafkaAdminClientInformatio
 		c.ClusterID = other.ClusterID
 	}
 
+	// Only use old SaslMechanism if new one is empty
+	if c.SaslMechanism == "" {
+		c.SaslMechanism = other.SaslMechanism
+	}
+
 	// Merge Topics: new topics take precedence, old topics preserved if not re-discovered
 	c.Topics = mergeTopics(c.Topics, other.Topics)
 
@@ -564,6 +569,7 @@ type SelfManagedConnectors struct {
 type KafkaAdminClientInformation struct {
 	ClusterID             string                 `json:"cluster_id"`
 	DiscoveredBrokers     []string               `json:"discovered_brokers,omitempty"`
+	SaslMechanism         string                 `json:"sasl_mechanism,omitempty"`
 	Topics                *Topics                `json:"topics"`
 	Acls                  []Acls                 `json:"acls"`
 	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`

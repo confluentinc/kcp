@@ -147,6 +147,11 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 		return nil, fmt.Errorf("failed to scan Kafka resources: %w", err)
 	}
 
+	// Store the SASL mechanism used to connect (if applicable)
+	if authType == types.AuthTypeSASLSCRAM && clusterCreds.AuthMethod.SASLScram != nil {
+		kafkaAdminInfo.SaslMechanism = types.NormalizeSaslMechanism(clusterCreds.AuthMethod.SASLScram.Mechanism)
+	}
+
 	metadata := types.OSKClusterMetadata{
 		Environment: clusterCreds.Metadata.Environment,
 		Location:    clusterCreds.Metadata.Location,

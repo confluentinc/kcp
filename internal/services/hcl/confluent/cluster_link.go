@@ -27,7 +27,7 @@ SASL/SCRAM only supports the 'SCRAM-SHA-512' mechanism.
 Error: error creating Cluster Link: 401 Unauthorized: Unable to validate cluster link due to error: Client SASL mechanism
 'PLAIN' not enabled in the server, enabled mechanisms are [SCRAM-SHA-512]
 */
-func GenerateClusterLinkResource(tfResourceName, sourceClusterIdVarName, targetClusterIdVarName, targetClusterRestEndpointVarName, clusterLinkNameVarName, sourceSaslScramBootstrapServersVarName, sourceSaslScramUsernameVarName, sourceSaslScramPasswordVarName string) *hclwrite.Block {
+func GenerateClusterLinkResource(tfResourceName, sourceClusterIdVarName, targetClusterIdVarName, targetClusterRestEndpointVarName, clusterLinkNameVarName, sourceSaslScramBootstrapServersVarName, sourceSaslScramMechanismVarName, sourceSaslScramUsernameVarName, sourceSaslScramPasswordVarName string) *hclwrite.Block {
 	resourceBlock := hclwrite.NewBlock("resource", []string{"null_resource", tfResourceName})
 
 	triggersMap := map[string]hclwrite.Tokens{
@@ -37,6 +37,7 @@ func GenerateClusterLinkResource(tfResourceName, sourceClusterIdVarName, targetC
 		"basic_auth_credentials":       utils.TokensForResourceReference("local.basic_auth_credentials"),
 		"target_cluster_rest_endpoint": utils.TokensForVarReference(targetClusterRestEndpointVarName),
 		"link_name":                    utils.TokensForVarReference(clusterLinkNameVarName),
+		"source_sasl_scram_mechanism":  utils.TokensForVarReference(sourceSaslScramMechanismVarName),
 		"source_sasl_scram_username":   utils.TokensForVarReference(sourceSaslScramUsernameVarName),
 		"source_sasl_scram_password":   utils.TokensForVarReference(sourceSaslScramPasswordVarName),
 	}
@@ -101,7 +102,7 @@ func generateCreateClusterLinkCurlCommand(triggersMap map[string]hclwrite.Tokens
       },
       {
         "name": "sasl.mechanism",
-        "value": "SCRAM-SHA-512"
+        "value": "${self.triggers.source_sasl_scram_mechanism}"
       },
       {
         "name": "sasl.jaas.config",

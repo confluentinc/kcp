@@ -186,6 +186,7 @@ type MigrationWizardRequest struct {
 	SourceClusterId                  string `json:"source_cluster_id"`
 	JumpClusterIamAuthRoleName       string `json:"jump_cluster_iam_auth_role_name"`
 	SourceSaslScramBootstrapServers  string `json:"source_sasl_scram_bootstrap_servers"`
+	SourceSaslScramMechanism        string `json:"source_sasl_scram_mechanism"`
 	SourceSaslIamBootstrapServers    string `json:"source_sasl_iam_bootstrap_servers"`
 	SourceRegion                     string `json:"source_region"`
 	TargetEnvironmentId              string `json:"target_environment_id"`

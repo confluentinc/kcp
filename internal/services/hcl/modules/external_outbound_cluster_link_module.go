@@ -131,6 +131,20 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			FromModuleOutput: "",
 		},
 		{
+			Name: "source_sasl_scram_mechanism",
+			Definition: types.TerraformVariable{
+				Name:        "source_sasl_scram_mechanism",
+				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceSaslScramMechanism
+			},
+			Condition:        nil,
+			FromModuleOutput: "",
+		},
+		{
 			Name: "source_sasl_scram_username",
 			Definition: types.TerraformVariable{
 				Name:        "source_sasl_scram_username",

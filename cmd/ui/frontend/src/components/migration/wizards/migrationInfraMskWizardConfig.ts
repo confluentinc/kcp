@@ -93,6 +93,11 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringPublicSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (public) from statefile.'
               },
+              source_sasl_scram_mechanism: {
+                type: 'string',
+                title: 'Source SASL/SCRAM Mechanism',
+                default: cluster?.kafka_admin_client_information?.sasl_mechanism || 'SCRAM-SHA-512',
+              },
             },
             required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers'],
           },
@@ -102,6 +107,9 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'ui:disabled': true,
             },
             source_sasl_scram_bootstrap_servers: {
+              'ui:disabled': true,
+            },
+            source_sasl_scram_mechanism: {
               'ui:disabled': true,
             },
           },
@@ -196,6 +204,11 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (public) from statefile.'
               },
+              source_sasl_scram_mechanism: {
+                type: 'string',
+                title: 'Source SASL/SCRAM Mechanism',
+                default: cluster?.kafka_admin_client_information?.sasl_mechanism || 'SCRAM-SHA-512',
+              },
               vpc_id: {
                 type: 'string',
                 title: 'VPC ID',
@@ -262,6 +275,9 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             },
             source_sasl_scram_bootstrap_servers: {
               'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
+            source_sasl_scram_mechanism: {
               'ui:disabled': true,
             },
             vpc_id: {
@@ -461,6 +477,11 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                 title: 'MSK Bootstrap Servers',
                 default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringSaslScram || 'failed to retrieve MSK SASL/SCRAM bootstrap servers (private) from statefile.'
               },
+              source_sasl_scram_mechanism: {
+                type: 'string',
+                title: 'Source SASL/SCRAM Mechanism',
+                default: cluster?.kafka_admin_client_information?.sasl_mechanism || 'SCRAM-SHA-512',
+              },
               source_region: {
                 type: 'string',
                 title: 'MSK Region',
@@ -476,6 +497,9 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'ui:disabled': true,
             },
             source_sasl_scram_bootstrap_servers: {
+              'ui:disabled': true,
+            },
+            source_sasl_scram_mechanism: {
               'ui:disabled': true,
             },
             source_region: {

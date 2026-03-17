@@ -216,6 +216,21 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			},
 		},
 		{
+			Name: "source_sasl_scram_mechanism",
+			Definition: types.TerraformVariable{
+				Name:        "source_sasl_scram_mechanism",
+				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceSaslScramMechanism
+			},
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.JumpClusterAuthType == "sasl_scram"
+			},
+		},
+		{
 			Name: "cluster_link_name",
 			Definition: types.TerraformVariable{
 				Name:        "cluster_link_name",

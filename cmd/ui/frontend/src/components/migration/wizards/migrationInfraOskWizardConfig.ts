@@ -7,6 +7,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
 
   const bootstrapServers = cluster?.bootstrap_servers?.join(',') || ''
   const kafkaClusterId = cluster?.kafka_admin_client_information?.cluster_id || ''
+  const saslMechanism = cluster?.kafka_admin_client_information?.sasl_mechanism || ''
 
   // Build broker data from bootstrap servers for external outbound path
   const sourceKafkaBrokers = (cluster?.bootstrap_servers || []).map((server: string, index: number) => {
@@ -88,6 +89,11 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 title: 'Source Kafka Bootstrap Servers',
                 default: bootstrapServers || undefined,
               },
+              source_sasl_scram_mechanism: {
+                type: 'string',
+                title: 'Source SASL/SCRAM Mechanism',
+                default: saslMechanism || undefined,
+              },
             },
             required: ['target_cluster_id', 'target_rest_endpoint', 'cluster_link_name', 'source_cluster_id', 'source_sasl_scram_bootstrap_servers'],
           },
@@ -101,6 +107,9 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
             },
             source_sasl_scram_bootstrap_servers: {
               'ui:disabled': !!bootstrapServers,
+            },
+            source_sasl_scram_mechanism: {
+              'ui:placeholder': 'e.g., SCRAM-SHA-256 or SCRAM-SHA-512',
             },
           },
         },
@@ -193,6 +202,11 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 title: 'Source Kafka Bootstrap Servers',
                 default: bootstrapServers || undefined,
               },
+              source_sasl_scram_mechanism: {
+                type: 'string',
+                title: 'Source SASL/SCRAM Mechanism',
+                default: saslMechanism || undefined,
+              },
               vpc_id: {
                 type: 'string',
                 title: 'VPC ID',
@@ -261,6 +275,9 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
             source_sasl_scram_bootstrap_servers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
+            },
+            source_sasl_scram_mechanism: {
+              'ui:placeholder': 'e.g., SCRAM-SHA-256 or SCRAM-SHA-512',
             },
             vpc_id: {
               'ui:placeholder': 'e.g., vpc-xxxxxxxx',
@@ -423,6 +440,11 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 title: 'Source Kafka Bootstrap Servers',
                 default: bootstrapServers || undefined,
               },
+              source_sasl_scram_mechanism: {
+                type: 'string',
+                title: 'Source SASL/SCRAM Mechanism',
+                default: saslMechanism || undefined,
+              },
               source_region: {
                 type: 'string',
                 title: 'AWS Region',
@@ -442,6 +464,9 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
             },
             source_sasl_scram_bootstrap_servers: {
               'ui:disabled': !!bootstrapServers,
+            },
+            source_sasl_scram_mechanism: {
+              'ui:placeholder': 'e.g., SCRAM-SHA-256 or SCRAM-SHA-512',
             },
             source_region: {
               'ui:placeholder': 'e.g., us-east-1',

@@ -28,7 +28,7 @@ curl --request POST \
       },
       {
         "name": "sasl.mechanism",
-        "value": "SCRAM-SHA-512"
+        "value": "${source_sasl_scram_mechanism}"
       },
       {
         "name": "sasl.jaas.config",

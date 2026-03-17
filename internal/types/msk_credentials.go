@@ -216,3 +216,17 @@ type SASLScramConfig struct {
 	Password  string `yaml:"password"`
 	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512". MSK requires "SHA512", OSK commonly uses "SHA256"
 }
+
+// NormalizeSaslMechanism converts shorthand mechanism values (e.g. "SHA256")
+// to the Kafka-standard format (e.g. "SCRAM-SHA-256").
+// Returns empty string for empty input.
+func NormalizeSaslMechanism(mechanism string) string {
+	switch mechanism {
+	case "SHA256", "SCRAM-SHA-256":
+		return "SCRAM-SHA-256"
+	case "SHA512", "SCRAM-SHA-512":
+		return "SCRAM-SHA-512"
+	default:
+		return mechanism
+	}
+}

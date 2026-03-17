@@ -176,6 +176,7 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 	targetClusterRestEndpointVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_rest_endpoint")
 	clusterLinkVarName := modules.GetModuleVariableName("cluster_link", "cluster_link_name")
 	sourceSaslScramBootstrapServersVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_bootstrap_servers")
+	sourceSaslScramMechanismVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_mechanism")
 	sourceSaslScramUsernameVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_username")
 	sourceSaslScramPasswordVarName := modules.GetModuleVariableName("cluster_link", "source_sasl_scram_password")
 
@@ -195,6 +196,7 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 		targetClusterRestEndpointVarName,
 		clusterLinkVarName,
 		sourceSaslScramBootstrapServersVarName,
+		sourceSaslScramMechanismVarName,
 		sourceSaslScramUsernameVarName,
 		sourceSaslScramPasswordVarName,
 	))
@@ -479,6 +481,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	rootBody.AppendNewline()
 
 	if request.JumpClusterAuthType == "sasl_scram" {
+		sourceSaslScramMechanismVarName := modules.GetModuleVariableName("jump_cluster", "source_sasl_scram_mechanism")
 		sourceSaslScramUsernameVarName := modules.GetModuleVariableName("jump_cluster", "source_sasl_scram_username")
 		sourceSaslScramPasswordVarName := modules.GetModuleVariableName("jump_cluster", "source_sasl_scram_password")
 
@@ -500,6 +503,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(targetApiSecretVarName),
 				"source_cluster_id":                          utils.TokensForVarReference(sourceClusterIdVarName),
 				"source_cluster_bootstrap_brokers":           utils.TokensForVarReference(sourceBootstrapBrokersVarName),
+				"source_sasl_scram_mechanism":                utils.TokensForVarReference(sourceSaslScramMechanismVarName),
 				"source_sasl_scram_username":                 utils.TokensForVarReference(sourceSaslScramUsernameVarName),
 				"source_sasl_scram_password":                 utils.TokensForVarReference(sourceSaslScramPasswordVarName),
 				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
@@ -801,6 +805,7 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 	clusterLinkNameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "cluster_link_name")
 	sourceClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_cluster_id")
 	sourceClusterBootstrapBrokersVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_cluster_bootstrap_servers")
+	sourceSaslScramMechanismVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_sasl_scram_mechanism")
 	sourceSaslScramUsernameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_sasl_scram_username")
 	sourceSaslScramPasswordVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "source_sasl_scram_password")
 
@@ -825,15 +830,16 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 		"create-external-outbound-cluster-link.tpl",
 		false,
 		map[string]hclwrite.Tokens{
-			"target_cluster_api_key":          utils.TokensForVarReference(targetClusterApiKeyVarName),
-			"target_cluster_api_secret":       utils.TokensForVarReference(targetClusterApiSecretVarName),
-			"target_cluster_rest_endpoint":    utils.TokensForVarReference(targetClusterRestEndpointVarName),
-			"target_cluster_id":               utils.TokensForVarReference(targetClusterIdVarName),
-			"cluster_link_name":               utils.TokensForVarReference(clusterLinkNameVarName),
-			"source_cluster_id":               utils.TokensForVarReference(sourceClusterIdVarName),
+			"target_cluster_api_key":           utils.TokensForVarReference(targetClusterApiKeyVarName),
+			"target_cluster_api_secret":        utils.TokensForVarReference(targetClusterApiSecretVarName),
+			"target_cluster_rest_endpoint":     utils.TokensForVarReference(targetClusterRestEndpointVarName),
+			"target_cluster_id":                utils.TokensForVarReference(targetClusterIdVarName),
+			"cluster_link_name":                utils.TokensForVarReference(clusterLinkNameVarName),
+			"source_cluster_id":                utils.TokensForVarReference(sourceClusterIdVarName),
 			"source_cluster_bootstrap_brokers": utils.TokensForVarReference(sourceClusterBootstrapBrokersVarName),
-			"source_sasl_scram_username":      utils.TokensForVarReference(sourceSaslScramUsernameVarName),
-			"source_sasl_scram_password":      utils.TokensForVarReference(sourceSaslScramPasswordVarName),
+			"source_sasl_scram_mechanism":      utils.TokensForVarReference(sourceSaslScramMechanismVarName),
+			"source_sasl_scram_username":       utils.TokensForVarReference(sourceSaslScramUsernameVarName),
+			"source_sasl_scram_password":       utils.TokensForVarReference(sourceSaslScramPasswordVarName),
 		},
 		nil,
 	))
