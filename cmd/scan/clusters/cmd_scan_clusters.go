@@ -276,8 +276,11 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 		}
 
 		if existingCluster, exists := existingClusters[newCluster.ID]; exists {
-			// Merge with existing cluster (preserve discovered clients, etc.)
+			// Merge with existing cluster (preserve discovered clients, JMX metrics, etc.)
 			newCluster.DiscoveredClients = existingCluster.DiscoveredClients
+			if newCluster.JMXMetrics == nil {
+				newCluster.JMXMetrics = existingCluster.JMXMetrics
+			}
 
 			// Replace in-place
 			*existingCluster = newCluster
