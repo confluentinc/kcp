@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-up-jmx test-env-down test-integration-osk test-all-envs test-certs-generate
+.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-up-jmx test-env-up-jmx-auth test-env-down test-integration-osk test-all-envs test-certs-generate
 
 # Build the frontend
 build-frontend:
@@ -175,6 +175,15 @@ test-env-up-jmx:
 	@echo "  Kafka:   localhost:9096"
 	@echo "  Jolokia: http://localhost:8778/jolokia"
 
+test-env-up-jmx-auth:
+	@echo "Starting JMX Kafka test environment (password-authenticated Jolokia)..."
+	docker-compose -f test/docker/docker-compose-jmx-auth.yml up -d
+	@bash test/docker/scripts/wait-for-kafka.sh localhost 9097
+	@bash test/docker/scripts/setup-test-data-jmx.sh localhost:9097
+	@echo "JMX environment is ready on port 9097"
+	@echo "  Kafka:   localhost:9097"
+	@echo "  Jolokia: http://localhost:8779/jolokia (user: monitorUser, pass: monitorPass)"
+
 test-env-down:
 	@echo "Stopping all test environments..."
 	docker-compose -f test/docker/docker-compose-schema-registry.yml down -v 2>/dev/null || true
@@ -183,6 +192,7 @@ test-env-down:
 	docker-compose -f test/docker/docker-compose-sasl.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-tls.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-jmx.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-jmx-auth.yml down -v 2>/dev/null || true
 
 test-integration-osk: test-env-up-plaintext
 	@echo "Running OSK integration tests (ZooKeeper mode)..."

@@ -3,7 +3,7 @@
 
 set -e
 
-BOOTSTRAP="localhost:9096"
+BOOTSTRAP="${1:-localhost:9096}"
 
 echo "Setting up test data on $BOOTSTRAP"
 
