@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/client"
+	jmx "github.com/confluentinc/kcp/internal/services/jmx"
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/sources/msk"
 	"github.com/confluentinc/kcp/internal/sources/osk"
@@ -24,6 +26,9 @@ var (
 	sourceType      string
 	skipTopics      bool
 	skipACLs        bool
+	jmxEnabled      bool
+	jmxScanDuration string
+	jmxPollInterval string
 )
 
 func NewScanClustersCmd() *cobra.Command {
@@ -50,6 +55,13 @@ func NewScanClustersCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipACLs, "skip-acls", false, "Skip ACL discovery")
 	scanClustersCmd.Flags().AddFlagSet(optionalFlags)
 
+	jmxFlags := pflag.NewFlagSet("jmx", pflag.ExitOnError)
+	jmxFlags.SortFlags = false
+	jmxFlags.BoolVar(&jmxEnabled, "jmx", false, "Enable JMX metrics collection via Jolokia (OSK only)")
+	jmxFlags.StringVar(&jmxScanDuration, "jmx-scan-duration", "", "Duration to collect JMX metrics (e.g. 5m, 30m, 1h). Required when --jmx is set.")
+	jmxFlags.StringVar(&jmxPollInterval, "jmx-poll-interval", "10s", "Polling interval for JMX metrics collection (e.g. 5s, 10s, 30s)")
+	scanClustersCmd.Flags().AddFlagSet(jmxFlags)
+
 	scanClustersCmd.MarkFlagRequired("source-type")
 	scanClustersCmd.MarkFlagRequired("credentials-file")
 
@@ -73,6 +85,28 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 	}
 	if sourceType == "osk" && filepath.Base(credentialsFile) != "osk-credentials.yaml" {
 		slog.Warn("credentials file should be named 'osk-credentials.yaml' for OSK sources", "file", credentialsFile)
+	}
+
+	// Validate JMX flags
+	if jmxEnabled {
+		if sourceType != "osk" {
+			return fmt.Errorf("--jmx is only supported for OSK sources (--source-type osk)")
+		}
+		if jmxScanDuration == "" {
+			return fmt.Errorf("--jmx-scan-duration is required when --jmx is set")
+		}
+		if _, err := time.ParseDuration(jmxScanDuration); err != nil {
+			return fmt.Errorf("invalid --jmx-scan-duration '%s': %w", jmxScanDuration, err)
+		}
+		if _, err := time.ParseDuration(jmxPollInterval); err != nil {
+			return fmt.Errorf("invalid --jmx-poll-interval '%s': %w", jmxPollInterval, err)
+		}
+	}
+	if !jmxEnabled && cmd.Flags().Changed("jmx-scan-duration") {
+		return fmt.Errorf("--jmx-scan-duration requires --jmx to be set")
+	}
+	if !jmxEnabled && cmd.Flags().Changed("jmx-poll-interval") {
+		return fmt.Errorf("--jmx-poll-interval requires --jmx to be set")
 	}
 
 	return nil
@@ -126,6 +160,14 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	// Merge scan results into state
 	if err := mergeResultsIntoState(state, scanResult); err != nil {
 		return fmt.Errorf("failed to merge scan results: %w", err)
+	}
+
+	// Collect JMX metrics if enabled
+	if jmxEnabled && sourceType == "osk" {
+		if err := collectJMXMetrics(ctx, state, credentialsFile); err != nil {
+			slog.Warn("JMX metrics collection failed", "error", err)
+			fmt.Printf("\n⚠️  JMX metrics collection failed: %v\n", err)
+		}
 	}
 
 	// Save updated state
@@ -246,5 +288,51 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 	}
 
 	slog.Info("merged OSK scan results", "clusters", len(result.Clusters))
+	return nil
+}
+
+func collectJMXMetrics(ctx context.Context, state *types.State, credentialsFilePath string) error {
+	creds, errs := types.NewOSKCredentialsFromFile(credentialsFilePath)
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to reload credentials for JMX: %v", errs)
+	}
+
+	duration, _ := time.ParseDuration(jmxScanDuration)
+	interval, _ := time.ParseDuration(jmxPollInterval)
+
+	for _, clusterCreds := range creds.Clusters {
+		if !clusterCreds.HasJMXConfig() {
+			slog.Info("no JMX config for cluster, skipping", "cluster", clusterCreds.ID)
+			continue
+		}
+
+		slog.Info("collecting JMX metrics", "cluster", clusterCreds.ID, "duration", duration, "interval", interval)
+		fmt.Printf("\n📊 Collecting JMX metrics for cluster '%s' (duration: %s, interval: %s)...\n", clusterCreds.ID, duration, interval)
+
+		var jolokiaOpts []client.JolokiaOption
+		if clusterCreds.JMX.Auth != nil {
+			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.JMX.Auth.Username, clusterCreds.JMX.Auth.Password))
+		}
+		if clusterCreds.JMX.TLS != nil {
+			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.JMX.TLS.CACert, clusterCreds.JMX.TLS.InsecureSkipVerify))
+		}
+
+		jmxService := jmx.NewJMXService(clusterCreds.JMX.Endpoints, jolokiaOpts...)
+		metrics, err := jmxService.CollectOverDuration(ctx, duration, interval)
+		if err != nil {
+			slog.Warn("JMX collection failed for cluster", "cluster", clusterCreds.ID, "error", err)
+			continue
+		}
+
+		oskCluster, err := state.GetOSKClusterByID(clusterCreds.ID)
+		if err != nil {
+			slog.Warn("cluster not found in state for JMX metrics", "cluster", clusterCreds.ID, "error", err)
+			continue
+		}
+		oskCluster.JMXMetrics = metrics
+
+		fmt.Printf("   ✅ Collected %d snapshots for cluster '%s'\n", len(metrics.Snapshots), clusterCreds.ID)
+	}
+
 	return nil
 }
