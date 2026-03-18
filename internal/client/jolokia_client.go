@@ -85,7 +85,7 @@ type jolokiaResponse struct {
 func (c *JolokiaClient) ReadMBean(mbeanPath string) (map[string]any, error) {
 	// Construct URL - do NOT URL-encode the mbean path
 	// Jolokia expects the raw ObjectName format in the URL path
-	url := fmt.Sprintf("%s/jolokia/read/%s", c.baseURL, mbeanPath)
+	url := fmt.Sprintf("%s/read/%s", c.baseURL, mbeanPath)
 
 	// Create HTTP request
 	req, err := http.NewRequest("GET", url, nil)

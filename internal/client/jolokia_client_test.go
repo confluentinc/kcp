@@ -13,7 +13,7 @@ import (
 func TestJolokiaClient_ReadMBean_Success(t *testing.T) {
 	// Create a test server that returns a valid Jolokia response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/jolokia/read/kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec", r.URL.Path)
+		assert.Equal(t, "/read/kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec", r.URL.Path)
 		assert.Equal(t, "GET", r.Method)
 
 		response := map[string]any{
@@ -112,7 +112,7 @@ func TestJolokiaClient_ReadMBean_URLEncoding(t *testing.T) {
 	// Verify that MBean paths are NOT URL-encoded (Jolokia expects raw ObjectName format)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The path should contain literal colons and commas, not %3A and %2C
-		expectedPath := "/jolokia/read/kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"
+		expectedPath := "/read/kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"
 		assert.Equal(t, expectedPath, r.URL.Path)
 		assert.NotContains(t, r.URL.Path, "%3A") // colon should not be encoded
 		assert.NotContains(t, r.URL.Path, "%2C") // comma should not be encoded

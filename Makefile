@@ -169,7 +169,7 @@ test-env-up-schema-registry: test-env-up-plaintext
 test-env-up-jmx:
 	@echo "Starting JMX Kafka test environment (unauthenticated Jolokia)..."
 	docker-compose -f test/docker/docker-compose-jmx.yml up -d
-	@bash test/docker/scripts/wait-for-kafka.sh localhost 9096
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9096
 	@bash test/docker/scripts/setup-test-data-jmx.sh
 	@echo "JMX environment is ready on port 9096"
 	@echo "  Kafka:   localhost:9096"
@@ -178,7 +178,7 @@ test-env-up-jmx:
 test-env-up-jmx-auth:
 	@echo "Starting JMX Kafka test environment (password-authenticated Jolokia)..."
 	docker-compose -f test/docker/docker-compose-jmx-auth.yml up -d
-	@bash test/docker/scripts/wait-for-kafka.sh localhost 9097
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9097
 	@bash test/docker/scripts/setup-test-data-jmx.sh localhost:9097
 	@echo "JMX environment is ready on port 9097"
 	@echo "  Kafka:   localhost:9097"
@@ -187,7 +187,7 @@ test-env-up-jmx-auth:
 test-env-up-jmx-tls: test-certs-generate
 	@echo "Starting JMX Kafka test environment (TLS + password-authenticated Jolokia)..."
 	docker-compose -f test/docker/docker-compose-jmx-tls.yml up -d
-	@bash test/docker/scripts/wait-for-kafka.sh localhost 9098
+	@bash test/docker/scripts/wait-for-kafka.sh localhost:9098
 	@bash test/docker/scripts/setup-test-data-jmx.sh localhost:9098
 	@echo "JMX environment is ready on port 9098"
 	@echo "  Kafka:   localhost:9098"

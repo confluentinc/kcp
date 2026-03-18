@@ -39,15 +39,12 @@ services:
     container_name: kcp-test-kafka-jmx-auth-producer
     depends_on:
       - kafka-jmx-auth
-    command: >
-      bash -c "
+    command:
+      - bash
+      - -c
+      - |
         cub kafka-ready -b kafka-jmx-auth:29092 1 60
-        kafka-producer-perf-test --topic test-topic-1 \
-          --throughput 10 \
-          --num-records 999999999 \
-          --record-size 100 \
-          --producer-props bootstrap.servers=kafka-jmx-auth:29092
-      "
+        kafka-producer-perf-test --topic test-topic-1 --throughput 10 --num-records 999999999 --record-size 100 --producer-props bootstrap.servers=kafka-jmx-auth:29092
     networks:
       - kcp-test-network
 
