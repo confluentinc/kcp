@@ -1,0 +1,176 @@
+package jmx
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/types"
+)
+
+// mbeanConfig defines a single MBean to query
+type mbeanConfig struct {
+	Name     string // Metric name (e.g., "BytesInPerSec")
+	MBean    string // MBean path (e.g., "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
+	IsRate   bool   // If true, extract rate fields (OneMinuteRate, etc.); if false, use ValueKey
+	ValueKey string // Key to read from value map when IsRate=false (e.g., "Value")
+}
+
+// mbeans defines all Kafka JMX MBeans to query
+var mbeans = []mbeanConfig{
+	{
+		Name:   "BytesInPerSec",
+		MBean:  "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec",
+		IsRate: true,
+	},
+	{
+		Name:   "BytesOutPerSec",
+		MBean:  "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec",
+		IsRate: true,
+	},
+	{
+		Name:   "MessagesInPerSec",
+		MBean:  "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec",
+		IsRate: true,
+	},
+	{
+		Name:     "PartitionCount",
+		MBean:    "kafka.server:type=ReplicaManager,name=PartitionCount",
+		IsRate:   false,
+		ValueKey: "Value",
+	},
+}
+
+// JMXService collects JMX metrics from Kafka brokers via Jolokia
+type JMXService struct {
+	clients []*client.JolokiaClient
+}
+
+// NewJMXService creates a new JMX service with Jolokia clients for each broker endpoint
+func NewJMXService(endpoints []string, opts ...client.JolokiaOption) *JMXService {
+	clients := make([]*client.JolokiaClient, len(endpoints))
+	for i, endpoint := range endpoints {
+		clients[i] = client.NewJolokiaClient(endpoint, opts...)
+	}
+	return &JMXService{clients: clients}
+}
+
+// CollectSnapshot collects a single snapshot of all JMX metrics
+func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnapshot, error) {
+	snapshot := &types.JMXMetricSnapshot{
+		Timestamp: time.Now(),
+		Metrics:   make(map[string]float64),
+	}
+
+	// Query each MBean across all brokers
+	for _, mb := range mbeans {
+		// Accumulate values across all brokers
+		metricValues := make(map[string]float64)
+
+		for _, client := range s.clients {
+			value, err := client.ReadMBean(mb.MBean)
+			if err != nil {
+				slog.Warn("Failed to read MBean",
+					"mbean", mb.Name,
+					"path", mb.MBean,
+					"error", err)
+				continue
+			}
+
+			if mb.IsRate {
+				// Extract rate fields: OneMinuteRate, FiveMinuteRate, FifteenMinuteRate, Count, MeanRate
+				rateFields := []string{"OneMinuteRate", "FiveMinuteRate", "FifteenMinuteRate", "Count", "MeanRate"}
+				for _, field := range rateFields {
+					if v, ok := value[field]; ok {
+						if f, ok := toFloat64(v); ok {
+							key := fmt.Sprintf("%s_%s", mb.Name, field)
+							metricValues[key] += f
+						}
+					}
+				}
+			} else {
+				// Read single value from ValueKey
+				if v, ok := value[mb.ValueKey]; ok {
+					if f, ok := toFloat64(v); ok {
+						metricValues[mb.Name] += f
+					}
+				}
+			}
+		}
+
+		// Store accumulated values in snapshot
+		for key, value := range metricValues {
+			snapshot.Metrics[key] = value
+		}
+	}
+
+	return snapshot, nil
+}
+
+// CollectOverDuration collects JMX metrics over a specified duration at regular intervals
+func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval time.Duration) (*types.JMXMetrics, error) {
+	startTime := time.Now()
+	metrics := &types.JMXMetrics{
+		ScanDuration:  duration.String(),
+		ScanStartTime: startTime,
+		Snapshots:     make([]types.JMXMetricSnapshot, 0),
+	}
+
+	// Collect first snapshot immediately
+	snapshot, err := s.CollectSnapshot(ctx)
+	if err != nil {
+		slog.Warn("Failed to collect initial JMX snapshot", "error", err)
+	} else {
+		metrics.Snapshots = append(metrics.Snapshots, *snapshot)
+		slog.Info("JMX snapshot collected",
+			"count", len(metrics.Snapshots),
+			"elapsed", time.Since(startTime).Round(time.Second))
+	}
+
+	// Set up ticker for subsequent snapshots
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	deadline := startTime.Add(duration)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return metrics, ctx.Err()
+		case <-ticker.C:
+			// Check if we've exceeded the duration
+			if time.Now().After(deadline) {
+				return metrics, nil
+			}
+
+			// Collect snapshot
+			snapshot, err := s.CollectSnapshot(ctx)
+			if err != nil {
+				slog.Warn("Failed to collect JMX snapshot", "error", err)
+				continue
+			}
+
+			metrics.Snapshots = append(metrics.Snapshots, *snapshot)
+			slog.Info("JMX snapshot collected",
+				"count", len(metrics.Snapshots),
+				"elapsed", time.Since(startTime).Round(time.Second))
+		}
+	}
+}
+
+// toFloat64 converts an interface{} value to float64
+// Handles float64, int, and int64 types from JSON unmarshaling
+func toFloat64(v any) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	default:
+		return 0, false
+	}
+}
