@@ -705,3 +705,155 @@ func TestOSKCredentials_Validate_BootstrapServerEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestOSKCredentials_Validate_ValidJMXConfig(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	if !valid {
+		t.Errorf("expected valid credentials with JMX config, got errors: %v", errs)
+	}
+}
+
+func TestOSKCredentials_Validate_JMXMissingType(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "", // Missing type
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	if valid {
+		t.Error("expected validation to fail when JMX type is missing")
+	}
+}
+
+func TestOSKCredentials_Validate_JMXMissingEndpoints(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{}, // Empty endpoints
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	if valid {
+		t.Error("expected validation to fail when JMX endpoints are missing")
+	}
+}
+
+func TestOSKCredentials_Validate_JMXUnsupportedType(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "prometheus", // Unsupported type
+					Endpoints: []string{"http://broker1:9090/metrics"},
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	if valid {
+		t.Error("expected validation to fail for unsupported JMX type")
+	}
+}
+
+func TestOSKCredentials_Validate_JMXWithAuth(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+					Auth: &JMXAuthConfig{
+						Username: "jmxuser",
+						Password: "jmxpass",
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	if !valid {
+		t.Errorf("expected valid credentials with JMX auth config, got errors: %v", errs)
+	}
+}
+
+func TestOSKCredentials_HasJMXConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		clusterAuth OSKClusterAuth
+		expected    bool
+	}{
+		{
+			name: "has JMX config",
+			clusterAuth: OSKClusterAuth{
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "no JMX config",
+			clusterAuth: OSKClusterAuth{
+				JMX: nil,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.clusterAuth.HasJMXConfig()
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

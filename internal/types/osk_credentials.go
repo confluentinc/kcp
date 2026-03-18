@@ -21,6 +21,7 @@ type OSKClusterAuth struct {
 	AuthMethod            AuthMethodConfig      `yaml:"auth_method"`
 	InsecureSkipTLSVerify bool                  `yaml:"insecure_skip_tls_verify,omitempty"` // Only set true for test environments with self-signed certs
 	Metadata              OSKCredentialMetadata `yaml:"metadata,omitempty"`
+	JMX                   *JMXConfig            `yaml:"jmx,omitempty"`
 }
 
 // OSKCredentialMetadata allows users to add optional organizational metadata
@@ -28,6 +29,26 @@ type OSKCredentialMetadata struct {
 	Environment string            `yaml:"environment,omitempty"`
 	Location    string            `yaml:"location,omitempty"`
 	Labels      map[string]string `yaml:"labels,omitempty"`
+}
+
+// JMXConfig contains JMX monitoring configuration for a cluster
+type JMXConfig struct {
+	Type      string         `yaml:"type"`
+	Endpoints []string       `yaml:"endpoints"`
+	Auth      *JMXAuthConfig `yaml:"auth,omitempty"`
+	TLS       *JMXTLSConfig  `yaml:"tls,omitempty"`
+}
+
+// JMXAuthConfig contains authentication credentials for JMX
+type JMXAuthConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// JMXTLSConfig contains TLS configuration for JMX connections
+type JMXTLSConfig struct {
+	CACert             string `yaml:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
 
 // NewOSKCredentialsFromFile loads OSK credentials from a YAML file
@@ -98,6 +119,13 @@ func (c OSKCredentials) Validate() (bool, []error) {
 		if err := validateAuthMethodConfig(cluster.AuthMethod, enabledMethods); err != nil {
 			errs = append(errs, fmt.Errorf("%s (id=%s): %w", clusterRef, cluster.ID, err))
 		}
+
+		// Validate JMX config if present
+		if cluster.JMX != nil {
+			if err := validateJMXConfig(cluster.JMX); err != nil {
+				errs = append(errs, fmt.Errorf("%s (id=%s): jmx: %w", clusterRef, cluster.ID, err))
+			}
+		}
 	}
 
 	return len(errs) == 0, errs
@@ -131,6 +159,11 @@ func (c OSKClusterAuth) GetSelectedAuthType() (AuthType, error) {
 		return "", fmt.Errorf("no authentication method enabled for cluster")
 	}
 	return enabledMethods[0], nil
+}
+
+// HasJMXConfig returns true if the cluster has JMX configuration
+func (c OSKClusterAuth) HasJMXConfig() bool {
+	return c.JMX != nil
 }
 
 // WriteToFile writes the credentials to a YAML file
@@ -212,5 +245,16 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 		}
 	}
 
+	return nil
+}
+
+// validateJMXConfig validates JMX configuration
+func validateJMXConfig(jmx *JMXConfig) error {
+	if jmx.Type != "jolokia" {
+		return fmt.Errorf("unsupported jmx type %q: must be 'jolokia'", jmx.Type)
+	}
+	if len(jmx.Endpoints) == 0 {
+		return fmt.Errorf("at least one endpoint is required")
+	}
 	return nil
 }
