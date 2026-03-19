@@ -108,7 +108,6 @@ func (s *MigrationWorkflow) Initialize(
 	}
 
 	// Update config with discovered data
-	config.InitialCrYAML = initialCrYAML
 	config.ClusterLinkTopics = clusterLinkTopics
 	config.ClusterLinkConfigs = configs
 
