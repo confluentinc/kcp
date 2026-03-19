@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,6 +11,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +35,7 @@ func TestClusterDiscoverer_NilClusterInfo(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
@@ -46,7 +48,7 @@ func TestClusterDiscoverer_DescribeClusterError(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
 
 	require.Error(t, err)
 }
@@ -62,7 +64,7 @@ func TestClusterDiscoverer_NilBrokerNodeGroupInfo(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
 
 	// Expect an error (networking cannot proceed without BrokerNodeGroupInfo),
 	// but NOT a panic.
@@ -81,7 +83,7 @@ func TestClusterDiscoverer_EmptySubnets(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "subnet")
@@ -95,7 +97,7 @@ func TestClusterDiscoverer_ServerlessCluster(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
 
 	require.NoError(t, err)
 	assert.Equal(t, testClusterName, result.Name)
@@ -126,7 +128,7 @@ func TestClusterDiscoverer_SkipMetrics(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true /* skipTopics */, true /* skipMetrics */)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true /* skipTopics */, true /* skipMetrics */, false)
 
 	require.NoError(t, err)
 	assert.False(t, metricsCalled, "metric service should not be called when skipMetrics=true")
@@ -160,8 +162,47 @@ func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, false /* skipMetrics=false */)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, false /* skipMetrics=false */, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
+}
+
+func TestClusterDiscoverer_ConnectorFailureDoesNotBlockTopicDiscovery(t *testing.T) {
+	msk, ec2svc, _, connect := defaultStubs()
+
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullProvisionedCluster(), nil
+	}
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{{
+				SubnetId:         aws.String(subnetIds[0]),
+				VpcId:            aws.String("vpc-12345"),
+				AvailabilityZone: aws.String("us-east-1a"),
+				CidrBlock:        aws.String("10.0.0.0/24"),
+			}},
+		}, nil
+	}
+
+	expectedTopics := []types.TopicDetails{
+		{Name: "test-topic", Partitions: 3, ReplicationFactor: 3},
+	}
+	msk.getTopicsWithConfigsFn = func(_ context.Context, _ string) ([]types.TopicDetails, error) {
+		return expectedTopics, nil
+	}
+
+	connect.listConnectorsFn = func(_ context.Context, _ *kafkaconnect.ListConnectorsInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+		return nil, fmt.Errorf("AccessDeniedException: User is not authorized to perform: kafkaconnect:ListConnectors")
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, nil, connect)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, false, true, false)
+
+	assert.NoError(t, err, "connector failure should not cause Discover to fail")
+	assert.NotNil(t, result)
+	assert.Empty(t, result.AWSClientInformation.Connectors, "connectors should be empty on failure")
+	assert.NotNil(t, result.KafkaAdminClientInformation.Topics, "topics should still be discovered")
+	assert.Len(t, result.KafkaAdminClientInformation.Topics.Details, 1, "should have discovered 1 topic")
+	assert.Equal(t, "test-topic", result.KafkaAdminClientInformation.Topics.Details[0].Name)
 }
