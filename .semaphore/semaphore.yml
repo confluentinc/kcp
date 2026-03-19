@@ -37,6 +37,7 @@ blocks:
       jobs:
         - name: "run tests"
           commands:
+            - (cd cmd/ui/frontend && npx playwright install chromium --with-deps)
             - make test
 
         - name: "trivy scan"
