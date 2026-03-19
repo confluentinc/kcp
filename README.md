@@ -100,4 +100,20 @@ make test-cov
 make test-cov-ui
 ```
 
+### Linting & Pre-commit Hooks
+
+```bash
+# Install linting tools
+brew install golangci-lint pre-commit
+
+# Run Go linters
+make lint
+
+# Run frontend ESLint
+make lint-frontend
+
+# Install git pre-commit hooks (runs linters automatically on commit)
+make pre-commit-install
+```
+
 
