@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend lint lint-frontend pre-commit-install
+.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend lint pre-commit-install
 
 # Build the frontend
 build-frontend:
@@ -73,7 +73,6 @@ help:
 	@echo "📊 test-cov           - Run tests with coverage"
 	@echo "🌐 test-cov-ui        - Coverage with HTML report"
 	@echo "🔍 lint               - Run Go linters (golangci-lint)"
-	@echo "🔍 lint-frontend      - Run frontend ESLint"
 	@echo "🔗 pre-commit-install - Install git pre-commit hooks"
 	@echo ""
 	@echo "💡 Usage: make <target>"
@@ -96,13 +95,9 @@ fmt:
 lint:
 	golangci-lint run --config .golangci.yml ./...
 
-# Run frontend ESLint
-lint-frontend:
-	@cd cmd/ui/frontend && npx eslint .
-
 # Install git pre-commit hooks
 pre-commit-install:
-	pre-commit install
+	git config --local core.hooksPath .githooks
 
 # Run tests
 test: build-frontend
