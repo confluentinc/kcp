@@ -367,6 +367,9 @@ Scan Kafka clusters at the Kafka level to discover topics, ACLs, and configurati
 - `--state-file`: Path to the state file (default: `kcp-state.json`)
 - `--skip-topics`: Skip topic discovery
 - `--skip-acls`: Skip ACL discovery
+- `--jmx`: Enable JMX metrics collection via Jolokia (OSK only). Requires `jmx` section in credentials file.
+- `--jmx-scan-duration`: Duration to collect JMX metrics (e.g. `5m`, `30m`, `1h`). Required when `--jmx` is set.
+- `--jmx-poll-interval`: Polling interval for JMX metrics (e.g. `1s`, `10s`). Default: `10s`.
 
 **Example Usage: MSK**
 
@@ -390,6 +393,20 @@ kcp scan clusters \
 
 For OSK clusters, you must create an `osk-credentials.yaml` file manually with your cluster connection details.
 
+**Example Usage: OSK with JMX Metrics**
+
+```shell
+kcp scan clusters \
+  --source-type osk \
+  --state-file kcp-state.json \
+  --credentials-file osk-credentials.yaml \
+  --jmx \
+  --jmx-scan-duration 5m \
+  --jmx-poll-interval 10s
+```
+
+When `--jmx` is enabled, kcp connects to the Jolokia HTTP endpoints defined in your credentials file and collects Kafka metrics (throughput, partition count, connection count, storage usage) over the specified duration. This provides equivalent data to what MSK gets from CloudWatch via `kcp discover`. Results are stored in the state file under `jmx_metrics`.
+
 **OSK Credentials File Format**
 
 The `osk-credentials.yaml` file defines connection details for one or more Open Source Kafka clusters. Here's the format with examples for each authentication method:
@@ -399,7 +416,7 @@ The `osk-credentials.yaml` file defines connection details for one or more Open 
 # Configure your Open Source Kafka cluster connection details
 
 clusters:
-  # Production cluster with SASL/SCRAM
+  # Production cluster with SASL/SCRAM and JMX metrics
   - id: production-kafka-us-east
     bootstrap_servers:
       - broker1.prod.example.com:9092
@@ -410,6 +427,15 @@ clusters:
         use: true
         username: admin
         password: changeme
+    jmx:
+      type: jolokia
+      endpoints:
+        - http://broker1.prod.example.com:8778/jolokia
+        - http://broker2.prod.example.com:8778/jolokia
+        - http://broker3.prod.example.com:8778/jolokia
+      auth:
+        username: monitorRole
+        password: monitorPass
     metadata:
       environment: production
       location: us-datacenter-1
@@ -452,6 +478,15 @@ clusters:
     - `client_cert`: Path to client certificate
     - `client_key`: Path to client private key
   - `unauthenticated_plaintext`: No authentication (insecure, for testing only)
+- `jmx`: (Optional) JMX metrics collection via Jolokia. Used with `--jmx` flag.
+  - `type`: Must be `"jolokia"`
+  - `endpoints`: List of Jolokia HTTP endpoints (one per broker, e.g. `http://broker:8778/jolokia`)
+  - `auth`: (Optional) HTTP basic auth credentials
+    - `username`: Jolokia username
+    - `password`: Jolokia password
+  - `tls`: (Optional) TLS settings for HTTPS Jolokia endpoints
+    - `ca_cert`: Path to CA certificate
+    - `insecure_skip_verify`: Skip TLS verification (test environments only)
 - `metadata`: Optional metadata fields for organization and reporting
 
 **Output:**
