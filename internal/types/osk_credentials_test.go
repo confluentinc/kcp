@@ -825,6 +825,84 @@ func TestOSKCredentials_Validate_JMXWithAuth(t *testing.T) {
 	}
 }
 
+func TestOSKCredentials_Validate_JMXWithTLS(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{"https://broker1:8778/jolokia"},
+					TLS: &JMXTLSConfig{
+						CACert:             "/path/to/ca.pem",
+						InsecureSkipVerify: false,
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "expected valid credentials with JMX TLS config, got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_JMXWithAuthAndTLS(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{"https://broker1:8778/jolokia"},
+					Auth: &JMXAuthConfig{
+						Username: "monitorUser",
+						Password: "monitorPass",
+					},
+					TLS: &JMXTLSConfig{
+						InsecureSkipVerify: true,
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "expected valid credentials with JMX auth + TLS config, got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_JMXAuthMissingPassword(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				JMX: &JMXConfig{
+					Type:      "jolokia",
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+					Auth: &JMXAuthConfig{
+						Username: "monitorUser",
+						Password: "", // Missing password
+					},
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	assert.False(t, valid, "expected validation to fail when JMX auth password is missing")
+}
+
 func TestOSKCredentials_HasJMXConfig(t *testing.T) {
 	tests := []struct {
 		name        string

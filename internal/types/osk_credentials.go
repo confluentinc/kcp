@@ -256,5 +256,13 @@ func validateJMXConfig(jmx *JMXConfig) error {
 	if len(jmx.Endpoints) == 0 {
 		return fmt.Errorf("at least one endpoint is required")
 	}
+	if jmx.Auth != nil {
+		if jmx.Auth.Username == "" {
+			return fmt.Errorf("jmx auth username is required when auth is configured")
+		}
+		if jmx.Auth.Password == "" {
+			return fmt.Errorf("jmx auth password is required when auth is configured")
+		}
+	}
 	return nil
 }
