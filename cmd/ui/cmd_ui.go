@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	port string
+	port      string
+	stateFile string
 )
 
 func NewUICmd() *cobra.Command {
@@ -24,6 +25,7 @@ func NewUICmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&port, "port", "p", "5556", "Port to run the UI server on")
+	cmd.Flags().StringVar(&stateFile, "state-file", "", "Path to a KCP state file to pre-load")
 
 	return cmd
 }
@@ -49,7 +51,8 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 
 func parseUICmdOpts() (*api.UICmdOpts, error) {
 	opts := api.UICmdOpts{
-		Port: port,
+		Port:      port,
+		StateFile: stateFile,
 	}
 
 	return &opts, nil
