@@ -331,38 +331,6 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	return fmt.Errorf("timed out waiting for gateway pods to be replaced (timeout: %s)", timeout)
 }
 
-// allPodsReplaced checks if all current pods have different UIDs from initial set
-func allPodsReplaced(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) bool {
-	for _, pod := range currentPods {
-		if _, wasInitial := initialUIDs[pod.UID]; wasInitial {
-			return false // Found an old pod still running
-		}
-	}
-	return true
-}
-
-// countReplacedPods counts how many current pods have new UIDs (not in initial set)
-func countReplacedPods(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) int {
-	count := 0
-	for _, pod := range currentPods {
-		if _, wasInitial := initialUIDs[pod.UID]; !wasInitial {
-			count++
-		}
-	}
-	return count
-}
-
-// countReadyPods returns count of ready pods
-func countReadyPods(pods []corev1.Pod) int {
-	count := 0
-	for _, pod := range pods {
-		if isPodReady(&pod) {
-			count++
-		}
-	}
-	return count
-}
-
 // countNewReadyPods counts how many new pods (not in initial set) are ready
 func countNewReadyPods(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) int {
 	count := 0
