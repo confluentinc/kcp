@@ -237,6 +237,20 @@ const state = {
     const endpoint = queryString ? `${API_ENDPOINTS.UPLOAD_STATE}?${queryString}` : API_ENDPOINTS.UPLOAD_STATE
     return post<StateUploadResponse>(endpoint, data, config)
   },
+
+  /**
+   * Get pre-loaded state (when kcp ui is started with --state-file)
+   */
+  async getState(
+    sessionId: string,
+    config?: RequestConfig
+  ): Promise<StateUploadResponse> {
+    return get<StateUploadResponse>(
+      API_ENDPOINTS.STATE,
+      { sessionId },
+      config
+    )
+  },
 }
 
 /**
