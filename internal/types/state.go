@@ -642,11 +642,13 @@ type ProcessedRegionCosts struct {
 	QueryInfo  CostQueryInfo       `json:"query_info"`
 }
 
-// ProcessedAggregates represents the three specific services we query
+// ProcessedAggregates represents the specific services we query
 type ProcessedAggregates struct {
 	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
 	AmazonManagedStreamingForApacheKafka ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka"`
 	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
+	ElasticLoadBalancing                 ServiceCostAggregates `json:"Amazon Elastic Load Balancing"`
+	AmazonVPC                            ServiceCostAggregates `json:"Amazon Virtual Private Cloud"`
 }
 
 // NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
@@ -667,6 +669,20 @@ func NewProcessedAggregates() ProcessedAggregates {
 			NetUnblendedCost: make(map[string]any),
 		},
 		EC2Other: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+		ElasticLoadBalancing: ServiceCostAggregates{
+			UnblendedCost:    make(map[string]any),
+			BlendedCost:      make(map[string]any),
+			AmortizedCost:    make(map[string]any),
+			NetAmortizedCost: make(map[string]any),
+			NetUnblendedCost: make(map[string]any),
+		},
+		AmazonVPC: ServiceCostAggregates{
 			UnblendedCost:    make(map[string]any),
 			BlendedCost:      make(map[string]any),
 			AmortizedCost:    make(map[string]any),

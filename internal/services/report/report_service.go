@@ -343,6 +343,10 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 			rs.assignToServiceMetric(&aggregates.AmazonManagedStreamingForApacheKafka, data.MetricName, data.UsageType, costAggregate)
 		case "EC2 - Other":
 			rs.assignToServiceMetric(&aggregates.EC2Other, data.MetricName, data.UsageType, costAggregate)
+		case "Amazon Elastic Load Balancing":
+			rs.assignToServiceMetric(&aggregates.ElasticLoadBalancing, data.MetricName, data.UsageType, costAggregate)
+		case "Amazon Virtual Private Cloud":
+			rs.assignToServiceMetric(&aggregates.AmazonVPC, data.MetricName, data.UsageType, costAggregate)
 		}
 
 		// Track running total for this service+metric combination
@@ -366,6 +370,10 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 			rs.assignServiceTotal(&aggregates.AmazonManagedStreamingForApacheKafka, metricName, total)
 		case "EC2 - Other":
 			rs.assignServiceTotal(&aggregates.EC2Other, metricName, total)
+		case "Amazon Elastic Load Balancing":
+			rs.assignServiceTotal(&aggregates.ElasticLoadBalancing, metricName, total)
+		case "Amazon Virtual Private Cloud":
+			rs.assignServiceTotal(&aggregates.AmazonVPC, metricName, total)
 		}
 	}
 

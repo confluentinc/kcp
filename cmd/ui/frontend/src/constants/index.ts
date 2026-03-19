@@ -97,6 +97,8 @@ export const DEFAULTS = {
  */
 export const AWS_SERVICES = {
   MSK: 'Amazon Managed Streaming for Apache Kafka',
+  ELB: 'Amazon Elastic Load Balancing',
+  VPC: 'Amazon Virtual Private Cloud',
 } as const
 
 /**
