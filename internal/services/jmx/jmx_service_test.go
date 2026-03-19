@@ -65,6 +65,20 @@ func mockJolokiaServer(t *testing.T) *httptest.Server {
 					"Value": 50.0,
 				},
 			}
+		case strings.Contains(r.URL.Path, "connection-count"):
+			response = map[string]any{
+				"status": 200,
+				"value": map[string]any{
+					"Value": 3.0,
+				},
+			}
+		case strings.Contains(r.URL.Path, "kafka.log"):
+			response = map[string]any{
+				"status": 200,
+				"value": map[string]any{
+					"Value": 1073741824.0, // 1 GB in bytes
+				},
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			response = map[string]any{
@@ -98,33 +112,41 @@ func TestJMXService_CollectSnapshot(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), snapshot.Timestamp, 2*time.Second)
 
 	// Verify metrics - values should be summed across both brokers (doubled)
-	// BytesInPerSec rate metrics
-	assert.Equal(t, 2001.0, snapshot.Metrics["BytesInPerSec_OneMinuteRate"])     // 1000.5 * 2
+	// BytesInPerSec: primary value (OneMinuteRate) stored as CloudWatch-aligned name
+	assert.Equal(t, 2001.0, snapshot.Metrics["BytesInPerSec"])                   // 1000.5 * 2
 	assert.Equal(t, 1900.4, snapshot.Metrics["BytesInPerSec_FiveMinuteRate"])    // 950.2 * 2
 	assert.Equal(t, 1801.6, snapshot.Metrics["BytesInPerSec_FifteenMinuteRate"]) // 900.8 * 2
 	assert.Equal(t, 100000.0, snapshot.Metrics["BytesInPerSec_Count"])           // 50000 * 2
 	assert.Equal(t, 1600.6, snapshot.Metrics["BytesInPerSec_MeanRate"])          // 800.3 * 2
 
-	// BytesOutPerSec rate metrics
-	assert.Equal(t, 4001.0, snapshot.Metrics["BytesOutPerSec_OneMinuteRate"])     // 2000.5 * 2
+	// BytesOutPerSec
+	assert.Equal(t, 4001.0, snapshot.Metrics["BytesOutPerSec"])                   // 2000.5 * 2
 	assert.Equal(t, 3900.4, snapshot.Metrics["BytesOutPerSec_FiveMinuteRate"])    // 1950.2 * 2
 	assert.Equal(t, 3801.6, snapshot.Metrics["BytesOutPerSec_FifteenMinuteRate"]) // 1900.8 * 2
 	assert.Equal(t, 200000.0, snapshot.Metrics["BytesOutPerSec_Count"])           // 100000 * 2
 	assert.Equal(t, 3600.6, snapshot.Metrics["BytesOutPerSec_MeanRate"])          // 1800.3 * 2
 
-	// MessagesInPerSec rate metrics
-	assert.Equal(t, 201.0, snapshot.Metrics["MessagesInPerSec_OneMinuteRate"])     // 100.5 * 2
+	// MessagesInPerSec
+	assert.Equal(t, 201.0, snapshot.Metrics["MessagesInPerSec"])                   // 100.5 * 2
 	assert.Equal(t, 190.4, snapshot.Metrics["MessagesInPerSec_FiveMinuteRate"])    // 95.2 * 2
 	assert.Equal(t, 181.6, snapshot.Metrics["MessagesInPerSec_FifteenMinuteRate"]) // 90.8 * 2
 	assert.Equal(t, 10000.0, snapshot.Metrics["MessagesInPerSec_Count"])           // 5000 * 2
 	assert.Equal(t, 160.6, snapshot.Metrics["MessagesInPerSec_MeanRate"])          // 80.3 * 2
 
-	// PartitionCount non-rate metric
-	assert.Equal(t, 100.0, snapshot.Metrics["PartitionCount"]) // 50 * 2
+	// PartitionCount and GlobalPartitionCount
+	assert.Equal(t, 100.0, snapshot.Metrics["PartitionCount"])       // 50 * 2
+	assert.Equal(t, 100.0, snapshot.Metrics["GlobalPartitionCount"]) // derived from PartitionCount
+
+	// ClientConnectionCount
+	assert.Equal(t, 6.0, snapshot.Metrics["ClientConnectionCount"]) // 3 * 2
+
+	// TotalLocalStorageUsage (converted from bytes to GB)
+	assert.Equal(t, 2.0, snapshot.Metrics["TotalLocalStorageUsage"]) // 1GB * 2 brokers
 
 	// Verify total number of metrics
-	// 4 MBeans: 3 rate MBeans (5 fields each) + 1 non-rate MBean (1 field) = 16 metrics
-	assert.Len(t, snapshot.Metrics, 16)
+	// 3 rate MBeans (5 fields each = 15) + 3 non-rate (PartitionCount, ClientConnectionCount, TotalLocalStorageUsage)
+	// + 1 derived (GlobalPartitionCount) = 19
+	assert.Len(t, snapshot.Metrics, 19)
 }
 
 func TestJMXService_CollectOverDuration(t *testing.T) {

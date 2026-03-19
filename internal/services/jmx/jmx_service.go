@@ -12,13 +12,14 @@ import (
 
 // mbeanConfig defines a single MBean to query
 type mbeanConfig struct {
-	Name     string // Metric name (e.g., "BytesInPerSec")
+	Name     string // Metric name matching CloudWatch (e.g., "BytesInPerSec")
 	MBean    string // MBean path (e.g., "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
-	IsRate   bool   // If true, extract rate fields (OneMinuteRate, etc.); if false, use ValueKey
+	IsRate   bool   // If true, extract rate fields; if false, use ValueKey
 	ValueKey string // Key to read from value map when IsRate=false (e.g., "Value")
 }
 
-// mbeans defines all Kafka JMX MBeans to query
+// mbeans defines all Kafka JMX MBeans to query.
+// Names are aligned with CloudWatch metric names for UI parity.
 var mbeans = []mbeanConfig{
 	{
 		Name:   "BytesInPerSec",
@@ -41,6 +42,18 @@ var mbeans = []mbeanConfig{
 		IsRate:   false,
 		ValueKey: "Value",
 	},
+	{
+		Name:     "ClientConnectionCount",
+		MBean:    "kafka.server:type=socket-server-metrics,name=connection-count",
+		IsRate:   false,
+		ValueKey: "Value",
+	},
+	{
+		Name:     "TotalLocalStorageUsage",
+		MBean:    "kafka.log:type=Log,name=Size",
+		IsRate:   false,
+		ValueKey: "Value",
+	},
 }
 
 // JMXService collects JMX metrics from Kafka brokers via Jolokia
@@ -57,7 +70,12 @@ func NewJMXService(endpoints []string, opts ...client.JolokiaOption) *JMXService
 	return &JMXService{clients: clients}
 }
 
-// CollectSnapshot collects a single snapshot of all JMX metrics
+// CollectSnapshot collects a single snapshot of all JMX metrics.
+// Metric naming is aligned with CloudWatch for UI parity:
+//   - Rate metrics: primary value uses CloudWatch name (e.g. "BytesInPerSec") from OneMinuteRate,
+//     supplementary rates stored with suffixes (e.g. "BytesInPerSec_FiveMinuteRate")
+//   - Non-rate metrics: stored directly (e.g. "PartitionCount", "ClientConnectionCount")
+//   - GlobalPartitionCount: derived as sum of per-broker PartitionCount
 func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnapshot, error) {
 	snapshot := &types.JMXMetricSnapshot{
 		Timestamp: time.Now(),
@@ -66,11 +84,10 @@ func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnaps
 
 	// Query each MBean across all brokers
 	for _, mb := range mbeans {
-		// Accumulate values across all brokers
 		metricValues := make(map[string]float64)
 
-		for _, client := range s.clients {
-			value, err := client.ReadMBean(mb.MBean)
+		for _, brokerClient := range s.clients {
+			value, err := brokerClient.ReadMBean(mb.MBean)
 			if err != nil {
 				slog.Warn("Failed to read MBean",
 					"mbean", mb.Name,
@@ -80,18 +97,21 @@ func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnaps
 			}
 
 			if mb.IsRate {
-				// Extract rate fields: OneMinuteRate, FiveMinuteRate, FifteenMinuteRate, Count, MeanRate
-				rateFields := []string{"OneMinuteRate", "FiveMinuteRate", "FifteenMinuteRate", "Count", "MeanRate"}
-				for _, field := range rateFields {
+				// Primary value: OneMinuteRate stored as the CloudWatch-aligned metric name
+				if v, ok := value["OneMinuteRate"]; ok {
+					if f, ok := toFloat64(v); ok {
+						metricValues[mb.Name] += f
+					}
+				}
+				// Supplementary rates stored with suffixes
+				for _, field := range []string{"FiveMinuteRate", "FifteenMinuteRate", "Count", "MeanRate"} {
 					if v, ok := value[field]; ok {
 						if f, ok := toFloat64(v); ok {
-							key := fmt.Sprintf("%s_%s", mb.Name, field)
-							metricValues[key] += f
+							metricValues[fmt.Sprintf("%s_%s", mb.Name, field)] += f
 						}
 					}
 				}
 			} else {
-				// Read single value from ValueKey
 				if v, ok := value[mb.ValueKey]; ok {
 					if f, ok := toFloat64(v); ok {
 						metricValues[mb.Name] += f
@@ -100,10 +120,19 @@ func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnaps
 			}
 		}
 
-		// Store accumulated values in snapshot
 		for key, value := range metricValues {
 			snapshot.Metrics[key] = value
 		}
+	}
+
+	// Derive GlobalPartitionCount (same as PartitionCount but matches CloudWatch naming)
+	if pc, ok := snapshot.Metrics["PartitionCount"]; ok {
+		snapshot.Metrics["GlobalPartitionCount"] = pc
+	}
+
+	// Convert TotalLocalStorageUsage from bytes to GB for CloudWatch parity
+	if bytes, ok := snapshot.Metrics["TotalLocalStorageUsage"]; ok {
+		snapshot.Metrics["TotalLocalStorageUsage"] = bytes / (1024 * 1024 * 1024)
 	}
 
 	return snapshot, nil
