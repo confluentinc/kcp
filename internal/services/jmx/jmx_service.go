@@ -9,60 +9,53 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// mbeanConfig defines a single MBean to query via direct read
-type mbeanConfig struct {
-	Name     string // Metric name matching CloudWatch (e.g., "BytesInPerSec")
-	MBean    string // MBean path (e.g., "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
-	IsRate   bool   // If true, extract rate fields; if false, use ValueKey
-	ValueKey string // Key to read from value map when IsRate=false (e.g., "Value")
+// counterMBeanConfig defines a rate MBean whose Count field is a monotonic counter.
+// Actual rates are computed from deltas between consecutive counter readings.
+type counterMBeanConfig struct {
+	Name string // Metric name matching CloudWatch (e.g., "BytesInPerSec")
+	MBean string // MBean path
 }
 
-// aggregateMBeanConfig defines a MBean that requires wildcard pattern + aggregation
+// gaugeMBeanConfig defines a MBean that returns a point-in-time gauge value.
+type gaugeMBeanConfig struct {
+	Name     string // Metric name matching CloudWatch
+	MBean    string // MBean path
+	ValueKey string // Attribute key to read (e.g., "Value")
+}
+
+// aggregateMBeanConfig defines a MBean that requires wildcard pattern + aggregation.
 type aggregateMBeanConfig struct {
 	Name      string // Metric name matching CloudWatch
 	MBean     string // MBean wildcard pattern
 	Attribute string // Attribute to read and sum
 }
 
-// mbeans defines Kafka JMX MBeans queried via direct read.
-// Names are aligned with CloudWatch metric names for UI parity.
-var mbeans = []mbeanConfig{
-	{
-		Name:   "BytesInPerSec",
-		MBean:  "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec",
-		IsRate: true,
-	},
-	{
-		Name:   "BytesOutPerSec",
-		MBean:  "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec",
-		IsRate: true,
-	},
-	{
-		Name:   "MessagesInPerSec",
-		MBean:  "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec",
-		IsRate: true,
-	},
-	{
-		Name:     "PartitionCount",
-		MBean:    "kafka.server:type=ReplicaManager,name=PartitionCount",
-		IsRate:   false,
-		ValueKey: "Value",
-	},
+// counterMBeans are rate metrics where we read the Count (monotonic counter)
+// and compute actual rates from deltas between consecutive readings.
+var counterMBeans = []counterMBeanConfig{
+	{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
+	{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
+	{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
 }
 
-// aggregateMBeans defines MBeans that are per-partition or per-listener
-// and need wildcard queries with summing across all matches.
+// gaugeMBeans are point-in-time values read directly.
+var gaugeMBeans = []gaugeMBeanConfig{
+	{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
+}
+
+// aggregateMBeans are per-partition or per-listener MBeans
+// that need wildcard queries with summing across all matches.
 var aggregateMBeans = []aggregateMBeanConfig{
-	{
-		Name:      "ClientConnectionCount",
-		MBean:     "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*",
-		Attribute: "connection-count",
-	},
-	{
-		Name:      "TotalLocalStorageUsage",
-		MBean:     "kafka.log:type=Log,name=Size,*",
-		Attribute: "Value",
-	},
+	{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
+	{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
+}
+
+// rawSample holds raw counter and gauge readings from a single poll.
+// This is an internal type — not stored in state.
+type rawSample struct {
+	timestamp time.Time
+	counters  map[string]float64 // monotonic counter values (e.g., BytesInPerSec Count)
+	gauges    map[string]float64 // point-in-time gauge values (e.g., PartitionCount)
 }
 
 // JMXService collects JMX metrics from Kafka brokers via Jolokia
@@ -79,84 +72,119 @@ func NewJMXService(endpoints []string, opts ...client.JolokiaOption) *JMXService
 	return &JMXService{clients: clients}
 }
 
-// CollectSnapshot collects a single snapshot of all JMX metrics.
-// Metric naming is aligned with CloudWatch for UI parity:
-//   - Rate metrics: primary value uses CloudWatch name (e.g. "BytesInPerSec") from OneMinuteRate,
-//     supplementary rates stored with suffixes (e.g. "BytesInPerSec_FiveMinuteRate")
-//   - Non-rate metrics: stored directly (e.g. "PartitionCount", "ClientConnectionCount")
-//   - GlobalPartitionCount: derived as sum of per-broker PartitionCount
-func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnapshot, error) {
-	snapshot := &types.JMXMetricSnapshot{
-		Timestamp: time.Now(),
-		Metrics:   make(map[string]float64),
+// collectRawSample reads raw counter and gauge values from all brokers.
+func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
+	sample := &rawSample{
+		timestamp: time.Now(),
+		counters:  make(map[string]float64),
+		gauges:    make(map[string]float64),
 	}
 
-	// Query each MBean across all brokers
-	for _, mb := range mbeans {
-		metricValues := make(map[string]float64)
-
+	// Read counter MBeans (monotonic Count field)
+	for _, mb := range counterMBeans {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(mb.MBean)
 			if err != nil {
-				slog.Warn("Failed to read MBean",
-					"mbean", mb.Name,
-					"path", mb.MBean,
-					"error", err)
+				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
 				continue
 			}
-
-			if mb.IsRate {
-				// Use OneMinuteRate as the primary value, matching CloudWatch's Average statistic
-				if v, ok := value["OneMinuteRate"]; ok {
-					if f, ok := toFloat64(v); ok {
-						metricValues[mb.Name] += f
-					}
-				}
-			} else {
-				if v, ok := value[mb.ValueKey]; ok {
-					if f, ok := toFloat64(v); ok {
-						metricValues[mb.Name] += f
-					}
+			if v, ok := value["Count"]; ok {
+				if f, ok := toFloat64(v); ok {
+					sample.counters[mb.Name] += f
 				}
 			}
-		}
-
-		for key, value := range metricValues {
-			snapshot.Metrics[key] = value
 		}
 	}
 
-	// Query aggregate MBeans (wildcard patterns summed across matches)
+	// Read gauge MBeans (point-in-time values)
+	for _, mb := range gaugeMBeans {
+		for _, brokerClient := range s.clients {
+			value, err := brokerClient.ReadMBean(mb.MBean)
+			if err != nil {
+				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
+				continue
+			}
+			if v, ok := value[mb.ValueKey]; ok {
+				if f, ok := toFloat64(v); ok {
+					sample.gauges[mb.Name] += f
+				}
+			}
+		}
+	}
+
+	// Read aggregate MBeans (wildcard patterns summed across matches)
 	for _, amb := range aggregateMBeans {
 		var total float64
 		for _, brokerClient := range s.clients {
 			val, err := brokerClient.ReadMBeanAggregate(amb.MBean, amb.Attribute)
 			if err != nil {
-				slog.Warn("Failed to read aggregate MBean",
-					"mbean", amb.Name,
-					"pattern", amb.MBean,
-					"error", err)
+				slog.Warn("Failed to read aggregate MBean", "mbean", amb.Name, "error", err)
 				continue
 			}
 			total += val
 		}
-		snapshot.Metrics[amb.Name] = total
+		sample.gauges[amb.Name] = total
 	}
 
-	// Derive GlobalPartitionCount (same as PartitionCount but matches CloudWatch naming)
+	return sample, nil
+}
+
+// computeSnapshot computes a metrics snapshot from two consecutive raw samples.
+// Counter deltas are divided by elapsed time to produce actual rates.
+// Gauge values are taken from the current (second) sample.
+func computeSnapshot(prev, curr *rawSample) *types.JMXMetricSnapshot {
+	elapsed := curr.timestamp.Sub(prev.timestamp).Seconds()
+	snapshot := &types.JMXMetricSnapshot{
+		Timestamp: curr.timestamp,
+		Metrics:   make(map[string]float64),
+	}
+
+	// Compute actual rates from counter deltas
+	for name, currCount := range curr.counters {
+		if prevCount, ok := prev.counters[name]; ok && elapsed > 0 {
+			snapshot.Metrics[name] = (currCount - prevCount) / elapsed
+		}
+	}
+
+	// Copy gauge values directly
+	for name, value := range curr.gauges {
+		snapshot.Metrics[name] = value
+	}
+
+	// Derive GlobalPartitionCount
 	if pc, ok := snapshot.Metrics["PartitionCount"]; ok {
 		snapshot.Metrics["GlobalPartitionCount"] = pc
 	}
 
-	// Convert TotalLocalStorageUsage from bytes to GB for CloudWatch parity
+	// Convert TotalLocalStorageUsage from bytes to GB
 	if bytes, ok := snapshot.Metrics["TotalLocalStorageUsage"]; ok {
 		snapshot.Metrics["TotalLocalStorageUsage"] = bytes / (1024 * 1024 * 1024)
 	}
 
-	return snapshot, nil
+	return snapshot
 }
 
-// CollectOverDuration collects JMX metrics over a specified duration at regular intervals
+// CollectSnapshot collects a single snapshot by taking two raw samples
+// separated by a short interval and computing rates from counter deltas.
+func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnapshot, error) {
+	first, err := s.collectRawSample(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	time.Sleep(1 * time.Second)
+
+	second, err := s.collectRawSample(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return computeSnapshot(first, second), nil
+}
+
+// CollectOverDuration collects JMX metrics over a specified duration at regular intervals.
+// Takes raw counter readings at each interval and computes actual rates from
+// consecutive counter deltas — not EWMA averages.
 func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval time.Duration) (*types.JMXMetrics, error) {
 	startTime := time.Now()
 	metrics := &types.JMXMetrics{
@@ -165,18 +193,13 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 		Snapshots:     make([]types.JMXMetricSnapshot, 0),
 	}
 
-	// Collect first snapshot immediately
-	snapshot, err := s.CollectSnapshot(ctx)
+	// Take initial raw sample (baseline for first rate computation)
+	prevSample, err := s.collectRawSample(ctx)
 	if err != nil {
-		slog.Warn("Failed to collect initial JMX snapshot", "error", err)
-	} else {
-		metrics.Snapshots = append(metrics.Snapshots, *snapshot)
-		slog.Info("JMX snapshot collected",
-			"count", len(metrics.Snapshots),
-			"elapsed", time.Since(startTime).Round(time.Second))
+		return nil, err
 	}
+	slog.Info("JMX baseline sample collected", "elapsed", "0s")
 
-	// Set up ticker for subsequent snapshots
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -187,19 +210,20 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 		case <-ctx.Done():
 			return metrics, ctx.Err()
 		case <-ticker.C:
-			// Check if we've exceeded the duration
 			if time.Now().After(deadline) {
 				return metrics, nil
 			}
 
-			// Collect snapshot
-			snapshot, err := s.CollectSnapshot(ctx)
+			currSample, err := s.collectRawSample(ctx)
 			if err != nil {
-				slog.Warn("Failed to collect JMX snapshot", "error", err)
+				slog.Warn("Failed to collect JMX sample", "error", err)
 				continue
 			}
 
+			snapshot := computeSnapshot(prevSample, currSample)
 			metrics.Snapshots = append(metrics.Snapshots, *snapshot)
+			prevSample = currSample
+
 			slog.Info("JMX snapshot collected",
 				"count", len(metrics.Snapshots),
 				"elapsed", time.Since(startTime).Round(time.Second))
@@ -207,8 +231,7 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 	}
 }
 
-// toFloat64 converts an interface{} value to float64
-// Handles float64, int, and int64 types from JSON unmarshaling
+// toFloat64 converts an interface{} value to float64.
 func toFloat64(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
