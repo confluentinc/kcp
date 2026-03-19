@@ -193,7 +193,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	slog.Info("migration initialized",
 		"migrationId", config.MigrationId,
-		"currentState", config.CurrentState,
 		"stateFile", migrationStateFile)
 	return nil
 }
