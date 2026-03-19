@@ -42,3 +42,11 @@ blocks:
         - name: "trivy scan"
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+  - name: "lint"
+    task:
+      jobs:
+        - name: "golangci-lint"
+          commands:
+            - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.1.6
+            - golangci-lint run --config .golangci.yml ./...
