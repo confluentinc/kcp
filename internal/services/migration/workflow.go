@@ -123,6 +123,10 @@ func (s *MigrationWorkflow) CheckLags(
 	lagThreshold int64,
 	clusterApiKey, clusterApiSecret string,
 ) error {
+	if s.sourceOffset == nil || s.destinationOffset == nil {
+		return fmt.Errorf("source and destination offset services are required")
+	}
+
 	fmt.Printf("\n%s Checking replication lag across %s (threshold: %s)\n\n",
 		color.CyanString("⏳"),
 		color.CyanString("%d topics", len(config.Topics)),
@@ -257,6 +261,10 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+	if s.sourceOffset == nil || s.destinationOffset == nil {
+		return fmt.Errorf("source and destination offset services are required")
+	}
+
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3
