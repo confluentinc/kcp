@@ -168,14 +168,14 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		CurrentState:        types.StateUninitialized,
 	}
 
-	// ===== PHASE 4: Early write - upsert migration and write to file =====
+	// ===== PHASE 3: Early write - upsert migration and write to file =====
 	// CRITICAL: File MUST exist before orchestrator runs to prevent panic
 	migrationState.UpsertMigration(*config)
 	if err := migrationState.WriteToFile(migrationStateFile); err != nil {
 		return fmt.Errorf("failed to write migration state file: %w", err)
 	}
 
-	// ===== PHASE 5: Handle skip-validate flag (exit early if set) =====
+	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
 		slog.Info("migration created (validation skipped)",
 			"migrationId", config.MigrationId,
@@ -184,7 +184,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// ===== PHASE 6: Pass to initializer for validation orchestration only =====
+	// ===== PHASE 5: Pass to initializer for validation orchestration only =====
 	opts := parseMigrationInitializerOpts(*migrationState, *config)
 	migrationInitializer := NewMigrationInitializer(opts)
 	if err := migrationInitializer.Run(); err != nil {
