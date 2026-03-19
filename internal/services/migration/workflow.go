@@ -259,6 +259,8 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	slog.Debug("topic promotion process started")
 
+	const maxPromoteRetries = 3
+
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
@@ -272,6 +274,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 
 	// Track which topics still need promotion
 	remaining := make(map[string]bool)
+	retryCount := make(map[string]int)
 	for _, topic := range config.Topics {
 		remaining[topic] = true
 	}
@@ -341,12 +344,18 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 
 		for _, topic := range promoteResponse.Data {
 			if topic.ErrorCode != 0 {
-				fmt.Printf("   %s Topic %s promotion error: %s\n",
-					color.RedString("✗"), topic.MirrorTopicName, topic.ErrorMessage)
+				retryCount[topic.MirrorTopicName]++
+				fmt.Printf("   %s Topic %s promotion error (attempt %d/%d): %s\n",
+					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage)
 				slog.Warn("topic promotion error",
 					"topic", topic.MirrorTopicName,
 					"errorCode", topic.ErrorCode,
-					"errorMessage", topic.ErrorMessage)
+					"errorMessage", topic.ErrorMessage,
+					"attempt", retryCount[topic.MirrorTopicName])
+				if retryCount[topic.MirrorTopicName] >= maxPromoteRetries {
+					return fmt.Errorf("topic %s failed promotion after %d attempts: %s",
+						topic.MirrorTopicName, maxPromoteRetries, topic.ErrorMessage)
+				}
 			} else {
 				fmt.Printf("   %s %s promoted\n", color.GreenString("✔"), topic.MirrorTopicName)
 				slog.Debug("topic promotion initiated", "topic", topic.MirrorTopicName)
