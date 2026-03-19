@@ -647,7 +647,7 @@ type ProcessedAggregates struct {
 	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
 	AmazonManagedStreamingForApacheKafka ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka"`
 	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
-	ElasticLoadBalancing                 ServiceCostAggregates `json:"Elastic Load Balancing"`
+	ElasticLoadBalancing                 ServiceCostAggregates `json:"Amazon Elastic Load Balancing"`
 	AmazonVPC                            ServiceCostAggregates `json:"Amazon Virtual Private Cloud"`
 }
 
