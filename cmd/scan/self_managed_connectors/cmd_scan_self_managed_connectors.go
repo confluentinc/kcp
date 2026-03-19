@@ -148,11 +148,12 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 	normalizedURL := normaliseConnectURL(connectRestURL)
 
 	var authMethod types.ConnectAuthMethod
-	if useSaslScram {
+	switch {
+	case useSaslScram:
 		authMethod = types.ConnectAuthMethodSaslScram
-	} else if useTls {
+	case useTls:
 		authMethod = types.ConnectAuthMethodTls
-	} else {
+	default:
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 

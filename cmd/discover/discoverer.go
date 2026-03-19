@@ -272,7 +272,6 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 			ClientCert: "",
 			ClientKey:  "",
 		}
-		defaultAuthSelected = true
 	}
 
 	return clusterAuth, nil

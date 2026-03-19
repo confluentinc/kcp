@@ -42,13 +42,13 @@ func (m *Markdown) AddHeading(text string, level int) *Markdown {
 		level = 1
 	}
 	prefix := strings.Repeat("#", level)
-	m.content.WriteString(fmt.Sprintf("%s %s\n\n", prefix, text))
+	fmt.Fprintf(&m.content, "%s %s\n\n", prefix, text)
 	return m
 }
 
 // AddParagraph adds a paragraph of text
 func (m *Markdown) AddParagraph(text string) *Markdown {
-	m.content.WriteString(fmt.Sprintf("%s\n\n", text))
+	fmt.Fprintf(&m.content, "%s\n\n", text)
 	return m
 }
 
@@ -108,9 +108,9 @@ func (m *Markdown) AddTable(headers []string, data [][]string, skipRepeatColumns
 // AddCodeBlock adds a code block with optional language specification
 func (m *Markdown) AddCodeBlock(code string, language string) *Markdown {
 	if language != "" {
-		m.content.WriteString(fmt.Sprintf("```%s\n%s\n```\n\n", language, code))
+		fmt.Fprintf(&m.content, "```%s\n%s\n```\n\n", language, code)
 	} else {
-		m.content.WriteString(fmt.Sprintf("```\n%s\n```\n\n", code))
+		fmt.Fprintf(&m.content, "```\n%s\n```\n\n", code)
 	}
 	return m
 }
@@ -118,7 +118,7 @@ func (m *Markdown) AddCodeBlock(code string, language string) *Markdown {
 // AddList adds a list of items
 func (m *Markdown) AddList(items []string) *Markdown {
 	for _, item := range items {
-		m.content.WriteString(fmt.Sprintf("- %s\n", item))
+		fmt.Fprintf(&m.content, "- %s\n", item)
 	}
 	m.content.WriteString("\n")
 	return m
