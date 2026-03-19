@@ -61,8 +61,8 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool) (*types.DiscoveredCluster, error) {
-	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool, skipManagedConnectors bool) (*types.DiscoveredCluster, error) {
+	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics, skipManagedConnectors)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 	}, nil
 }
 
-func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
+func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, clusterArn string, skipTopics bool, skipManagedConnectors bool) (*types.AWSClientInformation, *types.KafkaAdminClientInformation, error) {
 	awsClientInfo := types.AWSClientInformation{}
 	kafkaClientInfo := types.KafkaAdminClientInformation{}
 
@@ -109,15 +109,17 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 
 	connections, err := cd.scanClusterVpcConnections(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan VPC connections, continuing without VPC connection data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.ClientVpcConnections = connections
 	}
-	awsClientInfo.ClientVpcConnections = connections
 
 	operations, err := cd.scanClusterOperations(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan cluster operations, continuing without operations data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.ClusterOperations = operations
 	}
-	awsClientInfo.ClusterOperations = operations
 
 	nodes, err := cd.scanClusterNodes(ctx, clusterArn)
 	if err != nil {
@@ -127,21 +129,26 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 
 	scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to scan SCRAM secrets, continuing without SCRAM secret data", "clusterArn", clusterArn, "error", err)
+	} else {
+		awsClientInfo.ScramSecrets = scramSecrets
 	}
-	awsClientInfo.ScramSecrets = scramSecrets
 
 	policy, err := cd.getClusterPolicy(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to get cluster policy, continuing without policy data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.Policy = kafka.GetClusterPolicyOutput{}
+	} else {
+		awsClientInfo.Policy = *policy
 	}
-	awsClientInfo.Policy = *policy
 
 	versions, err := cd.getCompatibleKafkaVersions(ctx, clusterArn)
 	if err != nil {
-		return nil, nil, err
+		slog.Warn("⚠️ failed to get compatible Kafka versions, continuing without version data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.CompatibleVersions = kafka.GetCompatibleKafkaVersionsOutput{}
+	} else {
+		awsClientInfo.CompatibleVersions = *versions
 	}
-	awsClientInfo.CompatibleVersions = *versions
 
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless {
 		slog.Warn("⚠️ Cluster networking not supported for MSK Serverless clusters, skipping networking scan")
@@ -153,11 +160,17 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
-	if err != nil {
-		return nil, nil, err
+	if skipManagedConnectors {
+		slog.Info("⏭️ skipping MSK Connect connector discovery")
+	} else {
+		connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
+		if err != nil {
+			slog.Warn("⚠️ failed to discover connectors, continuing without connector data", "clusterArn", clusterArn, "error", err)
+			awsClientInfo.Connectors = []types.ConnectorSummary{}
+		} else {
+			awsClientInfo.Connectors = connectors
+		}
 	}
-	awsClientInfo.Connectors = connectors
 
 	if !skipTopics {
 		topics, err := cd.discoverTopics(ctx, clusterArn)

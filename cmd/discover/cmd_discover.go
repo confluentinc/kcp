@@ -18,10 +18,11 @@ const (
 )
 
 var (
-	regions     []string
-	skipCosts   bool
-	skipMetrics bool
-	skipTopics  bool
+	regions               []string
+	skipCosts             bool
+	skipMetrics           bool
+	skipTopics            bool
+	skipManagedConnectors bool
 )
 
 func NewDiscoverCmd() *cobra.Command {
@@ -48,6 +49,7 @@ func NewDiscoverCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skips the topic discovery through the AWS MSK API")
 	optionalFlags.BoolVar(&skipCosts, "skip-costs", false, "Skips the cost discovery through the AWS Cost Explorer API")
 	optionalFlags.BoolVar(&skipMetrics, "skip-metrics", false, "Skips the metrics discovery through the AWS CloudWatch API")
+	optionalFlags.BoolVar(&skipManagedConnectors, "skip-managed-connectors", false, "Skips the MSK Connect connector discovery through the AWS Kafka Connect API")
 	discoverCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -135,11 +137,12 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 	}
 
 	return &DiscovererOpts{
-		Regions:     regions,
-		SkipCosts:   skipCosts,
-		SkipMetrics: skipMetrics,
-		SkipTopics:  skipTopics,
-		State:       state,
-		Credentials: credentials,
+		Regions:               regions,
+		SkipCosts:             skipCosts,
+		SkipMetrics:           skipMetrics,
+		SkipTopics:            skipTopics,
+		SkipManagedConnectors: skipManagedConnectors,
+		State:                 state,
+		Credentials:           credentials,
 	}, nil
 }
