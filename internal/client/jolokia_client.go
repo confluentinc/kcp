@@ -129,3 +129,64 @@ func (c *JolokiaClient) ReadMBean(mbeanPath string) (map[string]any, error) {
 
 	return jolokiaResp.Value, nil
 }
+
+// ReadMBeanAggregate queries a wildcard MBean pattern and sums a numeric attribute
+// across all matching MBeans. Used for metrics like log size (per-partition) and
+// connection count (per-listener) that need to be aggregated.
+func (c *JolokiaClient) ReadMBeanAggregate(mbeanPattern string, attribute string) (float64, error) {
+	url := fmt.Sprintf("%s/read/%s/%s", c.baseURL, mbeanPattern, attribute)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.username != "" || c.password != "" {
+		req.SetBasicAuth(c.username, c.password)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Wildcard responses have value as map[mbeanName] -> attributeValue or map[mbeanName] -> map[attr] -> value
+	var raw struct {
+		Status int            `json:"status"`
+		Value  map[string]any `json:"value"`
+		Error  string         `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return 0, fmt.Errorf("failed to parse JSON response: %w", err)
+	}
+
+	if raw.Status != 200 {
+		return 0, fmt.Errorf("Jolokia error: status %d: %s", raw.Status, raw.Error)
+	}
+
+	var total float64
+	for _, val := range raw.Value {
+		switch v := val.(type) {
+		case float64:
+			total += v
+		case map[string]any:
+			if attrVal, ok := v[attribute]; ok {
+				if f, ok := attrVal.(float64); ok {
+					total += f
+				}
+			}
+		}
+	}
+
+	return total, nil
+}

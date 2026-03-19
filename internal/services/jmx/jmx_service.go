@@ -10,7 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// mbeanConfig defines a single MBean to query
+// mbeanConfig defines a single MBean to query via direct read
 type mbeanConfig struct {
 	Name     string // Metric name matching CloudWatch (e.g., "BytesInPerSec")
 	MBean    string // MBean path (e.g., "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
@@ -18,7 +18,14 @@ type mbeanConfig struct {
 	ValueKey string // Key to read from value map when IsRate=false (e.g., "Value")
 }
 
-// mbeans defines all Kafka JMX MBeans to query.
+// aggregateMBeanConfig defines a MBean that requires wildcard pattern + aggregation
+type aggregateMBeanConfig struct {
+	Name      string // Metric name matching CloudWatch
+	MBean     string // MBean wildcard pattern
+	Attribute string // Attribute to read and sum
+}
+
+// mbeans defines Kafka JMX MBeans queried via direct read.
 // Names are aligned with CloudWatch metric names for UI parity.
 var mbeans = []mbeanConfig{
 	{
@@ -42,17 +49,20 @@ var mbeans = []mbeanConfig{
 		IsRate:   false,
 		ValueKey: "Value",
 	},
+}
+
+// aggregateMBeans defines MBeans that are per-partition or per-listener
+// and need wildcard queries with summing across all matches.
+var aggregateMBeans = []aggregateMBeanConfig{
 	{
-		Name:     "ClientConnectionCount",
-		MBean:    "kafka.server:type=socket-server-metrics,name=connection-count",
-		IsRate:   false,
-		ValueKey: "Value",
+		Name:      "ClientConnectionCount",
+		MBean:     "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*",
+		Attribute: "connection-count",
 	},
 	{
-		Name:     "TotalLocalStorageUsage",
-		MBean:    "kafka.log:type=Log,name=Size",
-		IsRate:   false,
-		ValueKey: "Value",
+		Name:      "TotalLocalStorageUsage",
+		MBean:     "kafka.log:type=Log,name=Size,*",
+		Attribute: "Value",
 	},
 }
 
@@ -123,6 +133,23 @@ func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnaps
 		for key, value := range metricValues {
 			snapshot.Metrics[key] = value
 		}
+	}
+
+	// Query aggregate MBeans (wildcard patterns summed across matches)
+	for _, amb := range aggregateMBeans {
+		var total float64
+		for _, brokerClient := range s.clients {
+			val, err := brokerClient.ReadMBeanAggregate(amb.MBean, amb.Attribute)
+			if err != nil {
+				slog.Warn("Failed to read aggregate MBean",
+					"mbean", amb.Name,
+					"pattern", amb.MBean,
+					"error", err)
+				continue
+			}
+			total += val
+		}
+		snapshot.Metrics[amb.Name] = total
 	}
 
 	// Derive GlobalPartitionCount (same as PartitionCount but matches CloudWatch naming)

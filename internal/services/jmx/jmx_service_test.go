@@ -65,18 +65,30 @@ func mockJolokiaServer(t *testing.T) *httptest.Server {
 					"Value": 50.0,
 				},
 			}
-		case strings.Contains(r.URL.Path, "connection-count"):
+		case strings.Contains(r.URL.Path, "socket-server-metrics"):
+			// Wildcard aggregate response: map of MBean names to attribute maps
 			response = map[string]any{
 				"status": 200,
 				"value": map[string]any{
-					"Value": 3.0,
+					"kafka.server:listener=PLAINTEXT,networkProcessor=0,type=socket-server-metrics": map[string]any{
+						"connection-count": 2.0,
+					},
+					"kafka.server:listener=PLAINTEXT,networkProcessor=1,type=socket-server-metrics": map[string]any{
+						"connection-count": 1.0,
+					},
 				},
 			}
 		case strings.Contains(r.URL.Path, "kafka.log"):
+			// Wildcard aggregate response: map of MBean names to attribute maps
 			response = map[string]any{
 				"status": 200,
 				"value": map[string]any{
-					"Value": 1073741824.0, // 1 GB in bytes
+					"kafka.log:name=Size,partition=0,topic=test,type=Log": map[string]any{
+						"Value": 536870912.0, // 0.5 GB
+					},
+					"kafka.log:name=Size,partition=1,topic=test,type=Log": map[string]any{
+						"Value": 536870912.0, // 0.5 GB
+					},
 				},
 			}
 		default:
@@ -137,14 +149,17 @@ func TestJMXService_CollectSnapshot(t *testing.T) {
 	assert.Equal(t, 100.0, snapshot.Metrics["PartitionCount"])       // 50 * 2
 	assert.Equal(t, 100.0, snapshot.Metrics["GlobalPartitionCount"]) // derived from PartitionCount
 
-	// ClientConnectionCount
-	assert.Equal(t, 6.0, snapshot.Metrics["ClientConnectionCount"]) // 3 * 2
+	// ClientConnectionCount (aggregated across listeners/networkProcessors, per broker)
+	// Each broker mock returns 2+1=3 connections, 2 brokers = 6
+	assert.Equal(t, 6.0, snapshot.Metrics["ClientConnectionCount"])
 
-	// TotalLocalStorageUsage (converted from bytes to GB)
-	assert.Equal(t, 2.0, snapshot.Metrics["TotalLocalStorageUsage"]) // 1GB * 2 brokers
+	// TotalLocalStorageUsage (aggregated across partitions, converted from bytes to GB)
+	// Each broker mock returns 0.5+0.5=1 GB, 2 brokers = 2 GB
+	assert.Equal(t, 2.0, snapshot.Metrics["TotalLocalStorageUsage"])
 
 	// Verify total number of metrics
-	// 3 rate MBeans (5 fields each = 15) + 3 non-rate (PartitionCount, ClientConnectionCount, TotalLocalStorageUsage)
+	// 3 rate MBeans (5 fields each = 15) + 1 direct non-rate (PartitionCount)
+	// + 2 aggregate (ClientConnectionCount, TotalLocalStorageUsage)
 	// + 1 derived (GlobalPartitionCount) = 19
 	assert.Len(t, snapshot.Metrics, 19)
 }
