@@ -4,6 +4,12 @@ run:
   timeout: 5m
 
 linters:
+  exclusions:
+    paths:
+      - cmd/ui/frontend
+      - dist
+      - vendor
+    generated: lax
   enable:
     - govet
     - staticcheck
@@ -19,9 +25,3 @@ formatters:
 
 issues:
   new-from-rev: main
-  exclude-dirs:
-    - cmd/ui/frontend
-    - dist
-    - vendor
-  exclude-files:
-    - ".*\\.pb\\.go$"
