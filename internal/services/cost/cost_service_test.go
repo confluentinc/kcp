@@ -21,6 +21,8 @@ func TestBuildCostQueryInfo(t *testing.T) {
 		types.ServiceMSK,
 		types.ServiceEC2Other,
 		types.ServiceAWSCertificateManager,
+		types.ServiceELB,
+		types.ServiceVPC,
 	}
 	metrics := []string{
 		"UnblendedCost",
@@ -72,6 +74,8 @@ func TestBuildCostQueryInfo(t *testing.T) {
 		assert.Contains(t, queryInfo.AWSCLICommand, `"Amazon Managed Streaming for Apache Kafka"`)
 		assert.Contains(t, queryInfo.AWSCLICommand, `"EC2 - Other"`)
 		assert.Contains(t, queryInfo.AWSCLICommand, `"AWS Certificate Manager"`)
+		assert.Contains(t, queryInfo.AWSCLICommand, `"Amazon Elastic Load Balancing"`)
+		assert.Contains(t, queryInfo.AWSCLICommand, `"Amazon Virtual Private Cloud"`)
 
 		// Verify console URL format
 		assert.Contains(t, queryInfo.ConsoleURL, "us-east-1.console.aws.amazon.com/costmanagement/home#/cost-explorer")

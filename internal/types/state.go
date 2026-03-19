@@ -663,6 +663,24 @@ func newServiceCostAggregates() ServiceCostAggregates {
 	}
 }
 
+// ForService returns a pointer to the ServiceCostAggregates for the given service name,
+// or nil if the service is not recognized.
+func (a *ProcessedAggregates) ForService(name string) *ServiceCostAggregates {
+	switch name {
+	case ServiceAWSCertificateManager:
+		return &a.AWSCertificateManager
+	case ServiceMSK:
+		return &a.AmazonManagedStreamingForApacheKafka
+	case ServiceEC2Other:
+		return &a.EC2Other
+	case ServiceELB:
+		return &a.ElasticLoadBalancing
+	case ServiceVPC:
+		return &a.AmazonVPC
+	}
+	return nil
+}
+
 // ProcessedAggregates represents the specific services we query
 type ProcessedAggregates struct {
 	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
