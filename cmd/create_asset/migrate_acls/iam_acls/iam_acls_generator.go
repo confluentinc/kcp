@@ -130,7 +130,6 @@ func (ig *IamAclsGenerator) Run() error {
 	return nil
 }
 
-
 func (ig *IamAclsGenerator) extractKafkaPermissionsFromPrincipalPolicies(principalArn string, policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 

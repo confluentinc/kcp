@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +18,11 @@ func TestBuildCostQueryInfo(t *testing.T) {
 	end := aws.String("2026-03-10")
 	granularity := costexplorertypes.GranularityDaily
 	services := []string{
-		"Amazon Managed Streaming for Apache Kafka",
-		"EC2 - Other",
-		"AWS Certificate Manager",
+		types.ServiceMSK,
+		types.ServiceEC2Other,
+		types.ServiceAWSCertificateManager,
+		types.ServiceELB,
+		types.ServiceVPC,
 	}
 	metrics := []string{
 		"UnblendedCost",
@@ -71,6 +74,8 @@ func TestBuildCostQueryInfo(t *testing.T) {
 		assert.Contains(t, queryInfo.AWSCLICommand, `"Amazon Managed Streaming for Apache Kafka"`)
 		assert.Contains(t, queryInfo.AWSCLICommand, `"EC2 - Other"`)
 		assert.Contains(t, queryInfo.AWSCLICommand, `"AWS Certificate Manager"`)
+		assert.Contains(t, queryInfo.AWSCLICommand, `"Amazon Elastic Load Balancing"`)
+		assert.Contains(t, queryInfo.AWSCLICommand, `"Amazon Virtual Private Cloud"`)
 
 		// Verify console URL format
 		assert.Contains(t, queryInfo.ConsoleURL, "us-east-1.console.aws.amazon.com/costmanagement/home#/cost-explorer")
