@@ -253,9 +253,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 	}
 	if isSaslScramAvailable {
 		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
-			Use:      !defaultAuthSelected,
-			Username: "",
-			Password: "",
+			Use:       !defaultAuthSelected,
+			Username:  "",
+			Password:  "",
+			Mechanism: "SHA512", // AWS MSK only supports SCRAM-SHA-512
 		}
 		defaultAuthSelected = true
 	}
@@ -280,8 +281,10 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 
 func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	allClusters := []types.DiscoveredCluster{}
-	for _, region := range state.Regions {
-		allClusters = append(allClusters, region.Clusters...)
+	if state.MSKSources != nil {
+		for _, region := range state.MSKSources.Regions {
+			allClusters = append(allClusters, region.Clusters...)
+		}
 	}
 
 	if len(allClusters) == 0 {
