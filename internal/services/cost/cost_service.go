@@ -35,7 +35,7 @@ func (cs *CostService) GetCostsForTimeRange(ctx context.Context, region string, 
 		endStr = aws.String(endDate.Format("2006-01-02T00:00:00Z"))
 	}
 
-	services := []string{"Amazon Managed Streaming for Apache Kafka", "EC2 - Other", "AWS Certificate Manager"}
+	services := []string{types.ServiceMSK, types.ServiceEC2Other, types.ServiceAWSCertificateManager, types.ServiceELB, types.ServiceVPC}
 
 	metrics := []string{
 		string(costexplorertypes.MetricUnblendedCost),
