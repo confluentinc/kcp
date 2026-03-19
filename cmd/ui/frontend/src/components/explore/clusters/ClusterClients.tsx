@@ -13,8 +13,6 @@ interface ClusterClientsProps {
 }
 
 export const ClusterClients = ({ clients }: ClusterClientsProps) => {
-  console.log('clients', clients)
-
   const getRoleBadge = (role: string) => {
     const colors: Record<string, string> = {
       producer: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-700/50',

@@ -335,6 +335,9 @@ export interface SelfManagedConnectors {
  * Kafka Admin Client Information
  */
 export interface KafkaAdminInfo {
+  cluster_id?: string
+  discovered_brokers?: string[]
+  sasl_mechanism?: string
   topics?: TopicsInfo
   acls?: KafkaACL[]
   self_managed_connectors?: SelfManagedConnectors

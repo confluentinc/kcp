@@ -13,15 +13,15 @@ cat > /home/ec2-user/create-cluster-links.sh << 'EOF'
 cd /home/ec2-user/
 
 #
-# Create MSK -> CP cluster link
+# Create Source -> CP cluster link
 #
 echo "auto.create.mirror.topics.enable=true
-bootstrap.servers=${msk_cluster_bootstrap_brokers}
+bootstrap.servers=${source_cluster_bootstrap_brokers}
 security.protocol=SASL_SSL
-sasl.mechanism=SCRAM-SHA-512
+sasl.mechanism=${source_sasl_scram_mechanism}
 sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required \
-  username=\"${msk_sasl_scram_username}\" \
-  password=\"${msk_sasl_scram_password}\";" > /home/ec2-user/client.properties
+  username=\"${source_sasl_scram_username}\" \
+  password=\"${source_sasl_scram_password}\";" > /home/ec2-user/client.properties
 
 echo "bootstrap.servers=`hostname`:9092
 security.protocol=PLAINTEXT" > /home/ec2-user/destination-cluster.properties
@@ -39,7 +39,7 @@ cat > /home/ec2-user/topic-filters.json << 'FILTERS'
 }
 FILTERS
 
-kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${msk_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-msk-cp --topic-filters-json-file /home/ec2-user/topic-filters.json --config-file client.properties
+kafka-cluster-links --bootstrap-server `hostname`:9092 --cluster-id ${source_cluster_id} --command-config destination-cluster.properties --create --link ${cluster_link_name}-source-cp --topic-filters-json-file /home/ec2-user/topic-filters.json --config-file client.properties
 
 #
 # Create CP -> CC destination cluster link
