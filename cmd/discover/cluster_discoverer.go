@@ -110,6 +110,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	connections, err := cd.scanClusterVpcConnections(ctx, clusterArn)
 	if err != nil {
 		slog.Warn("⚠️ failed to scan VPC connections, continuing without VPC connection data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.ClientVpcConnections = []kafkatypes.ClientVpcConnection{}
 	} else {
 		awsClientInfo.ClientVpcConnections = connections
 	}
@@ -117,6 +118,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	operations, err := cd.scanClusterOperations(ctx, clusterArn)
 	if err != nil {
 		slog.Warn("⚠️ failed to scan cluster operations, continuing without operations data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.ClusterOperations = []kafkatypes.ClusterOperationV2Summary{}
 	} else {
 		awsClientInfo.ClusterOperations = operations
 	}
@@ -130,6 +132,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
 	if err != nil {
 		slog.Warn("⚠️ failed to scan SCRAM secrets, continuing without SCRAM secret data", "clusterArn", clusterArn, "error", err)
+		awsClientInfo.ScramSecrets = []string{}
 	} else {
 		awsClientInfo.ScramSecrets = scramSecrets
 	}
