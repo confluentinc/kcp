@@ -95,7 +95,10 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 	o.execParams.ClusterApiKey = clusterApiKey
 	o.execParams.ClusterApiSecret = clusterApiSecret
 
-	return o.fsm.Event(ctx, types.EventInitialize)
+	if err := o.fsm.Event(ctx, types.EventInitialize); err != nil {
+		return err
+	}
+	return o.persistState()
 }
 
 // Execute runs the full migration workflow from the current state
@@ -117,6 +120,9 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
+		if err := o.persistState(); err != nil {
+			return fmt.Errorf("failed during %s: %w", step.Description, err)
+		}
 		fmt.Printf("%s\n", color.GreenString("✅ Done"))
 	}
 
@@ -132,13 +138,15 @@ func (o *MigrationOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.
 // afterEventCallback is called after any event transition
 func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
 	slog.Debug("FSM: after event", "event", e.Event, "src", e.Src, "dst", e.Dst)
-
-	// Update config state and save
 	o.config.CurrentState = e.Dst
+}
+
+// persistState saves the current migration state to disk. Called after each successful FSM transition.
+func (o *MigrationOrchestrator) persistState() error {
 	if err := o.saveState(); err != nil {
-		// State persistence failure is critical - panic to avoid state drift
-		panic(fmt.Sprintf("FATAL: Failed to save state after transition to %s: %v", e.Dst, err))
+		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
 	}
+	return nil
 }
 
 // enterStateCallback is called when entering any state
