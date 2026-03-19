@@ -337,15 +337,15 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 		// Assign this aggregate to the correct service and metric field
 		// Example: aggregates.AWSCertificateManager.UnblendedCost["USE1-FreePrivateCA"] = costAggregate
 		switch data.Service {
-		case "AWS Certificate Manager":
+		case types.ServiceAWSCertificateManager:
 			rs.assignToServiceMetric(&aggregates.AWSCertificateManager, data.MetricName, data.UsageType, costAggregate)
-		case "Amazon Managed Streaming for Apache Kafka":
+		case types.ServiceMSK:
 			rs.assignToServiceMetric(&aggregates.AmazonManagedStreamingForApacheKafka, data.MetricName, data.UsageType, costAggregate)
-		case "EC2 - Other":
+		case types.ServiceEC2Other:
 			rs.assignToServiceMetric(&aggregates.EC2Other, data.MetricName, data.UsageType, costAggregate)
-		case "Amazon Elastic Load Balancing":
+		case types.ServiceELB:
 			rs.assignToServiceMetric(&aggregates.ElasticLoadBalancing, data.MetricName, data.UsageType, costAggregate)
-		case "Amazon Virtual Private Cloud":
+		case types.ServiceVPC:
 			rs.assignToServiceMetric(&aggregates.AmazonVPC, data.MetricName, data.UsageType, costAggregate)
 		}
 
@@ -364,15 +364,15 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 		// Assign the total to the correct service and metric field
 		// Example: aggregates.AWSCertificateManager.UnblendedCost["total"] = 2632.58
 		switch service {
-		case "AWS Certificate Manager":
+		case types.ServiceAWSCertificateManager:
 			rs.assignServiceTotal(&aggregates.AWSCertificateManager, metricName, total)
-		case "Amazon Managed Streaming for Apache Kafka":
+		case types.ServiceMSK:
 			rs.assignServiceTotal(&aggregates.AmazonManagedStreamingForApacheKafka, metricName, total)
-		case "EC2 - Other":
+		case types.ServiceEC2Other:
 			rs.assignServiceTotal(&aggregates.EC2Other, metricName, total)
-		case "Amazon Elastic Load Balancing":
+		case types.ServiceELB:
 			rs.assignServiceTotal(&aggregates.ElasticLoadBalancing, metricName, total)
-		case "Amazon Virtual Private Cloud":
+		case types.ServiceVPC:
 			rs.assignServiceTotal(&aggregates.AmazonVPC, metricName, total)
 		}
 	}

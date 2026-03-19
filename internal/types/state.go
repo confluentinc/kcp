@@ -549,16 +549,16 @@ type CloudWatchTimeWindow struct {
 }
 
 type MetricQueryInfo struct {
-	MetricName       string `json:"metric_name"`
-	Namespace        string `json:"namespace"`
-	Dimensions       string `json:"dimensions"`
-	Statistic        string `json:"statistic"`
-	Period           int32  `json:"period"`
-	SearchExpression   string `json:"search_expression"`
-	MathExpression     string `json:"math_expression"`
-	AWSCLICommand      string `json:"aws_cli_command"`
-	ConsoleSourceJSON  string `json:"console_source_json"`
-	AggregationNote    string `json:"aggregation_note"`
+	MetricName        string `json:"metric_name"`
+	Namespace         string `json:"namespace"`
+	Dimensions        string `json:"dimensions"`
+	Statistic         string `json:"statistic"`
+	Period            int32  `json:"period"`
+	SearchExpression  string `json:"search_expression"`
+	MathExpression    string `json:"math_expression"`
+	AWSCLICommand     string `json:"aws_cli_command"`
+	ConsoleSourceJSON string `json:"console_source_json"`
+	AggregationNote   string `json:"aggregation_note"`
 }
 
 // ----- costs -----
@@ -642,6 +642,27 @@ type ProcessedRegionCosts struct {
 	QueryInfo  CostQueryInfo       `json:"query_info"`
 }
 
+// AWS service name constants — single source of truth for Cost Explorer service filters.
+// Frontend constants (cmd/ui/frontend/src/constants/index.ts AWS_SERVICES) should mirror these.
+const (
+	ServiceAWSCertificateManager = "AWS Certificate Manager"
+	ServiceMSK                   = "Amazon Managed Streaming for Apache Kafka"
+	ServiceEC2Other              = "EC2 - Other"
+	ServiceELB                   = "Amazon Elastic Load Balancing"
+	ServiceVPC                   = "Amazon Virtual Private Cloud"
+)
+
+// newServiceCostAggregates creates a ServiceCostAggregates with all maps initialized
+func newServiceCostAggregates() ServiceCostAggregates {
+	return ServiceCostAggregates{
+		UnblendedCost:    make(map[string]any),
+		BlendedCost:      make(map[string]any),
+		AmortizedCost:    make(map[string]any),
+		NetAmortizedCost: make(map[string]any),
+		NetUnblendedCost: make(map[string]any),
+	}
+}
+
 // ProcessedAggregates represents the specific services we query
 type ProcessedAggregates struct {
 	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
@@ -654,41 +675,11 @@ type ProcessedAggregates struct {
 // NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
 func NewProcessedAggregates() ProcessedAggregates {
 	return ProcessedAggregates{
-		AWSCertificateManager: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
-		AmazonManagedStreamingForApacheKafka: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
-		EC2Other: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
-		ElasticLoadBalancing: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
-		AmazonVPC: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
+		AWSCertificateManager:                newServiceCostAggregates(),
+		AmazonManagedStreamingForApacheKafka: newServiceCostAggregates(),
+		EC2Other:                             newServiceCostAggregates(),
+		ElasticLoadBalancing:                 newServiceCostAggregates(),
+		AmazonVPC:                            newServiceCostAggregates(),
 	}
 }
 

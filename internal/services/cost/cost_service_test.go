@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +18,9 @@ func TestBuildCostQueryInfo(t *testing.T) {
 	end := aws.String("2026-03-10")
 	granularity := costexplorertypes.GranularityDaily
 	services := []string{
-		"Amazon Managed Streaming for Apache Kafka",
-		"EC2 - Other",
-		"AWS Certificate Manager",
+		types.ServiceMSK,
+		types.ServiceEC2Other,
+		types.ServiceAWSCertificateManager,
 	}
 	metrics := []string{
 		"UnblendedCost",
