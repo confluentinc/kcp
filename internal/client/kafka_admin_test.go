@@ -576,7 +576,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, admin)
-				admin.Close()
+				_ = admin.Close()
 			}
 		})
 	}
@@ -594,7 +594,7 @@ func TestNewKafkaAdmin_DefaultConfiguration(t *testing.T) {
 		assert.Contains(t, err.Error(), "Failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
-		admin.Close()
+		_ = admin.Close()
 	}
 }
 
@@ -615,7 +615,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 		assert.Contains(t, err.Error(), "Failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
-		admin.Close()
+		_ = admin.Close()
 	}
 }
 

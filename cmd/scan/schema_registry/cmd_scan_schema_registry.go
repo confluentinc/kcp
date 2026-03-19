@@ -65,8 +65,8 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 		return nil
 	})
 
-	schemaRegistryCmd.MarkFlagRequired("state-file")
-	schemaRegistryCmd.MarkFlagRequired("url")
+	_ = schemaRegistryCmd.MarkFlagRequired("state-file")
+	_ = schemaRegistryCmd.MarkFlagRequired("url")
 
 	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated", "use-basic-auth")
 	schemaRegistryCmd.MarkFlagsOneRequired("use-unauthenticated", "use-basic-auth")

@@ -292,7 +292,7 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 	if err != nil {
 		return "", fmt.Errorf("failed to open broker connection: %v", err)
 	}
-	defer brokerConn.Close()
+	defer func() { _ = brokerConn.Close() }()
 
 	// Request metadata from the broker
 	metadataReq := &sarama.MetadataRequest{Version: 7}
@@ -341,7 +341,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	partitions, err := consumer.Partitions(topicName)
 	if err != nil {
@@ -396,7 +396,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 			}
 		}
 
-		partitionConsumer.Close()
+		_ = partitionConsumer.Close()
 	}
 
 	return connectorConfigs, nil
@@ -410,7 +410,7 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	partitions, err := consumer.Partitions(topicName)
 	if err != nil {
@@ -481,7 +481,7 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 			}
 		}
 
-		partitionConsumer.Close()
+		_ = partitionConsumer.Close()
 	}
 
 	return connectorStatuses, nil

@@ -147,12 +147,12 @@ Refer to the kcp docs for more information on each migration type.
 		return nil
 	})
 
-	migrationInfraCmd.MarkFlagRequired("state-file")
-	migrationInfraCmd.MarkFlagRequired("cluster-arn")
-	migrationInfraCmd.MarkFlagRequired("type")
-	migrationInfraCmd.MarkFlagRequired("cluster-link-name")
-	migrationInfraCmd.MarkFlagRequired("target-cluster-id")
-	migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
+	_ = migrationInfraCmd.MarkFlagRequired("state-file")
+	_ = migrationInfraCmd.MarkFlagRequired("cluster-arn")
+	_ = migrationInfraCmd.MarkFlagRequired("type")
+	_ = migrationInfraCmd.MarkFlagRequired("cluster-link-name")
+	_ = migrationInfraCmd.MarkFlagRequired("target-cluster-id")
+	_ = migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
 
 	return migrationInfraCmd
 }
@@ -172,22 +172,22 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 		// No additional flag requirements.
 
 	case types.ExternalOutboundClusterLink:
-		cmd.MarkFlagRequired("target-environment-id")
+		_ = cmd.MarkFlagRequired("target-environment-id")
 
 	case types.JumpClusterSaslScram:
-		cmd.MarkFlagRequired("target-environment-id")
-		cmd.MarkFlagRequired("target-bootstrap-endpoint")
-		cmd.MarkFlagRequired("existing-private-link-vpce-id")
-		cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
-		cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
+		_ = cmd.MarkFlagRequired("target-environment-id")
+		_ = cmd.MarkFlagRequired("target-bootstrap-endpoint")
+		_ = cmd.MarkFlagRequired("existing-private-link-vpce-id")
+		_ = cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
+		_ = cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
 
 	case types.JumpClusterIam:
-		cmd.MarkFlagRequired("target-environment-id")
-		cmd.MarkFlagRequired("target-bootstrap-endpoint")
-		cmd.MarkFlagRequired("existing-private-link-vpce-id")
-		cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
-		cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
-		cmd.MarkFlagRequired("jump-cluster-iam-auth-role-name")
+		_ = cmd.MarkFlagRequired("target-environment-id")
+		_ = cmd.MarkFlagRequired("target-bootstrap-endpoint")
+		_ = cmd.MarkFlagRequired("existing-private-link-vpce-id")
+		_ = cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
+		_ = cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
+		_ = cmd.MarkFlagRequired("jump-cluster-iam-auth-role-name")
 	}
 
 	return nil

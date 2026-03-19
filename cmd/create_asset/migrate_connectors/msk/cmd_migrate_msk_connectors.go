@@ -68,11 +68,11 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 		return nil
 	})
 
-	mskConnectorsCmd.MarkFlagRequired("state-file")
-	mskConnectorsCmd.MarkFlagRequired("cc-environment-id")
-	mskConnectorsCmd.MarkFlagRequired("cc-cluster-id")
-	mskConnectorsCmd.MarkFlagRequired("cc-api-key")
-	mskConnectorsCmd.MarkFlagRequired("cc-api-secret")
+	_ = mskConnectorsCmd.MarkFlagRequired("state-file")
+	_ = mskConnectorsCmd.MarkFlagRequired("cc-environment-id")
+	_ = mskConnectorsCmd.MarkFlagRequired("cc-cluster-id")
+	_ = mskConnectorsCmd.MarkFlagRequired("cc-api-key")
+	_ = mskConnectorsCmd.MarkFlagRequired("cc-api-secret")
 
 	return mskConnectorsCmd
 }

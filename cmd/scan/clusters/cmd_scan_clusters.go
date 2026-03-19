@@ -52,8 +52,8 @@ func NewScanClustersCmd() *cobra.Command {
 		return nil
 	})
 
-	clustersCmd.MarkFlagRequired("state-file")
-	clustersCmd.MarkFlagRequired("credentials-file")
+	_ = clustersCmd.MarkFlagRequired("state-file")
+	_ = clustersCmd.MarkFlagRequired("credentials-file")
 
 	return clustersCmd
 }

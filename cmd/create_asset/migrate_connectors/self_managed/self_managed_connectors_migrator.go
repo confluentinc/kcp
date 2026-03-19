@@ -118,7 +118,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %w", filepath, err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		templateData := TemplateData{
 			ConnectorName:   connector.Name,
@@ -178,7 +178,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to execute HTTP request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

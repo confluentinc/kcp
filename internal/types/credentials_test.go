@@ -575,7 +575,7 @@ func TestCredentials_Integration(t *testing.T) {
 func createTempFile(t *testing.T, content string) string {
 	tmpFile, err := os.CreateTemp("", "test-creds-*.yaml")
 	require.NoError(t, err)
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 
 	_, err = tmpFile.WriteString(content)
 	require.NoError(t, err)
