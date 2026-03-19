@@ -147,6 +147,9 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 
 	// Add individual metric values
 	r.addIndividualMetricsSection(md, clusterMetrics.Metrics)
+
+	// Add query details
+	r.addQueryDetailsSection(md, clusterMetrics.QueryInfo)
 }
 
 func (r *MetricReporter) addIndividualMetricsSection(md *markdown.Markdown, metrics []types.ProcessedMetric) {
@@ -198,6 +201,39 @@ func (r *MetricReporter) groupMetricsByLabel(metrics []types.ProcessedMetric) ma
 	}
 
 	return groups
+}
+
+func (r *MetricReporter) addQueryDetailsSection(md *markdown.Markdown, queryInfos []types.MetricQueryInfo) {
+	if len(queryInfos) == 0 {
+		return
+	}
+
+	md.AddHeading("Query Details", 4)
+
+	for _, info := range queryInfos {
+		md.AddHeading(info.MetricName, 5)
+		md.AddParagraph(fmt.Sprintf("**Namespace:** %s", info.Namespace))
+		md.AddParagraph(fmt.Sprintf("**Dimensions:** %s", info.Dimensions))
+		md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+		md.AddParagraph(fmt.Sprintf("**Period:** %d seconds", info.Period))
+
+		if info.SearchExpression != "" {
+			md.AddParagraph("**SEARCH Expression:**")
+			md.AddCodeBlock(info.SearchExpression, "")
+		}
+
+		if info.MathExpression != "" {
+			md.AddParagraph(fmt.Sprintf("**Aggregation:** `%s`", info.MathExpression))
+		}
+
+		if info.AWSCLICommand != "" {
+			md.AddParagraph("**AWS CLI Command:**")
+			md.AddCodeBlock(info.AWSCLICommand, "bash")
+		}
+
+		md.AddParagraph(fmt.Sprintf("*%s*", info.AggregationNote))
+		md.AddParagraph("")
+	}
 }
 
 func (r *MetricReporter) formatTimestamp(timestamp string) string {

@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -13,122 +14,190 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Mock implementations
-
-type mockMSKService struct {
-	topicsToReturn []types.TopicDetails
-	topicsErr      error
+func newTestClusterDiscoverer(msk *stubMSKService, ec2svc *stubEC2Service, metrics *stubMetricService, connect *stubMSKConnectService) *ClusterDiscoverer {
+	cd := NewClusterDiscoverer(msk, ec2svc, metrics, connect)
+	return &cd
 }
 
-func (m *mockMSKService) DescribeClusterV2(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
-	return &kafka.DescribeClusterV2Output{
-		ClusterInfo: &kafkatypes.Cluster{
-			ClusterName: aws.String("test-cluster"),
-			ClusterArn:  aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123"),
-			ClusterType: kafkatypes.ClusterTypeProvisioned,
-			Provisioned: &kafkatypes.Provisioned{
-				BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
-					ClientSubnets:  []string{"subnet-1"},
-					SecurityGroups: []string{"sg-1"},
-				},
-				ClientAuthentication: &kafkatypes.ClientAuthentication{
-					Sasl: &kafkatypes.Sasl{
-						Iam: &kafkatypes.Iam{Enabled: aws.Bool(true)},
-					},
+func defaultStubs() (*stubMSKService, *stubEC2Service, *stubMetricService, *stubMSKConnectService) {
+	return &stubMSKService{}, &stubEC2Service{}, &stubMetricService{}, &stubMSKConnectService{}
+}
+
+func TestClusterDiscoverer_NilClusterInfo(t *testing.T) {
+	// DescribeClusterV2 returns a response with nil ClusterInfo —
+	// should return an error, not panic.
+	msk, ec2svc, metrics, connect := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return &kafka.DescribeClusterV2Output{ClusterInfo: nil}, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil ClusterInfo")
+}
+
+func TestClusterDiscoverer_DescribeClusterError(t *testing.T) {
+	msk, ec2svc, metrics, connect := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return nil, errors.New("AWS API error")
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
+
+	require.Error(t, err)
+}
+
+func TestClusterDiscoverer_NilBrokerNodeGroupInfo(t *testing.T) {
+	// Provisioned cluster where BrokerNodeGroupInfo is nil —
+	// networking scan should be skipped gracefully, not panic.
+	msk, ec2svc, metrics, connect := defaultStubs()
+	full := buildFullProvisionedCluster()
+	full.ClusterInfo.Provisioned.BrokerNodeGroupInfo = nil
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return full, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
+
+	// Expect an error (networking cannot proceed without BrokerNodeGroupInfo),
+	// but NOT a panic.
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "broker node group info")
+}
+
+func TestClusterDiscoverer_EmptySubnets(t *testing.T) {
+	// Provisioned cluster where BrokerNodeGroupInfo has empty ClientSubnets —
+	// getVpcIdFromSubnets should return an error, not panic on subnetIds[0].
+	msk, ec2svc, metrics, connect := defaultStubs()
+	full := buildFullProvisionedCluster()
+	full.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets = []string{}
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return full, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "subnet")
+}
+
+func TestClusterDiscoverer_ServerlessCluster(t *testing.T) {
+	// Serverless cluster — networking scan skipped, no provisioned-only fields accessed.
+	msk, ec2svc, metrics, connect := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullServerlessCluster(), nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, testClusterName, result.Name)
+}
+
+func TestClusterDiscoverer_SkipMetrics(t *testing.T) {
+	// skipMetrics=true — metric service should never be called.
+	msk, ec2svc, metrics, connect := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullProvisionedCluster(), nil
+	}
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{
+				{
+					SubnetId:         aws.String(subnetIds[0]),
+					VpcId:            aws.String("vpc-12345"),
+					AvailabilityZone: aws.String("us-east-1a"),
+					CidrBlock:        aws.String("10.0.0.0/24"),
 				},
 			},
-		},
-	}, nil
-}
-
-func (m *mockMSKService) GetBootstrapBrokers(_ context.Context, _ string) (*kafka.GetBootstrapBrokersOutput, error) {
-	return &kafka.GetBootstrapBrokersOutput{
-		BootstrapBrokerStringSaslIam: aws.String("b-1.test.kafka.us-east-1.amazonaws.com:9098"),
-	}, nil
-}
-
-func (m *mockMSKService) ListClientVpcConnections(_ context.Context, _ string, _ int32) ([]kafkatypes.ClientVpcConnection, error) {
-	return []kafkatypes.ClientVpcConnection{}, nil
-}
-
-func (m *mockMSKService) ListClusterOperationsV2(_ context.Context, _ string, _ int32) ([]kafkatypes.ClusterOperationV2Summary, error) {
-	return []kafkatypes.ClusterOperationV2Summary{}, nil
-}
-
-func (m *mockMSKService) ListNodes(_ context.Context, _ string, _ int32) ([]kafkatypes.NodeInfo, error) {
-	return []kafkatypes.NodeInfo{}, nil
-}
-
-func (m *mockMSKService) ListScramSecrets(_ context.Context, _ string, _ int32) ([]string, error) {
-	return []string{}, nil
-}
-
-func (m *mockMSKService) GetClusterPolicy(_ context.Context, _ string) (*kafka.GetClusterPolicyOutput, error) {
-	return &kafka.GetClusterPolicyOutput{}, nil
-}
-
-func (m *mockMSKService) GetCompatibleKafkaVersions(_ context.Context, _ string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
-	return &kafka.GetCompatibleKafkaVersionsOutput{
-		CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
-	}, nil
-}
-
-func (m *mockMSKService) IsFetchFromFollowerEnabled(_ context.Context, _ kafkatypes.Cluster) (bool, error) {
-	return false, nil
-}
-
-func (m *mockMSKService) GetTopicsWithConfigs(_ context.Context, _ string) ([]types.TopicDetails, error) {
-	return m.topicsToReturn, m.topicsErr
-}
-
-type mockEC2Service struct{}
-
-func (m *mockEC2Service) DescribeSubnets(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
-	var subnets []ec2types.Subnet
-	for _, id := range subnetIds {
-		subnets = append(subnets, ec2types.Subnet{
-			SubnetId:         aws.String(id),
-			VpcId:            aws.String("vpc-123"),
-			AvailabilityZone: aws.String("us-east-1a"),
-			CidrBlock:        aws.String("10.0.0.0/24"),
-		})
+		}, nil
 	}
-	return &ec2.DescribeSubnetsOutput{Subnets: subnets}, nil
-}
-
-type mockMSKConnectService struct {
-	listErr error
-}
-
-func (m *mockMSKConnectService) ListConnectors(_ context.Context, _ *kafkaconnect.ListConnectorsInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
-	if m.listErr != nil {
-		return nil, m.listErr
+	metricsCalled := false
+	metrics.processProvisionedClusterFn = func(_ context.Context, _ kafkatypes.Cluster, _ bool, _ types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
+		metricsCalled = true
+		return &types.ClusterMetrics{}, nil
 	}
-	return &kafkaconnect.ListConnectorsOutput{}, nil
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true /* skipTopics */, true /* skipMetrics */, false)
+
+	require.NoError(t, err)
+	assert.False(t, metricsCalled, "metric service should not be called when skipMetrics=true")
 }
 
-func (m *mockMSKConnectService) DescribeConnector(_ context.Context, _ *kafkaconnect.DescribeConnectorInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
-	return &kafkaconnect.DescribeConnectorOutput{}, nil
+func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
+	// The first DescribeClusterV2 call (in discoverAWSClientInformation) returns a valid cluster.
+	// The second call (in discoverMetrics) returns nil ClusterInfo.
+	// Should return an error, not panic.
+	msk, ec2svc, metrics, connect := defaultStubs()
+
+	callCount := 0
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		callCount++
+		if callCount == 1 {
+			return buildFullProvisionedCluster(), nil
+		}
+		// Second call (discoverMetrics) returns nil ClusterInfo
+		return &kafka.DescribeClusterV2Output{ClusterInfo: nil}, nil
+	}
+	// EC2 needs to succeed for the first call to complete
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{{
+				SubnetId:         aws.String(subnetIds[0]),
+				VpcId:            aws.String("vpc-12345"),
+				AvailabilityZone: aws.String("us-east-1a"),
+				CidrBlock:        aws.String("10.0.0.0/24"),
+			}},
+		}, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics, connect)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, false /* skipMetrics=false */, false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil ClusterInfo")
 }
 
 func TestClusterDiscoverer_ConnectorFailureDoesNotBlockTopicDiscovery(t *testing.T) {
+	msk, ec2svc, _, connect := defaultStubs()
+
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullProvisionedCluster(), nil
+	}
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{{
+				SubnetId:         aws.String(subnetIds[0]),
+				VpcId:            aws.String("vpc-12345"),
+				AvailabilityZone: aws.String("us-east-1a"),
+				CidrBlock:        aws.String("10.0.0.0/24"),
+			}},
+		}, nil
+	}
+
 	expectedTopics := []types.TopicDetails{
 		{Name: "test-topic", Partitions: 3, ReplicationFactor: 3},
 	}
-
-	mskService := &mockMSKService{
-		topicsToReturn: expectedTopics,
-	}
-	mskConnectService := &mockMSKConnectService{
-		listErr: fmt.Errorf("AccessDeniedException: User is not authorized to perform: kafkaconnect:ListConnectors"),
+	msk.getTopicsWithConfigsFn = func(_ context.Context, _ string) ([]types.TopicDetails, error) {
+		return expectedTopics, nil
 	}
 
-	cd := NewClusterDiscoverer(mskService, &mockEC2Service{}, nil, mskConnectService)
+	connect.listConnectorsFn = func(_ context.Context, _ *kafkaconnect.ListConnectorsInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+		return nil, fmt.Errorf("AccessDeniedException: User is not authorized to perform: kafkaconnect:ListConnectors")
+	}
 
-	clusterArn := "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123"
-	result, err := cd.Discover(context.Background(), clusterArn, "us-east-1", false, true, false)
+	cd := newTestClusterDiscoverer(msk, ec2svc, nil, connect)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, false, true, false)
 
 	assert.NoError(t, err, "connector failure should not cause Discover to fail")
 	assert.NotNil(t, result)

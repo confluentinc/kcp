@@ -85,14 +85,14 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
-			Condition: nil,
+			Condition:        nil,
 			FromModuleOutput: "",
 		},
 		{
 			Name: "cluster_link_name",
 			Definition: types.TerraformVariable{
 				Name:        "cluster_link_name",
-				Description: "The name of the cluster link between the source and target Confluent Cloud clusters.",
+				Description: "The name of the cluster link that will be created between the source and target Confluent Cloud clusters.",
 				Sensitive:   false,
 				Type:        "string",
 			},

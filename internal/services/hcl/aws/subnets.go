@@ -23,13 +23,13 @@ func GenerateSubnetResourceWithCount(tfResourceName, subnetCidrsVarName, availab
 	subnetBlock := hclwrite.NewBlock("resource", []string{"aws_subnet", tfResourceName})
 	subnetBlock.Body().SetAttributeRaw("count", utils.TokensForFunctionCall("length", utils.TokensForVarReference(subnetCidrsVarName)))
 	subnetBlock.Body().AppendNewline()
-	
+
 	subnetBlock.Body().SetAttributeRaw("vpc_id", utils.TokensForVarReference(vpcIdVarName))
-	
+
 	// Use modulo to cycle through AZs: availabilityZoneRef.names[count.index % length(availabilityZoneRef.names)]
 	moduloExpr := fmt.Sprintf("%s.names[count.index %% length(%s.names)]", availabilityZoneRef, availabilityZoneRef)
 	subnetBlock.Body().SetAttributeRaw("availability_zone", utils.TokensForResourceReference(moduloExpr))
-	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(subnetCidrsVarName + "[count.index]"))
+	subnetBlock.Body().SetAttributeRaw("cidr_block", utils.TokensForVarReference(subnetCidrsVarName+"[count.index]"))
 
 	return subnetBlock
 }

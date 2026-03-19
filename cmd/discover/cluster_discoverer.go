@@ -96,6 +96,9 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	if err != nil {
 		return nil, nil, err
 	}
+	if cluster.ClusterInfo == nil {
+		return nil, nil, fmt.Errorf("DescribeClusterV2 returned nil ClusterInfo for %s", clusterArn)
+	}
 	awsClientInfo.MskClusterConfig = *cluster.ClusterInfo
 
 	brokers, err := cd.getBootstrapBrokers(ctx, clusterArn)
@@ -294,6 +297,9 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 }
 
 func (cd *ClusterDiscoverer) scanNetworkingInfo(ctx context.Context, cluster *kafka.DescribeClusterV2Output, nodes []kafkatypes.NodeInfo) (types.ClusterNetworking, error) {
+	if cluster.ClusterInfo == nil || cluster.ClusterInfo.Provisioned == nil || cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo == nil {
+		return types.ClusterNetworking{}, fmt.Errorf("cluster has no broker node group info, cannot determine networking")
+	}
 	subnetIds := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets
 	securityGroups := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.SecurityGroups
 
@@ -318,6 +324,9 @@ func (cd *ClusterDiscoverer) scanNetworkingInfo(ctx context.Context, cluster *ka
 }
 
 func (cd *ClusterDiscoverer) getVpcIdFromSubnets(ctx context.Context, subnetIds []string) (string, error) {
+	if len(subnetIds) == 0 {
+		return "", fmt.Errorf("no subnets provided, cannot determine VPC ID")
+	}
 	// Only way to get the VPC ID is to query the subnets belonging to the cluster brokers.
 	result, err := cd.ec2Service.DescribeSubnets(ctx, []string{subnetIds[0]})
 	if err != nil {
@@ -378,9 +387,16 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 }
 
 func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
+	// TODO: this issues a second DescribeClusterV2 call for the same cluster, and also
+	// drops the caller's ctx by using context.Background(). Consider refactoring to
+	// accept the already-fetched cluster from discoverAWSClientInformation to eliminate
+	// the redundant API call and restore correct context propagation.
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get clusters: %v", err)
+	}
+	if cluster.ClusterInfo == nil {
+		return nil, fmt.Errorf("DescribeClusterV2 returned nil ClusterInfo for %s", clusterArn)
 	}
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)

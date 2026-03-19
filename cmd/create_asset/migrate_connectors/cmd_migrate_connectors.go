@@ -1,9 +1,9 @@
 package migrate_connectors
 
 import (
+	connector_utility "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/connector_utility"
 	msk_connectors "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/msk"
 	self_managed_connectors "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/self_managed"
-	connector_utility "github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors/connector_utility"
 
 	"github.com/spf13/cobra"
 )

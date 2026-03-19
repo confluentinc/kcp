@@ -22,7 +22,7 @@ var (
 	migrationInfraType string
 	clusterLinkName    string
 
-	existingInternetGateway    bool
+	existingInternetGateway   bool
 	existingPrivateLinkVpceId string
 	outputDir                 string
 
@@ -71,7 +71,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 
 	baseFlags := pflag.NewFlagSet("base", pflag.ExitOnError)
 	baseFlags.SortFlags = false
-	baseFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link for the migration.")
+	baseFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link that will be created as part of the migration.")
 	baseFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID.")
 	baseFlags.StringVar(&targetRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint.")
 	migrationInfraCmd.Flags().AddFlagSet(baseFlags)
@@ -260,7 +260,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
-		slog.Info("ℹ️ no cluster link name provided, using default", "default", "kcp-msk-to-cc-link")
+		slog.Warn("⚠️ no cluster link name provided, using default", "default", "kcp-msk-to-cc-link")
 		opts.MigrationWizardRequest.ClusterLinkName = "kcp-msk-to-cc-link"
 	}
 
@@ -298,7 +298,11 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 
 		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
 
-		opts.MigrationWizardRequest.ExtOutboundBrokers = buildExtOutboundBrokers(cluster)
+		extOutboundBrokers, err := buildExtOutboundBrokers(cluster)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build external outbound brokers: %w", err)
+		}
+		opts.MigrationWizardRequest.ExtOutboundBrokers = extOutboundBrokers
 
 	case types.JumpClusterSaslScram:
 		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
@@ -362,23 +366,40 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 }
 
 func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.MigrationType) (string, error) {
+	var bootstrap string
+	var authMethod string
+
 	switch migrationType {
 	case types.PublicMskEndpoints:
-		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram), nil
+		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
+		authMethod = "public SASL/SCRAM"
 	case types.ExternalOutboundClusterLink:
-		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram), nil
+		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
+		authMethod = "SASL/SCRAM"
 	case types.JumpClusterSaslScram:
-		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram), nil
+		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
+		authMethod = "SASL/SCRAM"
 	case types.JumpClusterIam:
-		return aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslIam), nil
+		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslIam)
+		authMethod = "IAM"
 	default:
 		return "<bootstrap broker address not found>", fmt.Errorf("invalid target type: %d", migrationType)
 	}
+
+	if bootstrap == "" {
+		return "", fmt.Errorf("no %s bootstrap brokers found for cluster %s. Ensure the cluster has %s authentication enabled", authMethod, cluster.Name, authMethod)
+	}
+
+	return bootstrap, nil
 }
 
-func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) []types.ExtOutboundClusterKafkaBroker {
-	var brokers []types.ExtOutboundClusterKafkaBroker
-	bootstrapBrokers := strings.Split(aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram), ",")
+func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
+	if bootstrapStr == "" {
+		return nil, fmt.Errorf("SASL/SCRAM bootstrap brokers string is empty for cluster %s", cluster.Name)
+	}
+
+	bootstrapBrokers := strings.Split(bootstrapStr, ",")
 
 	var formattedBootstrapBrokers []string
 	for _, broker := range bootstrapBrokers {
@@ -386,13 +407,19 @@ func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) []types.ExtOutbou
 	}
 	slices.Sort(formattedBootstrapBrokers)
 
+	var brokers []types.ExtOutboundClusterKafkaBroker
 	for _, subnet := range cluster.AWSClientInformation.ClusterNetworking.Subnets {
+		brokerIndex := subnet.SubnetMskBrokerId - 1
+		if brokerIndex < 0 || brokerIndex >= len(formattedBootstrapBrokers) {
+			return nil, fmt.Errorf("broker ID %d is out of range for the available bootstrap brokers (count: %d)", subnet.SubnetMskBrokerId, len(formattedBootstrapBrokers))
+		}
+
 		broker := types.ExtOutboundClusterKafkaBroker{
 			ID:       fmt.Sprintf("%d", subnet.SubnetMskBrokerId),
 			SubnetID: subnet.SubnetId,
 			Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
 				{
-					Host: formattedBootstrapBrokers[subnet.SubnetMskBrokerId-1],
+					Host: formattedBootstrapBrokers[brokerIndex],
 					Port: 9096, // Default port for SASL/SCRAM.
 					IP:   subnet.PrivateIpAddress,
 				},
@@ -402,7 +429,7 @@ func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) []types.ExtOutbou
 		brokers = append(brokers, broker)
 	}
 
-	return brokers
+	return brokers, nil
 }
 
 // `net.IP` slice is used for input validation from flag input. However, the Terraform module expects a string slice.

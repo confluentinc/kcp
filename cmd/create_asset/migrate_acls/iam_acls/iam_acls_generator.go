@@ -14,6 +14,7 @@ import (
 	iamservice "github.com/confluentinc/kcp/internal/services/iam"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type MigrateIamAclsOpts struct {
@@ -22,6 +23,7 @@ type MigrateIamAclsOpts struct {
 	TargetClusterRestEndpoint string
 	OutputDir                 string
 	SkipAuditReport           bool
+	PreventDestroy            bool
 }
 
 type IamAclsGenerator struct {
@@ -35,7 +37,7 @@ func NewIamAclsGenerator(opts MigrateIamAclsOpts) *IamAclsGenerator {
 }
 
 func (ig *IamAclsGenerator) Run() error {
-	slog.Info("🏁 generating Terraform files for IAM ACLs!", "principals", ig.opts.PrincipalArns)
+	slog.Info("🚀 generating Terraform files for IAM ACLs!", "principals", ig.opts.PrincipalArns)
 	ctx := context.Background()
 
 	iamClient, err := client.NewIAMClient()
@@ -46,7 +48,7 @@ func (ig *IamAclsGenerator) Run() error {
 	allAclsByPrincipal := make(map[string][]types.Acls)
 
 	for _, principalArn := range ig.opts.PrincipalArns {
-		slog.Info("📋 Retrieving IAM policies for principal", "principal", principalArn)
+		slog.Info("🔍 Retrieving IAM policies for principal", "principal", principalArn)
 		policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
 		if err != nil {
 			return fmt.Errorf("failed to get principal policies: %v", err)
@@ -76,7 +78,7 @@ func (ig *IamAclsGenerator) Run() error {
 	outputDir := ig.opts.OutputDir
 	if outputDir == "" {
 		if len(ig.opts.PrincipalArns) == 1 {
-			principal := cleanPrincipalName(getPrincipalFromArn(ig.opts.PrincipalArns[0]))
+			principal := utils.CleanPrincipalName(getPrincipalFromArn(ig.opts.PrincipalArns[0]))
 			outputDir = fmt.Sprintf("%s_iam_acls", principal)
 		} else {
 			outputDir = "iam_acls"
@@ -91,11 +93,12 @@ func (ig *IamAclsGenerator) Run() error {
 	for principal := range allAclsByPrincipal {
 		principalNames = append(principalNames, principal)
 	}
-	
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           ig.opts.TargetClusterId,
 		TargetClusterRestEndpoint: ig.opts.TargetClusterRestEndpoint,
+		PreventDestroy:            ig.opts.PreventDestroy,
 		AclsByPrincipal:           allAclsByPrincipal,
 	}
 
@@ -105,7 +108,7 @@ func (ig *IamAclsGenerator) Run() error {
 		return fmt.Errorf("failed to generate Terraform files: %w", err)
 	}
 
-	if err := ig.writeTerraformFiles(outputDir, terraformFiles); err != nil {
+	if err := utils.WriteTerraformFiles(outputDir, terraformFiles); err != nil {
 		return fmt.Errorf("failed to write Terraform files: %w", err)
 	}
 
@@ -114,7 +117,7 @@ func (ig *IamAclsGenerator) Run() error {
 		if err := ig.generateIamAuditReport(allAclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
-		slog.Info("📝 generated audit report", "path", reportPath)
+		slog.Info("✅ generated audit report", "path", reportPath)
 	}
 
 	totalAcls := 0
@@ -127,49 +130,17 @@ func (ig *IamAclsGenerator) Run() error {
 	return nil
 }
 
-func (ig *IamAclsGenerator) writeTerraformFiles(outputDir string, files types.TerraformFiles) error {
-	if files.MainTf != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
-			return fmt.Errorf("failed to write main.tf: %w", err)
-		}
-		slog.Info("✅ wrote main.tf")
-	}
-
-	if files.ProvidersTf != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
-			return fmt.Errorf("failed to write providers.tf: %w", err)
-		}
-		slog.Info("✅ wrote providers.tf")
-	}
-
-	if files.VariablesTf != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
-			return fmt.Errorf("failed to write variables.tf: %w", err)
-		}
-		slog.Info("✅ wrote variables.tf")
-	}
-
-	if files.InputsAutoTfvars != "" {
-		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(files.InputsAutoTfvars), 0644); err != nil {
-			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
-		}
-		slog.Info("✅ wrote inputs.auto.tfvars")
-	}
-
-	return nil
-}
-
 func (ig *IamAclsGenerator) extractKafkaPermissionsFromPrincipalPolicies(principalArn string, policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
-		slog.Info("📝 Processing attached policy", "policy", policy.PolicyName)
+		slog.Info("🔍 Processing attached policy", "policy", policy.PolicyName)
 		acls := ig.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	for _, policy := range policies.InlinePolicies {
-		slog.Info("📝 Processing inline policy", "policy", policy.PolicyName)
+		slog.Info("🔍 Processing inline policy", "policy", policy.PolicyName)
 		acls := ig.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
@@ -260,7 +231,7 @@ func (ig *IamAclsGenerator) createACLFromMapping(principalArn string, mapping ty
 		ResourceType:        mapping.ResourceType,
 		ResourceName:        resourceName,
 		ResourcePatternType: patternType,
-		Principal:           cleanPrincipalName(getPrincipalFromArn(principalArn)),
+		Principal:           utils.CleanPrincipalName(getPrincipalFromArn(principalArn)),
 		Host:                "*", // Unsure how we would retrieve this from the IAM policy.
 		Operation:           mapping.Operation,
 		PermissionType:      effect,
@@ -379,20 +350,6 @@ func getPrincipalFromArn(principalArn string) string {
 		return principalArn
 	}
 	return fmt.Sprintf("User:%s", parts[1])
-}
-
-// cleanPrincipalName cleans the principal name for use in Terraform resources
-func cleanPrincipalName(principal string) string {
-	name := strings.TrimPrefix(principal, "User:")
-
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, "@", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "/", "_")
-	name = strings.ReplaceAll(name, "\\", "_")
-
-	return strings.ToLower(name)
 }
 
 func (ig *IamAclsGenerator) generateIamAuditReport(aclsByPrincipal map[string][]types.Acls, filePath string) error {

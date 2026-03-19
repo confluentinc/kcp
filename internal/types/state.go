@@ -352,7 +352,7 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 			visibility = "PRIVATE"
 		}
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/IAM brokers found in the cluster")
+			return nil, fmt.Errorf("No SASL/IAM brokers found in the cluster")
 		}
 	case AuthTypeSASLSCRAM:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
@@ -362,19 +362,19 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 			visibility = "PRIVATE"
 		}
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No SASL/SCRAM brokers found in the cluster")
+			return nil, fmt.Errorf("No SASL/SCRAM brokers found in the cluster")
 		}
 	case AuthTypeUnauthenticatedTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
 		visibility = "PRIVATE"
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated (TLS Encryption) brokers found in the cluster")
+			return nil, fmt.Errorf("No Unauthenticated (TLS Encryption) brokers found in the cluster")
 		}
 	case AuthTypeUnauthenticatedPlaintext:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
 		visibility = "PRIVATE"
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No Unauthenticated (Plaintext) brokers found in the cluster")
+			return nil, fmt.Errorf("No Unauthenticated (Plaintext) brokers found in the cluster")
 		}
 	case AuthTypeTLS:
 		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
@@ -384,10 +384,10 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 			visibility = "PRIVATE"
 		}
 		if brokerList == "" {
-			return nil, fmt.Errorf("❌ No TLS brokers found in the cluster")
+			return nil, fmt.Errorf("No TLS brokers found in the cluster")
 		}
 	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
 	}
 
 	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
@@ -424,7 +424,7 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls))
 		brokerList = append(brokerList, aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls))
 	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
 	}
 
 	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
@@ -523,6 +523,7 @@ const (
 type ClusterMetrics struct {
 	MetricMetadata MetricMetadata                     `json:"metadata"`
 	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
+	QueryInfo      []MetricQueryInfo                  `json:"query_info"`
 }
 
 type MetricMetadata struct {
@@ -547,10 +548,42 @@ type CloudWatchTimeWindow struct {
 	Period    int32
 }
 
+type MetricQueryInfo struct {
+	MetricName        string `json:"metric_name"`
+	Namespace         string `json:"namespace"`
+	Dimensions        string `json:"dimensions"`
+	Statistic         string `json:"statistic"`
+	Period            int32  `json:"period"`
+	SearchExpression  string `json:"search_expression"`
+	MathExpression    string `json:"math_expression"`
+	AWSCLICommand     string `json:"aws_cli_command"`
+	ConsoleSourceJSON string `json:"console_source_json"`
+	AggregationNote   string `json:"aggregation_note"`
+}
+
 // ----- costs -----
+type CostQueryTimePeriod struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+type CostQueryInfo struct {
+	TimePeriod      CostQueryTimePeriod `json:"time_period"`
+	Granularity     string              `json:"granularity"`
+	Services        []string            `json:"services"`
+	Regions         []string            `json:"regions"`
+	GroupBy         []string            `json:"group_by"`
+	Metrics         []string            `json:"metrics"`
+	Tags            map[string][]string `json:"tags,omitempty"`
+	AWSCLICommand   string              `json:"aws_cli_command"`
+	ConsoleURL      string              `json:"console_url"`
+	AggregationNote string              `json:"aggregation_note"`
+}
+
 type CostInformation struct {
 	CostMetadata CostMetadata                     `json:"metadata"`
 	CostResults  []costexplorertypes.ResultByTime `json:"results"`
+	QueryInfo    CostQueryInfo                    `json:"query_info"`
 }
 
 type CostMetadata struct {
@@ -606,39 +639,65 @@ type ProcessedRegionCosts struct {
 	Metadata   CostMetadata        `json:"metadata"`
 	Results    []ProcessedCost     `json:"results"`
 	Aggregates ProcessedAggregates `json:"aggregates"`
+	QueryInfo  CostQueryInfo       `json:"query_info"`
 }
 
-// ProcessedAggregates represents the three specific services we query
+// AWS service name constants — single source of truth for Cost Explorer service filters.
+// Frontend constants (cmd/ui/frontend/src/constants/index.ts AWS_SERVICES) should mirror these.
+const (
+	ServiceAWSCertificateManager = "AWS Certificate Manager"
+	ServiceMSK                   = "Amazon Managed Streaming for Apache Kafka"
+	ServiceEC2Other              = "EC2 - Other"
+	ServiceELB                   = "Amazon Elastic Load Balancing"
+	ServiceVPC                   = "Amazon Virtual Private Cloud"
+)
+
+// newServiceCostAggregates creates a ServiceCostAggregates with all maps initialized
+func newServiceCostAggregates() ServiceCostAggregates {
+	return ServiceCostAggregates{
+		UnblendedCost:    make(map[string]any),
+		BlendedCost:      make(map[string]any),
+		AmortizedCost:    make(map[string]any),
+		NetAmortizedCost: make(map[string]any),
+		NetUnblendedCost: make(map[string]any),
+	}
+}
+
+// ForService returns a pointer to the ServiceCostAggregates for the given service name,
+// or nil if the service is not recognized.
+func (a *ProcessedAggregates) ForService(name string) *ServiceCostAggregates {
+	switch name {
+	case ServiceAWSCertificateManager:
+		return &a.AWSCertificateManager
+	case ServiceMSK:
+		return &a.AmazonManagedStreamingForApacheKafka
+	case ServiceEC2Other:
+		return &a.EC2Other
+	case ServiceELB:
+		return &a.ElasticLoadBalancing
+	case ServiceVPC:
+		return &a.AmazonVPC
+	}
+	return nil
+}
+
+// ProcessedAggregates represents the specific services we query
 type ProcessedAggregates struct {
 	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
 	AmazonManagedStreamingForApacheKafka ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka"`
 	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
+	ElasticLoadBalancing                 ServiceCostAggregates `json:"Amazon Elastic Load Balancing"`
+	AmazonVPC                            ServiceCostAggregates `json:"Amazon Virtual Private Cloud"`
 }
 
 // NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
 func NewProcessedAggregates() ProcessedAggregates {
 	return ProcessedAggregates{
-		AWSCertificateManager: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
-		AmazonManagedStreamingForApacheKafka: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
-		EC2Other: ServiceCostAggregates{
-			UnblendedCost:    make(map[string]any),
-			BlendedCost:      make(map[string]any),
-			AmortizedCost:    make(map[string]any),
-			NetAmortizedCost: make(map[string]any),
-			NetUnblendedCost: make(map[string]any),
-		},
+		AWSCertificateManager:                newServiceCostAggregates(),
+		AmazonManagedStreamingForApacheKafka: newServiceCostAggregates(),
+		EC2Other:                             newServiceCostAggregates(),
+		ElasticLoadBalancing:                 newServiceCostAggregates(),
+		AmazonVPC:                            newServiceCostAggregates(),
 	}
 }
 
@@ -676,6 +735,7 @@ type ProcessedClusterMetrics struct {
 	Metadata   MetricMetadata             `json:"metadata"`
 	Metrics    []ProcessedMetric          `json:"results"`
 	Aggregates map[string]MetricAggregate `json:"aggregates"`
+	QueryInfo  []MetricQueryInfo          `json:"query_info"`
 }
 
 type ProcessedMetric struct {
