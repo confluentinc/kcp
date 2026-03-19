@@ -48,6 +48,20 @@ services:
     networks:
       - kcp-test-network
 
+  kafka-jmx-consumer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-kafka-jmx-consumer
+    depends_on:
+      - kafka-jmx
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b kafka-jmx:29092 1 60
+        kafka-console-consumer --bootstrap-server kafka-jmx:29092 --topic test-topic-1 --group jmx-test-consumer > /dev/null
+    networks:
+      - kcp-test-network
+
 networks:
   kcp-test-network:
     driver: bridge
