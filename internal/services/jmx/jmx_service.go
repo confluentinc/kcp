@@ -2,7 +2,6 @@ package jmx
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -107,18 +106,10 @@ func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnaps
 			}
 
 			if mb.IsRate {
-				// Primary value: OneMinuteRate stored as the CloudWatch-aligned metric name
+				// Use OneMinuteRate as the primary value, matching CloudWatch's Average statistic
 				if v, ok := value["OneMinuteRate"]; ok {
 					if f, ok := toFloat64(v); ok {
 						metricValues[mb.Name] += f
-					}
-				}
-				// Supplementary rates stored with suffixes
-				for _, field := range []string{"FiveMinuteRate", "FifteenMinuteRate", "Count", "MeanRate"} {
-					if v, ok := value[field]; ok {
-						if f, ok := toFloat64(v); ok {
-							metricValues[fmt.Sprintf("%s_%s", mb.Name, field)] += f
-						}
 					}
 				}
 			} else {
