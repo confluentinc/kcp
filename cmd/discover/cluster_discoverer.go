@@ -193,7 +193,7 @@ func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn str
 
 	cluster, err := cd.mskService.DescribeClusterV2(ctx, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe cluster: %v", err)
+		return nil, fmt.Errorf("failed to describe cluster: %w", err)
 	}
 
 	return cluster, nil
@@ -204,7 +204,7 @@ func (cd *ClusterDiscoverer) getBootstrapBrokers(ctx context.Context, clusterArn
 
 	brokers, err := cd.mskService.GetBootstrapBrokers(ctx, clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan brokers: %v", err)
+		return nil, fmt.Errorf("failed to scan brokers: %w", err)
 	}
 	return brokers, nil
 }
@@ -219,7 +219,7 @@ func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clus
 			slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 			return []kafkatypes.ClientVpcConnection{}, nil
 		}
-		return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
+		return nil, fmt.Errorf("failed listing client vpc connections: %w", err)
 	}
 	return connections, nil
 }
@@ -229,7 +229,7 @@ func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterA
 
 	operations, err := cd.mskService.ListClusterOperationsV2(ctx, clusterArn, int32(100))
 	if err != nil {
-		return nil, fmt.Errorf("failed listing operations: %v", err)
+		return nil, fmt.Errorf("failed listing operations: %w", err)
 	}
 	return operations, nil
 }
@@ -244,7 +244,7 @@ func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn st
 			slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 			return []kafkatypes.NodeInfo{}, nil
 		}
-		return nil, fmt.Errorf("failed listing nodes: %v", err)
+		return nil, fmt.Errorf("failed listing nodes: %w", err)
 	}
 
 	return nodes, nil
@@ -260,7 +260,7 @@ func (cd *ClusterDiscoverer) scanClusterScramSecrets(ctx context.Context, cluste
 			slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 			return []string{}, nil
 		}
-		return nil, fmt.Errorf("failed listing secrets: %v", err)
+		return nil, fmt.Errorf("failed listing secrets: %w", err)
 	}
 
 	return secrets, nil
@@ -294,7 +294,7 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
 		}
-		return nil, fmt.Errorf("failed to get compatible versions: %v", err)
+		return nil, fmt.Errorf("failed to get compatible versions: %w", err)
 	}
 	return versions, nil
 }
@@ -308,12 +308,12 @@ func (cd *ClusterDiscoverer) scanNetworkingInfo(ctx context.Context, cluster *ka
 
 	vpcId, err := cd.getVpcIdFromSubnets(ctx, subnetIds)
 	if err != nil {
-		return types.ClusterNetworking{}, fmt.Errorf("failed to get VPC ID: %v", err)
+		return types.ClusterNetworking{}, fmt.Errorf("failed to get VPC ID: %w", err)
 	}
 
 	subnetDetails, err := cd.getSubnetDetails(ctx, subnetIds)
 	if err != nil {
-		return types.ClusterNetworking{}, fmt.Errorf("failed to get subnet details: %v", err)
+		return types.ClusterNetworking{}, fmt.Errorf("failed to get subnet details: %w", err)
 	}
 
 	subnetInfo := cd.createCombinedSubnetBrokerInfo(nodes, subnetDetails)
@@ -333,7 +333,7 @@ func (cd *ClusterDiscoverer) getVpcIdFromSubnets(ctx context.Context, subnetIds 
 	// Only way to get the VPC ID is to query the subnets belonging to the cluster brokers.
 	result, err := cd.ec2Service.DescribeSubnets(ctx, []string{subnetIds[0]})
 	if err != nil {
-		return "", fmt.Errorf("failed to describe subnet %s: %v", subnetIds[0], err)
+		return "", fmt.Errorf("failed to describe subnet %s: %w", subnetIds[0], err)
 	}
 
 	if len(result.Subnets) > 0 && result.Subnets[0].VpcId != nil {
@@ -346,7 +346,7 @@ func (cd *ClusterDiscoverer) getVpcIdFromSubnets(ctx context.Context, subnetIds 
 func (cd *ClusterDiscoverer) getSubnetDetails(ctx context.Context, subnetIds []string) (map[string]types.SubnetInfo, error) {
 	result, err := cd.ec2Service.DescribeSubnets(ctx, subnetIds)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe subnets: %v", err)
+		return nil, fmt.Errorf("failed to describe subnets: %w", err)
 	}
 
 	subnets := make(map[string]types.SubnetInfo)
@@ -396,7 +396,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	// the redundant API call and restore correct context propagation.
 	cluster, err := cd.mskService.DescribeClusterV2(context.Background(), clusterArn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get clusters: %v", err)
+		return nil, fmt.Errorf("failed to get clusters: %w", err)
 	}
 	if cluster.ClusterInfo == nil {
 		return nil, fmt.Errorf("DescribeClusterV2 returned nil ClusterInfo for %s", clusterArn)
@@ -404,7 +404,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %v", err)
+		return nil, fmt.Errorf("failed to check if follower fetching is enabled: %w", err)
 	}
 
 	// this time window can be extracted as a parameter in future
@@ -413,19 +413,19 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	endTime := previousMidnight.Add(24 * time.Hour)
 	timeWindow, err := metrics.GetTimeWindow(endTime, metrics.LastYear)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate time window: %v", err)
+		return nil, fmt.Errorf("failed to calculate time window: %w", err)
 	}
 
 	var clusterMetrics *types.ClusterMetrics
 	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeProvisioned {
 		clusterMetrics, err = cd.metricService.ProcessProvisionedCluster(ctx, *cluster.ClusterInfo, followerFetching, timeWindow)
 		if err != nil {
-			return nil, fmt.Errorf("failed to process provisioned cluster: %v", err)
+			return nil, fmt.Errorf("failed to process provisioned cluster: %w", err)
 		}
 	} else {
 		clusterMetrics, err = cd.metricService.ProcessServerlessCluster(ctx, *cluster.ClusterInfo, timeWindow)
 		if err != nil {
-			return nil, fmt.Errorf("failed to process serverless cluster: %v", err)
+			return nil, fmt.Errorf("failed to process serverless cluster: %w", err)
 		}
 	}
 
@@ -438,7 +438,7 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 
 	mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &kafkaconnect.ListConnectorsInput{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list connectors: %v", err)
+		return nil, fmt.Errorf("failed to list connectors: %w", err)
 	}
 
 	for _, connector := range mskConnectResult.Connectors {
@@ -503,7 +503,7 @@ func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn stri
 
 	topics, err := cd.mskService.GetTopicsWithConfigs(ctx, clusterArn)
 	if err != nil {
-		slog.Error("❌ failed to list topics", "clusterArn", clusterArn, "error", err)
+		return nil, fmt.Errorf("failed to list topics for %s: %w", clusterArn, err)
 	}
 
 	var topicDetails []types.TopicDetails
