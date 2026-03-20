@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl"
@@ -19,11 +18,11 @@ var (
 	stateFile  string
 	clusterArn string
 
-	needsEnvironmentStr string
-	environmentName     string
-	environmentId       string
+	needsEnvironment bool
+	environmentName  string
+	environmentId    string
 
-	needsClusterStr     string
+	needsCluster        bool
 	clusterName         string
 	clusterId           string
 	clusterType         string
@@ -32,10 +31,10 @@ var (
 
 	awsRegion string
 
-	needsPrivateLinkStr   string
+	needsPrivateLink       bool
 	useExistingRoute53Zone bool
 	vpcId                  string
-	subnetCidrs           []string
+	subnetCidrs            []string
 
 	preventDestroy bool
 
@@ -88,28 +87,28 @@ func NewTargetInfraCmd() *cobra.Command {
 
 	envFlags := pflag.NewFlagSet("environment", pflag.ExitOnError)
 	envFlags.SortFlags = false
-	envFlags.StringVar(&needsEnvironmentStr, "needs-environment", "false", "Whether to create a new environment (true) or use existing (false)")
-	envFlags.StringVar(&environmentName, "env-name", "", "Name for new environment (required when --needs-environment=true)")
-	envFlags.StringVar(&environmentId, "env-id", "", "ID of existing environment (required when --needs-environment=false)")
+	envFlags.BoolVar(&needsEnvironment, "needs-environment", false, "Create a new environment (requires --env-name)")
+	envFlags.StringVar(&environmentName, "env-name", "", "Name for new environment (required with --needs-environment)")
+	envFlags.StringVar(&environmentId, "env-id", "", "ID of existing environment (required without --needs-environment)")
 	targetInfraCmd.Flags().AddFlagSet(envFlags)
 	groups[envFlags] = "Target Environment"
 
 	clusterFlags := pflag.NewFlagSet("cluster", pflag.ExitOnError)
 	clusterFlags.SortFlags = false
-	clusterFlags.StringVar(&needsClusterStr, "needs-cluster", "false", "Whether to create a new cluster (true) or use existing (false)")
-	clusterFlags.StringVar(&clusterName, "cluster-name", "", "Name for new cluster (required when --needs-cluster=true)")
-	clusterFlags.StringVar(&clusterId, "cluster-id", "", "ID of existing cluster (required when --needs-cluster=false)")
-	clusterFlags.StringVar(&clusterType, "cluster-type", "", "Cluster type (e.g. 'dedicated' or 'enterprise')")
-	clusterFlags.StringVar(&clusterAvailability, "cluster-availability", "SINGLE_ZONE", "Cluster availability zone type ('SINGLE_ZONE' or 'MULTI_ZONE')")
+	clusterFlags.BoolVar(&needsCluster, "needs-cluster", false, "Create a new cluster (requires --cluster-name and --cluster-type)")
+	clusterFlags.StringVar(&clusterName, "cluster-name", "", "Name for new cluster (required with --needs-cluster)")
+	clusterFlags.StringVar(&clusterId, "cluster-id", "", "ID of existing cluster (required without --needs-cluster)")
+	clusterFlags.StringVar(&clusterType, "cluster-type", "", "Cluster type: 'dedicated' or 'enterprise' (required with --needs-cluster)")
+	clusterFlags.StringVar(&clusterAvailability, "cluster-availability", "SINGLE_ZONE", "Cluster availability: 'SINGLE_ZONE' or 'MULTI_ZONE'")
 	clusterFlags.IntVar(&clusterCku, "cluster-cku", 1, "Number of CKUs for dedicated clusters (MULTI_ZONE requires >= 2)")
-	clusterFlags.BoolVar(&preventDestroy, "prevent-destroy", true, "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources")
+	clusterFlags.BoolVar(&preventDestroy, "prevent-destroy", true, "Set lifecycle { prevent_destroy = true } on resources (use --prevent-destroy=false to disable)")
 	targetInfraCmd.Flags().AddFlagSet(clusterFlags)
 	groups[clusterFlags] = "Target Cluster"
 
 	privateLinkFlags := pflag.NewFlagSet("privatelink", pflag.ExitOnError)
 	privateLinkFlags.SortFlags = false
-	privateLinkFlags.StringVar(&needsPrivateLinkStr, "needs-private-link", "false", "Whether the infrastructure needs private link setup. If using Enterprise clusters, Private Link is required.")
-	privateLinkFlags.StringSliceVar(&subnetCidrs, "subnet-cidrs", []string{}, "Subnet CIDRs for private link (required when --needs-private-link=true)")
+	privateLinkFlags.BoolVar(&needsPrivateLink, "needs-private-link", false, "Setup private link (requires --subnet-cidrs). Required for Enterprise clusters.")
+	privateLinkFlags.StringSliceVar(&subnetCidrs, "subnet-cidrs", []string{}, "Subnet CIDRs for private link (required with --needs-private-link)")
 	privateLinkFlags.BoolVar(&useExistingRoute53Zone, "use-existing-route53-zone", false, "Use an existing Route53 hosted zone instead of creating a new one")
 	targetInfraCmd.Flags().AddFlagSet(privateLinkFlags)
 	groups[privateLinkFlags] = "Private Link"
@@ -150,75 +149,55 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Parsing flags from string to boolean. Opted for this approach to make the inputs appear as more natural syntax.
-	// --needs-environment=false vs --needs-environment false
-	needsEnvironment, err := strconv.ParseBool(needsEnvironmentStr)
-	if err != nil {
-		return fmt.Errorf("invalid value for --needs-environment: must be 'true' or 'false', got '%s'", needsEnvironmentStr)
-	}
-
-	needsCluster, err := strconv.ParseBool(needsClusterStr)
-	if err != nil {
-		return fmt.Errorf("invalid value for --needs-cluster: must be 'true' or 'false', got '%s'", needsClusterStr)
-	}
-
-	needsPrivateLink, err := strconv.ParseBool(needsPrivateLinkStr)
-	if err != nil {
-		return fmt.Errorf("invalid value for --needs-private-link: must be 'true' or 'false', got '%s'", needsPrivateLinkStr)
-	}
-
 	// Validate state file or manual configuration
 	if stateFile != "" {
-		// When using state file, cluster-arn is required
 		if clusterArn == "" {
-			return fmt.Errorf("required flag `--cluster-arn` not set when `--state-file` is provided")
+			return fmt.Errorf("--cluster-arn is required when --state-file is provided")
 		}
-		// vpc-id and aws-region will be extracted from state file
 	} else {
-		// When not using state file, require manual configuration
 		if awsRegion == "" {
-			return fmt.Errorf("required flag `--aws-region` not set when `--state-file` is not provided")
+			return fmt.Errorf("--aws-region is required when --state-file is not provided")
 		}
 		if vpcId == "" {
-			return fmt.Errorf("required flag `--vpc-id` not set when `--state-file` is not provided")
+			return fmt.Errorf("--vpc-id is required when --state-file is not provided")
 		}
 	}
 
 	if needsEnvironment {
 		if environmentName == "" {
-			return fmt.Errorf("required flag `--env-name` not set when `--needs-environment=true`")
+			return fmt.Errorf("--env-name is required with --needs-environment")
 		}
 	} else {
 		if environmentId == "" {
-			return fmt.Errorf("required flag `--env-id` not set when `--needs-environment=false`")
+			return fmt.Errorf("--env-id is required without --needs-environment")
 		}
 	}
 
 	if needsCluster {
 		if clusterName == "" {
-			return fmt.Errorf("required flag `--cluster-name` not set when `--needs-cluster=true`")
+			return fmt.Errorf("--cluster-name is required with --needs-cluster")
 		}
 		if clusterType == "" {
-			return fmt.Errorf("required flag `--cluster-type` not set when `--needs-cluster=true`")
+			return fmt.Errorf("--cluster-type is required with --needs-cluster")
 		}
 		if clusterAvailability != "SINGLE_ZONE" && clusterAvailability != "MULTI_ZONE" {
-			return fmt.Errorf("invalid value for --cluster-availability: must be 'SINGLE_ZONE' or 'MULTI_ZONE', got '%s'", clusterAvailability)
+			return fmt.Errorf("invalid --cluster-availability: must be 'SINGLE_ZONE' or 'MULTI_ZONE', got '%s'", clusterAvailability)
 		}
 		if clusterCku < 1 {
-			return fmt.Errorf("invalid value for --cluster-cku: must be >= 1, got %d", clusterCku)
+			return fmt.Errorf("invalid --cluster-cku: must be >= 1, got %d", clusterCku)
 		}
 		if clusterAvailability == "MULTI_ZONE" && clusterCku < 2 {
-			return fmt.Errorf("invalid value for --cluster-cku: MULTI_ZONE availability requires >= 2 CKUs, got %d", clusterCku)
+			return fmt.Errorf("invalid --cluster-cku: MULTI_ZONE requires >= 2 CKUs, got %d", clusterCku)
 		}
 	} else {
 		if clusterId == "" {
-			return fmt.Errorf("required flag `--cluster-id` not set when `--needs-cluster=false`")
+			return fmt.Errorf("--cluster-id is required without --needs-cluster")
 		}
 	}
 
 	if needsPrivateLink {
 		if len(subnetCidrs) == 0 {
-			return fmt.Errorf("required flag `--subnet-cidrs` not set when `--needs-private-link=true`")
+			return fmt.Errorf("--subnet-cidrs is required with --needs-private-link")
 		}
 	}
 
@@ -256,26 +235,23 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 			"vpc_id", vpcId)
 	}
 
-	opts, err := parseTargetInfraOpts()
-	if err != nil {
-		return fmt.Errorf("failed to parse options: %w", err)
-	}
+	opts := parseTargetInfraOpts()
 
 	request := types.TargetClusterWizardRequest{
-		AwsRegion:           opts.AwsRegion,
-		NeedsEnvironment:    opts.NeedsEnvironment,
-		EnvironmentName:     opts.EnvironmentName,
-		EnvironmentId:       opts.EnvironmentId,
-		NeedsCluster:        opts.NeedsCluster,
-		ClusterName:         opts.ClusterName,
-		ClusterType:         opts.ClusterType,
-		ClusterAvailability: opts.ClusterAvailability,
-		ClusterCku:          opts.ClusterCku,
-		NeedsPrivateLink:      opts.NeedsPrivateLink,
+		AwsRegion:              opts.AwsRegion,
+		NeedsEnvironment:       opts.NeedsEnvironment,
+		EnvironmentName:        opts.EnvironmentName,
+		EnvironmentId:          opts.EnvironmentId,
+		NeedsCluster:           opts.NeedsCluster,
+		ClusterName:            opts.ClusterName,
+		ClusterType:            opts.ClusterType,
+		ClusterAvailability:    opts.ClusterAvailability,
+		ClusterCku:             opts.ClusterCku,
+		NeedsPrivateLink:       opts.NeedsPrivateLink,
 		UseExistingRoute53Zone: opts.UseExistingRoute53Zone,
-		PreventDestroy:        opts.PreventDestroy,
-		VpcId:               opts.VpcId,
-		SubnetCidrRanges:    opts.SubnetCidrs,
+		PreventDestroy:         opts.PreventDestroy,
+		VpcId:                  opts.VpcId,
+		SubnetCidrRanges:       opts.SubnetCidrs,
 	}
 
 	slog.Info("🔍 generating Terraform configuration")
@@ -295,37 +271,22 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseTargetInfraOpts() (*TargetInfraOpts, error) {
-	needsEnvironment, err := strconv.ParseBool(needsEnvironmentStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid value for --needs-environment: %w", err)
-	}
-
-	needsCluster, err := strconv.ParseBool(needsClusterStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid value for --needs-cluster: %w", err)
-	}
-
-	needsPrivateLink, err := strconv.ParseBool(needsPrivateLinkStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid value for --needs-private-link: %w", err)
-	}
-
+func parseTargetInfraOpts() *TargetInfraOpts {
 	return &TargetInfraOpts{
-		NeedsEnvironment:    needsEnvironment,
-		EnvironmentName:     environmentName,
-		EnvironmentId:       environmentId,
-		NeedsCluster:        needsCluster,
-		ClusterName:         clusterName,
-		ClusterId:           clusterId,
-		ClusterType:         clusterType,
-		ClusterAvailability: clusterAvailability,
-		ClusterCku:          clusterCku,
-		AwsRegion:           awsRegion,
-		NeedsPrivateLink:      needsPrivateLink,
+		NeedsEnvironment:       needsEnvironment,
+		EnvironmentName:        environmentName,
+		EnvironmentId:          environmentId,
+		NeedsCluster:           needsCluster,
+		ClusterName:            clusterName,
+		ClusterId:              clusterId,
+		ClusterType:            clusterType,
+		ClusterAvailability:    clusterAvailability,
+		ClusterCku:             clusterCku,
+		AwsRegion:              awsRegion,
+		NeedsPrivateLink:       needsPrivateLink,
 		UseExistingRoute53Zone: useExistingRoute53Zone,
-		PreventDestroy:        preventDestroy,
-		VpcId:               vpcId,
-		SubnetCidrs:         subnetCidrs,
-	}, nil
+		PreventDestroy:         preventDestroy,
+		VpcId:                  vpcId,
+		SubnetCidrs:            subnetCidrs,
+	}
 }
