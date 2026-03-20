@@ -2,6 +2,7 @@ package hcl
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
@@ -257,7 +258,8 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	rootBody.AppendNewline()
 
 	description := fmt.Sprintf("Service account to manage the %s environment.", modules.VarEnvironmentName)
-	serviceAccountName := fmt.Sprintf("app-manager-%s", request.ClusterName[:min(len(request.ClusterName), 6)])
+	truncatedName := strings.TrimRight(request.ClusterName[:min(len(request.ClusterName), 6)], "-._:")
+	serviceAccountName := fmt.Sprintf("app-manager-%s", truncatedName)
 	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, serviceAccountName, description, request.PreventDestroy))
 	rootBody.AppendNewline()
 

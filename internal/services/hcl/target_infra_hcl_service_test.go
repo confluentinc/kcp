@@ -67,6 +67,25 @@ func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
 	assertMatchesGoldenFiles(t, "TestTargetInfra_DedicatedPrivateLink", files)
 }
 
+func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
+	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
+	request := types.TargetClusterWizardRequest{
+		AwsRegion:           "us-east-1",
+		NeedsEnvironment:    true,
+		EnvironmentName:     "refac-env",
+		NeedsCluster:        true,
+		ClusterName:         "refac-cluster",
+		ClusterType:         "enterprise",
+		ClusterAvailability: "MULTI_ZONE",
+		NeedsPrivateLink:    false,
+		PreventDestroy:      false,
+	}
+
+	project := service.GenerateTerraformFiles(request)
+	files := projectToFiles(project)
+	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterpriseTrailingHyphen", files)
+}
+
 func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
