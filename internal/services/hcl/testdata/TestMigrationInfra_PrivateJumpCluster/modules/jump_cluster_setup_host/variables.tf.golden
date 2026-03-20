@@ -15,7 +15,7 @@ variable "jump_cluster_ssh_key_pair_name" {
 
 variable "jump_cluster_instances_private_dns" {
   type        = list(string)
-  description = "IDs of the subnets that the jump cluster broker instances are deployed to."
+  description = "Private DNS addresses of the jump cluster instances."
 }
 
 variable "private_key" {

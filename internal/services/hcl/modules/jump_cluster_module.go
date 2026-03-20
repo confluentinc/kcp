@@ -235,24 +235,15 @@ func GetJumpClusterModuleVariableDefinitions(request types.MigrationWizardReques
 	return ExtractModuleVariableDefinitions(GetJumpClusterVariables(), request)
 }
 
-var JumpClusterModuleOutputs = []ModuleOutputDefinition{
+var JumpClusterModuleOutputs = []types.TerraformOutput{
 	{
-		Name: "jump_cluster_instances_private_dns",
-		Definition: types.TerraformOutput{
-			Name:        "jump_cluster_instances_private_dns",
-			Description: "Private DNS addresses of the jump cluster instances.",
-			Sensitive:   false,
-			Value:       "values(aws_instance.jump_cluster)[*].private_dns",
-		},
+		Name:        "jump_cluster_instances_private_dns",
+		Description: "Private DNS addresses of the jump cluster instances.",
+		Sensitive:   false,
+		Value:       "values(aws_instance.jump_cluster)[*].private_dns",
 	},
 }
 
 func GetJumpClusterModuleOutputDefinitions() []types.TerraformOutput {
-	var definitions []types.TerraformOutput
-
-	for _, outputDef := range JumpClusterModuleOutputs {
-		definitions = append(definitions, outputDef.Definition)
-	}
-
-	return definitions
+	return JumpClusterModuleOutputs
 }
