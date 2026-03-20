@@ -1,13 +1,10 @@
 package modules
 
 import (
+	"log/slog"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
-
-type VariableDefinition interface {
-	GetName() string
-	GetDefinition() types.TerraformVariable
-}
 
 type ModuleOutputDefinition struct {
 	Name       string
@@ -22,14 +19,6 @@ type ModuleVariable[R any] struct {
 	ValueExtractor   func(request R) any  // Extracts the value from FE request payload. If nil, it's not a root-level variable.
 	Condition        func(request R) bool // Determines if this variable should be included (nil = always include).
 	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
-}
-
-func (m ModuleVariable[R]) GetName() string {
-	return m.Name
-}
-
-func (m ModuleVariable[R]) GetDefinition() types.TerraformVariable {
-	return m.Definition
 }
 
 // ============================================================================
@@ -128,10 +117,12 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 			if v != "" {
 				// Check if already exists to avoid silent overwrites
 				if existing, exists := values[varDef.Definition.Name]; exists {
-					// If values match, it's fine (deduplication working as expected)
 					if existing != v {
-						// Optional: log warning or error about conflicting values
-						// For now, first-wins strategy (don't overwrite)
+						slog.Warn("conflicting variable values, keeping first occurrence",
+							"variable", varDef.Definition.Name,
+							"existing", existing,
+							"ignored", v,
+						)
 						continue
 					}
 				}

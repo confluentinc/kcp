@@ -242,20 +242,15 @@ func (ti *TargetInfraHCLService) generateOutputsTf(tfOutputs []types.TerraformOu
 // ============================================================================
 
 func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request types.TargetClusterWizardRequest) string {
-	envVarName := modules.VarEnvironmentName
-	envIdVarName := modules.VarEnvironmentID
-	clusterVarName := modules.VarClusterName
-	regionVarName := modules.VarAWSRegion
-
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	// Add environment (create or use data source if user states an environment already exists).
 	if request.NeedsEnvironment {
-		rootBody.AppendBlock(confluent.GenerateEnvironmentResource(ti.ResourceNames.Environment, envVarName, request.PreventDestroy))
+		rootBody.AppendBlock(confluent.GenerateEnvironmentResource(ti.ResourceNames.Environment, modules.VarEnvironmentName, request.PreventDestroy))
 		rootBody.AppendNewline()
 	} else {
-		rootBody.AppendBlock(confluent.GenerateEnvironmentDataSource(ti.ResourceNames.Environment, envIdVarName))
+		rootBody.AppendBlock(confluent.GenerateEnvironmentDataSource(ti.ResourceNames.Environment, modules.VarEnvironmentID))
 		rootBody.AppendNewline()
 	}
 
@@ -264,7 +259,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	// For dedicated clusters with private link, create the confluent_network resource first.
 	networkIdRef := ""
 	if request.NeedsPrivateLink && request.ClusterType == "dedicated" {
-		rootBody.AppendBlock(confluent.GenerateNetworkResource(ti.ResourceNames.Network, regionVarName, envIdRef, request.PreventDestroy))
+		rootBody.AppendBlock(confluent.GenerateNetworkResource(ti.ResourceNames.Network, modules.VarAWSRegion, envIdRef, request.PreventDestroy))
 		rootBody.AppendNewline()
 		networkIdRef = fmt.Sprintf("confluent_network.%s.id", ti.ResourceNames.Network)
 	}
@@ -277,7 +272,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 			availability = "HIGH"
 			cku = 0
 		}
-		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, clusterVarName, request.ClusterType, availability, cku, regionVarName, envIdRef, networkIdRef, request.PreventDestroy))
+		rootBody.AppendBlock(confluent.GenerateKafkaClusterResource(ti.ResourceNames.Cluster, modules.VarClusterName, request.ClusterType, availability, cku, modules.VarAWSRegion, envIdRef, networkIdRef, request.PreventDestroy))
 		rootBody.AppendNewline()
 	}
 
@@ -288,7 +283,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	))
 	rootBody.AppendNewline()
 
-	description := fmt.Sprintf("Service account to manage the %s environment.", envVarName)
+	description := fmt.Sprintf("Service account to manage the %s environment.", modules.VarEnvironmentName)
 	serviceAccountName := fmt.Sprintf("app-manager-%s", request.ClusterName[:min(len(request.ClusterName), 6)])
 	rootBody.AppendBlock(confluent.GenerateServiceAccount(ti.ResourceNames.ServiceAccount, serviceAccountName, description, request.PreventDestroy))
 	rootBody.AppendNewline()
@@ -325,7 +320,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 
 	rootBody.AppendBlock(confluent.GenerateSchemaRegistryAPIKey(
 		ti.ResourceNames.SchemaRegistryAPIKey,
-		envVarName,
+		modules.VarEnvironmentName,
 		fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount),
 		fmt.Sprintf("confluent_service_account.%s.api_version", ti.ResourceNames.ServiceAccount),
 		fmt.Sprintf("confluent_service_account.%s.kind", ti.ResourceNames.ServiceAccount),
@@ -339,7 +334,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 
 	rootBody.AppendBlock(confluent.GenerateKafkaAPIKey(
 		ti.ResourceNames.KafkaAPIKey,
-		envVarName,
+		modules.VarEnvironmentName,
 		fmt.Sprintf("confluent_service_account.%s.id", ti.ResourceNames.ServiceAccount),
 		fmt.Sprintf("confluent_service_account.%s.api_version", ti.ResourceNames.ServiceAccount),
 		fmt.Sprintf("confluent_service_account.%s.kind", ti.ResourceNames.ServiceAccount),
@@ -390,13 +385,8 @@ func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.T
 }
 
 func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
-	vpcIdVarName := modules.VarVpcID
-	subnetCidrRangesVarName := modules.VarSubnetCidrRanges
-	environmentIdVarName := modules.VarEnvironmentID
-	networkIdVarName := modules.VarNetworkID
 	networkDnsDomainVarRef := "var." + modules.VarNetworkDNSDomain
 	networkPlEndpointServiceVarRef := "var." + modules.VarNetworkPrivateLinkEndpointService
-	networkZonesVarName := modules.VarNetworkZones
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -410,26 +400,26 @@ func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(reques
 		ti.ResourceNames.PrivateLinkAccess,
 		"kcp-private-link-access",
 		fmt.Sprintf("data.aws_caller_identity.%s.account_id", ti.ResourceNames.CallerIdentity),
-		"var."+environmentIdVarName,
-		"var."+networkIdVarName,
+		"var."+modules.VarEnvironmentID,
+		"var."+modules.VarNetworkID,
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}, vpcIdVarName))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}, modules.VarVpcID))
 	rootBody.AppendNewline()
 
 	// Use the network's supported zone IDs (not all AZs) so subnets are in zones the VPC endpoint service supports
 	rootBody.AppendBlock(aws.GenerateSubnetResourceWithCountAndZoneIds(
 		ti.ResourceNames.SubnetName,
-		subnetCidrRangesVarName,
-		networkZonesVarName,
-		vpcIdVarName,
+		modules.VarSubnetCidrRanges,
+		modules.VarNetworkZones,
+		modules.VarVpcID,
 	))
 
 	// For dedicated clusters, the VPC endpoint service name comes from the confluent_network resource (via module variable)
 	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
 		ti.ResourceNames.VpcEndpoint,
-		vpcIdVarName,
+		modules.VarVpcID,
 		networkPlEndpointServiceVarRef,
 		fmt.Sprintf("aws_security_group.%s.id", ti.ResourceNames.SecurityGroup),
 		fmt.Sprintf("aws_subnet.%s[*].id", ti.ResourceNames.SubnetName),
@@ -440,7 +430,7 @@ func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(reques
 	// Route53 zone using the network's DNS domain (passed via module variable)
 	rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
 		ti.ResourceNames.Route53Zone,
-		vpcIdVarName,
+		modules.VarVpcID,
 		networkDnsDomainVarRef,
 	))
 	rootBody.AppendNewline()
@@ -457,38 +447,33 @@ func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(reques
 }
 
 func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
-	regionVarName := modules.VarAWSRegion
-	vpcIdVarName := modules.VarVpcID
-	subnetCidrRangesVarName := modules.VarSubnetCidrRanges
-	environmentIdVarName := modules.VarEnvironmentID
-
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResource(
 		ti.ResourceNames.PrivateLinkAttachment,
 		"kcp_private_link_attachment",
-		regionVarName,
-		environmentIdVarName,
+		modules.VarAWSRegion,
+		modules.VarEnvironmentID,
 	))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource(ti.ResourceNames.AvailabilityZones))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}, vpcIdVarName))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup(ti.ResourceNames.SecurityGroup, []int{80, 443, 9092}, []int{0}, modules.VarVpcID))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
 		ti.ResourceNames.SubnetName,
-		subnetCidrRangesVarName,
+		modules.VarSubnetCidrRanges,
 		fmt.Sprintf("data.aws_availability_zones.%s", ti.ResourceNames.AvailabilityZones),
-		vpcIdVarName,
+		modules.VarVpcID,
 	))
 
 	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
 		ti.ResourceNames.VpcEndpoint,
-		vpcIdVarName,
+		modules.VarVpcID,
 		fmt.Sprintf("confluent_private_link_attachment.%s.aws[0].vpc_endpoint_service_name", ti.ResourceNames.PrivateLinkAttachment),
 		fmt.Sprintf("aws_security_group.%s.id", ti.ResourceNames.SecurityGroup),
 		fmt.Sprintf("aws_subnet.%s[*].id", ti.ResourceNames.SubnetName),
@@ -499,7 +484,7 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnectionResource(
 		ti.ResourceNames.PrivateLinkAttachmentConnection,
 		request.ClusterName+"_private_link_attachment_connection",
-		environmentIdVarName,
+		modules.VarEnvironmentID,
 		fmt.Sprintf("aws_vpc_endpoint.%s.id", ti.ResourceNames.VpcEndpoint),
 		fmt.Sprintf("confluent_private_link_attachment.%s.id", ti.ResourceNames.PrivateLinkAttachment),
 	))
@@ -507,7 +492,7 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 
 	rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
 		ti.ResourceNames.Route53Zone,
-		vpcIdVarName,
+		modules.VarVpcID,
 		fmt.Sprintf("confluent_private_link_attachment.%s.dns_domain", ti.ResourceNames.PrivateLinkAttachment),
 	))
 	rootBody.AppendNewline()
