@@ -1,0 +1,18 @@
+aws_kafka_brokers = [{
+  endpoints = [{
+    host = "b-1.example.com"
+    ip   = "10.0.1.1"
+    port = 9092
+  }]
+  id        = "b-1"
+  subnet_id = "subnet-1"
+}]
+aws_region                   = "us-east-1"
+aws_vpc_id                   = "vpc-0123456789abcdef0"
+cluster_link_name            = "msk-to-cc-link"
+msk_cluster_id               = "msk-cluster-123"
+security_group_id            = "sg-0123456789abcdef0"
+subnet_id                    = "subnet-0123456789abcdef0"
+target_cluster_id            = "lkc-xyz789"
+target_cluster_rest_endpoint = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"
+target_environment_id        = "env-abc123"

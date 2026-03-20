@@ -55,8 +55,9 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: nil,
-			Condition:      nil,
+			ValueExtractor:   nil,
+			FromModuleOutput: "confluent_cloud",
+			Condition:        nil,
 		},
 		{
 			Name: "network_id",
@@ -66,7 +67,8 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: nil,
+			ValueExtractor:   nil,
+			FromModuleOutput: "confluent_cloud",
 			Condition: func(request types.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
@@ -79,7 +81,8 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: nil,
+			ValueExtractor:   nil,
+			FromModuleOutput: "confluent_cloud",
 			Condition: func(request types.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
@@ -92,7 +95,8 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: nil,
+			ValueExtractor:   nil,
+			FromModuleOutput: "confluent_cloud",
 			Condition: func(request types.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
@@ -105,7 +109,8 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: nil,
+			ValueExtractor:   nil,
+			FromModuleOutput: "confluent_cloud",
 			Condition: func(request types.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
@@ -124,15 +129,5 @@ func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []typ
 }
 
 func GetTargetClusterPrivateLinkModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	privateLinkVars := GetTargetClusterPrivateLinkVariables()
-
-	for _, varDef := range privateLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetTargetClusterPrivateLinkVariables(), request)
 }
