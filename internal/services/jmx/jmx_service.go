@@ -139,7 +139,12 @@ func computeSnapshot(prev, curr *rawSample) *jmxSnapshot {
 
 	for name, currCount := range curr.counters {
 		if prevCount, ok := prev.counters[name]; ok && elapsed > 0 {
-			snapshot.metrics[name] = (currCount - prevCount) / elapsed
+			delta := currCount - prevCount
+			if delta < 0 {
+				// Counter reset (e.g. broker restart) — skip this sample
+				continue
+			}
+			snapshot.metrics[name] = delta / elapsed
 		}
 	}
 

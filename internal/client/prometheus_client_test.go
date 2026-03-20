@@ -154,6 +154,42 @@ func TestPrometheusClient_QueryRange_ConnectionRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to query Prometheus")
 }
 
+func TestPrometheusClient_QueryRange_FiltersNaNAndInf(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := prometheusAPIResponse{
+			Status: "success",
+			Data: prometheusResponseData{
+				ResultType: "matrix",
+				Result: []prometheusMatrixResult{
+					{
+						Metric: map[string]string{"__name__": "test_metric"},
+						Values: [][]interface{}{
+							{float64(1710000000), "100.0"},
+							{float64(1710003600), "NaN"},
+							{float64(1710007200), "+Inf"},
+							{float64(1710010800), "-Inf"},
+							{float64(1710014400), "200.0"},
+						},
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewPrometheusClient(server.URL)
+	results, err := client.QueryRange("test_metric", time.Unix(1710000000, 0), time.Unix(1710014400, 0), time.Hour)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// Only the two valid data points should remain
+	assert.Len(t, results[0].Values, 2)
+	assert.InDelta(t, 100.0, results[0].Values[0].Value, 0.01)
+	assert.InDelta(t, 200.0, results[0].Values[1].Value, 0.01)
+}
+
 func TestPrometheusClient_QueryRange_ErrorStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := prometheusAPIResponse{

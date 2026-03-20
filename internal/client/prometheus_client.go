@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -170,6 +171,10 @@ func parseMatrixResults(raw []prometheusMatrixResult) ([]PrometheusMetricResult,
 
 			val, err := strconv.ParseFloat(valStr, 64)
 			if err != nil {
+				continue
+			}
+
+			if math.IsNaN(val) || math.IsInf(val, 0) {
 				continue
 			}
 

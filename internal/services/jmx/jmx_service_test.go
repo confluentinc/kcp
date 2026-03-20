@@ -75,6 +75,33 @@ func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 	assert.Equal(t, curr.timestamp, snapshot.end)
 }
 
+func TestComputeSnapshot_CounterResetProducesZeroNotNegative(t *testing.T) {
+	prev := &rawSample{
+		timestamp: time.Now(),
+		counters:  map[string]float64{"BytesInPerSec": 50000, "BytesOutPerSec": 20000, "MessagesInPerSec": 500},
+		gauges:    map[string]float64{"PartitionCount": 50},
+	}
+	// Simulate broker restart: counters reset to values lower than previous
+	curr := &rawSample{
+		timestamp: prev.timestamp.Add(10 * time.Second),
+		counters:  map[string]float64{"BytesInPerSec": 1000, "BytesOutPerSec": 500, "MessagesInPerSec": 10},
+		gauges:    map[string]float64{"PartitionCount": 50},
+	}
+
+	snapshot := computeSnapshot(prev, curr)
+
+	// Counter metrics should be absent (skipped), not negative
+	_, hasBytes := snapshot.metrics["BytesInPerSec"]
+	_, hasBytesOut := snapshot.metrics["BytesOutPerSec"]
+	_, hasMessages := snapshot.metrics["MessagesInPerSec"]
+	assert.False(t, hasBytes, "BytesInPerSec should be skipped on counter reset")
+	assert.False(t, hasBytesOut, "BytesOutPerSec should be skipped on counter reset")
+	assert.False(t, hasMessages, "MessagesInPerSec should be skipped on counter reset")
+
+	// Gauge metrics should still be present
+	assert.Equal(t, 50.0, snapshot.metrics["PartitionCount"])
+}
+
 func TestToProcessedClusterMetrics(t *testing.T) {
 	now := time.Now()
 	snapshots := []jmxSnapshot{
