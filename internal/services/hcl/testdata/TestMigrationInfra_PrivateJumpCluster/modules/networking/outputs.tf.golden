@@ -1,0 +1,30 @@
+output "jump_cluster_setup_host_subnet_id" {
+  value       = aws_subnet.jump_cluster_setup_host_subnet.id
+  description = "ID of the subnet that the Ansible jump cluster setup host instance is deployed to."
+  sensitive   = false
+}
+
+output "jump_cluster_broker_subnet_ids" {
+  value       = aws_subnet.jump_cluster_broker_subnets[*].id
+  description = "IDs of the subnets that the jump cluster broker instances are deployed to."
+  sensitive   = false
+}
+
+output "jump_cluster_ssh_key_pair_name" {
+  value       = aws_key_pair.jump_cluster_ssh_key.key_name
+  description = "Name of the AWS key pair for the jump cluster (including setup host) instances."
+  sensitive   = false
+}
+
+output "private_key" {
+  value       = tls_private_key.jump_cluster_ssh_key.private_key_pem
+  description = "Private SSH key for accessing the jump cluster (including setup host) instances."
+  sensitive   = true
+}
+
+output "jump_cluster_security_group_ids" {
+  value       = aws_security_group.security_group.id
+  description = "IDs of the security groups for the jump cluster (including setup host) instances."
+  sensitive   = false
+}
+

@@ -1,0 +1,58 @@
+variable "confluent_cloud_api_key" {
+  type        = string
+  description = "Confluent Cloud API Key"
+}
+
+variable "confluent_cloud_api_secret" {
+  type        = string
+  description = "Confluent Cloud API Secret"
+  sensitive   = true
+}
+
+variable "msk_sasl_scram_username" {
+  type        = string
+  description = "MSK SASL SCRAM Username"
+}
+
+variable "msk_sasl_scram_password" {
+  type        = string
+  description = "MSK SASL SCRAM Password"
+  sensitive   = true
+}
+
+variable "confluent_cloud_cluster_api_key" {
+  type        = string
+  description = "Confluent Cloud cluster API key"
+}
+
+variable "confluent_cloud_cluster_api_secret" {
+  type        = string
+  description = "Confluent Cloud cluster API secret"
+  sensitive   = true
+}
+
+variable "target_cluster_rest_endpoint" {
+  type        = string
+  description = "The REST endpoint of the target Confluent Cloud cluster that data will be migrated to."
+}
+
+variable "target_cluster_id" {
+  type        = string
+  description = "The ID of the target Confluent Cloud cluster that data will be migrated to."
+}
+
+variable "cluster_link_name" {
+  type        = string
+  description = "The name of the cluster link that will be created between the source and target Confluent Cloud clusters."
+}
+
+variable "msk_cluster_id" {
+  type        = string
+  description = "The ID of the source MSK cluster that data will be migrated from."
+}
+
+variable "msk_sasl_scram_bootstrap_servers" {
+  type        = string
+  description = "The SASL/SCRAM bootstrap servers of the source MSK cluster that data will be migrated from."
+}
+

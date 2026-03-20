@@ -1,0 +1,6 @@
+aws_region         = "us-east-1"
+cluster_name       = "prod-cluster-pl"
+cluster_type       = "DEDICATED"
+environment_name   = "production"
+subnet_cidr_ranges = ["10.0.1.0/24", "10.0.2.0/24"]
+vpc_id             = "vpc-0123456789abcdef0"

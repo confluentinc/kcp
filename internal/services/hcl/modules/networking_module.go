@@ -73,17 +73,7 @@ func GetNetworkingModuleVariableNames() map[string]string {
 }
 
 func GetNetworkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	networkingVars := GetNetworkingVariables()
-
-	for _, varDef := range networkingVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetNetworkingVariables(), request)
 }
 
 var NetworkingModuleOutputs = []ModuleOutputDefinition{
