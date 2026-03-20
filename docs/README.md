@@ -367,9 +367,10 @@ Scan Kafka clusters at the Kafka level to discover topics, ACLs, and configurati
 - `--state-file`: Path to the state file (default: `kcp-state.json`)
 - `--skip-topics`: Skip topic discovery
 - `--skip-acls`: Skip ACL discovery
-- `--jmx`: Enable JMX metrics collection via Jolokia (OSK only). Requires `jmx` section in credentials file.
-- `--jmx-scan-duration`: Duration to collect JMX metrics (e.g. `5m`, `30m`, `1h`). Required when `--jmx` is set.
-- `--jmx-poll-interval`: Polling interval for JMX metrics (e.g. `1s`, `10s`). Default: `10s`.
+- `--metrics`: Metrics collection source — `'jolokia'` or `'prometheus'` (OSK only).
+- `--metrics-duration`: Duration to poll Jolokia metrics (e.g. `5m`, `30m`, `1h`). Required with `--metrics jolokia`.
+- `--metrics-interval`: Polling interval for Jolokia metrics (e.g. `1s`, `10s`). Default: `10s`.
+- `--metrics-range`: Time range to query from Prometheus (e.g. `7d`, `30d`). Required with `--metrics prometheus`.
 
 **Example Usage: MSK**
 
@@ -393,19 +394,34 @@ kcp scan clusters \
 
 For OSK clusters, you must create an `osk-credentials.yaml` file manually with your cluster connection details.
 
-**Example Usage: OSK with JMX Metrics**
+**Example Usage: OSK with Jolokia Metrics**
 
 ```shell
 kcp scan clusters \
   --source-type osk \
   --state-file kcp-state.json \
   --credentials-file osk-credentials.yaml \
-  --jmx \
-  --jmx-scan-duration 5m \
-  --jmx-poll-interval 10s
+  --metrics jolokia \
+  --metrics-duration 5m \
+  --metrics-interval 10s
 ```
 
-When `--jmx` is enabled, kcp connects to the Jolokia HTTP endpoints defined in your credentials file and collects Kafka metrics (throughput, partition count, connection count, storage usage) over the specified duration. Results are stored in the state file under `jmx_metrics`.
+When `--metrics jolokia` is enabled, kcp connects to the Jolokia HTTP endpoints defined in your credentials file and collects Kafka metrics (throughput, partition count, connection count, storage usage) over the specified duration.
+
+**Example Usage: OSK with Prometheus Metrics**
+
+```shell
+kcp scan clusters \
+  --source-type osk \
+  --state-file kcp-state.json \
+  --credentials-file osk-credentials.yaml \
+  --metrics prometheus \
+  --metrics-range 30d
+```
+
+When `--metrics prometheus` is enabled, kcp queries the Prometheus HTTP API for historical Kafka metrics over the specified time range. This is useful when Kafka metrics are already being scraped by Prometheus (e.g. via JMX Exporter).
+
+Both metrics backends store results in the state file under `cluster_metrics` in the same `ProcessedClusterMetrics` format.
 
 #### How JMX Metrics Collection Works
 
@@ -433,9 +449,11 @@ This approach produces independent data points with real variance that accuratel
 
 **Scan Duration and Poll Interval**
 
-- `--jmx-scan-duration` controls how long kcp collects metrics. A longer duration captures more data points and is more representative of typical cluster usage. For production clusters, consider running for 15-30 minutes or longer during a representative traffic period.
+- `--metrics-duration` (Jolokia) controls how long kcp collects metrics. A longer duration captures more data points and is more representative of typical cluster usage. For production clusters, consider running for 15-30 minutes or longer during a representative traffic period.
 
-- `--jmx-poll-interval` controls how frequently kcp samples the counters. Shorter intervals (e.g. `1s`) give higher resolution but produce more data. Longer intervals (e.g. `10s`, `30s`) produce smoother rates averaged over each interval.
+- `--metrics-interval` (Jolokia) controls how frequently kcp samples the counters. Shorter intervals (e.g. `1s`) give higher resolution but produce more data. Longer intervals (e.g. `10s`, `30s`) produce smoother rates averaged over each interval.
+
+- `--metrics-range` (Prometheus) controls how far back in time kcp queries. Common values: `7d` for a week, `30d` for a month. The query step is auto-selected: ≤1d→1m, ≤7d→5m, ≤30d→1h, >30d→2h.
 
 A 30-minute scan with a 10-second interval produces 180 data points per metric — enough for meaningful analysis of throughput patterns.
 
@@ -453,7 +471,7 @@ A 30-minute scan with a 10-second interval produces 180 data points per metric �
 
 **Jolokia Authentication**
 
-Jolokia supports three authentication modes, configured in the `jmx` section of the credentials file:
+Jolokia supports three authentication modes, configured in the `jolokia` section of the credentials file:
 
 - **Unauthenticated**: No `auth` or `tls` section. Jolokia is accessible without credentials.
 - **Password authentication**: Set `auth.username` and `auth.password`. Jolokia uses HTTP Basic Auth.
@@ -468,7 +486,7 @@ The `osk-credentials.yaml` file defines connection details for one or more Open 
 # Configure your Open Source Kafka cluster connection details
 
 clusters:
-  # Production cluster with SASL/SCRAM and JMX metrics
+  # Production cluster with SASL/SCRAM and Jolokia metrics
   - id: production-kafka-us-east
     bootstrap_servers:
       - broker1.prod.example.com:9092
@@ -479,8 +497,7 @@ clusters:
         use: true
         username: admin
         password: changeme
-    jmx:
-      type: jolokia
+    jolokia:
       endpoints:
         - http://broker1.prod.example.com:8778/jolokia
         - http://broker2.prod.example.com:8778/jolokia
@@ -488,6 +505,12 @@ clusters:
       auth:
         username: monitorRole
         password: monitorPass
+    # Alternative: use Prometheus instead of Jolokia
+    # prometheus:
+    #   url: http://prometheus.prod.example.com:9090
+    #   auth:
+    #     username: promuser
+    #     password: prompass
     metadata:
       environment: production
       location: us-datacenter-1
@@ -530,13 +553,20 @@ clusters:
     - `client_cert`: Path to client certificate
     - `client_key`: Path to client private key
   - `unauthenticated_plaintext`: No authentication (insecure, for testing only)
-- `jmx`: (Optional) JMX metrics collection via Jolokia. Used with `--jmx` flag.
-  - `type`: Must be `"jolokia"`
+- `jolokia`: (Optional) Jolokia metrics collection. Used with `--metrics jolokia`.
   - `endpoints`: List of Jolokia HTTP endpoints (one per broker, e.g. `http://broker:8778/jolokia`)
   - `auth`: (Optional) HTTP basic auth credentials
     - `username`: Jolokia username
     - `password`: Jolokia password
   - `tls`: (Optional) TLS settings for HTTPS Jolokia endpoints
+    - `ca_cert`: Path to CA certificate
+    - `insecure_skip_verify`: Skip TLS verification (test environments only)
+- `prometheus`: (Optional) Prometheus metrics query. Used with `--metrics prometheus`.
+  - `url`: Prometheus server URL (e.g. `http://prometheus:9090`)
+  - `auth`: (Optional) HTTP basic auth credentials
+    - `username`: Prometheus username
+    - `password`: Prometheus password
+  - `tls`: (Optional) TLS settings for HTTPS Prometheus endpoints
     - `ca_cert`: Path to CA certificate
     - `insecure_skip_verify`: Skip TLS verification (test environments only)
 - `metadata`: Optional metadata fields for organization and reporting
