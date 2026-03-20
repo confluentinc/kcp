@@ -20,6 +20,9 @@ var generateDnsEntriesScript string
 var reverseProxyUserDataTpl string
 
 type ReverseProxyHCLService struct {
+	// DeploymentID overrides the random deployment identifier in AWS provider tags.
+	// When empty, a random 8-character string is generated.
+	DeploymentID string
 }
 
 func NewReverseProxyHCLService() *ReverseProxyHCLService {
@@ -88,7 +91,7 @@ func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyReques
 	keyPairBlock := rootBody.AppendNewBlock("resource", []string{"aws_key_pair", "deployer"})
 	keyPairBody := keyPairBlock.Body()
 	keyPairBody.SetAttributeRaw("key_name", keyPairNameTokens)
-	keyPairBody.SetAttributeRaw("public_key", utils.TokensForResourceReference("tls_private_key.ssh_key.public_key_openssh"))
+	SetResourceRef(keyPairBody, "public_key", "tls_private_key.ssh_key.public_key_openssh")
 	rootBody.AppendNewline()
 
 	// Availability zones data source
@@ -101,25 +104,25 @@ func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyReques
 	filterBlock := igwBody.AppendNewBlock("filter", nil)
 	filterBody := filterBlock.Body()
 	filterBody.SetAttributeValue("name", cty.StringVal("attachment.vpc-id"))
-	filterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("var.vpc_id")}))
+	filterBody.SetAttributeRaw("values", utils.TokensForList([]string{"var.vpc_id"}))
 	rootBody.AppendNewline()
 
 	// Route table
 	rtBlock := rootBody.AppendNewBlock("resource", []string{"aws_route_table", "public_rt"})
 	rtBody := rtBlock.Body()
-	rtBody.SetAttributeRaw("vpc_id", utils.TokensForVarReference("vpc_id"))
+	SetVarRef(rtBody, "vpc_id", "vpc_id")
 	routeBlock := rtBody.AppendNewBlock("route", nil)
 	routeBody := routeBlock.Body()
 	routeBody.SetAttributeValue("cidr_block", cty.StringVal("0.0.0.0/0"))
-	routeBody.SetAttributeRaw("gateway_id", utils.TokensForResourceReference("data.aws_internet_gateway.existing_internet_gateway.id"))
+	SetResourceRef(routeBody, "gateway_id", "data.aws_internet_gateway.existing_internet_gateway.id")
 	rootBody.AppendNewline()
 
 	// Subnet
 	subnetBlock := rootBody.AppendNewBlock("resource", []string{"aws_subnet", "public_subnet"})
 	subnetBody := subnetBlock.Body()
-	subnetBody.SetAttributeRaw("vpc_id", utils.TokensForVarReference("vpc_id"))
-	subnetBody.SetAttributeRaw("cidr_block", utils.TokensForVarReference("public_subnet_cidr"))
-	subnetBody.SetAttributeRaw("availability_zone", utils.TokensForResourceReference("data.aws_availability_zones.available.names[0]"))
+	SetVarRef(subnetBody, "vpc_id", "vpc_id")
+	SetVarRef(subnetBody, "cidr_block", "public_subnet_cidr")
+	SetResourceRef(subnetBody, "availability_zone", "data.aws_availability_zones.available.names[0]")
 	subnetBody.SetAttributeValue("map_public_ip_on_launch", cty.BoolVal(true))
 	rootBody.AppendNewline()
 
@@ -130,7 +133,7 @@ func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyReques
 	// Security group
 	securityGroupBlock := rootBody.AppendNewBlock("resource", []string{"aws_security_group", "public"})
 	securityGroupBody := securityGroupBlock.Body()
-	securityGroupBody.SetAttributeRaw("vpc_id", utils.TokensForVarReference("vpc_id"))
+	SetVarRef(securityGroupBody, "vpc_id", "vpc_id")
 	securityGroupBody.AppendNewline()
 
 	// Ingress rules
@@ -176,12 +179,12 @@ func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyReques
 	// Create instance block
 	instanceBlock := rootBody.AppendNewBlock("resource", []string{"aws_instance", "proxy"})
 	instanceBody := instanceBlock.Body()
-	instanceBody.SetAttributeRaw("ami", utils.TokensForResourceReference("data.aws_ami.ubuntu_ami.id"))
+	SetResourceRef(instanceBody, "ami", "data.aws_ami.ubuntu_ami.id")
 	instanceBody.SetAttributeValue("instance_type", cty.StringVal("t2.micro"))
-	instanceBody.SetAttributeRaw("subnet_id", utils.TokensForResourceReference("aws_subnet.public_subnet.id"))
+	SetResourceRef(instanceBody, "subnet_id", "aws_subnet.public_subnet.id")
 	instanceBody.SetAttributeRaw("vpc_security_group_ids", utils.TokensForStringList([]string{"aws_security_group.public.id"}))
 
-	instanceBody.SetAttributeRaw("key_name", utils.TokensForResourceReference("aws_key_pair.deployer.key_name"))
+	SetResourceRef(instanceBody, "key_name", "aws_key_pair.deployer.key_name")
 	instanceBody.SetAttributeValue("associate_public_ip_address", cty.BoolVal(true))
 	instanceBody.AppendNewline()
 
@@ -284,7 +287,7 @@ func (s *ReverseProxyHCLService) generateProvidersTf() string {
 	rootBody.AppendNewline()
 
 	// AWS provider block
-	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVarAndDeploymentID(s.DeploymentID))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
