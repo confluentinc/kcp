@@ -1,35 +1,37 @@
 version: '3.8'
 
 services:
-  prometheus:
+  prometheus-auth:
     image: prom/prometheus:v2.51.0
-    hostname: prometheus
-    container_name: kcp-test-prometheus
+    hostname: prometheus-auth
+    container_name: kcp-test-prometheus-auth
     ports:
-      - "9190:9090"
+      - "9191:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-remote-write-receiver'
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=60d'
+      - '--web.config.file=/etc/prometheus/web.yml'
     volumes:
-      - prometheus-data:/prometheus
+      - prometheus-auth-data:/prometheus
       - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/prometheus-web-auth.yml:/etc/prometheus/web.yml:ro
     networks:
       - kcp-test-network
 
-  prometheus-seeder:
+  prometheus-auth-seeder:
     image: prom/prometheus:v2.51.0
-    container_name: kcp-test-prometheus-seeder
+    container_name: kcp-test-prometheus-auth-seeder
     depends_on:
-      - prometheus
+      - prometheus-auth
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         echo "Waiting for Prometheus to be ready..."
         for i in $$(seq 1 30); do
-          if wget -q -O /dev/null http://prometheus:9090/-/ready 2>/dev/null; then
+          if wget -q -O /dev/null --user promuser --password prompass http://prometheus-auth:9090/-/ready 2>/dev/null; then
             echo "Prometheus is ready"
             break
           fi
@@ -37,16 +39,19 @@ services:
         done
 
         echo "Seeding Prometheus with mock Kafka metrics..."
-        PROM_URL="http://prometheus:9090" /bin/sh /scripts/seed-prometheus-data.sh
+        PROM_URL="http://prometheus-auth:9090" /bin/sh /scripts/seed-prometheus-data.sh
+        echo "Reloading Prometheus..."
+        wget -q -O /dev/null --user promuser --password prompass --post-data='' "http://prometheus-auth:9090/-/reload" 2>/dev/null || true
+        sleep 2
         echo "Seeding complete"
     volumes:
-      - prometheus-data:/prometheus
+      - prometheus-auth-data:/prometheus
       - ./scripts/seed-prometheus-data.sh:/scripts/seed-prometheus-data.sh:ro
     networks:
       - kcp-test-network
 
 volumes:
-  prometheus-data:
+  prometheus-auth-data:
 
 networks:
   kcp-test-network:

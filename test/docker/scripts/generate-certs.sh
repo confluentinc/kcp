@@ -119,6 +119,24 @@ echo "15. Creating password files..."
 echo "$KEYSTORE_PASSWORD" > keystore_password.txt
 echo "$TRUSTSTORE_PASSWORD" > truststore_password.txt
 
+# 16. Generate Prometheus TLS certificate (self-signed, uses same CA)
+echo "16. Generating Prometheus server certificate..."
+openssl genrsa -out prometheus-server.key 2048
+
+cat > prometheus-cert-extensions.cnf <<EOF
+[v3_req]
+subjectAltName = DNS:localhost,DNS:prometheus-tls,IP:127.0.0.1
+EOF
+
+openssl req -new -key prometheus-server.key -out prometheus-server.csr \
+    -subj "/CN=prometheus-tls/O=KCP-Test" 2>/dev/null
+
+# Self-sign the Prometheus cert (no CA needed for simple TLS test)
+openssl x509 -req -in prometheus-server.csr -signkey prometheus-server.key \
+    -out prometheus-server.crt -days 365 -extfile prometheus-cert-extensions.cnf -extensions v3_req 2>/dev/null
+
+rm -f prometheus-server.csr prometheus-cert-extensions.cnf
+
 # Clean up intermediate files
 rm -f server-cert-req.pem client-cert-req.pem ca-key.pem ca-cert.srl client.p12 server-cert-extensions.cnf
 

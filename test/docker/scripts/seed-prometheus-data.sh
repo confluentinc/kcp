@@ -4,7 +4,7 @@
 
 set -e
 
-PROM_URL="http://prometheus:9090"
+PROM_URL="${PROM_URL:-http://prometheus:9090}"
 DATA_DIR="/tmp/prom-seed"
 mkdir -p "$DATA_DIR"
 
