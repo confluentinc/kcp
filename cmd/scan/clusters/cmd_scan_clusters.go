@@ -278,14 +278,17 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 		}
 	}
 
-	// Build map of existing clusters by ID for efficient lookup
-	existingClusters := make(map[string]*types.OSKDiscoveredCluster)
+	// Build index of existing clusters by ID for efficient lookup
+	existingIndex := make(map[string]int)
 	for i := range state.OSKSources.Clusters {
-		cluster := &state.OSKSources.Clusters[i]
-		existingClusters[cluster.ID] = cluster
+		existingIndex[state.OSKSources.Clusters[i].ID] = i
 	}
 
-	// Merge new scan results
+	// Separate scan results into updates and new clusters to avoid pointer
+	// invalidation: appending to the slice may reallocate the backing array,
+	// which would invalidate any pointers taken before the append.
+	var newClusters []types.OSKDiscoveredCluster
+
 	for _, clusterResult := range result.Clusters {
 		metadata, ok := clusterResult.SourceSpecificData.(types.OSKClusterMetadata)
 		if !ok {
@@ -299,20 +302,28 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 			Metadata:                    metadata,
 		}
 
-		if existingCluster, exists := existingClusters[newCluster.ID]; exists {
-			// Merge with existing cluster (preserve discovered clients, metrics, etc.)
-			newCluster.DiscoveredClients = existingCluster.DiscoveredClients
+		if idx, exists := existingIndex[newCluster.ID]; exists {
+			existing := state.OSKSources.Clusters[idx]
+
+			// Merge KafkaAdminClientInformation: preserve old topics/ACLs/connectors
+			// if the new scan returned empty results (e.g. transient permission failure)
+			newCluster.KafkaAdminClientInformation.MergeFrom(existing.KafkaAdminClientInformation)
+
+			// Preserve discovered clients and metrics from prior scans
+			newCluster.DiscoveredClients = existing.DiscoveredClients
 			if newCluster.ClusterMetrics == nil {
-				newCluster.ClusterMetrics = existingCluster.ClusterMetrics
+				newCluster.ClusterMetrics = existing.ClusterMetrics
 			}
 
-			// Replace in-place
-			*existingCluster = newCluster
+			// Update in-place by index
+			state.OSKSources.Clusters[idx] = newCluster
 		} else {
-			// New cluster - append
-			state.OSKSources.Clusters = append(state.OSKSources.Clusters, newCluster)
+			newClusters = append(newClusters, newCluster)
 		}
 	}
+
+	// Append new clusters after all in-place updates are done
+	state.OSKSources.Clusters = append(state.OSKSources.Clusters, newClusters...)
 
 	slog.Info("merged OSK scan results", "clusters", len(result.Clusters))
 	return nil
