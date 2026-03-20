@@ -24,8 +24,14 @@ type MigrationExecutorOpts struct {
 	LagThreshold       int64
 	ClusterApiKey      string
 	ClusterApiSecret   string
-	CredentialsFile    string
 	CCBootstrap        string
+	SourceClusterArn   string
+	AuthType           types.AuthType
+	SaslScramUsername   string
+	SaslScramPassword   string
+	TlsCaCert           string
+	TlsClientCert      string
+	TlsClientKey       string
 }
 
 type MigrationExecutor struct {
@@ -78,24 +84,9 @@ func (m *MigrationExecutor) Run() error {
 }
 
 func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Service, error) {
-	config := m.opts.MigrationConfig
+	authType := m.opts.AuthType
 
-	credentials, errs := types.NewCredentialsFromFile(m.opts.CredentialsFile)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("failed to parse credentials file: %v", errs[0])
-	}
-
-	clusterAuth, err := credentials.FindClusterByArn(config.SourceClusterArn)
-	if err != nil {
-		return nil, err
-	}
-
-	authType, err := clusterAuth.GetSelectedAuthType()
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine auth type: %w", err)
-	}
-
-	region, err := utils.ExtractRegionFromArn(config.SourceClusterArn)
+	region, err := utils.ExtractRegionFromArn(m.opts.SourceClusterArn)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +98,7 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Ser
 	}
 
 	mskService := msk.NewMSKService(mskAwsClient)
-	bootstrapOutput, err := mskService.GetBootstrapBrokers(ctx, config.SourceClusterArn)
+	bootstrapOutput, err := mskService.GetBootstrapBrokers(ctx, m.opts.SourceClusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bootstrap brokers: %w", err)
 	}
@@ -118,8 +109,32 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Ser
 		return nil, err
 	}
 
+	// Build ClusterAuth from flag values
+	clusterAuth := types.ClusterAuth{}
+	switch authType {
+	case types.AuthTypeSASLSCRAM:
+		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
+			Use:      true,
+			Username: m.opts.SaslScramUsername,
+			Password: m.opts.SaslScramPassword,
+		}
+	case types.AuthTypeTLS:
+		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
+			Use:        true,
+			CACert:     m.opts.TlsCaCert,
+			ClientCert: m.opts.TlsClientCert,
+			ClientKey:  m.opts.TlsClientKey,
+		}
+	case types.AuthTypeIAM:
+		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}
+	case types.AuthTypeUnauthenticatedTLS:
+		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{Use: true}
+	case types.AuthTypeUnauthenticatedPlaintext:
+		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
+	}
+
 	slog.Debug("connecting to source cluster (MSK)")
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, *clusterAuth))
+	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, clusterAuth))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
 	}

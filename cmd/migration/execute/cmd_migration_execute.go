@@ -15,8 +15,21 @@ var (
 	lagThreshold       int64
 	clusterApiKey      string
 	clusterApiSecret   string
-	credentialsFile    string
 	ccBootstrap        string
+	sourceClusterArn   string
+
+	useSaslIam                  bool
+	useSaslScram                bool
+	useTls                      bool
+	useUnauthenticatedTLS       bool
+	useUnauthenticatedPlaintext bool
+
+	saslScramUsername string
+	saslScramPassword string
+
+	tlsCaCert     string
+	tlsClientCert string
+	tlsClientKey  string
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -45,16 +58,44 @@ interrupted, re-running this command will resume from the last completed step.`,
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
-	requiredFlags.StringVar(&credentialsFile, "credentials-file", "", "Credentials YAML file for MSK cluster authentication.")
+	requiredFlags.StringVar(&sourceClusterArn, "source-cluster-arn", "", "ARN of the source MSK cluster.")
 	requiredFlags.StringVar(&ccBootstrap, "cc-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
+	// Authentication flags.
+	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
+	authFlags.SortFlags = false
+	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
+	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
+	migrationExecuteCmd.Flags().AddFlagSet(authFlags)
+	groups[authFlags] = "Source Cluster Authentication Flags"
+
+	// SASL/SCRAM credential flags.
+	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
+	saslScramFlags.SortFlags = false
+	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
+	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
+	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
+	groups[saslScramFlags] = "SASL/SCRAM Flags"
+
+	// TLS credential flags.
+	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
+	tlsFlags.SortFlags = false
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
+	migrationExecuteCmd.Flags().AddFlagSet(tlsFlags)
+	groups[tlsFlags] = "TLS Flags"
+
 	migrationExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags}
-		groupNames := []string{"Required Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -72,8 +113,10 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
-	migrationExecuteCmd.MarkFlagRequired("credentials-file")
+	migrationExecuteCmd.MarkFlagRequired("source-cluster-arn")
 	migrationExecuteCmd.MarkFlagRequired("cc-bootstrap")
+
+	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationExecuteCmd
 }
@@ -81,6 +124,17 @@ interrupted, re-running this command will resume from the last completed step.`,
 func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	if useSaslScram {
+		cmd.MarkFlagRequired("sasl-scram-username")
+		cmd.MarkFlagRequired("sasl-scram-password")
+	}
+
+	if useTls {
+		cmd.MarkFlagRequired("tls-ca-cert")
+		cmd.MarkFlagRequired("tls-client-cert")
+		cmd.MarkFlagRequired("tls-client-key")
 	}
 
 	return nil
@@ -109,6 +163,23 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func resolveAuthType() types.AuthType {
+	switch {
+	case useSaslIam:
+		return types.AuthTypeIAM
+	case useSaslScram:
+		return types.AuthTypeSASLSCRAM
+	case useTls:
+		return types.AuthTypeTLS
+	case useUnauthenticatedTLS:
+		return types.AuthTypeUnauthenticatedTLS
+	case useUnauthenticatedPlaintext:
+		return types.AuthTypeUnauthenticatedPlaintext
+	default:
+		return types.AuthTypeIAM
+	}
+}
+
 func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
 		MigrationStateFile: migrationStateFile,
@@ -117,7 +188,13 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		LagThreshold:       lagThreshold,
 		ClusterApiKey:      clusterApiKey,
 		ClusterApiSecret:   clusterApiSecret,
-		CredentialsFile:    credentialsFile,
 		CCBootstrap:        ccBootstrap,
+		SourceClusterArn:   sourceClusterArn,
+		AuthType:           resolveAuthType(),
+		SaslScramUsername:   saslScramUsername,
+		SaslScramPassword:   saslScramPassword,
+		TlsCaCert:           tlsCaCert,
+		TlsClientCert:      tlsClientCert,
+		TlsClientKey:       tlsClientKey,
 	}
 }
