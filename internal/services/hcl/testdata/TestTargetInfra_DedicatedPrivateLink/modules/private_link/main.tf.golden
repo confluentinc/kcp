@@ -1,0 +1,84 @@
+data "aws_caller_identity" "current" {
+}
+
+resource "confluent_private_link_access" "private_link_access" {
+  display_name = "kcp-private-link-access"
+
+  aws {
+    account = data.aws_caller_identity.current.account_id
+  }
+
+  environment {
+    id = var.environment_id
+  }
+
+  network {
+    id = var.network_id
+  }
+
+}
+
+resource "aws_security_group" "cflt_private_link_sg" {
+  vpc_id = var.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9092
+    to_port     = 9092
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_subnet" "cflt_private_link_subnet" {
+  count = length(var.subnet_cidr_ranges)
+
+  vpc_id               = var.vpc_id
+  availability_zone_id = var.network_zones[count.index % length(var.network_zones)]
+  cidr_block           = var.subnet_cidr_ranges[count.index]
+}
+resource "aws_vpc_endpoint" "cflt_private_link_vpc_endpoint" {
+  vpc_id             = var.vpc_id
+  service_name       = var.network_private_link_endpoint_service
+  vpc_endpoint_type  = "Interface"
+  security_group_ids = [aws_security_group.cflt_private_link_sg.id]
+  subnet_ids         = aws_subnet.cflt_private_link_subnet[*].id
+
+  depends_on = [confluent_private_link_access.private_link_access]
+}
+
+resource "aws_route53_zone" "cflt_private_link_zone" {
+  name = var.network_dns_domain
+
+  vpc {
+    vpc_id = var.vpc_id
+  }
+}
+
+resource "aws_route53_record" "cflt_route_entries" {
+  zone_id = aws_route53_zone.cflt_private_link_zone.zone_id
+  name    = "*"
+  type    = "CNAME"
+  ttl     = 60
+  records = [aws_vpc_endpoint.cflt_private_link_vpc_endpoint.dns_entry[0].dns_name]
+}
+
