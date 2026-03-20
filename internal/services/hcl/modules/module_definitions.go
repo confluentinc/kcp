@@ -14,12 +14,19 @@ type ModuleOutputDefinition struct {
 // ModuleVariable is a generic definition for module variables.
 // R is the request type (e.g. TargetClusterWizardRequest or MigrationWizardRequest).
 type ModuleVariable[R any] struct {
+	// Name is the module input attribute name (the key in the module block).
+	// This may differ from Definition.Name (the root-level variable name).
+	// WriteModuleInputs uses Name for the attribute key and Definition.Name for the var. reference.
 	Name             string
 	Definition       types.TerraformVariable
 	ValueExtractor   func(request R) any  // Extracts the value from FE request payload. If nil, it's not a root-level variable.
 	Condition        func(request R) bool // Determines if this variable should be included (nil = always include).
 	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
 }
+
+// NOTE: VariableSchema migration is incomplete. Currently only cluster_link_module.go and
+// provider_variables.go use VariableSchema to define variable metadata; remaining modules
+// still define types.TerraformVariable inline and are candidates for migration.
 
 // ============================================================================
 // Target Cluster
