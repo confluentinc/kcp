@@ -1335,6 +1335,7 @@ One of the following combinations is required - `--state-file` + `--cluster-arn`
 
 - `--needs-private-link`: Whether the infrastructure needs private link setup
 - `--subnet-cidrs`: Subnet CIDRs for private link (required when `--needs-private-link=true`)
+- `--use-existing-route53-zone`: Use an existing Route53 Private Hosted Zone instead of creating a new one (default: false). See [Route53 DNS for Enterprise Private Link](#route53-dns-for-enterprise-private-link) below.
 
 **Optional Arguments**:
 
@@ -1358,6 +1359,36 @@ kcp create-asset target-infra \
 
 **Output:**
 The command creates a directory (default: `target-infra`) containing Terraform configurations that will provision a Confluent Cloud setup based on the provided flags.
+
+##### Route53 DNS for Enterprise Private Link
+
+When using `--needs-private-link` with enterprise clusters, the generated Terraform includes a Route53 Private Hosted Zone and DNS record for the Confluent Cloud private endpoint.
+
+**How it works:**
+
+Enterprise Private Link Attachments use a shared regional DNS domain (e.g., `us-east-1.aws.private.confluent.cloud`). To support multiple enterprise clusters in the same VPC and region, each cluster gets its own per-cluster CNAME record (e.g., `lkc-w9o1w5.us-east-1.aws.private.confluent.cloud`) pointing to its specific VPC endpoint, rather than a wildcard record.
+
+**First cluster in the VPC** — run without the flag (default). This creates the Route53 zone and the cluster's DNS record:
+
+```bash
+kcp create-asset target-infra \
+  --needs-private-link \
+  --cluster-type enterprise \
+  ...
+```
+
+**Subsequent clusters in the same VPC** — the Route53 zone already exists from the first cluster's deployment. Use `--use-existing-route53-zone` so Terraform looks up the existing zone instead of trying to create it:
+
+```bash
+kcp create-asset target-infra \
+  --needs-private-link \
+  --cluster-type enterprise \
+  --use-existing-route53-zone \
+  ...
+```
+
+> [!NOTE]
+> Dedicated clusters use a unique per-network DNS domain, so `--use-existing-route53-zone` is typically not needed — each dedicated cluster gets its own Route53 zone automatically.
 
 ---
 
