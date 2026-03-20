@@ -7,30 +7,18 @@ import (
 func GetPublicMigrationProviderVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
-			Name: "confluent_cloud_api_key",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_api_key",
-				Description: "Confluent Cloud API Key",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudAPIKey.Name,
+			Definition: SchemaConfluentCloudAPIKey.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition: nil,
 		},
 		{
-			Name: "confluent_cloud_api_secret",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_api_secret",
-				Description: "Confluent Cloud API Secret",
-				Sensitive:   true,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudAPISecret.Name,
+			Definition: SchemaConfluentCloudAPISecret.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition: nil,
 		},
 	}
 }
@@ -38,39 +26,22 @@ func GetPublicMigrationProviderVariables() []ModuleVariable[types.MigrationWizar
 func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
-			Name: "confluent_cloud_api_key",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_api_key",
-				Description: "Confluent Cloud API Key",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudAPIKey.Name,
+			Definition: SchemaConfluentCloudAPIKey.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition: nil,
 		},
 		{
-			Name: "confluent_cloud_api_secret",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_api_secret",
-				Description: "Confluent Cloud API Secret",
-				Sensitive:   true,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudAPISecret.Name,
+			Definition: SchemaConfluentCloudAPISecret.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition: nil,
 		},
 		{
-			Name: "aws_region",
-			Definition: types.TerraformVariable{
-				Name:        "aws_region",
-				Description: "The AWS region",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaAWSRegion.Name,
+			Definition: SchemaAWSRegion.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.MskRegion
 			},
@@ -84,43 +55,25 @@ func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWiza
 func GetTargetClusterProviderVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
 	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
-			Name: "confluent_cloud_api_key",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_api_key",
-				Description: "Confluent Cloud API Key",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudAPIKey.Name,
+			Definition: SchemaConfluentCloudAPIKey.ToDefinition(),
 			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
 				return ""
 			},
-			Condition: nil,
 		},
 		{
-			Name: "confluent_cloud_api_secret",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_api_secret",
-				Description: "Confluent Cloud API Secret",
-				Sensitive:   true,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudAPISecret.Name,
+			Definition: SchemaConfluentCloudAPISecret.ToDefinition(),
 			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
 				return ""
 			},
-			Condition: nil,
 		},
 		{
-			Name: "aws_region",
-			Definition: types.TerraformVariable{
-				Name:        "aws_region",
-				Description: "The AWS region",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaAWSRegion.Name,
+			Definition: SchemaAWSRegion.ToDefinition(),
 			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
 				return request.AwsRegion
 			},
-			Condition: nil,
 		},
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -134,7 +135,14 @@ func TokensForMap(entries map[string]hclwrite.Tokens) hclwrite.Tokens {
 		&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
 	}
 
-	for key, valueTokens := range entries {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		valueTokens := entries[key]
 		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(key)})
 		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenEqual, Bytes: []byte("=")})
 		tokens = append(tokens, valueTokens...)

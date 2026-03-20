@@ -1,0 +1,85 @@
+resource "confluent_private_link_attachment" "private_link_attachment" {
+  display_name = "kcp_private_link_attachment"
+  cloud        = "AWS"
+  region       = var.aws_region
+
+  environment {
+    id = var.environment_id
+  }
+
+}
+
+data "aws_availability_zones" "available" {
+  state = "available"
+
+  filter {
+    name   = "zone-type"
+    values = ["availability-zone"]
+  }
+}
+
+resource "aws_security_group" "cflt_private_link_sg" {
+  vpc_id = var.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9092
+    to_port     = 9092
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_subnet" "cflt_private_link_subnet" {
+  count = length(var.subnet_cidr_ranges)
+
+  vpc_id            = var.vpc_id
+  availability_zone = data.aws_availability_zones.available.names[count.index % length(data.aws_availability_zones.available.names)]
+  cidr_block        = var.subnet_cidr_ranges[count.index]
+}
+resource "aws_vpc_endpoint" "cflt_private_link_vpc_endpoint" {
+  vpc_id             = var.vpc_id
+  service_name       = confluent_private_link_attachment.private_link_attachment.aws[0].vpc_endpoint_service_name
+  vpc_endpoint_type  = "Interface"
+  security_group_ids = [aws_security_group.cflt_private_link_sg.id]
+  subnet_ids         = aws_subnet.cflt_private_link_subnet[*].id
+
+  depends_on = [confluent_private_link_attachment.private_link_attachment]
+}
+
+resource "confluent_private_link_attachment_connection" "private_link_attachment_connection" {
+  display_name = "eu-cluster_private_link_attachment_connection"
+
+  environment {
+    id = var.environment_id
+  }
+
+  aws {
+    vpc_endpoint_id = aws_vpc_endpoint.cflt_private_link_vpc_endpoint.id
+  }
+
+  private_link_attachment {
+    id = confluent_private_link_attachment.private_link_attachment.id
+  }
+
+}
+
