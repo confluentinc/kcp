@@ -33,8 +33,8 @@ var (
 	awsRegion string
 
 	needsPrivateLinkStr   string
-	existingRoute53ZoneId string
-	vpcId                 string
+	useExistingRoute53Zone bool
+	vpcId                  string
 	subnetCidrs           []string
 
 	preventDestroy bool
@@ -54,8 +54,8 @@ type TargetInfraOpts struct {
 	ClusterCku          int
 	AwsRegion           string
 	NeedsPrivateLink      bool
-	ExistingRoute53ZoneId string
-	PreventDestroy        bool
+	UseExistingRoute53Zone bool
+	PreventDestroy         bool
 	VpcId                 string
 	SubnetCidrs           []string
 }
@@ -110,7 +110,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	privateLinkFlags.SortFlags = false
 	privateLinkFlags.StringVar(&needsPrivateLinkStr, "needs-private-link", "false", "Whether the infrastructure needs private link setup. If using Enterprise clusters, Private Link is required.")
 	privateLinkFlags.StringSliceVar(&subnetCidrs, "subnet-cidrs", []string{}, "Subnet CIDRs for private link (required when --needs-private-link=true)")
-	privateLinkFlags.StringVar(&existingRoute53ZoneId, "existing-route53-zone-id", "", "ID of an existing Route53 hosted zone to use instead of creating a new one (optional)")
+	privateLinkFlags.BoolVar(&useExistingRoute53Zone, "use-existing-route53-zone", false, "Use an existing Route53 hosted zone instead of creating a new one")
 	targetInfraCmd.Flags().AddFlagSet(privateLinkFlags)
 	groups[privateLinkFlags] = "Private Link"
 
@@ -272,7 +272,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		ClusterAvailability: opts.ClusterAvailability,
 		ClusterCku:          opts.ClusterCku,
 		NeedsPrivateLink:      opts.NeedsPrivateLink,
-		ExistingRoute53ZoneId: opts.ExistingRoute53ZoneId,
+		UseExistingRoute53Zone: opts.UseExistingRoute53Zone,
 		PreventDestroy:        opts.PreventDestroy,
 		VpcId:               opts.VpcId,
 		SubnetCidrRanges:    opts.SubnetCidrs,
@@ -323,7 +323,7 @@ func parseTargetInfraOpts() (*TargetInfraOpts, error) {
 		ClusterCku:          clusterCku,
 		AwsRegion:           awsRegion,
 		NeedsPrivateLink:      needsPrivateLink,
-		ExistingRoute53ZoneId: existingRoute53ZoneId,
+		UseExistingRoute53Zone: useExistingRoute53Zone,
 		PreventDestroy:        preventDestroy,
 		VpcId:               vpcId,
 		SubnetCidrs:         subnetCidrs,
