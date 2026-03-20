@@ -471,7 +471,6 @@ func TestOSKClusterAuth_GetSelectedAuthType(t *testing.T) {
 			clusterAuth: OSKClusterAuth{
 				AuthMethod: AuthMethodConfig{},
 			},
-			expectedType:  "",
 			expectedError: true,
 		},
 		{
@@ -706,7 +705,7 @@ func TestOSKCredentials_Validate_BootstrapServerEdgeCases(t *testing.T) {
 	}
 }
 
-func TestOSKCredentials_Validate_ValidJMXConfig(t *testing.T) {
+func TestOSKCredentials_Validate_ValidJolokiaConfig(t *testing.T) {
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -715,8 +714,7 @@ func TestOSKCredentials_Validate_ValidJMXConfig(t *testing.T) {
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"http://broker1:8778/jolokia"},
 				},
 			},
@@ -725,11 +723,11 @@ func TestOSKCredentials_Validate_ValidJMXConfig(t *testing.T) {
 
 	valid, errs := creds.Validate()
 	if !valid {
-		t.Errorf("expected valid credentials with JMX config, got errors: %v", errs)
+		t.Errorf("expected valid credentials with Jolokia config, got errors: %v", errs)
 	}
 }
 
-func TestOSKCredentials_Validate_JMXMissingType(t *testing.T) {
+func TestOSKCredentials_Validate_JolokiaMissingEndpoints(t *testing.T) {
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -738,31 +736,7 @@ func TestOSKCredentials_Validate_JMXMissingType(t *testing.T) {
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
-				JMX: &JMXConfig{
-					Type:      "", // Missing type
-					Endpoints: []string{"http://broker1:8778/jolokia"},
-				},
-			},
-		},
-	}
-
-	valid, _ := creds.Validate()
-	if valid {
-		t.Error("expected validation to fail when JMX type is missing")
-	}
-}
-
-func TestOSKCredentials_Validate_JMXMissingEndpoints(t *testing.T) {
-	creds := &OSKCredentials{
-		Clusters: []OSKClusterAuth{
-			{
-				ID:               "prod-kafka-01",
-				BootstrapServers: []string{"broker1:9092"},
-				AuthMethod: AuthMethodConfig{
-					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
-				},
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{}, // Empty endpoints
 				},
 			},
@@ -771,11 +745,11 @@ func TestOSKCredentials_Validate_JMXMissingEndpoints(t *testing.T) {
 
 	valid, _ := creds.Validate()
 	if valid {
-		t.Error("expected validation to fail when JMX endpoints are missing")
+		t.Error("expected validation to fail when Jolokia endpoints are missing")
 	}
 }
 
-func TestOSKCredentials_Validate_JMXUnsupportedType(t *testing.T) {
+func TestOSKCredentials_Validate_JolokiaWithAuth(t *testing.T) {
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -784,33 +758,9 @@ func TestOSKCredentials_Validate_JMXUnsupportedType(t *testing.T) {
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
-				JMX: &JMXConfig{
-					Type:      "prometheus", // Unsupported type
-					Endpoints: []string{"http://broker1:9090/metrics"},
-				},
-			},
-		},
-	}
-
-	valid, _ := creds.Validate()
-	if valid {
-		t.Error("expected validation to fail for unsupported JMX type")
-	}
-}
-
-func TestOSKCredentials_Validate_JMXWithAuth(t *testing.T) {
-	creds := &OSKCredentials{
-		Clusters: []OSKClusterAuth{
-			{
-				ID:               "prod-kafka-01",
-				BootstrapServers: []string{"broker1:9092"},
-				AuthMethod: AuthMethodConfig{
-					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
-				},
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"http://broker1:8778/jolokia"},
-					Auth: &JMXAuthConfig{
+					Auth: &JolokiaAuthConfig{
 						Username: "jmxuser",
 						Password: "jmxpass",
 					},
@@ -821,11 +771,11 @@ func TestOSKCredentials_Validate_JMXWithAuth(t *testing.T) {
 
 	valid, errs := creds.Validate()
 	if !valid {
-		t.Errorf("expected valid credentials with JMX auth config, got errors: %v", errs)
+		t.Errorf("expected valid credentials with Jolokia auth config, got errors: %v", errs)
 	}
 }
 
-func TestOSKCredentials_Validate_JMXWithTLS(t *testing.T) {
+func TestOSKCredentials_Validate_JolokiaWithTLS(t *testing.T) {
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -834,10 +784,9 @@ func TestOSKCredentials_Validate_JMXWithTLS(t *testing.T) {
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"https://broker1:8778/jolokia"},
-					TLS: &JMXTLSConfig{
+					TLS: &JolokiaTLSConfig{
 						CACert:             "/path/to/ca.pem",
 						InsecureSkipVerify: false,
 					},
@@ -847,10 +796,10 @@ func TestOSKCredentials_Validate_JMXWithTLS(t *testing.T) {
 	}
 
 	valid, errs := creds.Validate()
-	assert.True(t, valid, "expected valid credentials with JMX TLS config, got errors: %v", errs)
+	assert.True(t, valid, "expected valid credentials with Jolokia TLS config, got errors: %v", errs)
 }
 
-func TestOSKCredentials_Validate_JMXWithAuthAndTLS(t *testing.T) {
+func TestOSKCredentials_Validate_JolokiaWithAuthAndTLS(t *testing.T) {
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -859,14 +808,13 @@ func TestOSKCredentials_Validate_JMXWithAuthAndTLS(t *testing.T) {
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"https://broker1:8778/jolokia"},
-					Auth: &JMXAuthConfig{
+					Auth: &JolokiaAuthConfig{
 						Username: "monitorUser",
 						Password: "monitorPass",
 					},
-					TLS: &JMXTLSConfig{
+					TLS: &JolokiaTLSConfig{
 						InsecureSkipVerify: true,
 					},
 				},
@@ -875,10 +823,10 @@ func TestOSKCredentials_Validate_JMXWithAuthAndTLS(t *testing.T) {
 	}
 
 	valid, errs := creds.Validate()
-	assert.True(t, valid, "expected valid credentials with JMX auth + TLS config, got errors: %v", errs)
+	assert.True(t, valid, "expected valid credentials with Jolokia auth + TLS config, got errors: %v", errs)
 }
 
-func TestOSKCredentials_Validate_JMXAuthMissingPassword(t *testing.T) {
+func TestOSKCredentials_Validate_JolokiaAuthMissingPassword(t *testing.T) {
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -887,10 +835,9 @@ func TestOSKCredentials_Validate_JMXAuthMissingPassword(t *testing.T) {
 				AuthMethod: AuthMethodConfig{
 					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
 				},
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"http://broker1:8778/jolokia"},
-					Auth: &JMXAuthConfig{
+					Auth: &JolokiaAuthConfig{
 						Username: "monitorUser",
 						Password: "", // Missing password
 					},
@@ -900,29 +847,28 @@ func TestOSKCredentials_Validate_JMXAuthMissingPassword(t *testing.T) {
 	}
 
 	valid, _ := creds.Validate()
-	assert.False(t, valid, "expected validation to fail when JMX auth password is missing")
+	assert.False(t, valid, "expected validation to fail when Jolokia auth password is missing")
 }
 
-func TestOSKCredentials_HasJMXConfig(t *testing.T) {
+func TestOSKCredentials_HasJolokiaConfig(t *testing.T) {
 	tests := []struct {
 		name        string
 		clusterAuth OSKClusterAuth
 		expected    bool
 	}{
 		{
-			name: "has JMX config",
+			name: "has Jolokia config",
 			clusterAuth: OSKClusterAuth{
-				JMX: &JMXConfig{
-					Type:      "jolokia",
+				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"http://broker1:8778/jolokia"},
 				},
 			},
 			expected: true,
 		},
 		{
-			name: "no JMX config",
+			name: "no Jolokia config",
 			clusterAuth: OSKClusterAuth{
-				JMX: nil,
+				Jolokia: nil,
 			},
 			expected: false,
 		},
@@ -930,7 +876,7 @@ func TestOSKCredentials_HasJMXConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.clusterAuth.HasJMXConfig()
+			result := tt.clusterAuth.HasJolokiaConfig()
 			assert.Equal(t, tt.expected, result)
 		})
 	}

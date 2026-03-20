@@ -21,7 +21,7 @@ type OSKClusterAuth struct {
 	AuthMethod            AuthMethodConfig      `yaml:"auth_method"`
 	InsecureSkipTLSVerify bool                  `yaml:"insecure_skip_tls_verify,omitempty"` // Only set true for test environments with self-signed certs
 	Metadata              OSKCredentialMetadata `yaml:"metadata,omitempty"`
-	JMX                   *JMXConfig            `yaml:"jmx,omitempty"`
+	Jolokia                  *JolokiaConfig            `yaml:"jolokia,omitempty"`
 }
 
 // OSKCredentialMetadata allows users to add optional organizational metadata
@@ -31,22 +31,21 @@ type OSKCredentialMetadata struct {
 	Labels      map[string]string `yaml:"labels,omitempty"`
 }
 
-// JMXConfig contains JMX monitoring configuration for a cluster
-type JMXConfig struct {
-	Type      string         `yaml:"type"`
+// JolokiaConfig contains Jolokia monitoring configuration for a cluster
+type JolokiaConfig struct {
 	Endpoints []string       `yaml:"endpoints"`
-	Auth      *JMXAuthConfig `yaml:"auth,omitempty"`
-	TLS       *JMXTLSConfig  `yaml:"tls,omitempty"`
+	Auth      *JolokiaAuthConfig `yaml:"auth,omitempty"`
+	TLS       *JolokiaTLSConfig  `yaml:"tls,omitempty"`
 }
 
-// JMXAuthConfig contains authentication credentials for JMX
-type JMXAuthConfig struct {
+// JolokiaAuthConfig contains authentication credentials for Jolokia
+type JolokiaAuthConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 }
 
-// JMXTLSConfig contains TLS configuration for JMX connections
-type JMXTLSConfig struct {
+// JolokiaTLSConfig contains TLS configuration for Jolokia connections
+type JolokiaTLSConfig struct {
 	CACert             string `yaml:"ca_cert,omitempty"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
@@ -120,9 +119,9 @@ func (c OSKCredentials) Validate() (bool, []error) {
 			errs = append(errs, fmt.Errorf("%s (id=%s): %w", clusterRef, cluster.ID, err))
 		}
 
-		// Validate JMX config if present
-		if cluster.JMX != nil {
-			if err := validateJMXConfig(cluster.JMX); err != nil {
+		// Validate Jolokia config if present
+		if cluster.Jolokia != nil {
+			if err := validateJolokiaConfig(cluster.Jolokia); err != nil {
 				errs = append(errs, fmt.Errorf("%s (id=%s): jmx: %w", clusterRef, cluster.ID, err))
 			}
 		}
@@ -161,9 +160,9 @@ func (c OSKClusterAuth) GetSelectedAuthType() (AuthType, error) {
 	return enabledMethods[0], nil
 }
 
-// HasJMXConfig returns true if the cluster has JMX configuration
-func (c OSKClusterAuth) HasJMXConfig() bool {
-	return c.JMX != nil
+// HasJolokiaConfig returns true if the cluster has Jolokia configuration
+func (c OSKClusterAuth) HasJolokiaConfig() bool {
+	return c.Jolokia != nil
 }
 
 // WriteToFile writes the credentials to a YAML file
@@ -248,20 +247,17 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 	return nil
 }
 
-// validateJMXConfig validates JMX configuration
-func validateJMXConfig(jmx *JMXConfig) error {
-	if jmx.Type != "jolokia" {
-		return fmt.Errorf("unsupported jmx type %q: must be 'jolokia'", jmx.Type)
-	}
-	if len(jmx.Endpoints) == 0 {
+// validateJolokiaConfig validates Jolokia configuration
+func validateJolokiaConfig(jolokia *JolokiaConfig) error {
+	if len(jolokia.Endpoints) == 0 {
 		return fmt.Errorf("at least one endpoint is required")
 	}
-	if jmx.Auth != nil {
-		if jmx.Auth.Username == "" {
-			return fmt.Errorf("jmx auth username is required when auth is configured")
+	if jolokia.Auth != nil {
+		if jolokia.Auth.Username == "" {
+			return fmt.Errorf("jolokia auth username is required when auth is configured")
 		}
-		if jmx.Auth.Password == "" {
-			return fmt.Errorf("jmx auth password is required when auth is configured")
+		if jolokia.Auth.Password == "" {
+			return fmt.Errorf("jolokia auth password is required when auth is configured")
 		}
 	}
 	return nil

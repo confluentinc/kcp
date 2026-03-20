@@ -309,7 +309,7 @@ func collectJMXMetrics(ctx context.Context, state *types.State, credentialsFileP
 	interval, _ := time.ParseDuration(jmxPollInterval)
 
 	for _, clusterCreds := range creds.Clusters {
-		if !clusterCreds.HasJMXConfig() {
+		if !clusterCreds.HasJolokiaConfig() {
 			slog.Info("no JMX config for cluster, skipping", "cluster", clusterCreds.ID)
 			continue
 		}
@@ -318,14 +318,14 @@ func collectJMXMetrics(ctx context.Context, state *types.State, credentialsFileP
 		fmt.Printf("\n📊 Collecting JMX metrics for cluster '%s' (duration: %s, interval: %s)...\n", clusterCreds.ID, duration, interval)
 
 		var jolokiaOpts []client.JolokiaOption
-		if clusterCreds.JMX.Auth != nil {
-			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.JMX.Auth.Username, clusterCreds.JMX.Auth.Password))
+		if clusterCreds.Jolokia.Auth != nil {
+			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.Jolokia.Auth.Username, clusterCreds.Jolokia.Auth.Password))
 		}
-		if clusterCreds.JMX.TLS != nil {
-			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.JMX.TLS.CACert, clusterCreds.JMX.TLS.InsecureSkipVerify))
+		if clusterCreds.Jolokia.TLS != nil {
+			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 		}
 
-		jmxService := jmx.NewJMXService(clusterCreds.JMX.Endpoints, jolokiaOpts...)
+		jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jolokiaOpts...)
 		metrics, err := jmxService.CollectOverDuration(ctx, duration, interval)
 		if err != nil {
 			slog.Warn("JMX collection failed for cluster", "cluster", clusterCreds.ID, "error", err)
