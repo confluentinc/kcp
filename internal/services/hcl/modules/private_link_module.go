@@ -9,6 +9,20 @@ import (
 func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
 	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
+			Name: "cluster_id",
+			Definition: types.TerraformVariable{
+				Name:        "cluster_id",
+				Description: "The ID of the Kafka cluster (used for per-cluster DNS records in the shared Route53 zone).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor:   nil,
+			FromModuleOutput: "confluent_cloud",
+			Condition: func(request types.TargetClusterWizardRequest) bool {
+				return request.ClusterType == "enterprise"
+			},
+		},
+		{
 			Name: "aws_region",
 			Definition: types.TerraformVariable{
 				Name:        "aws_region",

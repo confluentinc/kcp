@@ -19,6 +19,7 @@ module "private_link" {
     confluent = confluent
   }
 
+  cluster_id         = module.confluent_cloud.cluster_id
   aws_region         = var.aws_region
   vpc_id             = var.vpc_id
   subnet_cidr_ranges = var.subnet_cidr_ranges
