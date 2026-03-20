@@ -32,9 +32,10 @@ var (
 
 	awsRegion string
 
-	needsPrivateLinkStr string
-	vpcId               string
-	subnetCidrs         []string
+	needsPrivateLinkStr   string
+	useExistingRoute53Zone bool
+	vpcId                  string
+	subnetCidrs           []string
 
 	preventDestroy bool
 
@@ -52,10 +53,11 @@ type TargetInfraOpts struct {
 	ClusterAvailability string
 	ClusterCku          int
 	AwsRegion           string
-	NeedsPrivateLink    bool
-	PreventDestroy      bool
-	VpcId               string
-	SubnetCidrs         []string
+	NeedsPrivateLink      bool
+	UseExistingRoute53Zone bool
+	PreventDestroy         bool
+	VpcId                 string
+	SubnetCidrs           []string
 }
 
 func NewTargetInfraCmd() *cobra.Command {
@@ -108,6 +110,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	privateLinkFlags.SortFlags = false
 	privateLinkFlags.StringVar(&needsPrivateLinkStr, "needs-private-link", "false", "Whether the infrastructure needs private link setup. If using Enterprise clusters, Private Link is required.")
 	privateLinkFlags.StringSliceVar(&subnetCidrs, "subnet-cidrs", []string{}, "Subnet CIDRs for private link (required when --needs-private-link=true)")
+	privateLinkFlags.BoolVar(&useExistingRoute53Zone, "use-existing-route53-zone", false, "Use an existing Route53 hosted zone instead of creating a new one")
 	targetInfraCmd.Flags().AddFlagSet(privateLinkFlags)
 	groups[privateLinkFlags] = "Private Link"
 
@@ -268,8 +271,9 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		ClusterType:         opts.ClusterType,
 		ClusterAvailability: opts.ClusterAvailability,
 		ClusterCku:          opts.ClusterCku,
-		NeedsPrivateLink:    opts.NeedsPrivateLink,
-		PreventDestroy:      opts.PreventDestroy,
+		NeedsPrivateLink:      opts.NeedsPrivateLink,
+		UseExistingRoute53Zone: opts.UseExistingRoute53Zone,
+		PreventDestroy:        opts.PreventDestroy,
 		VpcId:               opts.VpcId,
 		SubnetCidrRanges:    opts.SubnetCidrs,
 	}
@@ -283,8 +287,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	generator := NewTargetInfraGenerator(outputDir)
-	if err := generator.BuildTerraformProject(project); err != nil {
+	if err := hcl.WriteTerraformProject(outputDir, project); err != nil {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
 	}
 
@@ -319,8 +322,9 @@ func parseTargetInfraOpts() (*TargetInfraOpts, error) {
 		ClusterAvailability: clusterAvailability,
 		ClusterCku:          clusterCku,
 		AwsRegion:           awsRegion,
-		NeedsPrivateLink:    needsPrivateLink,
-		PreventDestroy:      preventDestroy,
+		NeedsPrivateLink:      needsPrivateLink,
+		UseExistingRoute53Zone: useExistingRoute53Zone,
+		PreventDestroy:        preventDestroy,
 		VpcId:               vpcId,
 		SubnetCidrs:         subnetCidrs,
 	}, nil

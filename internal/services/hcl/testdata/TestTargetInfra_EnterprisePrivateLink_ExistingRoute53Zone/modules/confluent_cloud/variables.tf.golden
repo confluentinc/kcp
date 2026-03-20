@@ -1,0 +1,20 @@
+variable "aws_region" {
+  type        = string
+  description = "The AWS region in which the Confluent Cloud cluster is provisioned in."
+}
+
+variable "environment_name" {
+  type        = string
+  description = "Name of the environment"
+}
+
+variable "cluster_name" {
+  type        = string
+  description = "Name of the cluster"
+}
+
+variable "cluster_type" {
+  type        = string
+  description = "Type of the cluster"
+}
+
