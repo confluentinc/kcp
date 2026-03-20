@@ -43,6 +43,10 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
           schema: {
             type: 'object',
             properties: {
+              source_type: {
+                type: 'string',
+                default: 'msk',
+              },
               has_public_brokers: {
                 type: 'boolean',
                 title: 'Are your MSK brokers publicly accessible?',
@@ -55,6 +59,9 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             required: ['has_public_brokers'],
           },
           uiSchema: {
+            source_type: {
+              'ui:widget': 'hidden',
+            },
             has_public_brokers: {
               'ui:widget': 'radio',
             },

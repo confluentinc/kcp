@@ -720,18 +720,24 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	rootBody := f.Body()
 
 	//
-	// MSK Private Cluster Link Module
+	// Private Cluster Link Module
 	//
-	mskClusterLinkPrivateLinkModuleBlock := rootBody.AppendNewBlock("module", []string{"cluster-linking-aws-msk-private-link"})
-	mskClusterLinkPrivateLinkModuleBody := mskClusterLinkPrivateLinkModuleBlock.Body()
+	namePrefix := "msk"
+	if request.SourceType == "osk" {
+		namePrefix = "osk"
+	}
+	moduleName := "cluster-linking-aws-" + namePrefix + "-private-link"
+
+	privateLinkModuleBlock := rootBody.AppendNewBlock("module", []string{moduleName})
+	privateLinkModuleBody := privateLinkModuleBlock.Body()
 
 	// https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private
-	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("source", cty.StringVal("git::https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private.git"))
-	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
+	privateLinkModuleBody.SetAttributeValue("source", cty.StringVal("git::https://github.com/confluentinc/cc-terraform-module-clusterlinking-outbound-private.git"))
+	privateLinkModuleBody.AppendNewline()
 
-	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("name_prefix", cty.StringVal("msk"))
-	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
-	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
+	privateLinkModuleBody.SetAttributeValue("name_prefix", cty.StringVal(namePrefix))
+	privateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
+	privateLinkModuleBody.AppendNewline()
 
 	privateClusterLinkVars := modules.GetPrivateClusterLinkVariables()
 	for _, varDef := range privateClusterLinkVars {
@@ -739,7 +745,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 			continue
 		}
 
-		mskClusterLinkPrivateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Definition.Name))
+		privateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Definition.Name))
 	}
 	rootBody.AppendNewline()
 
@@ -763,7 +769,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	rootBody.AppendNewline()
 
 	extOutboundClModuleBody.AppendNewline()
-	extOutboundClModuleBody.SetAttributeRaw("depends_on", utils.TokensForList([]string{"module.cluster-linking-aws-msk-private-link"}))
+	extOutboundClModuleBody.SetAttributeRaw("depends_on", utils.TokensForList([]string{"module." + moduleName}))
 
 	return string(f.Bytes())
 }
