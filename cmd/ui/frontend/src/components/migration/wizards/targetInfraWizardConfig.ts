@@ -348,6 +348,12 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 maxItems: 3,
                 default: ['', '', ''],
               },
+              existing_route53_zone_id: {
+                type: 'string',
+                title: 'Existing Route53 Hosted Zone ID (optional)',
+                description:
+                  'If a Route53 hosted zone already exists for this VPC and domain, provide its ID to avoid conflicts. Leave empty to create a new zone.',
+              },
             },
             required: ['vpc_id', 'subnet_cidr_ranges'],
           },
@@ -364,6 +370,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 orderable: false,
                 removable: false,
               },
+            },
+            existing_route53_zone_id: {
+              'ui:placeholder': 'e.g., Z0563969185NB7OCVYNCN',
             },
           },
         },
