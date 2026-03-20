@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  kafka-jmx-auth:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka-jmx-auth
+    container_name: kcp-test-kafka-jmx-auth
+    ports:
+      - "9097:9097"
+      - "8779:8779"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-jmx-auth:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka-jmx-auth:29092,CONTROLLER://kafka-jmx-auth:29093,PLAINTEXT_HOST://0.0.0.0:9097'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-jmx-auth:29092,PLAINTEXT_HOST://localhost:9097'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'JkU4OEVBNTcwNTJENDM2Qk'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS'
+      KAFKA_OPTS: '-javaagent:/tmp/jolokia-agent.jar=port=8779,host=0.0.0.0,user=monitorUser,password=monitorPass'
+    command: >
+      bash -c "
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+        kafka-storage format -t JkU4OEVBNTcwNTJENDM2Qk -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+        /etc/confluent/docker/run
+      "
+    networks:
+      - kcp-test-network
+
+  kafka-jmx-auth-producer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-kafka-jmx-auth-producer
+    depends_on:
+      - kafka-jmx-auth
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b kafka-jmx-auth:29092 1 60
+        kafka-producer-perf-test --topic test-topic-1 --throughput 100 --num-records 999999999 --record-size 1000 --producer-props bootstrap.servers=kafka-jmx-auth:29092
+    networks:
+      - kcp-test-network
+
+  kafka-jmx-auth-consumer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-kafka-jmx-auth-consumer
+    depends_on:
+      - kafka-jmx-auth
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b kafka-jmx-auth:29092 1 60
+        kafka-console-consumer --bootstrap-server kafka-jmx-auth:29092 --topic test-topic-1 --group jmx-test-consumer > /dev/null
+    networks:
+      - kcp-test-network
+
+networks:
+  kcp-test-network:
+    driver: bridge

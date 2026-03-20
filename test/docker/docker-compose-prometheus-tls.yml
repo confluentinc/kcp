@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  prometheus-tls:
+    image: prom/prometheus:v2.51.0
+    hostname: prometheus-tls
+    container_name: kcp-test-prometheus-tls
+    ports:
+      - "9192:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=60d'
+      - '--web.config.file=/etc/prometheus/web.yml'
+    volumes:
+      - prometheus-tls-data:/prometheus
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/prometheus-web-tls.yml:/etc/prometheus/web.yml:ro
+      - ./certs/prometheus-server.crt:/etc/prometheus/certs/server.crt:ro
+      - ./certs/prometheus-server.key:/etc/prometheus/certs/server.key:ro
+    networks:
+      - kcp-test-network
+
+  prometheus-tls-seeder:
+    image: prom/prometheus:v2.51.0
+    container_name: kcp-test-prometheus-tls-seeder
+    depends_on:
+      - prometheus-tls
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Prometheus TLS to be ready..."
+        for i in $$(seq 1 30); do
+          if wget -q -O /dev/null --no-check-certificate --user promuser --password prompass https://prometheus-tls:9090/-/ready 2>/dev/null; then
+            echo "Prometheus TLS is ready"
+            break
+          fi
+          sleep 1
+        done
+
+        echo "Seeding Prometheus with mock Kafka metrics..."
+        PROM_URL="https://prometheus-tls:9090" /bin/sh /scripts/seed-prometheus-data.sh
+        echo "Reloading Prometheus..."
+        wget -q -O /dev/null --no-check-certificate --user promuser --password prompass --post-data='' "https://prometheus-tls:9090/-/reload" 2>/dev/null || true
+        sleep 2
+        echo "Seeding complete"
+    volumes:
+      - prometheus-tls-data:/prometheus
+      - ./scripts/seed-prometheus-data.sh:/scripts/seed-prometheus-data.sh:ro
+    networks:
+      - kcp-test-network
+
+volumes:
+  prometheus-tls-data:
+
+networks:
+  kcp-test-network:
+    driver: bridge
