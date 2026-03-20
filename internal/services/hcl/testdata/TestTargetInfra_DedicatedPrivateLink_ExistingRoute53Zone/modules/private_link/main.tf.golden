@@ -66,17 +66,3 @@ resource "aws_vpc_endpoint" "cflt_private_link_vpc_endpoint" {
   depends_on = [confluent_private_link_access.private_link_access]
 }
 
-data "aws_route53_zone" "cflt_private_link_zone" {
-  name         = var.network_dns_domain
-  private_zone = true
-  vpc_id       = var.vpc_id
-}
-
-resource "aws_route53_record" "cflt_route_entries" {
-  zone_id = data.aws_route53_zone.cflt_private_link_zone.zone_id
-  name    = "*"
-  type    = "CNAME"
-  ttl     = 60
-  records = [aws_vpc_endpoint.cflt_private_link_vpc_endpoint.dns_entry[0].dns_name]
-}
-
