@@ -16,6 +16,11 @@ var ConfluentProviderVariables = []types.TerraformVariable{
 	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true, Type: "string"},
 }
 
+// AddRequiredProvider adds the Confluent required provider to a required_providers block body.
+func AddRequiredProvider(body *hclwrite.Body) {
+	body.SetAttributeRaw(GenerateRequiredProviderTokens())
+}
+
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	confluentProvider := map[string]hclwrite.Tokens{
 		"source":  utils.TokensForStringTemplate("confluentinc/confluent"),

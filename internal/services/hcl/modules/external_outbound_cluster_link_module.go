@@ -16,7 +16,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.ExtOutboundSubnetId
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "security_group_id",
@@ -30,7 +29,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.ExtOutboundSecurityGroupId
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "target_cluster_api_key",
@@ -44,7 +42,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return ""
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "target_cluster_api_secret",
@@ -58,7 +55,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return ""
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "target_cluster_rest_endpoint",
@@ -72,7 +68,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.TargetRestEndpoint
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "target_cluster_id",
@@ -86,7 +81,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.TargetClusterId
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "cluster_link_name",
@@ -100,7 +94,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.ClusterLinkName
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "msk_cluster_id",
@@ -114,7 +107,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.MskClusterId
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "msk_cluster_bootstrap_servers",
@@ -128,7 +120,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.MskSaslScramBootstrapServers
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "msk_sasl_scram_username",
@@ -142,7 +133,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return ""
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
 			Name: "msk_sasl_scram_password",
@@ -156,32 +146,10 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return ""
 			},
 			Condition:        nil,
-			FromModuleOutput: "",
 		},
 	}
 }
 
-func GetExternalOutboundClusterLinkingModuleVariableNames() map[string]string {
-	vars := GetExternalOutboundClusterLinkingVariables()
-	names := make(map[string]string)
-
-	for _, v := range vars {
-		names[v.Name] = v.Name
-	}
-
-	return names
-}
-
 func GetExternalOutboundClusterLinkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	extOutboundClusterLinkingVars := GetExternalOutboundClusterLinkingVariables()
-
-	for _, varDef := range extOutboundClusterLinkingVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetExternalOutboundClusterLinkingVariables(), request)
 }
