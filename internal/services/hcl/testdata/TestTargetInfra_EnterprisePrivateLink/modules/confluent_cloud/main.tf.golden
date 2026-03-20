@@ -1,0 +1,124 @@
+resource "confluent_environment" "environment" {
+  display_name = var.environment_name
+
+  stream_governance {
+    package = "ADVANCED"
+  }
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "confluent_kafka_cluster" "cluster" {
+  display_name = var.cluster_name
+  cloud        = "AWS"
+  region       = var.aws_region
+
+  environment {
+    id = confluent_environment.environment.id
+  }
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+data "confluent_schema_registry_cluster" "schema_registry" {
+  environment {
+    id = confluent_environment.environment.id
+  }
+
+  depends_on = [confluent_api_key.app-manager-kafka-api-key]
+}
+
+resource "confluent_service_account" "app-manager" {
+  display_name = "app-manager-eu-clu"
+  description  = "Service account to manage the environment_name environment."
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "confluent_role_binding" "subject-resource-owner" {
+  principal   = "User:${confluent_service_account.app-manager.id}"
+  role_name   = "ResourceOwner"
+  crn_pattern = "${data.confluent_schema_registry_cluster.schema_registry.resource_name}/subject=*"
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "confluent_role_binding" "app-manager-kafka-cluster-admin" {
+  principal   = "User:${confluent_service_account.app-manager.id}"
+  role_name   = "CloudClusterAdmin"
+  crn_pattern = confluent_kafka_cluster.cluster.rbac_crn
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "confluent_role_binding" "app-manager-kafka-data-steward" {
+  principal   = "User:${confluent_service_account.app-manager.id}"
+  role_name   = "DataSteward"
+  crn_pattern = confluent_environment.environment.resource_name
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "confluent_api_key" "env-manager-schema-registry-api-key" {
+  display_name = "env-manager-schema-registry-api-key"
+  description  = "Schema Registry API Key that is owned by the environment_name environment."
+
+  owner {
+    id          = confluent_service_account.app-manager.id
+    api_version = confluent_service_account.app-manager.api_version
+    kind        = confluent_service_account.app-manager.kind
+  }
+
+  managed_resource {
+    id          = data.confluent_schema_registry_cluster.schema_registry.id
+    api_version = data.confluent_schema_registry_cluster.schema_registry.api_version
+    kind        = data.confluent_schema_registry_cluster.schema_registry.kind
+    environment {
+      id = confluent_environment.environment.id
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "confluent_api_key" "app-manager-kafka-api-key" {
+  display_name = "app-manager-kafka-api-key"
+  description  = "Kafka API Key that has been created by the environment_name environment."
+
+  owner {
+    id          = confluent_service_account.app-manager.id
+    api_version = confluent_service_account.app-manager.api_version
+    kind        = confluent_service_account.app-manager.kind
+  }
+
+  managed_resource {
+    id          = confluent_kafka_cluster.cluster.id
+    api_version = confluent_kafka_cluster.cluster.api_version
+    kind        = confluent_kafka_cluster.cluster.kind
+
+    environment {
+      id = confluent_environment.environment.id
+    }
+  }
+
+  disable_wait_for_ready = true
+
+  lifecycle {
+    prevent_destroy = false
+  }
+  depends_on = [confluent_role_binding.app-manager-kafka-cluster-admin]
+}
