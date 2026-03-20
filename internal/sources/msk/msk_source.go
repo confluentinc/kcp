@@ -115,6 +115,7 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}
+	defer (*kafkaAdmin).Close()
 
 	ks := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
 		AuthType:   authType,
