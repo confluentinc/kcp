@@ -17,41 +17,76 @@ func NewReportService() *ReportService {
 }
 
 func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
-	processedRegions := []types.ProcessedRegion{}
+	sources := []types.ProcessedSource{}
 
-	// Process each region: flatten costs and metrics for frontend consumption
-	for _, region := range state.Regions {
-		// Flatten cost data from nested AWS Cost Explorer format
-		processedCosts := rs.flattenCosts(region)
+	// Process MSK if present
+	if state.MSKSources != nil && len(state.MSKSources.Regions) > 0 {
+		processedRegions := []types.ProcessedRegion{}
 
-		// Process each cluster's metrics
-		processedClusters := []types.ProcessedCluster{}
-		for _, cluster := range region.Clusters {
-			// Flatten metrics data from nested CloudWatch format
-			processedMetrics := rs.flattenMetrics(cluster)
+		for _, region := range state.MSKSources.Regions {
+			// Flatten cost data from nested AWS Cost Explorer format
+			processedCosts := rs.flattenCosts(region)
 
-			processedClusters = append(processedClusters, types.ProcessedCluster{
-				Name:                        cluster.Name,
-				Arn:                         cluster.Arn,
-				Region:                      cluster.Region,
-				ClusterMetrics:              processedMetrics,
-				AWSClientInformation:        cluster.AWSClientInformation,
-				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
-				DiscoveredClients:           cluster.DiscoveredClients,
+			// Process each cluster's metrics
+			processedClusters := []types.ProcessedCluster{}
+			for _, cluster := range region.Clusters {
+				// Flatten metrics data from nested CloudWatch format
+				processedMetrics := rs.flattenMetrics(cluster)
+
+				processedClusters = append(processedClusters, types.ProcessedCluster{
+					Name:                        cluster.Name,
+					Arn:                         cluster.Arn,
+					Region:                      cluster.Region,
+					ClusterMetrics:              processedMetrics,
+					AWSClientInformation:        cluster.AWSClientInformation,
+					KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+					DiscoveredClients:           cluster.DiscoveredClients,
+				})
+			}
+
+			processedRegions = append(processedRegions, types.ProcessedRegion{
+				Name:           region.Name,
+				Configurations: region.Configurations,
+				Costs:          processedCosts,
+				Clusters:       processedClusters,
 			})
 		}
 
-		processedRegions = append(processedRegions, types.ProcessedRegion{
-			Name:           region.Name,
-			Configurations: region.Configurations,
-			Costs:          processedCosts,
-			Clusters:       processedClusters,
-		})
+		mskSource := types.ProcessedSource{
+			Type: types.SourceTypeMSK,
+			MSKData: &types.ProcessedMSKSource{
+				Regions: processedRegions,
+			},
+		}
+		sources = append(sources, mskSource)
 	}
 
-	// Return the processed state with flattened data for frontend consumption
+	// Process OSK if present
+	if state.OSKSources != nil && len(state.OSKSources.Clusters) > 0 {
+		processedOSKClusters := []types.ProcessedOSKCluster{}
+
+		for _, cluster := range state.OSKSources.Clusters {
+			processedOSKClusters = append(processedOSKClusters, types.ProcessedOSKCluster{
+				ID:                          cluster.ID,
+				BootstrapServers:            cluster.BootstrapServers,
+				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+				DiscoveredClients:           cluster.DiscoveredClients,
+				Metadata:                    cluster.Metadata,
+			})
+		}
+
+		oskSource := types.ProcessedSource{
+			Type: types.SourceTypeOSK,
+			OSKData: &types.ProcessedOSKSource{
+				Clusters: processedOSKClusters,
+			},
+		}
+		sources = append(sources, oskSource)
+	}
+
+	// Return the processed state with unified sources
 	processedState := types.ProcessedState{
-		Regions:          processedRegions,
+		Sources:          sources,
 		SchemaRegistries: state.SchemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
 		Timestamp:        state.Timestamp,
@@ -62,11 +97,18 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 
 // FilterRegionCosts filters the processed state to return cost data for a specific region
 func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
-	// Find the specified region
+	// Find the MSK source and the specified region
 	var targetRegion *types.ProcessedRegion
-	for _, r := range processedState.Regions {
-		if strings.EqualFold(r.Name, regionName) {
-			targetRegion = &r
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
+			for _, r := range source.MSKData.Regions {
+				if strings.EqualFold(r.Name, regionName) {
+					targetRegion = &r
+					break
+				}
+			}
+		}
+		if targetRegion != nil {
 			break
 		}
 	}
@@ -127,13 +169,24 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 	var regionName string
 	var targetCluster *types.ProcessedCluster
 
-	for _, region := range processedState.Regions {
-		for _, cluster := range region.Clusters {
-			if strings.EqualFold(cluster.Arn, clusterArn) {
-				targetCluster = &cluster
-				regionName = region.Name
-				break
+	// Find the cluster in MSK sources
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
+			for _, region := range source.MSKData.Regions {
+				for _, cluster := range region.Clusters {
+					if strings.EqualFold(cluster.Arn, clusterArn) {
+						targetCluster = &cluster
+						regionName = region.Name
+						break
+					}
+				}
+				if targetCluster != nil {
+					break
+				}
 			}
+		}
+		if targetCluster != nil {
+			break
 		}
 	}
 
@@ -183,11 +236,18 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 
 // filterMetrics filters the processed state by region, cluster, and date range
 func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	// Find the specified region
+	// Find the specified region in MSK sources
 	var targetRegion *types.ProcessedRegion
-	for _, r := range processedState.Regions {
-		if strings.EqualFold(r.Name, regionName) {
-			targetRegion = &r
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
+			for _, r := range source.MSKData.Regions {
+				if strings.EqualFold(r.Name, regionName) {
+					targetRegion = &r
+					break
+				}
+			}
+		}
+		if targetRegion != nil {
 			break
 		}
 	}

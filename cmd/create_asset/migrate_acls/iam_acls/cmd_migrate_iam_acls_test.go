@@ -126,7 +126,8 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 		{
 			name: "valid state with IAM principals should parse correctly",
 			state: &types.State{
-				Regions: []types.DiscoveredRegion{
+				MSKSources: &types.MSKSourcesState{
+					Regions: []types.DiscoveredRegion{
 					{
 						Name: "us-east-1",
 						Clusters: []types.DiscoveredCluster{
@@ -165,6 +166,7 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 					},
 				},
 			},
+			},
 			expectedPrincipals: []string{
 				"arn:aws:iam::000123456789:role/kcp-testing-role",
 				"arn:aws:iam::000123456789:role/kcp-iam-role",
@@ -174,7 +176,8 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 		{
 			name: "state with only SASL_SCRAM principals should return empty list",
 			state: &types.State{
-				Regions: []types.DiscoveredRegion{
+				MSKSources: &types.MSKSourcesState{
+					Regions: []types.DiscoveredRegion{
 					{
 						Name: "us-east-1",
 						Clusters: []types.DiscoveredCluster{
@@ -205,13 +208,15 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 					},
 				},
 			},
+			},
 			expectedPrincipals: nil,
 			expectedError:      false,
 		},
 		{
 			name: "state with mixed auth types should only return IAM principals",
 			state: &types.State{
-				Regions: []types.DiscoveredRegion{
+				MSKSources: &types.MSKSourcesState{
+					Regions: []types.DiscoveredRegion{
 					{
 						Name: "us-east-1",
 						Clusters: []types.DiscoveredCluster{
@@ -258,6 +263,7 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 					},
 				},
 			},
+			},
 			expectedPrincipals: []string{
 				"arn:aws:iam::111222333444:role/role-1",
 				"arn:aws:iam::555666777888:user/direct-user",
@@ -267,7 +273,8 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 		{
 			name: "state with empty discovered clients should return empty list",
 			state: &types.State{
-				Regions: []types.DiscoveredRegion{
+				MSKSources: &types.MSKSourcesState{
+					Regions: []types.DiscoveredRegion{
 					{
 						Name: "us-east-1",
 						Clusters: []types.DiscoveredCluster{
@@ -280,6 +287,7 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 						},
 					},
 				},
+			},
 			},
 			expectedPrincipals: nil,
 			expectedError:      false,
