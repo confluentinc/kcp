@@ -850,6 +850,177 @@ func TestOSKCredentials_Validate_JolokiaAuthMissingPassword(t *testing.T) {
 	assert.False(t, valid, "expected validation to fail when Jolokia auth password is missing")
 }
 
+func TestOSKCredentials_Validate_ValidPrometheusConfig(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "http://prometheus:9090",
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "expected valid credentials with Prometheus config, got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_PrometheusWithAuth(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "http://prometheus:9090",
+					Auth: &PrometheusAuthConfig{
+						Username: "promuser",
+						Password: "prompass",
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "expected valid credentials with Prometheus auth config, got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_PrometheusWithTLS(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "https://prometheus:9090",
+					TLS: &PrometheusTLSConfig{
+						CACert:             "/path/to/ca.pem",
+						InsecureSkipVerify: false,
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "expected valid credentials with Prometheus TLS config, got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_PrometheusWithAuthAndTLS(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "https://prometheus:9090",
+					Auth: &PrometheusAuthConfig{
+						Username: "promuser",
+						Password: "prompass",
+					},
+					TLS: &PrometheusTLSConfig{
+						InsecureSkipVerify: true,
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "expected valid credentials with Prometheus auth + TLS config, got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_PrometheusMissingURL(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "", // Missing URL
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	assert.False(t, valid, "expected validation to fail when Prometheus URL is missing")
+}
+
+func TestOSKCredentials_Validate_PrometheusAuthMissingPassword(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "http://prometheus:9090",
+					Auth: &PrometheusAuthConfig{
+						Username: "promuser",
+						Password: "", // Missing password
+					},
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	assert.False(t, valid, "expected validation to fail when Prometheus auth password is missing")
+}
+
+func TestOSKCredentials_HasPrometheusConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		clusterAuth OSKClusterAuth
+		expected    bool
+	}{
+		{
+			name: "has Prometheus config",
+			clusterAuth: OSKClusterAuth{
+				Prometheus: &PrometheusConfig{
+					URL: "http://prometheus:9090",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "no Prometheus config",
+			clusterAuth: OSKClusterAuth{
+				Prometheus: nil,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.clusterAuth.HasPrometheusConfig()
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestOSKCredentials_HasJolokiaConfig(t *testing.T) {
 	tests := []struct {
 		name        string

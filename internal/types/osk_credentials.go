@@ -21,7 +21,8 @@ type OSKClusterAuth struct {
 	AuthMethod            AuthMethodConfig      `yaml:"auth_method"`
 	InsecureSkipTLSVerify bool                  `yaml:"insecure_skip_tls_verify,omitempty"` // Only set true for test environments with self-signed certs
 	Metadata              OSKCredentialMetadata `yaml:"metadata,omitempty"`
-	Jolokia                  *JolokiaConfig            `yaml:"jolokia,omitempty"`
+	Jolokia    *JolokiaConfig    `yaml:"jolokia,omitempty"`
+	Prometheus *PrometheusConfig `yaml:"prometheus,omitempty"`
 }
 
 // OSKCredentialMetadata allows users to add optional organizational metadata
@@ -46,6 +47,25 @@ type JolokiaAuthConfig struct {
 
 // JolokiaTLSConfig contains TLS configuration for Jolokia connections
 type JolokiaTLSConfig struct {
+	CACert             string `yaml:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+}
+
+// PrometheusConfig holds Prometheus connection details for metrics queries
+type PrometheusConfig struct {
+	URL  string               `yaml:"url"`
+	Auth *PrometheusAuthConfig `yaml:"auth,omitempty"`
+	TLS  *PrometheusTLSConfig `yaml:"tls,omitempty"`
+}
+
+// PrometheusAuthConfig holds HTTP basic auth credentials for Prometheus
+type PrometheusAuthConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// PrometheusTLSConfig holds TLS settings for Prometheus HTTPS connections
+type PrometheusTLSConfig struct {
 	CACert             string `yaml:"ca_cert,omitempty"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
@@ -125,6 +145,13 @@ func (c OSKCredentials) Validate() (bool, []error) {
 				errs = append(errs, fmt.Errorf("%s (id=%s): jmx: %w", clusterRef, cluster.ID, err))
 			}
 		}
+
+		// Validate Prometheus config if present
+		if cluster.Prometheus != nil {
+			if err := validatePrometheusConfig(cluster.Prometheus); err != nil {
+				errs = append(errs, fmt.Errorf("%s (id=%s): prometheus: %w", clusterRef, cluster.ID, err))
+			}
+		}
 	}
 
 	return len(errs) == 0, errs
@@ -163,6 +190,11 @@ func (c OSKClusterAuth) GetSelectedAuthType() (AuthType, error) {
 // HasJolokiaConfig returns true if the cluster has Jolokia configuration
 func (c OSKClusterAuth) HasJolokiaConfig() bool {
 	return c.Jolokia != nil
+}
+
+// HasPrometheusConfig returns true if the cluster has Prometheus configuration
+func (c OSKClusterAuth) HasPrometheusConfig() bool {
+	return c.Prometheus != nil
 }
 
 // WriteToFile writes the credentials to a YAML file
@@ -244,6 +276,22 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 		}
 	}
 
+	return nil
+}
+
+// validatePrometheusConfig validates Prometheus configuration
+func validatePrometheusConfig(prom *PrometheusConfig) error {
+	if prom.URL == "" {
+		return fmt.Errorf("url is required")
+	}
+	if prom.Auth != nil {
+		if prom.Auth.Username == "" {
+			return fmt.Errorf("auth username is required when auth is configured")
+		}
+		if prom.Auth.Password == "" {
+			return fmt.Errorf("auth password is required when auth is configured")
+		}
+	}
 	return nil
 }
 
