@@ -19,17 +19,9 @@ type MigrationScriptsGenerator interface {
 	GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.MigrationScriptsTerraformProject, error)
 }
 
-// ReverseProxyGenerator generates Terraform files and embedded templates for reverse proxy infrastructure.
-type ReverseProxyGenerator interface {
-	GenerateReverseProxyFiles(request types.ReverseProxyRequest) (types.TerraformFiles, error)
-	GenerateReverseProxyUserDataTemplate() string
-	GenerateReverseProxyShellScript() string
-}
-
 // Compile-time interface satisfaction checks.
 var (
 	_ MigrationInfraGenerator   = (*MigrationInfraHCLService)(nil)
 	_ TargetInfraGenerator      = (*TargetInfraHCLService)(nil)
 	_ MigrationScriptsGenerator = (*MigrationScriptsHCLService)(nil)
-	_ ReverseProxyGenerator     = (*ReverseProxyHCLService)(nil)
 )

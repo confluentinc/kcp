@@ -52,7 +52,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 			Name: "jump_cluster_instances_private_dns",
 			Definition: types.TerraformVariable{
 				Name:        "jump_cluster_instances_private_dns",
-				Description: "IDs of the subnets that the jump cluster broker instances are deployed to.",
+				Description: "Private DNS addresses of the jump cluster instances.",
 				Sensitive:   false,
 				Type:        "list(string)",
 			},

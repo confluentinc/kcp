@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -54,6 +55,9 @@ func WriteTerraformProject(outputDir string, project types.MigrationInfraTerrafo
 	}
 
 	for _, module := range project.Modules {
+		if strings.Contains(module.Name, "..") || filepath.IsAbs(module.Name) {
+			return fmt.Errorf("invalid module name: %s", module.Name)
+		}
 		moduleDir := filepath.Join(outputDir, module.Name)
 		if err := os.MkdirAll(moduleDir, 0755); err != nil {
 			return fmt.Errorf("failed to create module directory %s: %w", module.Name, err)
@@ -84,6 +88,9 @@ func WriteTerraformProject(outputDir string, project types.MigrationInfraTerrafo
 		}
 
 		for filename, content := range module.AdditionalFiles {
+			if strings.Contains(filename, "..") || filepath.IsAbs(filename) {
+				return fmt.Errorf("invalid filename in module %s: %s", module.Name, filename)
+			}
 			if err := os.WriteFile(filepath.Join(moduleDir, filename), []byte(content), 0644); err != nil {
 				return fmt.Errorf("failed to write module %s file %s: %w", module.Name, filename, err)
 			}
