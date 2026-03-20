@@ -283,8 +283,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	generator := NewTargetInfraGenerator(outputDir)
-	if err := generator.BuildTerraformProject(project); err != nil {
+	if err := hcl.WriteTerraformProject(outputDir, project); err != nil {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
 	}
 

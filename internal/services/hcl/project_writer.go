@@ -1,4 +1,4 @@
-package targetinfra
+package hcl
 
 import (
 	"fmt"
@@ -9,61 +9,52 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type TargetInfraGenerator struct {
-	OutputDir string
-}
-
-func NewTargetInfraGenerator(outputDir string) *TargetInfraGenerator {
-	return &TargetInfraGenerator{
-		OutputDir: outputDir,
-	}
-}
-
-func (g *TargetInfraGenerator) BuildTerraformProject(project types.MigrationInfraTerraformProject) error {
+// WriteTerraformProject writes a MigrationInfraTerraformProject to disk at the given output directory.
+func WriteTerraformProject(outputDir string, project types.MigrationInfraTerraformProject) error {
 	if project.MainTf != "" {
-		if err := os.WriteFile(filepath.Join(g.OutputDir, "main.tf"), []byte(project.MainTf), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(project.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
 		slog.Debug("wrote root main.tf")
 	}
 
 	if project.ProvidersTf != "" {
-		if err := os.WriteFile(filepath.Join(g.OutputDir, "providers.tf"), []byte(project.ProvidersTf), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(project.ProvidersTf), 0644); err != nil {
 			return fmt.Errorf("failed to write providers.tf: %w", err)
 		}
 		slog.Debug("wrote root providers.tf")
 	}
 
 	if project.VariablesTf != "" {
-		if err := os.WriteFile(filepath.Join(g.OutputDir, "variables.tf"), []byte(project.VariablesTf), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(project.VariablesTf), 0644); err != nil {
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
 		slog.Debug("wrote root variables.tf")
 	}
 
 	if project.OutputsTf != "" {
-		if err := os.WriteFile(filepath.Join(g.OutputDir, "outputs.tf"), []byte(project.OutputsTf), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(outputDir, "outputs.tf"), []byte(project.OutputsTf), 0644); err != nil {
 			return fmt.Errorf("failed to write outputs.tf: %w", err)
 		}
 		slog.Debug("wrote root outputs.tf")
 	}
 
 	if project.ReadmeMd != "" {
-		if err := os.WriteFile(filepath.Join(g.OutputDir, "README.md"), []byte(project.ReadmeMd), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte(project.ReadmeMd), 0644); err != nil {
 			return fmt.Errorf("failed to write README.md: %w", err)
 		}
 		slog.Debug("wrote README.md")
 	}
 
 	if project.InputsAutoTfvars != "" {
-		if err := os.WriteFile(filepath.Join(g.OutputDir, "inputs.auto.tfvars"), []byte(project.InputsAutoTfvars), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(project.InputsAutoTfvars), 0644); err != nil {
 			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
 		}
 		slog.Debug("wrote root inputs.auto.tfvars")
 	}
 
 	for _, module := range project.Modules {
-		moduleDir := filepath.Join(g.OutputDir, module.Name)
+		moduleDir := filepath.Join(outputDir, module.Name)
 		if err := os.MkdirAll(moduleDir, 0755); err != nil {
 			return fmt.Errorf("failed to create module directory %s: %w", module.Name, err)
 		}
