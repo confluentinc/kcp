@@ -61,13 +61,8 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			},
 		},
 		{
-			Name: "msk_sasl_scram_bootstrap_servers",
-			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_bootstrap_servers",
-				Description: "The SASL/SCRAM bootstrap servers of the source MSK cluster that data will be migrated from.",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaMSKSaslScramBootstrapServers.Name,
+			Definition: SchemaMSKSaslScramBootstrapServers.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.MskSaslScramBootstrapServers
 			},

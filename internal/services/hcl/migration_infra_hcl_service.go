@@ -36,7 +36,7 @@ func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request 
 	return types.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForPublicMigrationInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForClusterLink(),
-		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		VariablesTf:      GenerateVariablesTf(requiredVariables),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
@@ -54,7 +54,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 	return types.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForPrivateMigrationInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForPrivateMigrationInfrastructure(),
-		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		VariablesTf:      GenerateVariablesTf(requiredVariables),
 		ReadmeMd:         mi.generateJumpClusterReadmeMd(request),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
@@ -94,7 +94,7 @@ func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastr
 	return types.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForExternalOutboundClusterLinkingInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForExternalOutboundClusterLinkingInfrastructure(),
-		VariablesTf:      mi.generateVariablesTf(requiredVariables),
+		VariablesTf:      GenerateVariablesTf(requiredVariables),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
 		Modules: []types.MigrationInfraTerraformModule{
 			{
@@ -109,19 +109,6 @@ func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastr
 	}
 }
 
-// ============================================================================
-// Shared/Utility Functions
-// ============================================================================
-
-func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
-	return GenerateVariablesTf(tfVariables)
-}
-
-func (mi *MigrationInfraHCLService) generateOutputsTf(tfOutputs []types.TerraformOutput) string {
-	return GenerateOutputsTf(tfOutputs)
-}
-
 func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.MigrationWizardRequest) string {
-	values := modules.GetMigrationInfraRootVariableValues(request)
-	return GenerateInputsAutoTfvarsWithBrokers(values)
+	return GenerateInputsAutoTfvars(modules.GetMigrationInfraRootVariableValues(request))
 }

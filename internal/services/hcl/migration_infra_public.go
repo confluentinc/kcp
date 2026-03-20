@@ -22,19 +22,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastr
 	moduleBody.SetAttributeValue("source", cty.StringVal("./cluster_link"))
 	moduleBody.AppendNewline()
 
-	clusterLinkVars := modules.GetClusterLinkVariables()
-	for _, varDef := range clusterLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-
-		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
-			// Use FromModuleOutput to determine which module this comes from
-			SetModuleRef(moduleBody, varDef.Name, varDef.FromModuleOutput, varDef.Name)
-		} else {
-			SetVarRef(moduleBody, varDef.Name, varDef.Name)
-		}
-	}
+	WriteModuleInputs(moduleBody, modules.GetClusterLinkVariables(), request)
 
 	return string(f.Bytes())
 }
@@ -88,6 +76,5 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 }
 
 func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf(request types.MigrationWizardRequest) string {
-	requiredVariables := modules.GetClusterLinkModuleVariableDefinitions(request)
-	return mi.generateVariablesTf(requiredVariables)
+	return GenerateVariablesTf(modules.GetClusterLinkModuleVariableDefinitions(request))
 }

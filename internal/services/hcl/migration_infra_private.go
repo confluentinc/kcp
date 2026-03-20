@@ -30,13 +30,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	}))
 	networkingModuleBody.AppendNewline()
 
-	networkingVars := modules.GetNetworkingVariables()
-	for _, varDef := range networkingVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		SetVarRef(networkingModuleBody, varDef.Name, varDef.Name)
-	}
+	WriteModuleInputs(networkingModuleBody, modules.GetNetworkingVariables(), request)
 	rootBody.AppendNewline()
 
 	setupHostModuleBlock := rootBody.AppendNewBlock("module", []string{"jump_cluster_setup_host"})
@@ -49,19 +43,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	}))
 	setupHostModuleBody.AppendNewline()
 
-	setupHostVars := modules.GetJumpClusterSetupHostVariables()
-	for _, varDef := range setupHostVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-
-		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
-			// Use FromModuleOutput to determine which module this comes from
-			SetModuleRef(setupHostModuleBody, varDef.Name, varDef.FromModuleOutput, varDef.Name)
-		} else {
-			SetVarRef(setupHostModuleBody, varDef.Name, varDef.Name)
-		}
-	}
+	WriteModuleInputs(setupHostModuleBody, modules.GetJumpClusterSetupHostVariables(), request)
 	rootBody.AppendNewline()
 
 	setupHostModuleBody.AppendNewline()
@@ -77,19 +59,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	}))
 	jumpClustersModuleBody.AppendNewline()
 
-	jumpClusterVars := modules.GetJumpClusterVariables()
-	for _, varDef := range jumpClusterVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-
-		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
-			// Use FromModuleOutput to determine which module this comes from
-			SetModuleRef(jumpClustersModuleBody, varDef.Name, varDef.FromModuleOutput, varDef.Name)
-		} else {
-			SetVarRef(jumpClustersModuleBody, varDef.Name, varDef.Name)
-		}
-	}
+	WriteModuleInputs(jumpClustersModuleBody, modules.GetJumpClusterVariables(), request)
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -229,7 +199,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(requ
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf(request types.MigrationWizardRequest) string {
-	return mi.generateVariablesTf(modules.GetJumpClusterSetupHostVariableDefinitions(request))
+	return GenerateVariablesTf(modules.GetJumpClusterSetupHostVariableDefinitions(request))
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() string {
@@ -333,13 +303,11 @@ func (mi *MigrationInfraHCLService) generateJumpClusterClusterLinksUserDataTpl(a
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClustersVariablesTf(request types.MigrationWizardRequest) string {
-	requiredVariables := modules.GetJumpClusterModuleVariableDefinitions(request)
-	return mi.generateVariablesTf(requiredVariables)
+	return GenerateVariablesTf(modules.GetJumpClusterModuleVariableDefinitions(request))
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClustersOutputsTf() string {
-	outputs := modules.GetJumpClusterModuleOutputDefinitions()
-	return mi.generateOutputsTf(outputs)
+	return GenerateOutputsTf(modules.GetJumpClusterModuleOutputDefinitions())
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClustersVersionsTf() string {
@@ -434,13 +402,11 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf(request types.MigrationWizardRequest) string {
-	requiredVariables := modules.GetNetworkingModuleVariableDefinitions(request)
-	return mi.generateVariablesTf(requiredVariables)
+	return GenerateVariablesTf(modules.GetNetworkingModuleVariableDefinitions(request))
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
-	outputs := modules.GetNetworkingModuleOutputDefinitions()
-	return mi.generateOutputsTf(outputs)
+	return GenerateOutputsTf(modules.GetNetworkingModuleOutputDefinitions())
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingVersionsTf() string {

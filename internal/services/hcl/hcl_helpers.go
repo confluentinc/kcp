@@ -1,6 +1,7 @@
 package hcl
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
@@ -23,4 +24,21 @@ func SetResourceRef(body *hclwrite.Body, attrName, ref string) {
 // SetStringTemplate sets an attribute to a quoted string template.
 func SetStringTemplate(body *hclwrite.Body, attrName, template string) {
 	body.SetAttributeRaw(attrName, utils.TokensForStringTemplate(template))
+}
+
+// WriteModuleInputs writes module input attributes for a list of module variables.
+// For each variable: if it comes from a module output, writes a module reference;
+// otherwise, writes a variable reference.
+func WriteModuleInputs[R any](body *hclwrite.Body, vars []modules.ModuleVariable[R], request R) {
+	for _, varDef := range vars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+
+		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
+			SetModuleRef(body, varDef.Name, varDef.FromModuleOutput, varDef.Name)
+		} else {
+			SetVarRef(body, varDef.Name, varDef.Definition.Name)
+		}
+	}
 }
