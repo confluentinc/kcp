@@ -19,9 +19,10 @@ type ModuleVariable[R any] struct {
 	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
 }
 
-// NOTE: VariableSchema migration is incomplete. Currently only cluster_link_module.go and
-// provider_variables.go use VariableSchema to define variable metadata; remaining modules
-// still define types.TerraformVariable inline and are candidates for migration.
+// NOTE: VariableSchema migration is partially complete. Variables shared across modules
+// (provider, cluster link, vpc, security group, SSH key pair) use VariableSchema.
+// Remaining module-specific variables (jump cluster, networking, confluent cloud,
+// private link, external outbound) still define types.TerraformVariable inline.
 
 // ============================================================================
 // Target Cluster
@@ -106,6 +107,10 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 			}
 		case []types.ExtOutboundClusterKafkaBroker:
 			if len(v) == 0 {
+				continue
+			}
+		case int:
+			if v == 0 {
 				continue
 			}
 		}

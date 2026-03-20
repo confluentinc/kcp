@@ -5,10 +5,12 @@ module "confluent_cloud" {
     confluent = confluent
   }
 
-  aws_region       = var.aws_region
-  environment_name = var.environment_name
-  cluster_name     = var.cluster_name
-  cluster_type     = var.cluster_type
+  aws_region           = var.aws_region
+  environment_name     = var.environment_name
+  cluster_name         = var.cluster_name
+  cluster_type         = var.cluster_type
+  cluster_availability = var.cluster_availability
+  cluster_cku          = var.cluster_cku
 }
 
 module "private_link" {
@@ -19,9 +21,13 @@ module "private_link" {
     confluent = confluent
   }
 
-  aws_region         = var.aws_region
-  vpc_id             = var.vpc_id
-  subnet_cidr_ranges = var.subnet_cidr_ranges
-  environment_id     = module.confluent_cloud.environment_id
+  aws_region                            = var.aws_region
+  vpc_id                                = var.vpc_id
+  subnet_cidr_ranges                    = var.subnet_cidr_ranges
+  environment_id                        = module.confluent_cloud.environment_id
+  network_id                            = module.confluent_cloud.network_id
+  network_dns_domain                    = module.confluent_cloud.network_dns_domain
+  network_private_link_endpoint_service = module.confluent_cloud.network_private_link_endpoint_service
+  network_zones                         = module.confluent_cloud.network_zones
 }
 

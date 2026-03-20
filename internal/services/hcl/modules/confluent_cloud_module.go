@@ -63,11 +63,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				return request.ClusterName
 			},
 			Condition: func(request types.TargetClusterWizardRequest) bool {
-				if request.NeedsEnvironment || request.NeedsCluster {
-					return true
-				} else {
-					return false
-				}
+				return request.NeedsEnvironment || request.NeedsCluster
 			},
 		},
 		{

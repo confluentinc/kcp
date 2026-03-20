@@ -10,13 +10,41 @@ resource "confluent_environment" "environment" {
   }
 }
 
+resource "confluent_network" "network" {
+  display_name     = "private-link-network"
+  cloud            = "AWS"
+  region           = var.aws_region
+  connection_types = ["PRIVATELINK"]
+
+  environment {
+    id = confluent_environment.environment.id
+  }
+
+  dns_config {
+    resolution = "PRIVATE"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "confluent_kafka_cluster" "cluster" {
   display_name = var.cluster_name
   cloud        = "AWS"
   region       = var.aws_region
+  availability = "SINGLE_ZONE"
+
+  dedicated {
+    cku = 2
+  }
 
   environment {
     id = confluent_environment.environment.id
+  }
+
+  network {
+    id = confluent_network.network.id
   }
 
   lifecycle {
