@@ -1,0 +1,60 @@
+resource "confluent_kafka_mirror_topic" "orders" {
+  source_kafka_topic {
+    topic_name = "orders"
+  }
+
+  cluster_link {
+    link_name = "msk-to-cc-link"
+  }
+
+  kafka_cluster {
+    id            = "lkc-xyz789"
+    rest_endpoint = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"
+
+    credentials {
+      key    = var.confluent_cloud_cluster_api_key
+      secret = var.confluent_cloud_cluster_api_secret
+    }
+  }
+}
+
+resource "confluent_kafka_mirror_topic" "events" {
+  source_kafka_topic {
+    topic_name = "events"
+  }
+
+  cluster_link {
+    link_name = "msk-to-cc-link"
+  }
+
+  kafka_cluster {
+    id            = "lkc-xyz789"
+    rest_endpoint = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"
+
+    credentials {
+      key    = var.confluent_cloud_cluster_api_key
+      secret = var.confluent_cloud_cluster_api_secret
+    }
+  }
+}
+
+resource "confluent_kafka_mirror_topic" "users" {
+  source_kafka_topic {
+    topic_name = "users"
+  }
+
+  cluster_link {
+    link_name = "msk-to-cc-link"
+  }
+
+  kafka_cluster {
+    id            = "lkc-xyz789"
+    rest_endpoint = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"
+
+    credentials {
+      key    = var.confluent_cloud_cluster_api_key
+      secret = var.confluent_cloud_cluster_api_secret
+    }
+  }
+}
+
