@@ -124,15 +124,5 @@ func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []typ
 }
 
 func GetTargetClusterPrivateLinkModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	privateLinkVars := GetTargetClusterPrivateLinkVariables()
-
-	for _, varDef := range privateLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetTargetClusterPrivateLinkVariables(), request)
 }

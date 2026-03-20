@@ -38,7 +38,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 			continue
 		}
 
-		mskClusterLinkPrivateLinkModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Definition.Name))
+		SetVarRef(mskClusterLinkPrivateLinkModuleBody, varDef.Name, varDef.Definition.Name)
 	}
 	rootBody.AppendNewline()
 
@@ -57,7 +57,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 			continue
 		}
 
-		extOutboundClModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+		SetVarRef(extOutboundClModuleBody, varDef.Name, varDef.Name)
 	}
 	rootBody.AppendNewline()
 

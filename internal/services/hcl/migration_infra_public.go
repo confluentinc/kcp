@@ -4,7 +4,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -31,9 +30,9 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastr
 
 		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
 			// Use FromModuleOutput to determine which module this comes from
-			moduleBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput(varDef.FromModuleOutput, varDef.Name))
+			SetModuleRef(moduleBody, varDef.Name, varDef.FromModuleOutput, varDef.Name)
 		} else {
-			moduleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+			SetVarRef(moduleBody, varDef.Name, varDef.Name)
 		}
 	}
 
