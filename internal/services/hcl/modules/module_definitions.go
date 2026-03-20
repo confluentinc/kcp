@@ -114,41 +114,28 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 		// Only include non-empty values, keyed by Definition.Name for deduplication
 		switch v := value.(type) {
 		case string:
-			if v != "" {
-				// Check if already exists to avoid silent overwrites
-				if existing, exists := values[varDef.Definition.Name]; exists {
-					if existing != v {
-						slog.Warn("conflicting variable values, keeping first occurrence",
-							"variable", varDef.Definition.Name,
-							"existing", existing,
-							"ignored", v,
-						)
-						continue
-					}
-				}
-				values[varDef.Definition.Name] = v
+			if v == "" {
+				continue
 			}
 		case []string:
-			if len(v) > 0 {
-				if _, exists := values[varDef.Definition.Name]; !exists {
-					values[varDef.Definition.Name] = v
-				}
-			}
-		case bool:
-			if _, exists := values[varDef.Definition.Name]; !exists {
-				values[varDef.Definition.Name] = v
-			}
-		case int:
-			if _, exists := values[varDef.Definition.Name]; !exists {
-				values[varDef.Definition.Name] = v
+			if len(v) == 0 {
+				continue
 			}
 		case []types.ExtOutboundClusterKafkaBroker:
-			if len(v) > 0 {
-				if _, exists := values[varDef.Definition.Name]; !exists {
-					values[varDef.Definition.Name] = v
-				}
+			if len(v) == 0 {
+				continue
 			}
 		}
+
+		if existing, exists := values[varDef.Definition.Name]; exists {
+			slog.Warn("conflicting variable values, keeping first occurrence",
+				"variable", varDef.Definition.Name,
+				"existing", existing,
+				"ignored", value,
+			)
+			continue
+		}
+		values[varDef.Definition.Name] = value
 	}
 
 	return values

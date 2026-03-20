@@ -78,9 +78,9 @@ func GenerateVersionsTf(providers ...func(*hclwrite.Body)) string {
 	return string(f.Bytes())
 }
 
-// GenerateInputsAutoTfvarsWithBrokers generates an inputs.auto.tfvars file, handling the
-// ExtOutboundClusterKafkaBroker custom type in addition to standard types.
-func GenerateInputsAutoTfvarsWithBrokers(values map[string]any) string {
+// GenerateInputsAutoTfvars generates an inputs.auto.tfvars file from a map of variable names to values.
+// Supports string, []string, bool, int, and []ExtOutboundClusterKafkaBroker value types.
+func GenerateInputsAutoTfvars(values map[string]any) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -129,8 +129,3 @@ func GenerateInputsAutoTfvarsWithBrokers(values map[string]any) string {
 	return string(f.Bytes())
 }
 
-// GenerateInputsAutoTfvars generates an inputs.auto.tfvars file from a map of variable names to values.
-// Supports string, []string, bool, and int value types.
-func GenerateInputsAutoTfvars(values map[string]any) string {
-	return GenerateInputsAutoTfvarsWithBrokers(values)
-}

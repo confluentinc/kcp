@@ -32,14 +32,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
 
-	mskClusterLinkPrivateLinkVars := modules.GetMskPrivateClusterLinkVariables()
-	for _, varDef := range mskClusterLinkPrivateLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-
-		SetVarRef(mskClusterLinkPrivateLinkModuleBody, varDef.Name, varDef.Definition.Name)
-	}
+	WriteModuleInputs(mskClusterLinkPrivateLinkModuleBody, modules.GetMskPrivateClusterLinkVariables(), request)
 	rootBody.AppendNewline()
 
 	//
@@ -51,14 +44,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	extOutboundClModuleBody.SetAttributeValue("source", cty.StringVal("./external_outbound_cluster_link"))
 	extOutboundClModuleBody.AppendNewline()
 
-	externalOutboundClusterLinkVars := modules.GetExternalOutboundClusterLinkingVariables()
-	for _, varDef := range externalOutboundClusterLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-
-		SetVarRef(extOutboundClModuleBody, varDef.Name, varDef.Name)
-	}
+	WriteModuleInputs(extOutboundClModuleBody, modules.GetExternalOutboundClusterLinkingVariables(), request)
 	rootBody.AppendNewline()
 
 	extOutboundClModuleBody.AppendNewline()
@@ -134,7 +120,7 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 }
 
 func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkVariablesTf(request types.MigrationWizardRequest) string {
-	return mi.generateVariablesTf(modules.GetExternalOutboundClusterLinkingModuleVariableDefinitions(request))
+	return GenerateVariablesTf(modules.GetExternalOutboundClusterLinkingModuleVariableDefinitions(request))
 }
 
 func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl() string {

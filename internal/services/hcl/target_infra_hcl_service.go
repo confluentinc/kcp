@@ -101,7 +101,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 	return types.MigrationInfraTerraformProject{
 		MainTf:           ti.generateRootMainTf(request),
 		ProvidersTf:      ti.generateRootProvidersTf(),
-		VariablesTf:      ti.generateVariablesTf(modules.GetTargetClusterModuleVariableDefinitions(request)),
+		VariablesTf:      GenerateVariablesTf(modules.GetTargetClusterModuleVariableDefinitions(request)),
 		OutputsTf:        ti.generateRootOutputsTf(request),
 		InputsAutoTfvars: ti.generateInputsAutoTfvars(request),
 		Modules:          requiredModules,
@@ -125,13 +125,7 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 	confluentCloudBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{"confluent": utils.TokensForResourceReference("confluent")}))
 	confluentCloudBody.AppendNewline()
 
-	confluentCloudVars := modules.GetConfluentCloudVariables()
-	for _, varDef := range confluentCloudVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		SetVarRef(confluentCloudBody, varDef.Name, varDef.Name)
-	}
+	WriteModuleInputs(confluentCloudBody, modules.GetConfluentCloudVariables(), request)
 
 	if request.NeedsPrivateLink {
 		rootBody.AppendNewline()
@@ -143,19 +137,7 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 		privateLinkBody.SetAttributeRaw("providers", utils.TokensForMap(map[string]hclwrite.Tokens{"aws": utils.TokensForResourceReference("aws"), "confluent": utils.TokensForResourceReference("confluent")}))
 		privateLinkBody.AppendNewline()
 
-		privateLinkVars := modules.GetTargetClusterPrivateLinkVariables()
-		for _, varDef := range privateLinkVars {
-			if varDef.Condition != nil && !varDef.Condition(request) {
-				continue
-			}
-
-			if varDef.ValueExtractor == nil {
-				// Variables without ValueExtractor come from module outputs
-				privateLinkBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput("confluent_cloud", varDef.Name))
-			} else {
-				SetVarRef(privateLinkBody, varDef.Name, varDef.Name)
-			}
-		}
+		WriteModuleInputs(privateLinkBody, modules.GetTargetClusterPrivateLinkVariables(), request)
 		rootBody.AppendNewline()
 	}
 
@@ -221,20 +203,11 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 		}
 	}
 
-	return ti.generateOutputsTf(rootOutputs)
-}
-
-func (ti *TargetInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
-	return GenerateVariablesTf(tfVariables)
+	return GenerateOutputsTf(rootOutputs)
 }
 
 func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request types.TargetClusterWizardRequest) string {
-	values := modules.GetTargetClusterModuleVariableValues(request)
-	return GenerateInputsAutoTfvars(values)
-}
-
-func (ti *TargetInfraHCLService) generateOutputsTf(tfOutputs []types.TerraformOutput) string {
-	return GenerateOutputsTf(tfOutputs)
+	return GenerateInputsAutoTfvars(modules.GetTargetClusterModuleVariableValues(request))
 }
 
 // ============================================================================
@@ -350,7 +323,7 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 }
 
 func (ti *TargetInfraHCLService) generateConfluentCloudModuleVariablesTf(request types.TargetClusterWizardRequest) string {
-	return ti.generateVariablesTf(modules.GetConfluentCloudVariableDefinitions(request))
+	return GenerateVariablesTf(modules.GetConfluentCloudVariableDefinitions(request))
 }
 
 func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf(request types.TargetClusterWizardRequest) string {
@@ -361,12 +334,12 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf(request t
 		ServiceAccountName: ti.ResourceNames.ServiceAccount,
 		KafkaAPIKeyName:    ti.ResourceNames.KafkaAPIKey,
 	})
-	return ti.generateOutputsTf(outputs)
+	return GenerateOutputsTf(outputs)
 }
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleOutputsTf() string {
 	outputs := modules.GetPrivateLinkModuleOutputDefinitions(ti.ResourceNames.VpcEndpoint)
-	return ti.generateOutputsTf(outputs)
+	return GenerateOutputsTf(outputs)
 }
 
 func (ti *TargetInfraHCLService) generateConfluentCloudModuleVersionsTf() string {
@@ -509,7 +482,7 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 }
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleVariablesTf(request types.TargetClusterWizardRequest) string {
-	return ti.generateVariablesTf(modules.GetTargetClusterPrivateLinkModuleVariableDefinitions(request))
+	return GenerateVariablesTf(modules.GetTargetClusterPrivateLinkModuleVariableDefinitions(request))
 }
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleVersionsTf() string {

@@ -63,6 +63,14 @@ var (
 	}
 )
 
+// MSK bootstrap variables
+var (
+	SchemaMSKSaslScramBootstrapServers = VariableSchema{
+		Name: "msk_sasl_scram_bootstrap_servers", Type: "string",
+		Description: "The SASL/SCRAM bootstrap servers of the source MSK cluster that data will be migrated from.", Sensitive: false,
+	}
+)
+
 // Cluster link variables
 var (
 	SchemaTargetClusterRestEndpoint = VariableSchema{
