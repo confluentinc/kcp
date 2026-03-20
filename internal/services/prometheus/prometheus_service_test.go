@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,10 +20,10 @@ func newMockPrometheusServer(t *testing.T, metrics map[string][]float64) *httpte
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
 
-		// Find matching metric data by checking if the query contains the metric name
+		// Find matching metric data by checking if the query contains the metric key
 		var values []float64
 		for metricKey, vals := range metrics {
-			if query == metricKey {
+			if strings.Contains(query, metricKey) {
 				values = vals
 				break
 			}
@@ -59,23 +60,14 @@ func newMockPrometheusServer(t *testing.T, metrics map[string][]float64) *httpte
 }
 
 func TestPrometheusService_CollectMetrics(t *testing.T) {
-	// Map query strings to mock data
-	mockData := map[string][]float64{}
-	for _, mq := range prometheusQueries {
-		switch mq.Label {
-		case "BytesInPerSec":
-			mockData[mq.Query] = []float64{1024.0, 2048.0, 1500.0}
-		case "BytesOutPerSec":
-			mockData[mq.Query] = []float64{512.0, 1024.0, 768.0}
-		case "MessagesInPerSec":
-			mockData[mq.Query] = []float64{100.0, 200.0, 150.0}
-		case "PartitionCount", "GlobalPartitionCount":
-			mockData[mq.Query] = []float64{50.0, 50.0, 50.0}
-		case "ClientConnectionCount":
-			mockData[mq.Query] = []float64{10.0, 15.0, 12.0}
-		case "TotalLocalStorageUsage":
-			mockData[mq.Query] = []float64{5.5, 5.6, 5.7}
-		}
+	// Map metric name substrings to mock data (matched via strings.Contains)
+	mockData := map[string][]float64{
+		"bytesinpersec_total":    {1024.0, 2048.0, 1500.0},
+		"bytesoutpersec_total":   {512.0, 1024.0, 768.0},
+		"messagesinpersec_total": {100.0, 200.0, 150.0},
+		"partitioncount":         {50.0, 50.0, 50.0},
+		"connection_count":       {10.0, 15.0, 12.0},
+		"log_size":               {5.5, 5.6, 5.7},
 	}
 
 	server := newMockPrometheusServer(t, mockData)
@@ -113,11 +105,8 @@ func TestPrometheusService_CollectMetrics(t *testing.T) {
 
 func TestPrometheusService_CollectMetrics_MissingMetric(t *testing.T) {
 	// Only provide BytesInPerSec, all other queries return empty
-	mockData := map[string][]float64{}
-	for _, mq := range prometheusQueries {
-		if mq.Label == "BytesInPerSec" {
-			mockData[mq.Query] = []float64{1024.0, 2048.0}
-		}
+	mockData := map[string][]float64{
+		"bytesinpersec_total": {1024.0, 2048.0},
 	}
 
 	server := newMockPrometheusServer(t, mockData)

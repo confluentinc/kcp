@@ -198,6 +198,8 @@ test-env-up-prometheus:
 	docker-compose -f test/docker/docker-compose-prometheus.yml up -d
 	@echo "Waiting for Prometheus seeder to complete..."
 	@docker wait kcp-test-prometheus-seeder >/dev/null 2>&1 || true
+	@echo "Restarting Prometheus to load seeded data..."
+	@docker restart kcp-test-prometheus >/dev/null 2>&1 && sleep 3
 	@echo "Prometheus environment is ready"
 	@echo "  Prometheus: http://localhost:9190"
 
@@ -206,6 +208,8 @@ test-env-up-prometheus-auth:
 	docker-compose -f test/docker/docker-compose-prometheus-auth.yml up -d
 	@echo "Waiting for Prometheus seeder to complete..."
 	@docker wait kcp-test-prometheus-auth-seeder >/dev/null 2>&1 || true
+	@echo "Restarting Prometheus to load seeded data..."
+	@docker restart kcp-test-prometheus-auth >/dev/null 2>&1 && sleep 3
 	@echo "Prometheus auth environment is ready"
 	@echo "  Prometheus: http://localhost:9191 (user: promuser, pass: prompass)"
 
@@ -214,6 +218,8 @@ test-env-up-prometheus-tls: test-certs-generate
 	docker-compose -f test/docker/docker-compose-prometheus-tls.yml up -d
 	@echo "Waiting for Prometheus seeder to complete..."
 	@docker wait kcp-test-prometheus-tls-seeder >/dev/null 2>&1 || true
+	@echo "Restarting Prometheus to load seeded data..."
+	@docker restart kcp-test-prometheus-tls >/dev/null 2>&1 && sleep 3
 	@echo "Prometheus TLS environment is ready"
 	@echo "  Prometheus: https://localhost:9192 (user: promuser, pass: prompass)"
 
