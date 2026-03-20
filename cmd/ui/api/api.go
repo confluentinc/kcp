@@ -231,7 +231,7 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	if cluster.ClusterMetrics == nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "No metrics available",
-			"message": "Run 'kcp scan clusters --source-type osk --jmx' to collect JMX metrics",
+			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
 		})
 	}
 
