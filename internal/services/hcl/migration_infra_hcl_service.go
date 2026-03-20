@@ -2,7 +2,6 @@ package hcl
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
@@ -176,15 +175,15 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForClusterLink() stri
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
-	ccClusterKeyVarName := modules.GetModuleVariableName("cluster_link", "confluent_cloud_cluster_api_key")
-	ccClusterSecretVarName := modules.GetModuleVariableName("cluster_link", "confluent_cloud_cluster_api_secret")
-	mskClusterIdVarName := modules.GetModuleVariableName("cluster_link", "msk_cluster_id")
-	targetClusterIdVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_id")
-	targetClusterRestEndpointVarName := modules.GetModuleVariableName("cluster_link", "target_cluster_rest_endpoint")
-	clusterLinkVarName := modules.GetModuleVariableName("cluster_link", "cluster_link_name")
-	mskSaslScramBootstrapServersVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_bootstrap_servers")
-	mskSaslScramUsernameVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_username")
-	mskSaslScramPasswordVarName := modules.GetModuleVariableName("cluster_link", "msk_sasl_scram_password")
+	ccClusterKeyVarName := modules.VarConfluentCloudClusterAPIKey
+	ccClusterSecretVarName := modules.VarConfluentCloudClusterAPISecret
+	mskClusterIdVarName := modules.VarMSKClusterID
+	targetClusterIdVarName := modules.VarTargetClusterID
+	targetClusterRestEndpointVarName := modules.VarTargetClusterRestEndpoint
+	clusterLinkVarName := modules.VarClusterLinkName
+	mskSaslScramBootstrapServersVarName := modules.VarMSKSaslScramBootstrapServers
+	mskSaslScramUsernameVarName := modules.VarMSKSaslScramUsername
+	mskSaslScramPasswordVarName := modules.VarMSKSaslScramPassword
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -391,11 +390,11 @@ Note: Due to the nature of how the cluster link is created between the jump clus
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string {
-	jumpClusterSetupHostSubnetIdVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_setup_host_subnet_id")
-	securityGroupIdsVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_security_group_ids")
-	jumpClusterSshKeyPairNameVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_ssh_key_pair_name")
-	jumpClusterInstancesPrivateDnsVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "jump_cluster_instances_private_dns")
-	privateKeyVarName := modules.GetModuleVariableName("jump_cluster_setup_host", "private_key")
+	jumpClusterSetupHostSubnetIdVarName := modules.VarJumpClusterSetupHostSubnetID
+	securityGroupIdsVarName := modules.VarJumpClusterSecurityGroupIDs
+	jumpClusterSshKeyPairNameVarName := modules.VarJumpClusterSSHKeyPairName
+	jumpClusterInstancesPrivateDnsVarName := modules.VarJumpClusterInstancesPrivateDNS
+	privateKeyVarName := modules.VarPrivateKey
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -441,18 +440,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf(requ
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-	terraformBody := terraformBlock.Body()
-
-	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-	requiredProvidersBody := requiredProvidersBlock.Body()
-
-	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-
-	return string(f.Bytes())
+	return GenerateVersionsTf(aws.AddRequiredProvider)
 }
 
 // ============================================================================
@@ -460,19 +448,19 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() str
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.MigrationWizardRequest) string {
-	jumpClusterBrokerSubnetIdsVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_broker_subnet_ids")
-	securityGroupIdsVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_security_group_ids")
-	jumpClusterSshKeyPairNameVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_ssh_key_pair_name")
-	jumpClusterInstanceTypeVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_instance_type")
-	jumpClusterBrokerStorageVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_broker_storage")
-	targetClusterIdVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_id")
-	targetBootstrapEndpointVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_bootstrap_endpoint")
-	targetRestEndpointVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_rest_endpoint")
-	targetApiKeyVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_api_key")
-	targetApiSecretVarName := modules.GetModuleVariableName("jump_cluster", "confluent_cloud_cluster_api_secret")
-	mskClusterIdVarName := modules.GetModuleVariableName("jump_cluster", "msk_cluster_id")
-	mskBootstrapBrokersVarName := modules.GetModuleVariableName("jump_cluster", "msk_cluster_bootstrap_brokers")
-	clusterLinkNameVarName := modules.GetModuleVariableName("jump_cluster", "cluster_link_name")
+	jumpClusterBrokerSubnetIdsVarName := modules.VarJumpClusterBrokerSubnetIDs
+	securityGroupIdsVarName := modules.VarJumpClusterSecurityGroupIDs
+	jumpClusterSshKeyPairNameVarName := modules.VarJumpClusterSSHKeyPairName
+	jumpClusterInstanceTypeVarName := modules.VarJumpClusterInstanceType
+	jumpClusterBrokerStorageVarName := modules.VarJumpClusterBrokerStorage
+	targetClusterIdVarName := modules.VarConfluentCloudClusterID
+	targetBootstrapEndpointVarName := modules.VarConfluentCloudClusterBootstrapEndpoint
+	targetRestEndpointVarName := modules.VarConfluentCloudClusterRestEndpoint
+	targetApiKeyVarName := modules.VarConfluentCloudClusterAPIKey
+	targetApiSecretVarName := modules.VarConfluentCloudClusterAPISecret
+	mskClusterIdVarName := modules.VarMSKClusterID
+	mskBootstrapBrokersVarName := modules.VarMSKClusterBootstrapBrokers
+	clusterLinkNameVarName := modules.VarClusterLinkName
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -486,8 +474,8 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	rootBody.AppendNewline()
 
 	if request.MskJumpClusterAuthType == "sasl_scram" {
-		mskSaslScramUsernameVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_username")
-		mskSaslScramPasswordVarName := modules.GetModuleVariableName("jump_cluster", "msk_sasl_scram_password")
+		mskSaslScramUsernameVarName := modules.VarMSKSaslScramUsername
+		mskSaslScramPasswordVarName := modules.VarMSKSaslScramPassword
 
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
@@ -523,7 +511,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			},
 		))
 	} else {
-		jumpClusterIamAuthRoleNameVarName := modules.GetModuleVariableName("jump_cluster", "jump_cluster_iam_auth_role_name")
+		jumpClusterIamAuthRoleNameVarName := modules.VarJumpClusterIAMAuthRoleName
 
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
@@ -581,18 +569,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersOutputsTf() string {
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClustersVersionsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-	terraformBody := terraformBlock.Body()
-
-	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-	requiredProvidersBody := requiredProvidersBlock.Body()
-
-	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-
-	return string(f.Bytes())
+	return GenerateVersionsTf(aws.AddRequiredProvider)
 }
 
 // ============================================================================
@@ -604,9 +581,9 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody := f.Body()
 
 	// Get variable names from module definitions
-	vpcIdVarName := modules.GetModuleVariableName("networking", "vpc_id")
-	jumpClusterBrokerSubnetCidrsVarName := modules.GetModuleVariableName("networking", "jump_cluster_broker_subnet_cidrs")
-	jumpClusterSetupHostSubnetCidrVarName := modules.GetModuleVariableName("networking", "jump_cluster_setup_host_subnet_cidr")
+	vpcIdVarName := modules.VarVpcID
+	jumpClusterBrokerSubnetCidrsVarName := modules.VarJumpClusterBrokerSubnetCidrs
+	jumpClusterSetupHostSubnetCidrVarName := modules.VarJumpClusterSetupHostSubnetCidr
 
 	if request.HasExistingInternetGateway {
 		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", vpcIdVarName))
@@ -655,7 +632,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResourceWithCount("jump_cluster_broker_route_table_assoc", aws.GenerateSubnetResourceReference("jump_cluster_broker_subnets"), "aws_route_table.private_subnet_rt.id"))
 	rootBody.AppendNewline()
 
-	existingVpceIdVarName := modules.GetModuleVariableName("networking", "existing_private_link_vpce_id")
+	existingVpceIdVarName := modules.VarExistingPrivateLinkVpceID
 	rootBody.AppendBlock(aws.GenerateVpcEndpointDataSource("existing_vpce", existingVpceIdVarName))
 	rootBody.AppendNewline()
 
@@ -699,18 +676,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
 }
 
 func (mi *MigrationInfraHCLService) generateNetworkingVersionsTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-	terraformBody := terraformBlock.Body()
-
-	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-	requiredProvidersBody := requiredProvidersBlock.Body()
-
-	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-
-	return string(f.Bytes())
+	return GenerateVersionsTf(aws.AddRequiredProvider)
 }
 
 // ============================================================================
@@ -798,17 +764,17 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForExternalOutboundCl
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() string {
-	subnetIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "subnet_id")
-	securityGroupIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "security_group_id")
-	targetClusterApiKeyVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_api_key")
-	targetClusterApiSecretVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_api_secret")
-	targetClusterRestEndpointVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_rest_endpoint")
-	targetClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "target_cluster_id")
-	clusterLinkNameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "cluster_link_name")
-	mskClusterIdVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_cluster_id")
-	mskClusterBootstrapBrokersVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_cluster_bootstrap_servers")
-	mskSaslScramUsernameVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_sasl_scram_username")
-	mskSaslScramPasswordVarName := modules.GetModuleVariableName("ext_outbound_cluster_link", "msk_sasl_scram_password")
+	subnetIdVarName := modules.VarSubnetID
+	securityGroupIdVarName := modules.VarSecurityGroupID
+	targetClusterApiKeyVarName := modules.VarTargetClusterAPIKey
+	targetClusterApiSecretVarName := modules.VarTargetClusterAPISecret
+	targetClusterRestEndpointVarName := modules.VarTargetClusterRestEndpoint
+	targetClusterIdVarName := modules.VarTargetClusterID
+	clusterLinkNameVarName := modules.VarClusterLinkName
+	mskClusterIdVarName := modules.VarMSKClusterID
+	mskClusterBootstrapBrokersVarName := modules.VarMSKClusterBootstrapServers
+	mskSaslScramUsernameVarName := modules.VarMSKSaslScramUsername
+	mskSaslScramPasswordVarName := modules.VarMSKSaslScramPassword
 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -861,106 +827,14 @@ func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateVariablesTf(tfVariables []types.TerraformVariable) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	varSeenVariables := make(map[string]bool)
-
-	for _, v := range tfVariables {
-		if varSeenVariables[v.Name] {
-			continue
-		}
-		varSeenVariables[v.Name] = true
-		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
-		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
-
-		if v.Description != "" {
-			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
-		}
-
-		if v.Sensitive {
-			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
-		}
-		rootBody.AppendNewline()
-	}
-
-	return string(f.Bytes())
+	return GenerateVariablesTf(tfVariables)
 }
 
 func (mi *MigrationInfraHCLService) generateOutputsTf(tfOutputs []types.TerraformOutput) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	for _, output := range tfOutputs {
-		outputBlock := rootBody.AppendNewBlock("output", []string{output.Name})
-		outputBody := outputBlock.Body()
-		outputBody.SetAttributeRaw("value", utils.TokensForResourceReference(output.Value))
-
-		if output.Description != "" {
-			outputBody.SetAttributeValue("description", cty.StringVal(output.Description))
-		}
-		outputBody.SetAttributeValue("sensitive", cty.BoolVal(output.Sensitive))
-		rootBody.AppendNewline()
-	}
-
-	return string(f.Bytes())
+	return GenerateOutputsTf(tfOutputs)
 }
 
 func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.MigrationWizardRequest) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	// Use GetRootLevelVariableValues to get only root-level variables (not from module outputs)
 	values := modules.GetMigrationInfraRootVariableValues(request)
-
-	varNames := make([]string, 0, len(values))
-	for varName := range values {
-		varNames = append(varNames, varName)
-	}
-	sort.Strings(varNames)
-
-	varSeenVariables := make(map[string]bool)
-	for _, varName := range varNames {
-		if varSeenVariables[varName] {
-			continue
-		}
-
-		varSeenVariables[varName] = true
-		value := values[varName]
-		switch v := value.(type) {
-		case string:
-			rootBody.SetAttributeValue(varName, cty.StringVal(v))
-		case []string:
-			ctyValues := make([]cty.Value, len(v))
-			for i, s := range v {
-				ctyValues[i] = cty.StringVal(s)
-			}
-			rootBody.SetAttributeValue(varName, cty.ListVal(ctyValues))
-		case bool:
-			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
-		case int:
-			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
-		case []types.ExtOutboundClusterKafkaBroker:
-			brokerObjects := make([]cty.Value, len(v))
-			for i, broker := range v {
-				endpoints := make([]cty.Value, len(broker.Endpoints))
-				for j, endpoint := range broker.Endpoints {
-					endpoints[j] = cty.ObjectVal(map[string]cty.Value{
-						"host": cty.StringVal(endpoint.Host),
-						"port": cty.NumberIntVal(int64(endpoint.Port)),
-						"ip":   cty.StringVal(endpoint.IP),
-					})
-				}
-				brokerObjects[i] = cty.ObjectVal(map[string]cty.Value{
-					"id":        cty.StringVal(broker.ID),
-					"subnet_id": cty.StringVal(broker.SubnetID),
-					"endpoints": cty.ListVal(endpoints),
-				})
-			}
-			rootBody.SetAttributeValue(varName, cty.ListVal(brokerObjects))
-		}
-	}
-
-	return string(f.Bytes())
+	return GenerateInputsAutoTfvarsWithBrokers(values)
 }

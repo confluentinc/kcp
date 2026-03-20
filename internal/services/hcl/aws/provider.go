@@ -15,6 +15,11 @@ var AwsProviderVariables = []types.TerraformVariable{
 	{Name: VarAwsRegion, Description: "The AWS region", Sensitive: false, Type: "string"},
 }
 
+// AddRequiredProvider adds the AWS required provider to a required_providers block body.
+func AddRequiredProvider(body *hclwrite.Body) {
+	body.SetAttributeRaw(GenerateRequiredProviderTokens())
+}
+
 func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 	awsProvider := map[string]hclwrite.Tokens{
 		"source":  utils.TokensForStringTemplate("hashicorp/aws"),
