@@ -2,6 +2,7 @@ package hcl
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
@@ -38,6 +39,9 @@ type TerraformResourceNames struct {
 
 type TargetInfraHCLService struct {
 	ResourceNames TerraformResourceNames
+	// DeploymentID overrides the random deployment identifier in AWS provider tags.
+	// When empty, a random 8-character string is generated.
+	DeploymentID string
 }
 
 func NewTerraformResourceNames() TerraformResourceNames {
@@ -176,7 +180,7 @@ func (ti *TargetInfraHCLService) generateRootProvidersTf() string {
 	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVarAndDeploymentID(ti.DeploymentID))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -256,13 +260,20 @@ func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request types.TargetCl
 
 	values := modules.GetTargetClusterModuleVariableValues(request)
 
-	for varName, value := range values {
-		varSeenVariables := make(map[string]bool)
+	varNames := make([]string, 0, len(values))
+	for varName := range values {
+		varNames = append(varNames, varName)
+	}
+	sort.Strings(varNames)
+
+	varSeenVariables := make(map[string]bool)
+	for _, varName := range varNames {
 		if varSeenVariables[varName] {
 			continue
 		}
 		varSeenVariables[varName] = true
 
+		value := values[varName]
 		switch v := value.(type) {
 		case string:
 			rootBody.SetAttributeValue(varName, cty.StringVal(v))

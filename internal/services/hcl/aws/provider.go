@@ -25,6 +25,19 @@ func GenerateRequiredProviderTokens() (string, hclwrite.Tokens) {
 }
 
 func GenerateProviderBlock(region string) *hclwrite.Block {
+	return generateProviderBlockWithDeploymentID(region, "")
+}
+
+// GenerateProviderBlockWithDeploymentID generates an AWS provider block with a fixed deployment ID (for testing).
+func GenerateProviderBlockWithDeploymentID(region, deploymentID string) *hclwrite.Block {
+	return generateProviderBlockWithDeploymentID(region, deploymentID)
+}
+
+func generateProviderBlockWithDeploymentID(region, deploymentID string) *hclwrite.Block {
+	if deploymentID == "" {
+		deploymentID = utils.RandomString(8)
+	}
+
 	providerBlock := hclwrite.NewBlock("provider", []string{"aws"})
 	providerBody := providerBlock.Body()
 	providerBody.SetAttributeValue("region", cty.StringVal(region))
@@ -33,7 +46,7 @@ func GenerateProviderBlock(region string) *hclwrite.Block {
 	defaultTagsBlock := hclwrite.NewBlock("default_tags", nil)
 	defaultTagsBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
 		"managed_by":            utils.TokensForStringTemplate("kcp"),
-		"deployment_identifier": utils.TokensForStringTemplate(utils.RandomString(8)),
+		"deployment_identifier": utils.TokensForStringTemplate(deploymentID),
 	}))
 	providerBody.AppendBlock(defaultTagsBlock)
 
@@ -42,6 +55,15 @@ func GenerateProviderBlock(region string) *hclwrite.Block {
 
 // GenerateProviderBlockWithVar generates an AWS provider block that uses a variable reference for the region
 func GenerateProviderBlockWithVar() *hclwrite.Block {
+	return GenerateProviderBlockWithVarAndDeploymentID("")
+}
+
+// GenerateProviderBlockWithVarAndDeploymentID generates an AWS provider block with var reference and a fixed deployment ID.
+func GenerateProviderBlockWithVarAndDeploymentID(deploymentID string) *hclwrite.Block {
+	if deploymentID == "" {
+		deploymentID = utils.RandomString(8)
+	}
+
 	providerBlock := hclwrite.NewBlock("provider", []string{"aws"})
 	providerBody := providerBlock.Body()
 	providerBody.SetAttributeRaw("region", utils.TokensForVarReference(VarAwsRegion))
@@ -50,7 +72,7 @@ func GenerateProviderBlockWithVar() *hclwrite.Block {
 	defaultTagsBlock := hclwrite.NewBlock("default_tags", nil)
 	defaultTagsBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
 		"managed_by":            utils.TokensForStringTemplate("kcp"),
-		"deployment_identifier": utils.TokensForStringTemplate(utils.RandomString(8)),
+		"deployment_identifier": utils.TokensForStringTemplate(deploymentID),
 	}))
 	providerBody.AppendBlock(defaultTagsBlock)
 

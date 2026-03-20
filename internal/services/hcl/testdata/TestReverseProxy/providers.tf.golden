@@ -1,0 +1,40 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "4.0.6"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "2.4.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "3.7.2"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "0.13.1-alpha1"
+    }
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.4"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      deployment_identifier = "testdeploy"
+      managed_by            = "kcp"
+    }
+  }
+}
+
