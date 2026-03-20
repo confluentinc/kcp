@@ -11,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	jmx "github.com/confluentinc/kcp/internal/services/jmx"
+	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/sources/msk"
 	"github.com/confluentinc/kcp/internal/sources/osk"
@@ -331,8 +332,7 @@ func collectMetrics(ctx context.Context, state *types.State, credentialsFilePath
 		case "jolokia":
 			metrics, err = collectJolokiaMetrics(ctx, clusterCreds)
 		case "prometheus":
-			// TODO: implement in Task 6
-			return fmt.Errorf("prometheus metrics collection not yet implemented")
+			metrics, err = collectPrometheusMetrics(ctx, clusterCreds)
 		}
 
 		if err != nil {
@@ -374,6 +374,35 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 
 	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jolokiaOpts...)
 	return jmxService.CollectOverDuration(ctx, duration, interval)
+}
+
+func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+	if !clusterCreds.HasPrometheusConfig() {
+		return nil, fmt.Errorf("no prometheus config for cluster %s", clusterCreds.ID)
+	}
+
+	queryRange, _ := parseDurationDays(metricsRange)
+
+	slog.Info("collecting Prometheus metrics", "cluster", clusterCreds.ID, "range", metricsRange)
+	fmt.Printf("\n📊 Collecting Prometheus metrics for cluster '%s' (range: %s)...\n", clusterCreds.ID, metricsRange)
+
+	var promOpts []client.PrometheusOption
+	if clusterCreds.Prometheus.Auth != nil {
+		promOpts = append(promOpts, client.WithPrometheusBasicAuth(
+			clusterCreds.Prometheus.Auth.Username,
+			clusterCreds.Prometheus.Auth.Password,
+		))
+	}
+	if clusterCreds.Prometheus.TLS != nil {
+		promOpts = append(promOpts, client.WithPrometheusTLS(
+			clusterCreds.Prometheus.TLS.CACert,
+			clusterCreds.Prometheus.TLS.InsecureSkipVerify,
+		))
+	}
+
+	promClient := client.NewPrometheusClient(clusterCreds.Prometheus.URL, promOpts...)
+	promService := prometheussvc.NewPrometheusService(promClient)
+	return promService.CollectMetrics(ctx, queryRange)
 }
 
 // parseDurationDays parses duration strings like "1d", "7d", "30d" into time.Duration
