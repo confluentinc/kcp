@@ -35,7 +35,7 @@ func WriteModuleInputs[R any](body *hclwrite.Body, vars []modules.ModuleVariable
 			continue
 		}
 
-		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
+		if varDef.FromModuleOutput != "" {
 			SetModuleRef(body, varDef.Name, varDef.FromModuleOutput, varDef.Name)
 		} else {
 			SetVarRef(body, varDef.Name, varDef.Definition.Name)

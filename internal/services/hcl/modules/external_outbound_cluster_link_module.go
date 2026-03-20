@@ -161,17 +161,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 	}
 }
 
-func GetExternalOutboundClusterLinkingModuleVariableNames() map[string]string {
-	vars := GetExternalOutboundClusterLinkingVariables()
-	names := make(map[string]string)
-
-	for _, v := range vars {
-		names[v.Name] = v.Name
-	}
-
-	return names
-}
-
 func GetExternalOutboundClusterLinkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetExternalOutboundClusterLinkingVariables(), request)
 }
