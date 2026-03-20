@@ -1,13 +1,10 @@
 package modules
 
 import (
+	"log/slog"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
-
-type VariableDefinition interface {
-	GetName() string
-	GetDefinition() types.TerraformVariable
-}
 
 type ModuleOutputDefinition struct {
 	Name       string
@@ -22,14 +19,6 @@ type ModuleVariable[R any] struct {
 	ValueExtractor   func(request R) any  // Extracts the value from FE request payload. If nil, it's not a root-level variable.
 	Condition        func(request R) bool // Determines if this variable should be included (nil = always include).
 	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
-}
-
-func (m ModuleVariable[R]) GetName() string {
-	return m.Name
-}
-
-func (m ModuleVariable[R]) GetDefinition() types.TerraformVariable {
-	return m.Definition
 }
 
 // ============================================================================
@@ -125,39 +114,28 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 		// Only include non-empty values, keyed by Definition.Name for deduplication
 		switch v := value.(type) {
 		case string:
-			if v != "" {
-				// Check if already exists to avoid silent overwrites
-				if existing, exists := values[varDef.Definition.Name]; exists {
-					// If values match, it's fine (deduplication working as expected)
-					if existing != v {
-						// Optional: log warning or error about conflicting values
-						// For now, first-wins strategy (don't overwrite)
-						continue
-					}
-				}
-				values[varDef.Definition.Name] = v
+			if v == "" {
+				continue
 			}
 		case []string:
-			if len(v) > 0 {
-				if _, exists := values[varDef.Definition.Name]; !exists {
-					values[varDef.Definition.Name] = v
-				}
-			}
-		case bool:
-			if _, exists := values[varDef.Definition.Name]; !exists {
-				values[varDef.Definition.Name] = v
-			}
-		case int:
-			if _, exists := values[varDef.Definition.Name]; !exists {
-				values[varDef.Definition.Name] = v
+			if len(v) == 0 {
+				continue
 			}
 		case []types.ExtOutboundClusterKafkaBroker:
-			if len(v) > 0 {
-				if _, exists := values[varDef.Definition.Name]; !exists {
-					values[varDef.Definition.Name] = v
-				}
+			if len(v) == 0 {
+				continue
 			}
 		}
+
+		if existing, exists := values[varDef.Definition.Name]; exists {
+			slog.Warn("conflicting variable values, keeping first occurrence",
+				"variable", varDef.Definition.Name,
+				"existing", existing,
+				"ignored", value,
+			)
+			continue
+		}
+		values[varDef.Definition.Name] = value
 	}
 
 	return values
@@ -189,45 +167,3 @@ func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) [
 	return definitions
 }
 
-func toVariableDefinitions[R any](vars []ModuleVariable[R]) []VariableDefinition {
-	result := make([]VariableDefinition, len(vars))
-	for i, v := range vars {
-		result[i] = v
-	}
-	return result
-}
-
-func GetModuleVariableName(moduleName string, varName string) string {
-	var variables []VariableDefinition
-
-	switch moduleName {
-	case "provider_variables":
-		variables = toVariableDefinitions(GetPrivateMigrationProviderVariables())
-	case "jump_cluster_setup_host":
-		variables = toVariableDefinitions(GetJumpClusterSetupHostVariables())
-	case "jump_cluster":
-		variables = toVariableDefinitions(GetJumpClusterVariables())
-	case "networking":
-		variables = toVariableDefinitions(GetNetworkingVariables())
-	case "cluster_link":
-		variables = toVariableDefinitions(GetClusterLinkVariables())
-	case "confluent_cloud":
-		variables = toVariableDefinitions(GetConfluentCloudVariables())
-	case "private_link_target_cluster":
-		variables = toVariableDefinitions(GetTargetClusterPrivateLinkVariables())
-	case "ext_outbound_cluster_link":
-		variables = toVariableDefinitions(GetExternalOutboundClusterLinkingVariables())
-	case "msk_private_cluster_link":
-		variables = toVariableDefinitions(GetMskPrivateClusterLinkVariables())
-	default:
-		return "<variable not found>"
-	}
-
-	for _, varDef := range variables {
-		if varDef.GetName() == varName {
-			return varDef.GetName()
-		}
-	}
-
-	return "<variable not found>"
-}
