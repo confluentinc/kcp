@@ -137,7 +137,7 @@ type TargetClusterWizardRequest struct {
 	ClusterAvailability string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
 	ClusterCku          int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
 	NeedsPrivateLink      bool     `json:"needs_private_link"`
-	ExistingRoute53ZoneId string   `json:"existing_route53_zone_id"`
+	UseExistingRoute53Zone bool   `json:"use_existing_route53_zone"`
 	PreventDestroy        bool     `json:"prevent_destroy"`
 	VpcId                 string   `json:"vpc_id"`
 	SubnetCidrRanges      []string `json:"subnet_cidr_ranges"`

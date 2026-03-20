@@ -477,7 +477,7 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 // appendRoute53Zone appends either a data source (when an existing zone ID is provided)
 // or a resource for the Route53 zone, and returns the reference to its zone_id attribute.
 func (ti *TargetInfraHCLService) appendRoute53Zone(rootBody *hclwrite.Body, request types.TargetClusterWizardRequest, dnsDomainRef string) string {
-	if request.ExistingRoute53ZoneId != "" {
+	if request.UseExistingRoute53Zone {
 		rootBody.AppendBlock(aws.GenerateRoute53ZoneDataSource(
 			ti.ResourceNames.Route53Zone,
 			modules.VarVpcID,
