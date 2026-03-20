@@ -1,0 +1,13 @@
+aws_region                                 = "us-east-1"
+cluster_link_name                          = "msk-to-cc-link"
+confluent_cloud_cluster_bootstrap_endpoint = "pkc-abc123.us-east-1.aws.confluent.cloud:9092"
+confluent_cloud_cluster_id                 = "lkc-xyz789"
+confluent_cloud_cluster_rest_endpoint      = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"
+jump_cluster_broker_storage                = 100
+jump_cluster_broker_subnet_cidrs           = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+jump_cluster_iam_auth_role_name            = "msk-iam-role"
+jump_cluster_instance_type                 = "kafka.m5.large"
+jump_cluster_setup_host_subnet_cidr        = "10.0.4.0/24"
+msk_cluster_bootstrap_brokers              = "b-1.mskcluster.abc123.c1.kafka.us-east-1.amazonaws.com:9098"
+msk_cluster_id                             = "msk-cluster-123"
+vpc_id                                     = "vpc-0123456789abcdef0"

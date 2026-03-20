@@ -1,0 +1,4 @@
+aws_region       = "us-east-1"
+cluster_name     = "refac-cluster"
+cluster_type     = "enterprise"
+environment_name = "refac-env"

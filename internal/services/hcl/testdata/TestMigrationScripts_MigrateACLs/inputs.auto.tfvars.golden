@@ -1,0 +1,2 @@
+confluent_cloud_cluster_id            = "lkc-xyz789"
+confluent_cloud_cluster_rest_endpoint = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"

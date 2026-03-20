@@ -1,0 +1,44 @@
+package hcl
+
+import (
+	"github.com/confluentinc/kcp/internal/services/hcl/modules"
+	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/hashicorp/hcl/v2/hclwrite"
+)
+
+// SetVarRef sets an attribute to reference a Terraform variable: var.<varName>
+func SetVarRef(body *hclwrite.Body, attrName, varName string) {
+	body.SetAttributeRaw(attrName, utils.TokensForVarReference(varName))
+}
+
+// SetModuleRef sets an attribute to reference a module output: module.<moduleName>.<outputName>
+func SetModuleRef(body *hclwrite.Body, attrName, moduleName, outputName string) {
+	body.SetAttributeRaw(attrName, utils.TokensForModuleOutput(moduleName, outputName))
+}
+
+// SetResourceRef sets an attribute to a resource reference expression (unquoted).
+func SetResourceRef(body *hclwrite.Body, attrName, ref string) {
+	body.SetAttributeRaw(attrName, utils.TokensForResourceReference(ref))
+}
+
+// SetStringTemplate sets an attribute to a quoted string template.
+func SetStringTemplate(body *hclwrite.Body, attrName, template string) {
+	body.SetAttributeRaw(attrName, utils.TokensForStringTemplate(template))
+}
+
+// WriteModuleInputs writes module input attributes for a list of module variables.
+// For each variable: if it comes from a module output, writes a module reference;
+// otherwise, writes a variable reference.
+func WriteModuleInputs[R any](body *hclwrite.Body, vars []modules.ModuleVariable[R], request R) {
+	for _, varDef := range vars {
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
+		}
+
+		if varDef.FromModuleOutput != "" {
+			SetModuleRef(body, varDef.Name, varDef.FromModuleOutput, varDef.Name)
+		} else {
+			SetVarRef(body, varDef.Name, varDef.Definition.Name)
+		}
+	}
+}

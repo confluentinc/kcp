@@ -26,16 +26,16 @@ type UICmdOpts struct {
 
 type UI struct {
 	reportService              ReportService
-	targetInfraHCLService      hcl.TargetInfraHCLService
-	migrationInfraHCLService   hcl.MigrationInfraHCLService
-	migrationScriptsHCLService hcl.MigrationScriptsHCLService
+	targetInfraHCLService      hcl.TargetInfraGenerator
+	migrationInfraHCLService   hcl.MigrationInfraGenerator
+	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
 	port        string
 	states      map[string]*types.State // Session-based state storage (key: sessionId)
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
 	return &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,

@@ -37,3 +37,21 @@ func GenerateRoute53RecordResource(tfResourceName, route53ZoneIdRef, recordName,
 
 	return route53RecordBlock
 }
+
+// GenerateRoute53VarNameRecordResource creates a Route53 CNAME record where the record name
+// is a Terraform variable reference (e.g., var.cluster_id) instead of a literal string.
+// Used for enterprise Private Link where each cluster gets its own record in a shared zone.
+func GenerateRoute53VarNameRecordResource(tfResourceName, route53ZoneIdRef, recordNameVar, vpcEndpointDnsEntryRef string, allowOverwrite bool) *hclwrite.Block {
+	route53RecordBlock := hclwrite.NewBlock("resource", []string{"aws_route53_record", tfResourceName})
+	route53RecordBlock.Body().SetAttributeRaw("zone_id", utils.TokensForResourceReference(route53ZoneIdRef))
+	route53RecordBlock.Body().SetAttributeRaw("name", utils.TokensForVarReference(recordNameVar))
+	route53RecordBlock.Body().SetAttributeValue("type", cty.StringVal("CNAME"))
+	route53RecordBlock.Body().SetAttributeValue("ttl", cty.NumberIntVal(60))
+	route53RecordBlock.Body().SetAttributeRaw("records", utils.TokensForList([]string{vpcEndpointDnsEntryRef}))
+
+	if allowOverwrite {
+		route53RecordBlock.Body().SetAttributeValue("allow_overwrite", cty.BoolVal(true))
+	}
+
+	return route53RecordBlock
+}
