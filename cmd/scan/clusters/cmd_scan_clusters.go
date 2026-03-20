@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -26,9 +27,10 @@ var (
 	sourceType      string
 	skipTopics      bool
 	skipACLs        bool
-	jmxEnabled      bool
-	jmxScanDuration string
-	jmxPollInterval string
+	metricsSource   string
+	metricsDuration string
+	metricsInterval string
+	metricsRange    string
 )
 
 func NewScanClustersCmd() *cobra.Command {
@@ -55,12 +57,13 @@ func NewScanClustersCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipACLs, "skip-acls", false, "Skip ACL discovery")
 	scanClustersCmd.Flags().AddFlagSet(optionalFlags)
 
-	jmxFlags := pflag.NewFlagSet("jmx", pflag.ExitOnError)
-	jmxFlags.SortFlags = false
-	jmxFlags.BoolVar(&jmxEnabled, "jmx", false, "Enable JMX metrics collection via Jolokia (OSK only)")
-	jmxFlags.StringVar(&jmxScanDuration, "jmx-scan-duration", "", "Duration to collect JMX metrics (e.g. 5m, 30m, 1h). Required when --jmx is set.")
-	jmxFlags.StringVar(&jmxPollInterval, "jmx-poll-interval", "10s", "Polling interval for JMX metrics collection (e.g. 5s, 10s, 30s)")
-	scanClustersCmd.Flags().AddFlagSet(jmxFlags)
+	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
+	metricsFlags.SortFlags = false
+	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics collection source: 'jolokia' or 'prometheus' (OSK only)")
+	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia (e.g. 10m, 1h). Required with --metrics jolokia.")
+	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia (e.g. 10s, 30s). Default: 10s.")
+	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Time range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
+	scanClustersCmd.Flags().AddFlagSet(metricsFlags)
 
 	scanClustersCmd.MarkFlagRequired("source-type")
 	scanClustersCmd.MarkFlagRequired("credentials-file")
@@ -87,31 +90,46 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 		slog.Warn("credentials file should be named 'osk-credentials.yaml' for OSK sources", "file", credentialsFile)
 	}
 
-	// Validate JMX flags
-	if jmxEnabled {
+	// Validate metrics flags
+	if metricsSource != "" {
 		if sourceType != "osk" {
-			return fmt.Errorf("--jmx is only supported for OSK sources (--source-type osk)")
+			return fmt.Errorf("--metrics is only supported for OSK sources (--source-type osk)")
 		}
-		if jmxScanDuration == "" {
-			return fmt.Errorf("--jmx-scan-duration is required when --jmx is set")
+		switch metricsSource {
+		case "jolokia":
+			if metricsDuration == "" {
+				return fmt.Errorf("--metrics-duration is required when --metrics jolokia is set")
+			}
+			if _, err := time.ParseDuration(metricsDuration); err != nil {
+				return fmt.Errorf("invalid --metrics-duration '%s': %w", metricsDuration, err)
+			}
+			if _, err := time.ParseDuration(metricsInterval); err != nil {
+				return fmt.Errorf("invalid --metrics-interval '%s': %w", metricsInterval, err)
+			}
+			duration, _ := time.ParseDuration(metricsDuration)
+			interval, _ := time.ParseDuration(metricsInterval)
+			if duration <= interval {
+				return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
+			}
+			if cmd.Flags().Changed("metrics-range") {
+				return fmt.Errorf("--metrics-range cannot be used with --metrics jolokia")
+			}
+		case "prometheus":
+			if metricsRange == "" {
+				return fmt.Errorf("--metrics-range is required when --metrics prometheus is set")
+			}
+			if _, err := parseDurationDays(metricsRange); err != nil {
+				return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
+			}
+			if cmd.Flags().Changed("metrics-duration") {
+				return fmt.Errorf("--metrics-duration cannot be used with --metrics prometheus")
+			}
+			if cmd.Flags().Changed("metrics-interval") {
+				return fmt.Errorf("--metrics-interval cannot be used with --metrics prometheus")
+			}
+		default:
+			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
 		}
-		if _, err := time.ParseDuration(jmxScanDuration); err != nil {
-			return fmt.Errorf("invalid --jmx-scan-duration '%s': %w", jmxScanDuration, err)
-		}
-		if _, err := time.ParseDuration(jmxPollInterval); err != nil {
-			return fmt.Errorf("invalid --jmx-poll-interval '%s': %w", jmxPollInterval, err)
-		}
-		duration, _ := time.ParseDuration(jmxScanDuration)
-		interval, _ := time.ParseDuration(jmxPollInterval)
-		if duration <= interval {
-			return fmt.Errorf("--jmx-scan-duration (%s) must be greater than --jmx-poll-interval (%s) to collect at least one data point", jmxScanDuration, jmxPollInterval)
-		}
-	}
-	if !jmxEnabled && cmd.Flags().Changed("jmx-scan-duration") {
-		return fmt.Errorf("--jmx-scan-duration requires --jmx to be set")
-	}
-	if !jmxEnabled && cmd.Flags().Changed("jmx-poll-interval") {
-		return fmt.Errorf("--jmx-poll-interval requires --jmx to be set")
 	}
 
 	return nil
@@ -167,11 +185,11 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to merge scan results: %w", err)
 	}
 
-	// Collect JMX metrics if enabled
-	if jmxEnabled && sourceType == "osk" {
-		if err := collectJMXMetrics(ctx, state, credentialsFile); err != nil {
-			slog.Warn("JMX metrics collection failed", "error", err)
-			fmt.Printf("\n⚠️  JMX metrics collection failed: %v\n", err)
+	// Collect metrics if enabled
+	if metricsSource != "" && sourceType == "osk" {
+		if err := collectMetrics(ctx, state, credentialsFile); err != nil {
+			slog.Warn("metrics collection failed", "error", err)
+			fmt.Printf("\n⚠️  Metrics collection failed: %v\n", err)
 		}
 	}
 
@@ -299,42 +317,32 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 	return nil
 }
 
-func collectJMXMetrics(ctx context.Context, state *types.State, credentialsFilePath string) error {
+func collectMetrics(ctx context.Context, state *types.State, credentialsFilePath string) error {
 	creds, errs := types.NewOSKCredentialsFromFile(credentialsFilePath)
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to reload credentials for JMX: %v", errs)
+		return fmt.Errorf("failed to reload credentials: %v", errs)
 	}
 
-	duration, _ := time.ParseDuration(jmxScanDuration)
-	interval, _ := time.ParseDuration(jmxPollInterval)
-
 	for _, clusterCreds := range creds.Clusters {
-		if !clusterCreds.HasJolokiaConfig() {
-			slog.Info("no JMX config for cluster, skipping", "cluster", clusterCreds.ID)
-			continue
+		var metrics *types.ProcessedClusterMetrics
+		var err error
+
+		switch metricsSource {
+		case "jolokia":
+			metrics, err = collectJolokiaMetrics(ctx, clusterCreds)
+		case "prometheus":
+			// TODO: implement in Task 6
+			return fmt.Errorf("prometheus metrics collection not yet implemented")
 		}
 
-		slog.Info("collecting JMX metrics", "cluster", clusterCreds.ID, "duration", duration, "interval", interval)
-		fmt.Printf("\n📊 Collecting JMX metrics for cluster '%s' (duration: %s, interval: %s)...\n", clusterCreds.ID, duration, interval)
-
-		var jolokiaOpts []client.JolokiaOption
-		if clusterCreds.Jolokia.Auth != nil {
-			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.Jolokia.Auth.Username, clusterCreds.Jolokia.Auth.Password))
-		}
-		if clusterCreds.Jolokia.TLS != nil {
-			jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
-		}
-
-		jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jolokiaOpts...)
-		metrics, err := jmxService.CollectOverDuration(ctx, duration, interval)
 		if err != nil {
-			slog.Warn("JMX collection failed for cluster", "cluster", clusterCreds.ID, "error", err)
+			slog.Warn("metrics collection failed", "cluster", clusterCreds.ID, "source", metricsSource, "error", err)
 			continue
 		}
 
 		oskCluster, err := state.GetOSKClusterByID(clusterCreds.ID)
 		if err != nil {
-			slog.Warn("cluster not found in state for JMX metrics", "cluster", clusterCreds.ID, "error", err)
+			slog.Warn("cluster not found in state", "cluster", clusterCreds.ID, "error", err)
 			continue
 		}
 		oskCluster.ClusterMetrics = metrics
@@ -343,4 +351,39 @@ func collectJMXMetrics(ctx context.Context, state *types.State, credentialsFileP
 	}
 
 	return nil
+}
+
+func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+	if !clusterCreds.HasJolokiaConfig() {
+		return nil, fmt.Errorf("no jolokia config for cluster %s", clusterCreds.ID)
+	}
+
+	duration, _ := time.ParseDuration(metricsDuration)
+	interval, _ := time.ParseDuration(metricsInterval)
+
+	slog.Info("collecting Jolokia metrics", "cluster", clusterCreds.ID, "duration", duration, "interval", interval)
+	fmt.Printf("\n📊 Collecting Jolokia metrics for cluster '%s' (duration: %s, interval: %s)...\n", clusterCreds.ID, duration, interval)
+
+	var jolokiaOpts []client.JolokiaOption
+	if clusterCreds.Jolokia.Auth != nil {
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.Jolokia.Auth.Username, clusterCreds.Jolokia.Auth.Password))
+	}
+	if clusterCreds.Jolokia.TLS != nil {
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
+	}
+
+	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jolokiaOpts...)
+	return jmxService.CollectOverDuration(ctx, duration, interval)
+}
+
+// parseDurationDays parses duration strings like "1d", "7d", "30d" into time.Duration
+func parseDurationDays(s string) (time.Duration, error) {
+	if len(s) < 2 || s[len(s)-1] != 'd' {
+		return 0, fmt.Errorf("must end with 'd' (e.g. 7d, 30d)")
+	}
+	days, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil || days <= 0 {
+		return 0, fmt.Errorf("invalid number of days")
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
 }
