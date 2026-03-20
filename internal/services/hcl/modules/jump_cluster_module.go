@@ -32,13 +32,8 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			Condition: nil,
 		},
 		{
-			Name: "jump_cluster_security_group_ids",
-			Definition: types.TerraformVariable{
-				Name:        "jump_cluster_security_group_ids",
-				Description: "IDs of the security groups for the jump cluster (including setup host) instances.",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaJumpClusterSecurityGroupIDs.Name,
+			Definition: SchemaJumpClusterSecurityGroupIDs.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return []string{} // Retrieved from networking module output.
 			},
@@ -46,13 +41,8 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			FromModuleOutput: "networking",
 		},
 		{
-			Name: "jump_cluster_ssh_key_pair_name",
-			Definition: types.TerraformVariable{
-				Name:        "jump_cluster_ssh_key_pair_name",
-				Description: "Name of the AWS key pair for SSH access to the jump cluster (including setup host) instances.",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaJumpClusterSSHKeyPairName.Name,
+			Definition: SchemaJumpClusterSSHKeyPairName.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return "" // Retrieved from networking module output.
 			},

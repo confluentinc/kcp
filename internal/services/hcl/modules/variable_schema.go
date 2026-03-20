@@ -95,7 +95,7 @@ var (
 var (
 	SchemaVpcID = VariableSchema{
 		Name: "vpc_id", Type: "string",
-		Description: "VPC ID", Sensitive: false,
+		Description: "ID of the VPC", Sensitive: false,
 	}
 )
 
@@ -103,11 +103,11 @@ var (
 var (
 	SchemaJumpClusterSecurityGroupIDs = VariableSchema{
 		Name: "jump_cluster_security_group_ids", Type: "string",
-		Description: "Security Group IDs for the Jump Cluster", Sensitive: false,
+		Description: "IDs of the security groups for the jump cluster (including setup host) instances.", Sensitive: false,
 	}
 	SchemaJumpClusterSSHKeyPairName = VariableSchema{
 		Name: "jump_cluster_ssh_key_pair_name", Type: "string",
-		Description: "SSH key pair name for the Jump Cluster", Sensitive: false,
+		Description: "Name of the AWS key pair for SSH access to the jump cluster (including setup host) instances.", Sensitive: false,
 	}
 )
 

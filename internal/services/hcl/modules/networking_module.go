@@ -7,13 +7,8 @@ import (
 func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
-			Name: "vpc_id",
-			Definition: types.TerraformVariable{
-				Name:        "vpc_id",
-				Description: "ID of the VPC",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaVpcID.Name,
+			Definition: SchemaVpcID.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.VpcId
 			},

@@ -44,7 +44,7 @@ data "aws_availability_zones" "available" {
 data "aws_internet_gateway" "existing_internet_gateway" {
   filter {
     name   = "attachment.vpc-id"
-    values = ["var.vpc_id"]
+    values = [var.vpc_id]
   }
 }
 

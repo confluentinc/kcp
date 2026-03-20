@@ -14,6 +14,10 @@ resource "confluent_kafka_cluster" "cluster" {
   display_name = var.cluster_name
   cloud        = "AWS"
   region       = var.aws_region
+  availability = "HIGH"
+
+  enterprise {
+  }
 
   environment {
     id = confluent_environment.environment.id

@@ -1,21 +1,21 @@
-resource "confluent_private_link_attachment" "private_link_attachment" {
-  display_name = "kcp_private_link_attachment"
-  cloud        = "AWS"
-  region       = var.aws_region
+data "aws_caller_identity" "current" {
+}
+
+resource "confluent_private_link_access" "private_link_access" {
+  display_name = "kcp-private-link-access"
+
+  aws {
+    account = data.aws_caller_identity.current.account_id
+  }
 
   environment {
     id = var.environment_id
   }
 
-}
-
-data "aws_availability_zones" "available" {
-  state = "available"
-
-  filter {
-    name   = "zone-type"
-    values = ["availability-zone"]
+  network {
+    id = var.network_id
   }
+
 }
 
 resource "aws_security_group" "cflt_private_link_sg" {
@@ -52,39 +52,22 @@ resource "aws_security_group" "cflt_private_link_sg" {
 resource "aws_subnet" "cflt_private_link_subnet" {
   count = length(var.subnet_cidr_ranges)
 
-  vpc_id            = var.vpc_id
-  availability_zone = data.aws_availability_zones.available.names[count.index % length(data.aws_availability_zones.available.names)]
-  cidr_block        = var.subnet_cidr_ranges[count.index]
+  vpc_id               = var.vpc_id
+  availability_zone_id = var.network_zones[count.index % length(var.network_zones)]
+  cidr_block           = var.subnet_cidr_ranges[count.index]
 }
 resource "aws_vpc_endpoint" "cflt_private_link_vpc_endpoint" {
   vpc_id             = var.vpc_id
-  service_name       = confluent_private_link_attachment.private_link_attachment.aws[0].vpc_endpoint_service_name
+  service_name       = var.network_private_link_endpoint_service
   vpc_endpoint_type  = "Interface"
   security_group_ids = [aws_security_group.cflt_private_link_sg.id]
   subnet_ids         = aws_subnet.cflt_private_link_subnet[*].id
 
-  depends_on = [confluent_private_link_attachment.private_link_attachment]
-}
-
-resource "confluent_private_link_attachment_connection" "private_link_attachment_connection" {
-  display_name = "prod-cluster-pl_private_link_attachment_connection"
-
-  environment {
-    id = var.environment_id
-  }
-
-  aws {
-    vpc_endpoint_id = aws_vpc_endpoint.cflt_private_link_vpc_endpoint.id
-  }
-
-  private_link_attachment {
-    id = confluent_private_link_attachment.private_link_attachment.id
-  }
-
+  depends_on = [confluent_private_link_access.private_link_access]
 }
 
 resource "aws_route53_zone" "cflt_private_link_zone" {
-  name = confluent_private_link_attachment.private_link_attachment.dns_domain
+  name = var.network_dns_domain
 
   vpc {
     vpc_id = var.vpc_id

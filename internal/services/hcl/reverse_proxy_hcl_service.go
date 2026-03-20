@@ -104,7 +104,7 @@ func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyReques
 	filterBlock := igwBody.AppendNewBlock("filter", nil)
 	filterBody := filterBlock.Body()
 	filterBody.SetAttributeValue("name", cty.StringVal("attachment.vpc-id"))
-	filterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal("var.vpc_id")}))
+	filterBody.SetAttributeRaw("values", utils.TokensForList([]string{"var.vpc_id"}))
 	rootBody.AppendNewline()
 
 	// Route table

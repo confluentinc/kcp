@@ -18,3 +18,13 @@ variable "cluster_type" {
   description = "Type of the cluster"
 }
 
+variable "cluster_availability" {
+  type        = string
+  description = "Cluster availability zone type (SINGLE_ZONE or MULTI_ZONE)"
+}
+
+variable "cluster_cku" {
+  type        = number
+  description = "Number of CKUs for dedicated clusters"
+}
+

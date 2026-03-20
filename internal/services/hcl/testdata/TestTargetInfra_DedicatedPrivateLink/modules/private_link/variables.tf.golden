@@ -18,3 +18,23 @@ variable "environment_id" {
   description = "The ID of the environment that the private link connection is established in."
 }
 
+variable "network_id" {
+  type        = string
+  description = "The ID of the Confluent Cloud network (for dedicated cluster private link)."
+}
+
+variable "network_dns_domain" {
+  type        = string
+  description = "The DNS domain of the Confluent Cloud network (for dedicated cluster private link)."
+}
+
+variable "network_private_link_endpoint_service" {
+  type        = string
+  description = "The AWS VPC endpoint service name for the Confluent Cloud network (for dedicated cluster private link)."
+}
+
+variable "network_zones" {
+  type        = list(string)
+  description = "Availability zone IDs supported by the Confluent Cloud network (for dedicated cluster private link)."
+}
+
