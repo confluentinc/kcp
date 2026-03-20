@@ -90,13 +90,7 @@ func GenerateInputsAutoTfvarsWithBrokers(values map[string]any) string {
 	}
 	sort.Strings(varNames)
 
-	varSeenVariables := make(map[string]bool)
 	for _, varName := range varNames {
-		if varSeenVariables[varName] {
-			continue
-		}
-		varSeenVariables[varName] = true
-
 		value := values[varName]
 		switch v := value.(type) {
 		case string:
@@ -138,38 +132,5 @@ func GenerateInputsAutoTfvarsWithBrokers(values map[string]any) string {
 // GenerateInputsAutoTfvars generates an inputs.auto.tfvars file from a map of variable names to values.
 // Supports string, []string, bool, and int value types.
 func GenerateInputsAutoTfvars(values map[string]any) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	varNames := make([]string, 0, len(values))
-	for varName := range values {
-		varNames = append(varNames, varName)
-	}
-	sort.Strings(varNames)
-
-	varSeenVariables := make(map[string]bool)
-	for _, varName := range varNames {
-		if varSeenVariables[varName] {
-			continue
-		}
-		varSeenVariables[varName] = true
-
-		value := values[varName]
-		switch v := value.(type) {
-		case string:
-			rootBody.SetAttributeValue(varName, cty.StringVal(v))
-		case []string:
-			ctyValues := make([]cty.Value, len(v))
-			for i, s := range v {
-				ctyValues[i] = cty.StringVal(s)
-			}
-			rootBody.SetAttributeValue(varName, cty.ListVal(ctyValues))
-		case bool:
-			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
-		case int:
-			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
-		}
-	}
-
-	return string(f.Bytes())
+	return GenerateInputsAutoTfvarsWithBrokers(values)
 }

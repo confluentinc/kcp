@@ -63,34 +63,24 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForClusterLink() stri
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
-	ccClusterKeyVarName := modules.VarConfluentCloudClusterAPIKey
-	ccClusterSecretVarName := modules.VarConfluentCloudClusterAPISecret
-	mskClusterIdVarName := modules.VarMSKClusterID
-	targetClusterIdVarName := modules.VarTargetClusterID
-	targetClusterRestEndpointVarName := modules.VarTargetClusterRestEndpoint
-	clusterLinkVarName := modules.VarClusterLinkName
-	mskSaslScramBootstrapServersVarName := modules.VarMSKSaslScramBootstrapServers
-	mskSaslScramUsernameVarName := modules.VarMSKSaslScramUsername
-	mskSaslScramPasswordVarName := modules.VarMSKSaslScramPassword
-
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
 	rootBody.AppendBlock(confluent.GenerateClusterLinkLocals(
-		ccClusterKeyVarName,
-		ccClusterSecretVarName,
+		modules.VarConfluentCloudClusterAPIKey,
+		modules.VarConfluentCloudClusterAPISecret,
 	))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(confluent.GenerateClusterLinkResource(
 		"confluent_cluster_link",
-		mskClusterIdVarName,
-		targetClusterIdVarName,
-		targetClusterRestEndpointVarName,
-		clusterLinkVarName,
-		mskSaslScramBootstrapServersVarName,
-		mskSaslScramUsernameVarName,
-		mskSaslScramPasswordVarName,
+		modules.VarMSKClusterID,
+		modules.VarTargetClusterID,
+		modules.VarTargetClusterRestEndpoint,
+		modules.VarClusterLinkName,
+		modules.VarMSKSaslScramBootstrapServers,
+		modules.VarMSKSaslScramUsername,
+		modules.VarMSKSaslScramPassword,
 	))
 	rootBody.AppendNewline()
 

@@ -95,18 +95,6 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForExternalOutboundCl
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() string {
-	subnetIdVarName := modules.VarSubnetID
-	securityGroupIdVarName := modules.VarSecurityGroupID
-	targetClusterApiKeyVarName := modules.VarTargetClusterAPIKey
-	targetClusterApiSecretVarName := modules.VarTargetClusterAPISecret
-	targetClusterRestEndpointVarName := modules.VarTargetClusterRestEndpoint
-	targetClusterIdVarName := modules.VarTargetClusterID
-	clusterLinkNameVarName := modules.VarClusterLinkName
-	mskClusterIdVarName := modules.VarMSKClusterID
-	mskClusterBootstrapBrokersVarName := modules.VarMSKClusterBootstrapServers
-	mskSaslScramUsernameVarName := modules.VarMSKSaslScramUsername
-	mskSaslScramPasswordVarName := modules.VarMSKSaslScramPassword
-
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -122,21 +110,21 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 		"external_outbound_cluster_link",
 		"data.aws_ami.amzn_linux_ami.id",
 		"t2.medium",
-		subnetIdVarName,
-		securityGroupIdVarName,
+		modules.VarSubnetID,
+		modules.VarSecurityGroupID,
 		"", // No keypair needed as user will never need to access instance.
 		"create-external-outbound-cluster-link.tpl",
 		false,
 		map[string]hclwrite.Tokens{
-			"target_cluster_api_key":        utils.TokensForVarReference(targetClusterApiKeyVarName),
-			"target_cluster_api_secret":     utils.TokensForVarReference(targetClusterApiSecretVarName),
-			"target_cluster_rest_endpoint":  utils.TokensForVarReference(targetClusterRestEndpointVarName),
-			"target_cluster_id":             utils.TokensForVarReference(targetClusterIdVarName),
-			"cluster_link_name":             utils.TokensForVarReference(clusterLinkNameVarName),
-			"msk_cluster_id":                utils.TokensForVarReference(mskClusterIdVarName),
-			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(mskClusterBootstrapBrokersVarName),
-			"msk_sasl_scram_username":       utils.TokensForVarReference(mskSaslScramUsernameVarName),
-			"msk_sasl_scram_password":       utils.TokensForVarReference(mskSaslScramPasswordVarName),
+			"target_cluster_api_key":        utils.TokensForVarReference(modules.VarTargetClusterAPIKey),
+			"target_cluster_api_secret":     utils.TokensForVarReference(modules.VarTargetClusterAPISecret),
+			"target_cluster_rest_endpoint":  utils.TokensForVarReference(modules.VarTargetClusterRestEndpoint),
+			"target_cluster_id":             utils.TokensForVarReference(modules.VarTargetClusterID),
+			"cluster_link_name":             utils.TokensForVarReference(modules.VarClusterLinkName),
+			"msk_cluster_id":                utils.TokensForVarReference(modules.VarMSKClusterID),
+			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
+			"msk_sasl_scram_username":       utils.TokensForVarReference(modules.VarMSKSaslScramUsername),
+			"msk_sasl_scram_password":       utils.TokensForVarReference(modules.VarMSKSaslScramPassword),
 		},
 		nil,
 	))

@@ -32,9 +32,10 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 	networkingVars := modules.GetNetworkingVariables()
 	for _, varDef := range networkingVars {
-		if varDef.Condition == nil || varDef.Condition(request) {
-			SetVarRef(networkingModuleBody, varDef.Name, varDef.Name)
+		if varDef.Condition != nil && !varDef.Condition(request) {
+			continue
 		}
+		SetVarRef(networkingModuleBody, varDef.Name, varDef.Name)
 	}
 	rootBody.AppendNewline()
 
@@ -188,12 +189,6 @@ Note: Due to the nature of how the cluster link is created between the jump clus
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string {
-	jumpClusterSetupHostSubnetIdVarName := modules.VarJumpClusterSetupHostSubnetID
-	securityGroupIdsVarName := modules.VarJumpClusterSecurityGroupIDs
-	jumpClusterSshKeyPairNameVarName := modules.VarJumpClusterSSHKeyPairName
-	jumpClusterInstancesPrivateDnsVarName := modules.VarJumpClusterInstancesPrivateDNS
-	privateKeyVarName := modules.VarPrivateKey
-
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -209,14 +204,14 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 		"jump_cluster_setup_host",
 		"data.aws_ami.amzn_linux_ami.id",
 		"t2.medium",
-		jumpClusterSetupHostSubnetIdVarName,
-		securityGroupIdsVarName,
-		jumpClusterSshKeyPairNameVarName,
+		modules.VarJumpClusterSetupHostSubnetID,
+		modules.VarJumpClusterSecurityGroupIDs,
+		modules.VarJumpClusterSSHKeyPairName,
 		"jump-cluster-setup-host-user-data.tpl",
 		true,
 		map[string]hclwrite.Tokens{
-			"broker_ips":  utils.TokensForVarReference(jumpClusterInstancesPrivateDnsVarName),
-			"private_key": utils.TokensForVarReference(privateKeyVarName),
+			"broker_ips":  utils.TokensForVarReference(modules.VarJumpClusterInstancesPrivateDNS),
+			"private_key": utils.TokensForVarReference(modules.VarPrivateKey),
 		},
 		nil,
 	))
@@ -246,20 +241,6 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() str
 // ============================================================================
 
 func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.MigrationWizardRequest) string {
-	jumpClusterBrokerSubnetIdsVarName := modules.VarJumpClusterBrokerSubnetIDs
-	securityGroupIdsVarName := modules.VarJumpClusterSecurityGroupIDs
-	jumpClusterSshKeyPairNameVarName := modules.VarJumpClusterSSHKeyPairName
-	jumpClusterInstanceTypeVarName := modules.VarJumpClusterInstanceType
-	jumpClusterBrokerStorageVarName := modules.VarJumpClusterBrokerStorage
-	targetClusterIdVarName := modules.VarConfluentCloudClusterID
-	targetBootstrapEndpointVarName := modules.VarConfluentCloudClusterBootstrapEndpoint
-	targetRestEndpointVarName := modules.VarConfluentCloudClusterRestEndpoint
-	targetApiKeyVarName := modules.VarConfluentCloudClusterAPIKey
-	targetApiSecretVarName := modules.VarConfluentCloudClusterAPISecret
-	mskClusterIdVarName := modules.VarMSKClusterID
-	mskBootstrapBrokersVarName := modules.VarMSKClusterBootstrapBrokers
-	clusterLinkNameVarName := modules.VarClusterLinkName
-
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -272,34 +253,31 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	rootBody.AppendNewline()
 
 	if request.MskJumpClusterAuthType == "sasl_scram" {
-		mskSaslScramUsernameVarName := modules.VarMSKSaslScramUsername
-		mskSaslScramPasswordVarName := modules.VarMSKSaslScramPassword
-
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
 			"data.aws_ami.red_hat_linux_ami.id",
-			jumpClusterInstanceTypeVarName,
-			jumpClusterBrokerSubnetIdsVarName,
-			securityGroupIdsVarName,
-			jumpClusterSshKeyPairNameVarName,
+			modules.VarJumpClusterInstanceType,
+			modules.VarJumpClusterBrokerSubnetIDs,
+			modules.VarJumpClusterSecurityGroupIDs,
+			modules.VarJumpClusterSSHKeyPairName,
 			"jump-cluster-with-cluster-links-user-data.tpl",
 			"",
 			false,
 			map[string]hclwrite.Tokens{
-				"confluent_cloud_cluster_id":                 utils.TokensForVarReference(targetClusterIdVarName),
-				"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(targetBootstrapEndpointVarName),
-				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(targetRestEndpointVarName),
-				"confluent_cloud_cluster_key":                utils.TokensForVarReference(targetApiKeyVarName),
-				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(targetApiSecretVarName),
-				"msk_cluster_id":                             utils.TokensForVarReference(mskClusterIdVarName),
-				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(mskBootstrapBrokersVarName),
-				"msk_sasl_scram_username":                    utils.TokensForVarReference(mskSaslScramUsernameVarName),
-				"msk_sasl_scram_password":                    utils.TokensForVarReference(mskSaslScramPasswordVarName),
-				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
+				"confluent_cloud_cluster_id":                 utils.TokensForVarReference(modules.VarConfluentCloudClusterID),
+				"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(modules.VarConfluentCloudClusterBootstrapEndpoint),
+				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(modules.VarConfluentCloudClusterRestEndpoint),
+				"confluent_cloud_cluster_key":                utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
+				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
+				"msk_cluster_id":                             utils.TokensForVarReference(modules.VarMSKClusterID),
+				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
+				"msk_sasl_scram_username":                    utils.TokensForVarReference(modules.VarMSKSaslScramUsername),
+				"msk_sasl_scram_password":                    utils.TokensForVarReference(modules.VarMSKSaslScramPassword),
+				"cluster_link_name":                          utils.TokensForVarReference(modules.VarClusterLinkName),
 			},
 			aws.OptionalBlocksConfig{
 				"root_block_device": {
-					"volume_size": utils.TokensForVarReference(jumpClusterBrokerStorageVarName),
+					"volume_size": utils.TokensForVarReference(modules.VarJumpClusterBrokerStorage),
 					"volume_type": cty.StringVal("gp3"),
 				},
 				"metadata_options": {
@@ -309,31 +287,29 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			},
 		))
 	} else {
-		jumpClusterIamAuthRoleNameVarName := modules.VarJumpClusterIAMAuthRoleName
-
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
 			"data.aws_ami.red_hat_linux_ami.id",
-			jumpClusterInstanceTypeVarName,
-			jumpClusterBrokerSubnetIdsVarName,
-			securityGroupIdsVarName,
-			jumpClusterSshKeyPairNameVarName,
+			modules.VarJumpClusterInstanceType,
+			modules.VarJumpClusterBrokerSubnetIDs,
+			modules.VarJumpClusterSecurityGroupIDs,
+			modules.VarJumpClusterSSHKeyPairName,
 			"jump-cluster-with-cluster-links-user-data.tpl",
-			jumpClusterIamAuthRoleNameVarName,
+			modules.VarJumpClusterIAMAuthRoleName,
 			false,
 			map[string]hclwrite.Tokens{
-				"confluent_cloud_cluster_id":                 utils.TokensForVarReference(targetClusterIdVarName),
-				"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(targetBootstrapEndpointVarName),
-				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(targetRestEndpointVarName),
-				"confluent_cloud_cluster_key":                utils.TokensForVarReference(targetApiKeyVarName),
-				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(targetApiSecretVarName),
-				"msk_cluster_id":                             utils.TokensForVarReference(mskClusterIdVarName),
-				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(mskBootstrapBrokersVarName),
-				"cluster_link_name":                          utils.TokensForVarReference(clusterLinkNameVarName),
+				"confluent_cloud_cluster_id":                 utils.TokensForVarReference(modules.VarConfluentCloudClusterID),
+				"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(modules.VarConfluentCloudClusterBootstrapEndpoint),
+				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(modules.VarConfluentCloudClusterRestEndpoint),
+				"confluent_cloud_cluster_key":                utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
+				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
+				"msk_cluster_id":                             utils.TokensForVarReference(modules.VarMSKClusterID),
+				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
+				"cluster_link_name":                          utils.TokensForVarReference(modules.VarClusterLinkName),
 			},
 			aws.OptionalBlocksConfig{
 				"root_block_device": {
-					"volume_size": utils.TokensForVarReference(jumpClusterBrokerStorageVarName),
+					"volume_size": utils.TokensForVarReference(modules.VarJumpClusterBrokerStorage),
 					"volume_type": cty.StringVal("gp3"),
 				},
 				"metadata_options": {
@@ -378,37 +354,32 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	// Get variable names from module definitions
-	vpcIdVarName := modules.VarVpcID
-	jumpClusterBrokerSubnetCidrsVarName := modules.VarJumpClusterBrokerSubnetCidrs
-	jumpClusterSetupHostSubnetCidrVarName := modules.VarJumpClusterSetupHostSubnetCidr
-
 	if request.HasExistingInternetGateway {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", vpcIdVarName))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", modules.VarVpcID))
 	} else {
-		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway", vpcIdVarName))
+		rootBody.AppendBlock(aws.GenerateInternetGatewayResource("internet_gateway", modules.VarVpcID))
 	}
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateAvailabilityZonesDataSource("available"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}, vpcIdVarName))
+	rootBody.AppendBlock(aws.GenerateSecurityGroup("security_group", []int{22, 9091, 9092, 9093, 8090, 8081}, []int{0}, modules.VarVpcID))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateSubnetResourceWithCount(
 		"jump_cluster_broker_subnets",
-		jumpClusterBrokerSubnetCidrsVarName,
+		modules.VarJumpClusterBrokerSubnetCidrs,
 		"data.aws_availability_zones.available",
-		vpcIdVarName,
+		modules.VarVpcID,
 	))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateSubnetResource(
 		"jump_cluster_setup_host_subnet",
-		jumpClusterSetupHostSubnetCidrVarName,
+		modules.VarJumpClusterSetupHostSubnetCidr,
 		"data.aws_availability_zones.available.names[0]",
-		vpcIdVarName,
+		modules.VarVpcID,
 	))
 	rootBody.AppendNewline()
 
@@ -418,20 +389,19 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateNATGatewayResource("nat_gw", "aws_eip.nat_eip.id", "aws_subnet.jump_cluster_setup_host_subnet.id"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), vpcIdVarName))
+	rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), modules.VarVpcID))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource("jump_cluster_setup_host_public_rt_association", aws.GenerateSubnetResourceReference("jump_cluster_setup_host_subnet"), "aws_route_table.jump_cluster_setup_host_public_rt.id"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", "aws_nat_gateway.nat_gw.id", vpcIdVarName))
+	rootBody.AppendBlock(aws.GenerateRouteTableResource("private_subnet_rt", "aws_nat_gateway.nat_gw.id", modules.VarVpcID))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResourceWithCount("jump_cluster_broker_route_table_assoc", aws.GenerateSubnetResourceReference("jump_cluster_broker_subnets"), "aws_route_table.private_subnet_rt.id"))
 	rootBody.AppendNewline()
 
-	existingVpceIdVarName := modules.VarExistingPrivateLinkVpceID
-	rootBody.AppendBlock(aws.GenerateVpcEndpointDataSource("existing_vpce", existingVpceIdVarName))
+	rootBody.AppendBlock(aws.GenerateVpcEndpointDataSource("existing_vpce", modules.VarExistingPrivateLinkVpceID))
 	rootBody.AppendNewline()
 
 	for _, port := range []int{80, 443, 9092} {
