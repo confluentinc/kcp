@@ -31,6 +31,19 @@ var (
 
 	fencedCrYamlPath     string
 	switchoverCrYamlPath string
+
+	useSaslIam                  bool
+	useSaslScram                bool
+	useTls                      bool
+	useUnauthenticatedTLS       bool
+	useUnauthenticatedPlaintext bool
+
+	saslScramUsername string
+	saslScramPassword string
+
+	tlsCaCert     string
+	tlsClientCert string
+	tlsClientKey  string
 )
 
 func NewMigrationInitCmd() *cobra.Command {
@@ -77,11 +90,39 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
+	// Authentication flags.
+	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
+	authFlags.SortFlags = false
+	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
+	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
+	migrationInitCmd.Flags().AddFlagSet(authFlags)
+	groups[authFlags] = "Source Cluster Authentication Flags"
+
+	// SASL/SCRAM credential flags.
+	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
+	saslScramFlags.SortFlags = false
+	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
+	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
+	migrationInitCmd.Flags().AddFlagSet(saslScramFlags)
+	groups[saslScramFlags] = "SASL/SCRAM Flags"
+
+	// TLS credential flags.
+	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
+	tlsFlags.SortFlags = false
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
+	migrationInitCmd.Flags().AddFlagSet(tlsFlags)
+	groups[tlsFlags] = "TLS Flags"
+
 	migrationInitCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Optional Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -106,12 +147,25 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
 	migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
+	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+
 	return migrationInitCmd
 }
 
 func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	if useSaslScram {
+		cmd.MarkFlagRequired("sasl-scram-username")
+		cmd.MarkFlagRequired("sasl-scram-password")
+	}
+
+	if useTls {
+		cmd.MarkFlagRequired("tls-ca-cert")
+		cmd.MarkFlagRequired("tls-client-cert")
+		cmd.MarkFlagRequired("tls-client-key")
 	}
 
 	return nil
@@ -166,6 +220,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		FencedCrYAML:        fencedCrYAML,
 		SwitchoverCrYAML:    switchoverCrYAML,
 		CurrentState:        types.StateUninitialized,
+		AuthMode:            resolveAuthMode(),
 	}
 
 	// ===== PHASE 3: Early write - upsert migration and write to file =====
@@ -195,6 +250,23 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		"migrationId", config.MigrationId,
 		"stateFile", migrationStateFile)
 	return nil
+}
+
+func resolveAuthMode() string {
+	switch {
+	case useSaslIam:
+		return string(types.AuthTypeIAM)
+	case useSaslScram:
+		return string(types.AuthTypeSASLSCRAM)
+	case useTls:
+		return string(types.AuthTypeTLS)
+	case useUnauthenticatedTLS:
+		return string(types.AuthTypeUnauthenticatedTLS)
+	case useUnauthenticatedPlaintext:
+		return string(types.AuthTypeUnauthenticatedPlaintext)
+	default:
+		return ""
+	}
 }
 
 func parseMigrationInitializerOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationInitializerOpts {
