@@ -20,6 +20,9 @@ var generateDnsEntriesScript string
 var reverseProxyUserDataTpl string
 
 type ReverseProxyHCLService struct {
+	// DeploymentID overrides the random deployment identifier in AWS provider tags.
+	// When empty, a random 8-character string is generated.
+	DeploymentID string
 }
 
 func NewReverseProxyHCLService() *ReverseProxyHCLService {
@@ -284,7 +287,7 @@ func (s *ReverseProxyHCLService) generateProvidersTf() string {
 	rootBody.AppendNewline()
 
 	// AWS provider block
-	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVarAndDeploymentID(s.DeploymentID))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())

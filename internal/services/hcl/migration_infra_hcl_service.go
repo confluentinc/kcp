@@ -2,6 +2,7 @@ package hcl
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
@@ -14,6 +15,12 @@ import (
 )
 
 type MigrationInfraHCLService struct {
+	// SSHKeySuffix overrides the random suffix used in SSH key pair names.
+	// When empty, a random 5-character string is generated.
+	SSHKeySuffix string
+	// DeploymentID overrides the random deployment identifier in AWS provider tags.
+	// When empty, a random 8-character string is generated.
+	DeploymentID string
 }
 
 func NewMigrationInfraHCLService() *MigrationInfraHCLService {
@@ -303,7 +310,7 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateMigrationIn
 	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVarAndDeploymentID(mi.DeploymentID))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -636,13 +643,8 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(aws.GenerateNATGatewayResource("nat_gw", "aws_eip.nat_eip.id", "aws_subnet.jump_cluster_setup_host_subnet.id"))
 	rootBody.AppendNewline()
 
-	if request.HasExistingInternetGateway {
-		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), vpcIdVarName))
-		rootBody.AppendNewline()
-	} else {
-		rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), vpcIdVarName))
-		rootBody.AppendNewline()
-	}
+	rootBody.AppendBlock(aws.GenerateRouteTableResource("jump_cluster_setup_host_public_rt", aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"), vpcIdVarName))
+	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource("jump_cluster_setup_host_public_rt_association", aws.GenerateSubnetResourceReference("jump_cluster_setup_host_subnet"), "aws_route_table.jump_cluster_setup_host_public_rt.id"))
 	rootBody.AppendNewline()
@@ -676,7 +678,11 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	rootBody.AppendBlock(other.GenerateLocalFileResource("jump_cluster_ssh_key_public_key", "tls_private_key.jump_cluster_ssh_key.public_key_openssh", "./.ssh/jump_cluster_ssh_key_public_key.pub", "400"))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateKeyPairResource("jump_cluster_ssh_key", fmt.Sprintf("jump_cluster_ssh_key_%s", utils.RandomString(5)), "tls_private_key.jump_cluster_ssh_key.public_key_openssh"))
+	sshKeySuffix := mi.SSHKeySuffix
+	if sshKeySuffix == "" {
+		sshKeySuffix = utils.RandomString(5)
+	}
+	rootBody.AppendBlock(aws.GenerateKeyPairResource("jump_cluster_ssh_key", fmt.Sprintf("jump_cluster_ssh_key_%s", sshKeySuffix), "tls_private_key.jump_cluster_ssh_key.public_key_openssh"))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -778,7 +784,7 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForExternalOutboundCl
 	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateProviderBlockWithVar())
+	rootBody.AppendBlock(aws.GenerateProviderBlockWithVarAndDeploymentID(mi.DeploymentID))
 	rootBody.AppendNewline()
 
 	rootBody.AppendBlock(confluent.GenerateProviderBlock())
@@ -850,21 +856,6 @@ func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl
 	return aws.GenerateCreateExternalOutboundClusterLinkTpl()
 }
 
-// func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkingVersionsTf() string {
-// 	f := hclwrite.NewEmptyFile()
-// 	rootBody := f.Body()
-
-// 	terraformBlock := rootBody.AppendNewBlock("terraform", nil)
-// 	terraformBody := terraformBlock.Body()
-
-// 	requiredProvidersBlock := terraformBody.AppendNewBlock("required_providers", nil)
-// 	requiredProvidersBody := requiredProvidersBlock.Body()
-
-// 	requiredProvidersBody.SetAttributeRaw(aws.GenerateRequiredProviderTokens())
-
-// 	return string(f.Bytes())
-// }
-
 // ============================================================================
 // Shared/Utility Functions
 // ============================================================================
@@ -923,13 +914,20 @@ func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.Migra
 	// Use GetRootLevelVariableValues to get only root-level variables (not from module outputs)
 	values := modules.GetMigrationInfraRootVariableValues(request)
 
+	varNames := make([]string, 0, len(values))
+	for varName := range values {
+		varNames = append(varNames, varName)
+	}
+	sort.Strings(varNames)
+
 	varSeenVariables := make(map[string]bool)
-	for varName, value := range values {
+	for _, varName := range varNames {
 		if varSeenVariables[varName] {
 			continue
 		}
 
 		varSeenVariables[varName] = true
+		value := values[varName]
 		switch v := value.(type) {
 		case string:
 			rootBody.SetAttributeValue(varName, cty.StringVal(v))
