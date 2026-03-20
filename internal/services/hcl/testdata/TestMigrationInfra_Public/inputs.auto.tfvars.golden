@@ -1,0 +1,4 @@
+cluster_link_name            = "msk-to-cc-link"
+msk_cluster_id               = "msk-cluster-123"
+target_cluster_id            = "lkc-xyz789"
+target_cluster_rest_endpoint = "https://pkc-abc123.us-east-1.aws.confluent.cloud:443"
