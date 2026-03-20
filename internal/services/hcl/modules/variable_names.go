@@ -38,6 +38,7 @@ const (
 	VarExistingPrivateLinkVpceID     = "existing_private_link_vpce_id"
 
 	// Confluent Cloud module variables
+	VarClusterID       = "cluster_id"
 	VarEnvironmentName = "environment_name"
 	VarEnvironmentID   = "environment_id"
 	VarClusterName     = "cluster_name"

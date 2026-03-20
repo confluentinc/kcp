@@ -92,10 +92,11 @@ resource "aws_route53_zone" "cflt_private_link_zone" {
 }
 
 resource "aws_route53_record" "cflt_route_entries" {
-  zone_id = aws_route53_zone.cflt_private_link_zone.zone_id
-  name    = "*"
-  type    = "CNAME"
-  ttl     = 60
-  records = [aws_vpc_endpoint.cflt_private_link_vpc_endpoint.dns_entry[0].dns_name]
+  zone_id         = aws_route53_zone.cflt_private_link_zone.zone_id
+  name            = var.cluster_id
+  type            = "CNAME"
+  ttl             = 60
+  records         = [aws_vpc_endpoint.cflt_private_link_vpc_endpoint.dns_entry[0].dns_name]
+  allow_overwrite = true
 }
 
