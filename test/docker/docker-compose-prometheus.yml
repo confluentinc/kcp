@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    hostname: prometheus
+    container_name: kcp-test-prometheus
+    ports:
+      - "9190:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--storage.tsdb.retention.time=60d'
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - kcp-test-network
+
+  prometheus-seeder:
+    image: prom/prometheus:v2.51.0
+    container_name: kcp-test-prometheus-seeder
+    depends_on:
+      - prometheus
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Prometheus to be ready..."
+        for i in $$(seq 1 30); do
+          if wget -q -O /dev/null http://prometheus:9090/-/ready 2>/dev/null; then
+            echo "Prometheus is ready"
+            break
+          fi
+          sleep 1
+        done
+
+        echo "Seeding Prometheus with mock Kafka metrics..."
+        /bin/sh /scripts/seed-prometheus-data.sh
+        echo "Seeding complete"
+    volumes:
+      - ./scripts/seed-prometheus-data.sh:/scripts/seed-prometheus-data.sh:ro
+    networks:
+      - kcp-test-network
+
+networks:
+  kcp-test-network:
+    driver: bridge

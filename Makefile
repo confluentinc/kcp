@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-up-jmx test-env-up-jmx-auth test-env-up-jmx-tls test-env-down test-integration-osk test-all-envs test-certs-generate
+.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-up-jmx test-env-up-jmx-auth test-env-up-jmx-tls test-env-up-prometheus test-env-up-prometheus-auth test-env-up-prometheus-tls test-env-down test-integration-osk test-all-envs test-certs-generate
 
 # Build the frontend
 build-frontend:
@@ -193,6 +193,30 @@ test-env-up-jmx-tls: test-certs-generate
 	@echo "  Kafka:   localhost:9098"
 	@echo "  Jolokia: https://localhost:8780/jolokia (user: monitorUser, pass: monitorPass)"
 
+test-env-up-prometheus:
+	@echo "Starting Prometheus test environment (unauthenticated)..."
+	docker-compose -f test/docker/docker-compose-prometheus.yml up -d
+	@echo "Waiting for Prometheus seeder to complete..."
+	@docker wait kcp-test-prometheus-seeder >/dev/null 2>&1 || true
+	@echo "Prometheus environment is ready"
+	@echo "  Prometheus: http://localhost:9190"
+
+test-env-up-prometheus-auth:
+	@echo "Starting Prometheus test environment (basic auth)..."
+	docker-compose -f test/docker/docker-compose-prometheus-auth.yml up -d
+	@echo "Waiting for Prometheus seeder to complete..."
+	@docker wait kcp-test-prometheus-auth-seeder >/dev/null 2>&1 || true
+	@echo "Prometheus auth environment is ready"
+	@echo "  Prometheus: http://localhost:9191 (user: promuser, pass: prompass)"
+
+test-env-up-prometheus-tls: test-certs-generate
+	@echo "Starting Prometheus test environment (TLS + basic auth)..."
+	docker-compose -f test/docker/docker-compose-prometheus-tls.yml up -d
+	@echo "Waiting for Prometheus seeder to complete..."
+	@docker wait kcp-test-prometheus-tls-seeder >/dev/null 2>&1 || true
+	@echo "Prometheus TLS environment is ready"
+	@echo "  Prometheus: https://localhost:9192 (user: promuser, pass: prompass)"
+
 test-env-down:
 	@echo "Stopping all test environments..."
 	docker-compose -f test/docker/docker-compose-schema-registry.yml down -v 2>/dev/null || true
@@ -203,6 +227,9 @@ test-env-down:
 	docker-compose -f test/docker/docker-compose-jmx.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-jmx-auth.yml down -v 2>/dev/null || true
 	docker-compose -f test/docker/docker-compose-jmx-tls.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-prometheus.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-prometheus-auth.yml down -v 2>/dev/null || true
+	docker-compose -f test/docker/docker-compose-prometheus-tls.yml down -v 2>/dev/null || true
 
 test-integration-osk: test-env-up-plaintext
 	@echo "Running OSK integration tests (ZooKeeper mode)..."
