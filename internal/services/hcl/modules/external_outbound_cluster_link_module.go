@@ -161,27 +161,6 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 	}
 }
 
-func GetExternalOutboundClusterLinkingModuleVariableNames() map[string]string {
-	vars := GetExternalOutboundClusterLinkingVariables()
-	names := make(map[string]string)
-
-	for _, v := range vars {
-		names[v.Name] = v.Name
-	}
-
-	return names
-}
-
 func GetExternalOutboundClusterLinkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	extOutboundClusterLinkingVars := GetExternalOutboundClusterLinkingVariables()
-
-	for _, varDef := range extOutboundClusterLinkingVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetExternalOutboundClusterLinkingVariables(), request)
 }

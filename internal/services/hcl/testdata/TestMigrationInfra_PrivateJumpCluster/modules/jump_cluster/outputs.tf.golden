@@ -1,0 +1,6 @@
+output "jump_cluster_instances_private_dns" {
+  value       = values(aws_instance.jump_cluster)[*].private_dns
+  description = "Private DNS addresses of the jump cluster instances."
+  sensitive   = false
+}
+

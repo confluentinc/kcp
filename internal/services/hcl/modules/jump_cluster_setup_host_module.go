@@ -52,7 +52,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 			Name: "jump_cluster_instances_private_dns",
 			Definition: types.TerraformVariable{
 				Name:        "jump_cluster_instances_private_dns",
-				Description: "IDs of the subnets that the jump cluster broker instances are deployed to.",
+				Description: "Private DNS addresses of the jump cluster instances.",
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
@@ -79,27 +79,6 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 	}
 }
 
-func GetJumpClusterSetupHostVariableNames() map[string]string {
-	vars := GetJumpClusterSetupHostVariables()
-	names := make(map[string]string)
-
-	for _, v := range vars {
-		names[v.Name] = v.Name
-	}
-
-	return names
-}
-
 func GetJumpClusterSetupHostVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	jumpClusterSetupHostVars := GetJumpClusterSetupHostVariables()
-
-	for _, varDef := range jumpClusterSetupHostVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetJumpClusterSetupHostVariables(), request)
 }
