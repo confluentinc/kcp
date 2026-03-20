@@ -33,7 +33,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 	networkingVars := modules.GetNetworkingVariables()
 	for _, varDef := range networkingVars {
 		if varDef.Condition == nil || varDef.Condition(request) {
-			networkingModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+			SetVarRef(networkingModuleBody, varDef.Name, varDef.Name)
 		}
 	}
 	rootBody.AppendNewline()
@@ -56,9 +56,9 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
 			// Use FromModuleOutput to determine which module this comes from
-			setupHostModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput(varDef.FromModuleOutput, varDef.Name))
+			SetModuleRef(setupHostModuleBody, varDef.Name, varDef.FromModuleOutput, varDef.Name)
 		} else {
-			setupHostModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+			SetVarRef(setupHostModuleBody, varDef.Name, varDef.Name)
 		}
 	}
 	rootBody.AppendNewline()
@@ -84,9 +84,9 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrast
 
 		if varDef.FromModuleOutput != "" || varDef.ValueExtractor == nil {
 			// Use FromModuleOutput to determine which module this comes from
-			jumpClustersModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput(varDef.FromModuleOutput, varDef.Name))
+			SetModuleRef(jumpClustersModuleBody, varDef.Name, varDef.FromModuleOutput, varDef.Name)
 		} else {
-			jumpClustersModuleBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+			SetVarRef(jumpClustersModuleBody, varDef.Name, varDef.Name)
 		}
 	}
 	rootBody.AppendNewline()

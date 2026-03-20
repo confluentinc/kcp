@@ -130,7 +130,7 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 		if varDef.Condition != nil && !varDef.Condition(request) {
 			continue
 		}
-		confluentCloudBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+		SetVarRef(confluentCloudBody, varDef.Name, varDef.Name)
 	}
 
 	if request.NeedsPrivateLink {
@@ -153,7 +153,7 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 				// Variables without ValueExtractor come from module outputs
 				privateLinkBody.SetAttributeRaw(varDef.Name, utils.TokensForModuleOutput("confluent_cloud", varDef.Name))
 			} else {
-				privateLinkBody.SetAttributeRaw(varDef.Name, utils.TokensForVarReference(varDef.Name))
+				SetVarRef(privateLinkBody, varDef.Name, varDef.Name)
 			}
 		}
 		rootBody.AppendNewline()

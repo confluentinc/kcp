@@ -232,17 +232,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 }
 
 func GetJumpClusterModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	jumpClusterVars := GetJumpClusterVariables()
-
-	for _, varDef := range jumpClusterVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetJumpClusterVariables(), request)
 }
 
 var JumpClusterModuleOutputs = []ModuleOutputDefinition{
