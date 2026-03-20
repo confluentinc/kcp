@@ -7,6 +7,7 @@ import { ClusterTopics } from '../clusters/ClusterTopics'
 import { ClusterACLs } from '../clusters/ClusterACLs'
 import { ClusterConnectors } from '../clusters/ClusterConnectors'
 import { ClusterClients } from '../clusters/ClusterClients'
+import { ClusterMetrics } from '../clusters/ClusterMetrics'
 import { Tabs } from '@/components/common/Tabs'
 
 export const OSKClusterReport = () => {
@@ -33,6 +34,7 @@ export const OSKClusterReport = () => {
   // Build tabs array
   const tabs = [
     { id: 'cluster', label: 'Cluster' },
+    { id: 'metrics', label: 'Metrics' },
     { id: 'topics', label: 'Topics' },
     { id: 'acls', label: 'ACLs' },
     { id: 'connectors', label: 'Connectors' },
@@ -50,6 +52,15 @@ export const OSKClusterReport = () => {
 
       <div className="mt-6">
         {activeTab === 'cluster' && <OSKClusterOverview cluster={cluster} />}
+
+        {activeTab === 'metrics' && selectedOSKClusterId && (
+          <ClusterMetrics
+            cluster={{ name: cluster.id, metrics: cluster.metrics }}
+            sourceType="osk"
+            clusterId={selectedOSKClusterId}
+            isActive={activeTab === 'metrics'}
+          />
+        )}
 
         {activeTab === 'topics' && (
           <ClusterTopics kafkaAdminInfo={cluster.kafka_admin_client_information} />

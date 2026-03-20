@@ -46,7 +46,7 @@ services:
       - -c
       - |
         cub kafka-ready -b kafka-jmx-tls:29092 1 60
-        kafka-producer-perf-test --topic test-topic-1 --throughput 10 --num-records 999999999 --record-size 100 --producer-props bootstrap.servers=kafka-jmx-tls:29092
+        kafka-producer-perf-test --topic test-topic-1 --throughput 100 --num-records 999999999 --record-size 1000 --producer-props bootstrap.servers=kafka-jmx-tls:29092
     networks:
       - kcp-test-network
 

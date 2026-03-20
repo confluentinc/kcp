@@ -185,6 +185,22 @@ const metrics = {
       config
     )
   },
+
+  /**
+   * Get JMX metrics for an OSK cluster
+   */
+  async getOSKMetrics(
+    clusterId: string,
+    sessionId: string,
+    config?: RequestConfig
+  ): Promise<MetricsApiResponse> {
+    const queryParams: Record<string, string> = { sessionId }
+    return get<MetricsApiResponse>(
+      `${API_ENDPOINTS.METRICS}/osk/${encodeURIComponent(clusterId)}`,
+      queryParams,
+      config
+    )
+  },
 }
 
 /**

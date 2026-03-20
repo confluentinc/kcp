@@ -33,7 +33,7 @@ type OSKDiscoveredCluster struct {
 	ID                          string                      `json:"id"`
 	BootstrapServers            []string                    `json:"bootstrap_servers"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
-	JMXMetrics                  *JMXMetrics                 `json:"jmx_metrics,omitempty"`
+	ClusterMetrics              *ProcessedClusterMetrics    `json:"metrics,omitempty"`
 	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
 	Metadata                    OSKClusterMetadata          `json:"metadata"`
 }
@@ -867,7 +867,7 @@ type ProcessedOSKCluster struct {
 	ID                          string                      `json:"id"`
 	BootstrapServers            []string                    `json:"bootstrap_servers"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
-	JMXMetrics                  *JMXMetrics                 `json:"jmx_metrics,omitempty"`
+	ClusterMetrics              *ProcessedClusterMetrics    `json:"metrics,omitempty"`
 	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
 	Metadata                    OSKClusterMetadata          `json:"metadata"`
 }

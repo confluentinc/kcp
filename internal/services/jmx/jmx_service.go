@@ -2,6 +2,7 @@ package jmx
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -10,52 +11,53 @@ import (
 )
 
 // counterMBeanConfig defines a rate MBean whose Count field is a monotonic counter.
-// Actual rates are computed from deltas between consecutive counter readings.
 type counterMBeanConfig struct {
-	Name string // Metric name matching CloudWatch (e.g., "BytesInPerSec")
-	MBean string // MBean path
+	Name  string
+	MBean string
 }
 
 // gaugeMBeanConfig defines a MBean that returns a point-in-time gauge value.
 type gaugeMBeanConfig struct {
-	Name     string // Metric name matching CloudWatch
-	MBean    string // MBean path
-	ValueKey string // Attribute key to read (e.g., "Value")
+	Name     string
+	MBean    string
+	ValueKey string
 }
 
 // aggregateMBeanConfig defines a MBean that requires wildcard pattern + aggregation.
 type aggregateMBeanConfig struct {
-	Name      string // Metric name matching CloudWatch
-	MBean     string // MBean wildcard pattern
-	Attribute string // Attribute to read and sum
+	Name      string
+	MBean     string
+	Attribute string
 }
 
-// counterMBeans are rate metrics where we read the Count (monotonic counter)
-// and compute actual rates from deltas between consecutive readings.
 var counterMBeans = []counterMBeanConfig{
 	{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
 	{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
 	{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
 }
 
-// gaugeMBeans are point-in-time values read directly.
 var gaugeMBeans = []gaugeMBeanConfig{
 	{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
 }
 
-// aggregateMBeans are per-partition or per-listener MBeans
-// that need wildcard queries with summing across all matches.
 var aggregateMBeans = []aggregateMBeanConfig{
 	{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
 	{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
 }
 
 // rawSample holds raw counter and gauge readings from a single poll.
-// This is an internal type — not stored in state.
 type rawSample struct {
 	timestamp time.Time
-	counters  map[string]float64 // monotonic counter values (e.g., BytesInPerSec Count)
-	gauges    map[string]float64 // point-in-time gauge values (e.g., PartitionCount)
+	counters  map[string]float64
+	gauges    map[string]float64
+}
+
+// jmxSnapshot holds computed metrics from a single poll interval.
+// Internal to the jmx package — not serialized to state.
+type jmxSnapshot struct {
+	start   time.Time
+	end     time.Time
+	metrics map[string]float64
 }
 
 // JMXService collects JMX metrics from Kafka brokers via Jolokia
@@ -80,7 +82,6 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		gauges:    make(map[string]float64),
 	}
 
-	// Read counter MBeans (monotonic Count field)
 	for _, mb := range counterMBeans {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(mb.MBean)
@@ -96,7 +97,6 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		}
 	}
 
-	// Read gauge MBeans (point-in-time values)
 	for _, mb := range gaugeMBeans {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(mb.MBean)
@@ -112,7 +112,6 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		}
 	}
 
-	// Read aggregate MBeans (wildcard patterns summed across matches)
 	for _, amb := range aggregateMBeans {
 		var total float64
 		for _, brokerClient := range s.clients {
@@ -129,71 +128,46 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 	return sample, nil
 }
 
-// computeSnapshot computes a metrics snapshot from two consecutive raw samples.
-// Counter deltas are divided by elapsed time to produce actual rates.
-// Gauge values are taken from the current (second) sample.
-func computeSnapshot(prev, curr *rawSample) *types.JMXMetricSnapshot {
+// computeSnapshot computes metrics from two consecutive raw samples.
+func computeSnapshot(prev, curr *rawSample) *jmxSnapshot {
 	elapsed := curr.timestamp.Sub(prev.timestamp).Seconds()
-	snapshot := &types.JMXMetricSnapshot{
-		Timestamp: curr.timestamp,
-		Metrics:   make(map[string]float64),
+	snapshot := &jmxSnapshot{
+		start:   prev.timestamp,
+		end:     curr.timestamp,
+		metrics: make(map[string]float64),
 	}
 
-	// Compute actual rates from counter deltas
 	for name, currCount := range curr.counters {
 		if prevCount, ok := prev.counters[name]; ok && elapsed > 0 {
-			snapshot.Metrics[name] = (currCount - prevCount) / elapsed
+			snapshot.metrics[name] = (currCount - prevCount) / elapsed
 		}
 	}
 
-	// Copy gauge values directly
 	for name, value := range curr.gauges {
-		snapshot.Metrics[name] = value
+		snapshot.metrics[name] = value
 	}
 
-	// Derive GlobalPartitionCount
-	if pc, ok := snapshot.Metrics["PartitionCount"]; ok {
-		snapshot.Metrics["GlobalPartitionCount"] = pc
+	if pc, ok := snapshot.metrics["PartitionCount"]; ok {
+		snapshot.metrics["GlobalPartitionCount"] = pc
 	}
 
-	// Convert TotalLocalStorageUsage from bytes to GB
-	if bytes, ok := snapshot.Metrics["TotalLocalStorageUsage"]; ok {
-		snapshot.Metrics["TotalLocalStorageUsage"] = bytes / (1024 * 1024 * 1024)
+	if bytes, ok := snapshot.metrics["TotalLocalStorageUsage"]; ok {
+		snapshot.metrics["TotalLocalStorageUsage"] = bytes / (1024 * 1024 * 1024)
 	}
 
 	return snapshot
 }
 
-// CollectSnapshot collects a single snapshot by taking two raw samples
-// separated by a short interval and computing rates from counter deltas.
-func (s *JMXService) CollectSnapshot(ctx context.Context) (*types.JMXMetricSnapshot, error) {
-	first, err := s.collectRawSample(ctx)
-	if err != nil {
-		return nil, err
+// CollectOverDuration collects JMX metrics over a specified duration at regular intervals
+// and returns them in ProcessedClusterMetrics format for direct use by the UI.
+func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval time.Duration) (*types.ProcessedClusterMetrics, error) {
+	if duration <= interval {
+		return nil, fmt.Errorf("scan duration (%s) must be greater than poll interval (%s)", duration, interval)
 	}
 
-	time.Sleep(1 * time.Second)
-
-	second, err := s.collectRawSample(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return computeSnapshot(first, second), nil
-}
-
-// CollectOverDuration collects JMX metrics over a specified duration at regular intervals.
-// Takes raw counter readings at each interval and computes actual rates from
-// consecutive counter deltas — not EWMA averages.
-func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval time.Duration) (*types.JMXMetrics, error) {
 	startTime := time.Now()
-	metrics := &types.JMXMetrics{
-		ScanDuration:  duration.String(),
-		ScanStartTime: startTime,
-		Snapshots:     make([]types.JMXMetricSnapshot, 0),
-	}
+	var snapshots []jmxSnapshot
 
-	// Take initial raw sample (baseline for first rate computation)
 	prevSample, err := s.collectRawSample(ctx)
 	if err != nil {
 		return nil, err
@@ -208,10 +182,10 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 	for {
 		select {
 		case <-ctx.Done():
-			return metrics, ctx.Err()
+			return toProcessedClusterMetrics(snapshots, startTime, duration, interval), ctx.Err()
 		case <-ticker.C:
 			if time.Now().After(deadline) {
-				return metrics, nil
+				return toProcessedClusterMetrics(snapshots, startTime, duration, interval), nil
 			}
 
 			currSample, err := s.collectRawSample(ctx)
@@ -221,17 +195,78 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 			}
 
 			snapshot := computeSnapshot(prevSample, currSample)
-			metrics.Snapshots = append(metrics.Snapshots, *snapshot)
+			snapshots = append(snapshots, *snapshot)
 			prevSample = currSample
 
 			slog.Info("JMX snapshot collected",
-				"count", len(metrics.Snapshots),
+				"count", len(snapshots),
 				"elapsed", time.Since(startTime).Round(time.Second))
 		}
 	}
 }
 
-// toFloat64 converts an interface{} value to float64.
+// toProcessedClusterMetrics converts internal JMX snapshots into the
+// ProcessedClusterMetrics format used by the UI, matching CloudWatch output.
+func toProcessedClusterMetrics(snapshots []jmxSnapshot, scanStart time.Time, scanDuration, pollInterval time.Duration) *types.ProcessedClusterMetrics {
+	var metrics []types.ProcessedMetric
+	for _, snap := range snapshots {
+		start := snap.start.Format(time.RFC3339)
+		end := snap.end.Format(time.RFC3339)
+		for label, value := range snap.metrics {
+			v := value
+			metrics = append(metrics, types.ProcessedMetric{
+				Start: start,
+				End:   end,
+				Label: label,
+				Value: &v,
+			})
+		}
+	}
+
+	return &types.ProcessedClusterMetrics{
+		Metadata: types.MetricMetadata{
+			StartDate: scanStart,
+			EndDate:   scanStart.Add(scanDuration),
+			Period:    int32(pollInterval.Seconds()),
+		},
+		Metrics:    metrics,
+		Aggregates: calculateAggregates(snapshots),
+	}
+}
+
+func calculateAggregates(snapshots []jmxSnapshot) map[string]types.MetricAggregate {
+	valuesByLabel := make(map[string][]float64)
+	for _, snap := range snapshots {
+		for label, value := range snap.metrics {
+			valuesByLabel[label] = append(valuesByLabel[label], value)
+		}
+	}
+
+	aggregates := make(map[string]types.MetricAggregate)
+	for label, values := range valuesByLabel {
+		if len(values) == 0 {
+			continue
+		}
+		min, max, sum := values[0], values[0], 0.0
+		for _, v := range values {
+			if v < min {
+				min = v
+			}
+			if v > max {
+				max = v
+			}
+			sum += v
+		}
+		avg := sum / float64(len(values))
+		aggregates[label] = types.MetricAggregate{
+			Average: &avg,
+			Maximum: &max,
+			Minimum: &min,
+		}
+	}
+	return aggregates
+}
+
 func toFloat64(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:

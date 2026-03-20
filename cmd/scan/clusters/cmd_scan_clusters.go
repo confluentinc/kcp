@@ -101,6 +101,11 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 		if _, err := time.ParseDuration(jmxPollInterval); err != nil {
 			return fmt.Errorf("invalid --jmx-poll-interval '%s': %w", jmxPollInterval, err)
 		}
+		duration, _ := time.ParseDuration(jmxScanDuration)
+		interval, _ := time.ParseDuration(jmxPollInterval)
+		if duration <= interval {
+			return fmt.Errorf("--jmx-scan-duration (%s) must be greater than --jmx-poll-interval (%s) to collect at least one data point", jmxScanDuration, jmxPollInterval)
+		}
 	}
 	if !jmxEnabled && cmd.Flags().Changed("jmx-scan-duration") {
 		return fmt.Errorf("--jmx-scan-duration requires --jmx to be set")
@@ -276,10 +281,10 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 		}
 
 		if existingCluster, exists := existingClusters[newCluster.ID]; exists {
-			// Merge with existing cluster (preserve discovered clients, JMX metrics, etc.)
+			// Merge with existing cluster (preserve discovered clients, metrics, etc.)
 			newCluster.DiscoveredClients = existingCluster.DiscoveredClients
-			if newCluster.JMXMetrics == nil {
-				newCluster.JMXMetrics = existingCluster.JMXMetrics
+			if newCluster.ClusterMetrics == nil {
+				newCluster.ClusterMetrics = existingCluster.ClusterMetrics
 			}
 
 			// Replace in-place
@@ -332,9 +337,9 @@ func collectJMXMetrics(ctx context.Context, state *types.State, credentialsFileP
 			slog.Warn("cluster not found in state for JMX metrics", "cluster", clusterCreds.ID, "error", err)
 			continue
 		}
-		oskCluster.JMXMetrics = metrics
+		oskCluster.ClusterMetrics = metrics
 
-		fmt.Printf("   ✅ Collected %d snapshots for cluster '%s'\n", len(metrics.Snapshots), clusterCreds.ID)
+		fmt.Printf("   ✅ Collected %d data points for cluster '%s'\n", len(metrics.Metrics), clusterCreds.ID)
 	}
 
 	return nil

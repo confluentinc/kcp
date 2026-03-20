@@ -14,11 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockJolokiaServer creates a test server that simulates Jolokia responses.
-// Counter values increment on each call to simulate real monotonic counters.
 func mockJolokiaServer(t *testing.T) *httptest.Server {
 	t.Helper()
-
 	var callCount atomic.Int64
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,166 +24,137 @@ func mockJolokiaServer(t *testing.T) *httptest.Server {
 
 		switch {
 		case strings.Contains(r.URL.Path, "BytesInPerSec"):
-			// Counter increments by 1000 per call
-			response = map[string]any{
-				"status": 200,
-				"value": map[string]any{
-					"Count": float64(n * 1000),
-				},
-			}
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 1000)}}
 		case strings.Contains(r.URL.Path, "BytesOutPerSec"):
-			// Counter increments by 500 per call
-			response = map[string]any{
-				"status": 200,
-				"value": map[string]any{
-					"Count": float64(n * 500),
-				},
-			}
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 500)}}
 		case strings.Contains(r.URL.Path, "MessagesInPerSec"):
-			// Counter increments by 10 per call
-			response = map[string]any{
-				"status": 200,
-				"value": map[string]any{
-					"Count": float64(n * 10),
-				},
-			}
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 10)}}
 		case strings.Contains(r.URL.Path, "PartitionCount"):
-			response = map[string]any{
-				"status": 200,
-				"value": map[string]any{
-					"Value": 50.0,
-				},
-			}
+			response = map[string]any{"status": 200, "value": map[string]any{"Value": 50.0}}
 		case strings.Contains(r.URL.Path, "socket-server-metrics"):
-			response = map[string]any{
-				"status": 200,
-				"value": map[string]any{
-					"kafka.server:listener=PLAINTEXT,networkProcessor=0,type=socket-server-metrics": map[string]any{
-						"connection-count": 2.0,
-					},
-					"kafka.server:listener=PLAINTEXT,networkProcessor=1,type=socket-server-metrics": map[string]any{
-						"connection-count": 1.0,
-					},
-				},
-			}
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"l1": map[string]any{"connection-count": 2.0},
+				"l2": map[string]any{"connection-count": 1.0},
+			}}
 		case strings.Contains(r.URL.Path, "kafka.log"):
-			response = map[string]any{
-				"status": 200,
-				"value": map[string]any{
-					"kafka.log:name=Size,partition=0,topic=test,type=Log": map[string]any{
-						"Value": 536870912.0, // 0.5 GB
-					},
-					"kafka.log:name=Size,partition=1,topic=test,type=Log": map[string]any{
-						"Value": 536870912.0, // 0.5 GB
-					},
-				},
-			}
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"p0": map[string]any{"Value": 536870912.0},
+				"p1": map[string]any{"Value": 536870912.0},
+			}}
 		default:
-			w.WriteHeader(http.StatusNotFound)
-			response = map[string]any{
-				"status": 404,
-				"error":  "MBean not found",
-			}
+			response = map[string]any{"status": 404, "error": "MBean not found"}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		err := json.NewEncoder(w).Encode(response)
-		require.NoError(t, err)
+		json.NewEncoder(w).Encode(response)
 	}))
 }
 
 func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 	prev := &rawSample{
 		timestamp: time.Now(),
-		counters: map[string]float64{
-			"BytesInPerSec":    10000,
-			"BytesOutPerSec":   5000,
-			"MessagesInPerSec": 100,
-		},
-		gauges: map[string]float64{
-			"PartitionCount":       50,
-			"ClientConnectionCount": 3,
-			"TotalLocalStorageUsage": 1073741824, // 1 GB in bytes
-		},
+		counters:  map[string]float64{"BytesInPerSec": 10000, "BytesOutPerSec": 5000, "MessagesInPerSec": 100},
+		gauges:    map[string]float64{"PartitionCount": 50, "ClientConnectionCount": 3, "TotalLocalStorageUsage": 1073741824},
 	}
-
 	curr := &rawSample{
 		timestamp: prev.timestamp.Add(10 * time.Second),
-		counters: map[string]float64{
-			"BytesInPerSec":    20000, // +10000 in 10s = 1000/s
-			"BytesOutPerSec":   10000, // +5000 in 10s = 500/s
-			"MessagesInPerSec": 200,   // +100 in 10s = 10/s
-		},
-		gauges: map[string]float64{
-			"PartitionCount":       50,
-			"ClientConnectionCount": 5,
-			"TotalLocalStorageUsage": 2147483648, // 2 GB in bytes
-		},
+		counters:  map[string]float64{"BytesInPerSec": 20000, "BytesOutPerSec": 10000, "MessagesInPerSec": 200},
+		gauges:    map[string]float64{"PartitionCount": 50, "ClientConnectionCount": 5, "TotalLocalStorageUsage": 2147483648},
 	}
 
 	snapshot := computeSnapshot(prev, curr)
 
-	// Rates computed from counter deltas
-	assert.Equal(t, 1000.0, snapshot.Metrics["BytesInPerSec"])
-	assert.Equal(t, 500.0, snapshot.Metrics["BytesOutPerSec"])
-	assert.Equal(t, 10.0, snapshot.Metrics["MessagesInPerSec"])
-
-	// Gauges taken from current sample
-	assert.Equal(t, 50.0, snapshot.Metrics["PartitionCount"])
-	assert.Equal(t, 50.0, snapshot.Metrics["GlobalPartitionCount"])
-	assert.Equal(t, 5.0, snapshot.Metrics["ClientConnectionCount"])
-	assert.Equal(t, 2.0, snapshot.Metrics["TotalLocalStorageUsage"]) // 2 GB
-
-	assert.Len(t, snapshot.Metrics, 7)
+	assert.Equal(t, 1000.0, snapshot.metrics["BytesInPerSec"])
+	assert.Equal(t, 500.0, snapshot.metrics["BytesOutPerSec"])
+	assert.Equal(t, 10.0, snapshot.metrics["MessagesInPerSec"])
+	assert.Equal(t, 50.0, snapshot.metrics["PartitionCount"])
+	assert.Equal(t, 50.0, snapshot.metrics["GlobalPartitionCount"])
+	assert.Equal(t, 5.0, snapshot.metrics["ClientConnectionCount"])
+	assert.Equal(t, 2.0, snapshot.metrics["TotalLocalStorageUsage"])
+	assert.Equal(t, prev.timestamp, snapshot.start)
+	assert.Equal(t, curr.timestamp, snapshot.end)
 }
 
-func TestJMXService_CollectSnapshot(t *testing.T) {
+func TestToProcessedClusterMetrics(t *testing.T) {
+	now := time.Now()
+	snapshots := []jmxSnapshot{
+		{
+			start:   now,
+			end:     now.Add(1 * time.Second),
+			metrics: map[string]float64{"BytesInPerSec": 1000, "PartitionCount": 7},
+		},
+		{
+			start:   now.Add(1 * time.Second),
+			end:     now.Add(2 * time.Second),
+			metrics: map[string]float64{"BytesInPerSec": 2000, "PartitionCount": 7},
+		},
+		{
+			start:   now.Add(2 * time.Second),
+			end:     now.Add(3 * time.Second),
+			metrics: map[string]float64{"BytesInPerSec": 1500, "PartitionCount": 7},
+		},
+	}
+
+	result := toProcessedClusterMetrics(snapshots, now, 3*time.Second, 1*time.Second)
+
+	// 3 snapshots × 2 metrics = 6 ProcessedMetric rows
+	assert.Len(t, result.Metrics, 6)
+
+	// Check aggregates
+	bytesAgg := result.Aggregates["BytesInPerSec"]
+	assert.NotNil(t, bytesAgg.Minimum)
+	assert.NotNil(t, bytesAgg.Maximum)
+	assert.NotNil(t, bytesAgg.Average)
+	assert.Equal(t, 1000.0, *bytesAgg.Minimum)
+	assert.Equal(t, 2000.0, *bytesAgg.Maximum)
+	assert.Equal(t, 1500.0, *bytesAgg.Average)
+
+	partAgg := result.Aggregates["PartitionCount"]
+	assert.Equal(t, 7.0, *partAgg.Minimum)
+	assert.Equal(t, 7.0, *partAgg.Maximum)
+	assert.Equal(t, 7.0, *partAgg.Average)
+
+	// Check metadata
+	assert.Equal(t, int32(1), result.Metadata.Period)
+	assert.Equal(t, now, result.Metadata.StartDate)
+}
+
+func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
 	svc := NewJMXService([]string{server.URL})
-	snapshot, err := svc.CollectSnapshot(context.Background())
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
-	require.NotNil(t, snapshot)
+	require.NotNil(t, result)
 
-	// Rate metrics should be non-zero (computed from counter deltas)
-	assert.Greater(t, snapshot.Metrics["BytesInPerSec"], 0.0)
-	assert.Greater(t, snapshot.Metrics["BytesOutPerSec"], 0.0)
-	assert.Greater(t, snapshot.Metrics["MessagesInPerSec"], 0.0)
+	// Should have ProcessedMetric rows
+	assert.NotEmpty(t, result.Metrics)
 
-	// Gauge metrics
-	assert.Equal(t, 50.0, snapshot.Metrics["PartitionCount"])
-	assert.Equal(t, 50.0, snapshot.Metrics["GlobalPartitionCount"])
-	assert.Equal(t, 3.0, snapshot.Metrics["ClientConnectionCount"])
+	// Should have aggregates for rate and gauge metrics
+	assert.NotEmpty(t, result.Aggregates)
+	assert.Contains(t, result.Aggregates, "BytesInPerSec")
+	assert.Contains(t, result.Aggregates, "PartitionCount")
 
-	assert.Len(t, snapshot.Metrics, 7)
+	// Each ProcessedMetric should have start, end, label, value
+	for _, m := range result.Metrics {
+		assert.NotEmpty(t, m.Start)
+		assert.NotEmpty(t, m.End)
+		assert.NotEmpty(t, m.Label)
+		assert.NotNil(t, m.Value)
+	}
+
+	// Metadata should be populated
+	assert.Equal(t, int32(1), result.Metadata.Period)
+	assert.False(t, result.Metadata.StartDate.IsZero())
+	assert.False(t, result.Metadata.EndDate.IsZero())
 }
 
-func TestJMXService_CollectOverDuration(t *testing.T) {
-	server := mockJolokiaServer(t)
-	defer server.Close()
+func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
+	svc := NewJMXService([]string{"http://localhost:1"})
+	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
 
-	svc := NewJMXService([]string{server.URL})
-
-	ctx := context.Background()
-	metrics, err := svc.CollectOverDuration(ctx, 3*time.Second, 1*time.Second)
-
-	require.NoError(t, err)
-	require.NotNil(t, metrics)
-
-	assert.Equal(t, "3s", metrics.ScanDuration)
-	assert.GreaterOrEqual(t, len(metrics.Snapshots), 2, "Expected at least 2 rate snapshots")
-
-	// Each snapshot should have computed rates
-	for i, snapshot := range metrics.Snapshots {
-		assert.NotEmpty(t, snapshot.Metrics, "Snapshot %d should have metrics", i)
-		assert.Greater(t, snapshot.Metrics["BytesInPerSec"], 0.0,
-			"Snapshot %d BytesInPerSec should be positive", i)
-	}
-
-	// Snapshots should be in chronological order
-	for i := 1; i < len(metrics.Snapshots); i++ {
-		assert.True(t, metrics.Snapshots[i].Timestamp.After(metrics.Snapshots[i-1].Timestamp))
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be greater than")
 }

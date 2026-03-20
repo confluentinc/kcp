@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Store implementation plans outside the repository. Use `~/claude-plans/kcp/` as the default location. Never write plans into `docs/plans/` or anywhere inside the repo — they are local working artefacts and must not be committed to GitHub.
 
+## Before Pushing
+
+Before committing or pushing any changes, always:
+
+1. **Show test output** — run tests and show the user the results, don't just say "tests pass"
+2. **Show generated artifacts** — if code generates state files, Terraform, or other output, show the content
+3. **Suggest visual verification** — for UI changes, offer to spin up `kcp ui --state-file` with relevant test data so the user can inspect the frontend in a browser
+4. **Wait for user approval** — never commit or push without explicit confirmation
+
 ## Project Overview
 
 KCP (Kafka Copy) is a CLI tool for planning and executing Kafka migrations from **AWS MSK and Open Source Kafka (OSK)** to Confluent Cloud. It provides commands for discovering resources, generating reports, creating migration assets (Terraform), and managing the migration workflow.

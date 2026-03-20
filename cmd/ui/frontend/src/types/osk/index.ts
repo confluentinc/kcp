@@ -34,6 +34,20 @@ export interface ProcessedOSKCluster {
   id: string
   bootstrap_servers: string[]
   kafka_admin_client_information: KafkaAdminInfo
+  metrics?: {
+    metadata?: {
+      start_date?: string
+      end_date?: string
+      period?: number
+    }
+    results?: Array<{
+      start: string
+      end: string
+      label: string
+      value: number | null
+    }>
+    aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
+  }
   discovered_clients: DiscoveredClient[]
   metadata: OSKClusterMetadata
 }

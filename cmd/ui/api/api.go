@@ -129,6 +129,7 @@ func (ui *UI) Run() error {
 	})
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
+	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -200,6 +201,41 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
+func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
+	clusterId := c.Param("clusterId")
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": err.Error(),
+		})
+	}
+
+	if state.OSKSources == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error": "No OSK sources in state",
+		})
+	}
+
+	cluster, err := state.GetOSKClusterByID(clusterId)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found",
+			"message": err.Error(),
+		})
+	}
+
+	if cluster.ClusterMetrics == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "No metrics available",
+			"message": "Run 'kcp scan clusters --source-type osk --jmx' to collect JMX metrics",
+		})
+	}
+
+	return c.JSON(http.StatusOK, cluster.ClusterMetrics)
 }
 
 func (ui *UI) handleGetCosts(c echo.Context) error {
