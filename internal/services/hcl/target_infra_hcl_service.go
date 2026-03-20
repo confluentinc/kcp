@@ -402,16 +402,24 @@ func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(reques
 	))
 	rootBody.AppendNewline()
 
-	// Route53 zone using the network's DNS domain (passed via module variable)
-	route53ZoneIdRef := ti.appendRoute53Zone(rootBody, request, networkDnsDomainVarRef)
+	// Route53: when using an existing zone, both the zone and its records already exist.
+	// Only generate the zone and record resources when creating from scratch.
+	if !request.UseExistingRoute53Zone {
+		rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
+			ti.ResourceNames.Route53Zone,
+			modules.VarVpcID,
+			networkDnsDomainVarRef,
+		))
+		rootBody.AppendNewline()
 
-	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
-		ti.ResourceNames.Route53Record,
-		route53ZoneIdRef,
-		"*",
-		fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
-	))
-	rootBody.AppendNewline()
+		rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
+			ti.ResourceNames.Route53Record,
+			fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone),
+			"*",
+			fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
+		))
+		rootBody.AppendNewline()
+	}
 
 	return string(f.Bytes())
 }
@@ -460,40 +468,26 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 	))
 	rootBody.AppendNewline()
 
-	dnsRef := fmt.Sprintf("confluent_private_link_attachment.%s.dns_domain", ti.ResourceNames.PrivateLinkAttachment)
-	route53ZoneIdRef := ti.appendRoute53Zone(rootBody, request, dnsRef)
-
-	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
-		ti.ResourceNames.Route53Record,
-		route53ZoneIdRef,
-		"*",
-		fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
-	))
-	rootBody.AppendNewline()
-
-	return string(f.Bytes())
-}
-
-// appendRoute53Zone appends either a data source (when an existing zone ID is provided)
-// or a resource for the Route53 zone, and returns the reference to its zone_id attribute.
-func (ti *TargetInfraHCLService) appendRoute53Zone(rootBody *hclwrite.Body, request types.TargetClusterWizardRequest, dnsDomainRef string) string {
-	if request.UseExistingRoute53Zone {
-		rootBody.AppendBlock(aws.GenerateRoute53ZoneDataSource(
+	// Route53: when using an existing zone, both the zone and its records already exist.
+	// Only generate the zone and record resources when creating from scratch.
+	if !request.UseExistingRoute53Zone {
+		rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
 			ti.ResourceNames.Route53Zone,
 			modules.VarVpcID,
-			dnsDomainRef,
+			fmt.Sprintf("confluent_private_link_attachment.%s.dns_domain", ti.ResourceNames.PrivateLinkAttachment),
 		))
 		rootBody.AppendNewline()
-		return fmt.Sprintf("data.aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone)
+
+		rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
+			ti.ResourceNames.Route53Record,
+			fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone),
+			"*",
+			fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
+		))
+		rootBody.AppendNewline()
 	}
 
-	rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
-		ti.ResourceNames.Route53Zone,
-		modules.VarVpcID,
-		dnsDomainRef,
-	))
-	rootBody.AppendNewline()
-	return fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone)
+	return string(f.Bytes())
 }
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleVariablesTf(request types.TargetClusterWizardRequest) string {
