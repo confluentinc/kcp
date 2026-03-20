@@ -1,0 +1,26 @@
+variable "jump_cluster_setup_host_subnet_id" {
+  type        = string
+  description = "ID of the subnet that the jump cluster setup host (Ansible) instance is deployed to."
+}
+
+variable "jump_cluster_security_group_ids" {
+  type        = string
+  description = "IDs of the security groups for the jump cluster (including setup host) instances."
+}
+
+variable "jump_cluster_ssh_key_pair_name" {
+  type        = string
+  description = "Name of the AWS key pair for SSH access to the jump cluster (including setup host) instances."
+}
+
+variable "jump_cluster_instances_private_dns" {
+  type        = list(string)
+  description = "Private DNS addresses of the jump cluster instances."
+}
+
+variable "private_key" {
+  type        = string
+  description = "Private SSH key for accessing the jump cluster (including setup host) instances."
+  sensitive   = true
+}
+
