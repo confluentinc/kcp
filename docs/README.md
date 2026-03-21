@@ -1335,7 +1335,7 @@ One of the following combinations is required - `--state-file` + `--cluster-arn`
 
 - `--needs-private-link`: Whether the infrastructure needs private link setup
 - `--subnet-cidrs`: Subnet CIDRs for private link (required when `--needs-private-link=true`)
-- `--use-existing-route53-zone`: Use an existing Route53 Private Hosted Zone instead of creating a new one (default: false). See [Route53 DNS for Enterprise Private Link](#route53-dns-for-enterprise-private-link) below.
+- `--use-existing-route53-zone`: Use an existing Route53 Private Hosted Zone instead of creating a new one (default: false, only applies to dedicated clusters).
 
 **Optional Arguments**:
 
@@ -1362,7 +1362,7 @@ The command creates a directory (default: `target-infra`) containing Terraform c
 
 ##### Route53 DNS for Enterprise Private Link
 
-For enterprise clusters, Route53 DNS records are prefixed with the cluster ID (e.g., `lkc-w9o1w5`) rather than using a wildcard, since all enterprise clusters in a region share the same Route53 zone. Use `--use-existing-route53-zone` when the zone already exists from a previous cluster deployment.
+Enterprise clusters use the **ingress Private Link Gateway** pattern, which provides a unique DNS domain per access point. Each cluster gets its own Route53 Private Hosted Zone automatically — no shared zones, no conflicts when deploying multiple enterprise clusters in the same VPC.
 
 ---
 
