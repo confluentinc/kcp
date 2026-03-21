@@ -1,12 +1,11 @@
-resource "confluent_private_link_attachment" "private_link_attachment" {
-  display_name = "kcp_private_link_attachment"
-  cloud        = "AWS"
-  region       = var.aws_region
-
+resource "confluent_gateway" "ingress_gateway" {
+  display_name = "kcp_ingress_gateway"
   environment {
     id = var.environment_id
   }
-
+  aws_ingress_private_link_gateway {
+    region = var.aws_region
+  }
 }
 
 data "aws_availability_zones" "available" {
@@ -58,33 +57,29 @@ resource "aws_subnet" "cflt_private_link_subnet" {
 }
 resource "aws_vpc_endpoint" "cflt_private_link_vpc_endpoint" {
   vpc_id             = var.vpc_id
-  service_name       = confluent_private_link_attachment.private_link_attachment.aws[0].vpc_endpoint_service_name
+  service_name       = confluent_gateway.ingress_gateway.aws_ingress_private_link_gateway[0].vpc_endpoint_service_name
   vpc_endpoint_type  = "Interface"
   security_group_ids = [aws_security_group.cflt_private_link_sg.id]
   subnet_ids         = aws_subnet.cflt_private_link_subnet[*].id
 
-  depends_on = [confluent_private_link_attachment.private_link_attachment]
+  depends_on = [confluent_gateway.ingress_gateway]
 }
 
-resource "confluent_private_link_attachment_connection" "private_link_attachment_connection" {
-  display_name = "eu-cluster_private_link_attachment_connection"
-
+resource "confluent_access_point" "access_point" {
+  display_name = "eu-cluster_access_point"
   environment {
     id = var.environment_id
   }
-
-  aws {
+  gateway {
+    id = confluent_gateway.ingress_gateway.id
+  }
+  aws_ingress_private_link_endpoint {
     vpc_endpoint_id = aws_vpc_endpoint.cflt_private_link_vpc_endpoint.id
   }
-
-  private_link_attachment {
-    id = confluent_private_link_attachment.private_link_attachment.id
-  }
-
 }
 
 resource "aws_route53_zone" "cflt_private_link_zone" {
-  name = confluent_private_link_attachment.private_link_attachment.dns_domain
+  name = confluent_access_point.access_point.aws_ingress_private_link_endpoint[0].dns_domain
 
   vpc {
     vpc_id = var.vpc_id
@@ -92,11 +87,10 @@ resource "aws_route53_zone" "cflt_private_link_zone" {
 }
 
 resource "aws_route53_record" "cflt_route_entries" {
-  zone_id         = aws_route53_zone.cflt_private_link_zone.zone_id
-  name            = var.cluster_id
-  type            = "CNAME"
-  ttl             = 60
-  records         = [aws_vpc_endpoint.cflt_private_link_vpc_endpoint.dns_entry[0].dns_name]
-  allow_overwrite = true
+  zone_id = aws_route53_zone.cflt_private_link_zone.zone_id
+  name    = "*"
+  type    = "CNAME"
+  ttl     = 60
+  records = [aws_vpc_endpoint.cflt_private_link_vpc_endpoint.dns_entry[0].dns_name]
 }
 

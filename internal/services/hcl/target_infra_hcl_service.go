@@ -24,6 +24,8 @@ type TerraformResourceNames struct {
 	PrivateLinkAttachment           string
 	PrivateLinkAttachmentConnection string
 	PrivateLinkAccess               string
+	IngressGateway                  string
+	AccessPoint                     string
 	SubjectResourceOwnerRoleBinding string
 	KafkaClusterAdminRoleBinding    string
 	DataStewardRoleBinding          string
@@ -57,6 +59,8 @@ func NewTerraformResourceNames() TerraformResourceNames {
 		PrivateLinkAttachment:           "private_link_attachment",
 		PrivateLinkAttachmentConnection: "private_link_attachment_connection",
 		PrivateLinkAccess:               "private_link_access",
+		IngressGateway:                  "ingress_gateway",
+		AccessPoint:                     "access_point",
 		SubjectResourceOwnerRoleBinding: "subject-resource-owner",
 		KafkaClusterAdminRoleBinding:    "app-manager-kafka-cluster-admin",
 		DataStewardRoleBinding:          "app-manager-kafka-data-steward",
@@ -428,9 +432,11 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentResource(
-		ti.ResourceNames.PrivateLinkAttachment,
-		"kcp_private_link_attachment",
+	// Ingress Private Link Gateway (replaces confluent_private_link_attachment for enterprise clusters).
+	// Each access point gets a unique dns_domain, eliminating shared-zone DNS conflicts.
+	rootBody.AppendBlock(confluent.GenerateIngressGatewayResource(
+		ti.ResourceNames.IngressGateway,
+		"kcp_ingress_gateway",
 		modules.VarAWSRegion,
 		modules.VarEnvironmentID,
 	))
@@ -452,53 +458,25 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 	rootBody.AppendBlock(aws.GenerateVpcEndpointResource(
 		ti.ResourceNames.VpcEndpoint,
 		modules.VarVpcID,
-		fmt.Sprintf("confluent_private_link_attachment.%s.aws[0].vpc_endpoint_service_name", ti.ResourceNames.PrivateLinkAttachment),
+		fmt.Sprintf("confluent_gateway.%s.aws_ingress_private_link_gateway[0].vpc_endpoint_service_name", ti.ResourceNames.IngressGateway),
 		fmt.Sprintf("aws_security_group.%s.id", ti.ResourceNames.SecurityGroup),
 		fmt.Sprintf("aws_subnet.%s[*].id", ti.ResourceNames.SubnetName),
-		[]string{fmt.Sprintf("confluent_private_link_attachment.%s", ti.ResourceNames.PrivateLinkAttachment)},
+		[]string{fmt.Sprintf("confluent_gateway.%s", ti.ResourceNames.IngressGateway)},
 	))
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(confluent.GeneratePrivateLinkAttachmentConnectionResource(
-		ti.ResourceNames.PrivateLinkAttachmentConnection,
-		request.ClusterName+"_private_link_attachment_connection",
+	rootBody.AppendBlock(confluent.GenerateAccessPointResource(
+		ti.ResourceNames.AccessPoint,
+		request.ClusterName+"_access_point",
 		modules.VarEnvironmentID,
 		fmt.Sprintf("aws_vpc_endpoint.%s.id", ti.ResourceNames.VpcEndpoint),
-		fmt.Sprintf("confluent_private_link_attachment.%s.id", ti.ResourceNames.PrivateLinkAttachment),
+		fmt.Sprintf("confluent_gateway.%s.id", ti.ResourceNames.IngressGateway),
 	))
 	rootBody.AppendNewline()
 
-	// Route53: Enterprise clusters share a regional dns_domain (e.g., us-east-1.aws.private.confluent.cloud).
-	// The zone may already exist from another cluster's deployment, so we create-or-reuse it.
-	// Each cluster gets its own per-cluster CNAME record (using cluster_id, not wildcard) to avoid
-	// overwriting records from other clusters sharing the same zone.
-	dnsDomainRef := fmt.Sprintf("confluent_private_link_attachment.%s.dns_domain", ti.ResourceNames.PrivateLinkAttachment)
-	zoneIdRef := ti.appendRoute53Zone(rootBody, request, dnsDomainRef)
-
-	rootBody.AppendBlock(aws.GenerateRoute53VarNameRecordResource(
-		ti.ResourceNames.Route53Record,
-		zoneIdRef,
-		modules.VarClusterID,
-		fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
-		true, // allow_overwrite: safe because record is scoped to this cluster's ID
-	))
-	rootBody.AppendNewline()
-
-	return string(f.Bytes())
-}
-
-// appendRoute53Zone adds either a Route53 zone resource (new) or data source (existing)
-// and returns the zone_id reference for use in the record resource.
-func (ti *TargetInfraHCLService) appendRoute53Zone(rootBody *hclwrite.Body, request types.TargetClusterWizardRequest, dnsDomainRef string) string {
-	if request.UseExistingRoute53Zone {
-		rootBody.AppendBlock(aws.GenerateRoute53ZoneDataSource(
-			ti.ResourceNames.Route53Zone,
-			modules.VarVpcID,
-			dnsDomainRef,
-		))
-		rootBody.AppendNewline()
-		return fmt.Sprintf("data.aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone)
-	}
+	// Route53: Each access point gets a unique dns_domain (e.g., ap123abc.us-west-2.aws.accesspoint.confluent.cloud).
+	// No shared-zone conflicts — each enterprise cluster gets its own zone.
+	dnsDomainRef := fmt.Sprintf("confluent_access_point.%s.aws_ingress_private_link_endpoint[0].dns_domain", ti.ResourceNames.AccessPoint)
 
 	rootBody.AppendBlock(aws.GenerateRoute53ZoneResource(
 		ti.ResourceNames.Route53Zone,
@@ -506,7 +484,16 @@ func (ti *TargetInfraHCLService) appendRoute53Zone(rootBody *hclwrite.Body, requ
 		dnsDomainRef,
 	))
 	rootBody.AppendNewline()
-	return fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone)
+
+	rootBody.AppendBlock(aws.GenerateRoute53RecordResource(
+		ti.ResourceNames.Route53Record,
+		fmt.Sprintf("aws_route53_zone.%s.zone_id", ti.ResourceNames.Route53Zone),
+		"*",
+		fmt.Sprintf("aws_vpc_endpoint.%s.dns_entry[0].dns_name", ti.ResourceNames.VpcEndpoint),
+	))
+	rootBody.AppendNewline()
+
+	return string(f.Bytes())
 }
 
 func (ti *TargetInfraHCLService) generatePrivateLinkModuleVariablesTf(request types.TargetClusterWizardRequest) string {
