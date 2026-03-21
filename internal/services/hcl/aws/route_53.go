@@ -37,3 +37,4 @@ func GenerateRoute53RecordResource(tfResourceName, route53ZoneIdRef, recordName,
 
 	return route53RecordBlock
 }
+

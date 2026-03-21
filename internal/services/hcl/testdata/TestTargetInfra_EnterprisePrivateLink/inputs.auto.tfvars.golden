@@ -1,0 +1,6 @@
+aws_region         = "eu-west-1"
+cluster_name       = "eu-cluster"
+cluster_type       = "enterprise"
+environment_name   = "eu-prod"
+subnet_cidr_ranges = ["10.0.10.0/24", "10.0.11.0/24", "10.0.12.0/24"]
+vpc_id             = "vpc-eu-0123456789abcdef0"
