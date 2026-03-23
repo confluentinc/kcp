@@ -21,6 +21,7 @@ global_job_config:
       - sem-version node 24.6.0
       - npm install -g yarn@1.22.22
       - sem-version go 1.25.8
+      - cd ~
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -38,7 +39,27 @@ blocks:
         - name: "run tests"
           commands:
             - make test
+            - cache store frontend-dist-$SEMAPHORE_GIT_SHA cmd/ui/frontend/dist
 
         - name: "trivy scan"
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+  - name: "lint"
+    task:
+      prologue:
+        commands:
+          - sem-version go 1.25.8
+          - cd ~
+          - export "GOPATH=$(go env GOPATH)"
+          - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
+          - export "PATH=${GOPATH}/bin:${PATH}"
+          - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
+          - checkout
+          - cache restore frontend-dist-$SEMAPHORE_GIT_SHA
+      jobs:
+        - name: "golangci-lint"
+          commands:
+            - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
+            - git fetch origin main
+            - golangci-lint run --config .golangci.yml ./...

@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if command -v golangci-lint >/dev/null 2>&1; then
+  golangci-lint run --config .golangci.yml ./... || exit 1
+else
+  echo "warning: golangci-lint not installed, skipping Go lint"
+fi
