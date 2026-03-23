@@ -225,7 +225,10 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 		}
 
 		// For enterprise clusters with gateways, output the gateway-specific private endpoints.
-		// These should be used instead of the cluster's default endpoints for Private Link access.
+		// These resolve through the Private Link VPC endpoint and must be used for
+		// migration-infra cluster links (--target-bootstrap-endpoint and --target-rest-endpoint)
+		// instead of the default cluster endpoints which use the *.aws.private.confluent.cloud
+		// domain that does not resolve via the gateway Route53 Private Hosted Zone.
 		if request.ClusterType == "enterprise" {
 			rootOutputs = append(rootOutputs,
 				types.TerraformOutput{
