@@ -2,7 +2,6 @@ package schema_registry
 
 import (
 	"fmt"
-	"log/slog"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/schema_registry"
@@ -106,7 +105,7 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to scan schema registry: %v", err)
 	}
 
-	slog.Info("✅ successfully scanned schema registry")
+	fmt.Printf("✅ Successfully scanned schema registry\n")
 
 	return nil
 }

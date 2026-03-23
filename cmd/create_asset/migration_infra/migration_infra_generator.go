@@ -33,18 +33,18 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 }
 
 func (mi *MigrationInfraAssetGenerator) Run() error {
-	slog.Info("🚀 generating migration infrastructure", "targetType", mi.migrationType)
+	fmt.Printf("🚀 Generating migration infrastructure (type: %v)\n", mi.migrationType)
 
 	outputDir := mi.outputDir
 	if outputDir == "" {
 		outputDir = "migration-infra"
 	}
-	slog.Info("🔍 creating migration-infra directory", "directory", outputDir)
+	slog.Debug("creating migration-infra directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create migration-infra directory: %w", err)
 	}
 
-	slog.Info("🔍 generating Terraform configuration")
+	slog.Debug("generating Terraform configuration")
 	hclService := hcl.NewMigrationInfraHCLService()
 	project := hclService.GenerateTerraformModules(mi.MigrationWizardRequest)
 
@@ -52,7 +52,7 @@ func (mi *MigrationInfraAssetGenerator) Run() error {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
 	}
 
-	slog.Info("✅ migration infrastructure generated", "directory", outputDir)
+	fmt.Printf("✅ Migration infrastructure generated: %s\n", outputDir)
 	return nil
 }
 
@@ -61,42 +61,42 @@ func (mi *MigrationInfraAssetGenerator) buildTerraformProject(outputDir string, 
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(project.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-		slog.Info("✅ wrote root main.tf")
+		slog.Debug("wrote root main.tf")
 	}
 
 	if project.ProvidersTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(project.ProvidersTf), 0644); err != nil {
 			return fmt.Errorf("failed to write providers.tf: %w", err)
 		}
-		slog.Info("✅ wrote root providers.tf")
+		slog.Debug("wrote root providers.tf")
 	}
 
 	if project.VariablesTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(project.VariablesTf), 0644); err != nil {
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
-		slog.Info("✅ wrote root variables.tf")
+		slog.Debug("wrote root variables.tf")
 	}
 
 	if project.OutputsTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "outputs.tf"), []byte(project.OutputsTf), 0644); err != nil {
 			return fmt.Errorf("failed to write outputs.tf: %w", err)
 		}
-		slog.Info("✅ wrote root outputs.tf")
+		slog.Debug("wrote root outputs.tf")
 	}
 
 	if project.ReadmeMd != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte(project.ReadmeMd), 0644); err != nil {
 			return fmt.Errorf("failed to write README.md: %w", err)
 		}
-		slog.Info("✅ wrote README.md")
+		slog.Debug("wrote README.md")
 	}
 
 	if project.InputsAutoTfvars != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(project.InputsAutoTfvars), 0644); err != nil {
 			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
 		}
-		slog.Info("✅ wrote root inputs.auto.tfvars")
+		slog.Debug("wrote root inputs.auto.tfvars")
 	}
 
 	for _, module := range project.Modules {

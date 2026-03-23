@@ -34,7 +34,7 @@ func NewKafkaAclsGenerator(opts MigrateKafkaAclsOpts) *KafkaAclsGenerator {
 }
 
 func (kg *KafkaAclsGenerator) Run() error {
-	slog.Info("🚀 generating Terraform files for Kafka ACLs!")
+	fmt.Printf("🚀 Generating Terraform files for Kafka ACLs\n")
 
 	outputDir := kg.opts.OutputDir
 	if outputDir == "" {
@@ -79,7 +79,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		if err := kg.generateKafkaAuditReport(aclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
-		slog.Info("✅ generated audit report", "path", reportPath)
+		slog.Debug("generated audit report", "path", reportPath)
 	}
 
 	totalAcls := 0
@@ -87,7 +87,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	slog.Info("✅ Kafka ACLs Terraform files generated", "directory", outputDir, "principals", len(aclsByPrincipal), "acls", totalAcls)
+	fmt.Printf("✅ Kafka ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(aclsByPrincipal), totalAcls)
 
 	return nil
 }

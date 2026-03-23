@@ -205,7 +205,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		}
 		kubeConfigPathResolved = filepath.Join(homeDir, ".kube", "config")
 	}
-	slog.Info("using kube config path", "path", kubeConfigPathResolved)
+	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
 	config := &types.MigrationConfig{
 		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
@@ -232,10 +232,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
-		slog.Info("migration created (validation skipped)",
-			"migrationId", config.MigrationId,
-			"currentState", config.CurrentState,
-			"stateFile", migrationStateFile)
+		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
 		return nil
 	}
 
@@ -246,9 +243,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	slog.Info("migration initialized",
-		"migrationId", config.MigrationId,
-		"stateFile", migrationStateFile)
+	fmt.Printf("✅ Migration initialized: %s\n", config.MigrationId)
 	return nil
 }
 
