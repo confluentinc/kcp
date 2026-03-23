@@ -40,7 +40,7 @@ blocks:
         on_pass:
           commands:
             - cache delete frontend-dependencies;
-            - cache store frontend-dependencies cmd/ui/frontend/node_modules/;
+            - cache store frontend-dependencies node_modules/;
 
   - name: "test and security scan"
     dependencies: ["resolve frontend dependencies"]
