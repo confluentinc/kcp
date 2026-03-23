@@ -77,9 +77,7 @@ func (m *MigrationExecutor) Run() error {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
-	slog.Debug("migration completed",
-		"migrationId", config.MigrationId,
-		"currentState", config.CurrentState)
+	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil
 }
 
