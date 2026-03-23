@@ -34,11 +34,11 @@ test.describe('Switching Between MSK and OSK', () => {
     await expect(page.locator('text=MSK Cost Summary')).toBeVisible()
   })
 
-  test('OSK cluster does not have Metrics tab', async ({ page }) => {
+  test('OSK cluster has Metrics tab', async ({ page }) => {
     await page.click('text=production-kafka-us-east')
 
-    // Verify no Metrics tab for OSK
-    await expect(page.locator('nav button:has-text("Metrics")')).not.toBeVisible()
+    // OSK supports Jolokia/Prometheus metrics
+    await expect(page.locator('nav button:has-text("Metrics")')).toBeVisible()
   })
 
   test('MSK cluster has Metrics tab', async ({ page }) => {

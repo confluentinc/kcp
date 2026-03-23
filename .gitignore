@@ -37,6 +37,7 @@ crash.*.log
 *.json
 # But allow test fixtures
 !cmd/ui/frontend/tests/fixtures/*.json
+!cmd/ui/frontend/tests/e2e/fixtures/*.json
 
 # Ignore coverage files
 coverage.out

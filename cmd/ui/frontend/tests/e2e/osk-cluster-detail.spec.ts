@@ -29,8 +29,8 @@ test.describe('OSK Cluster Detail View', () => {
     await expect(page.locator('nav button:has-text("ACLs")')).toBeVisible()
     await expect(page.locator('nav button:has-text("Connectors")')).toBeVisible()
 
-    // Verify Metrics tab is NOT present
-    await expect(page.locator('nav button:has-text("Metrics")')).not.toBeVisible()
+    // Verify Metrics tab is present (OSK supports Jolokia/Prometheus metrics)
+    await expect(page.locator('nav button:has-text("Metrics")')).toBeVisible()
   })
 
   test('displays bootstrap servers in cluster tab', async ({ page }) => {
