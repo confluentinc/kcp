@@ -57,6 +57,7 @@ blocks:
         - name: "run tests"
           commands:
             - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test
 
         - name: "trivy scan"
@@ -76,7 +77,7 @@ blocks:
           - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
           - checkout
           - cache restore frontend-dependencies
-          - cd cmd/ui/frontend && yarn build && cd -
+          - cd cmd/ui/frontend && yarn install && yarn build && cd -
       jobs:
         - name: "golangci-lint"
           commands:
