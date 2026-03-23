@@ -68,7 +68,20 @@ func (s *State) WriteToFile(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %v", err)
 	}
-	return os.WriteFile(filePath, data, 0644)
+
+	// Write to temporary file first for atomic operation
+	tmpFile := filePath + ".tmp"
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	// Atomic rename (on most filesystems)
+	if err := os.Rename(tmpFile, filePath); err != nil {
+		os.Remove(tmpFile) // Clean up temp file
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
 }
 
 func (s *State) WriteReportCommands(filePath string, stateFilePath string) error {
@@ -110,8 +123,6 @@ func (s *State) PersistStateFile(stateFile string) error {
 	return s.WriteToFile(stateFile)
 }
 
-// UpsertRegion inserts a new region or updates an existing one by name
-// Automatically preserves KafkaAdminClientInformation from existing clusters
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 	for i, existingRegion := range s.Regions {
 		if existingRegion.Name == newRegion.Name {
