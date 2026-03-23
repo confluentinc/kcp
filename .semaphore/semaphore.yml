@@ -21,6 +21,7 @@ global_job_config:
       - sem-version node 24.6.0
       - npm install -g yarn@1.22.22
       - sem-version go 1.25.8
+      - cd ~
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -28,7 +29,25 @@ global_job_config:
       - checkout
 
 blocks:
+  - name: "resolve frontend dependencies"
+    dependencies: []
+    task:
+      jobs:
+        - name: "dependencies"
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install
+      epilogue:
+        on_pass:
+          commands:
+            - >-
+              if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ]; then
+                cache delete frontend-dependencies;
+                cache store frontend-dependencies cmd/ui/frontend/node_modules/;
+              fi
+
   - name: "test and security scan"
+    dependencies: ["resolve frontend dependencies"]
     task:
       env_vars:
         - name: TRIVY_DB_REPOSITORIES
@@ -37,8 +56,31 @@ blocks:
       jobs:
         - name: "run tests"
           commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test
 
         - name: "trivy scan"
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+  - name: "lint"
+    dependencies: ["resolve frontend dependencies"]
+    task:
+      prologue:
+        commands:
+          - sem-version go 1.25.8
+          - cd ~
+          - export "GOPATH=$(go env GOPATH)"
+          - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
+          - export "PATH=${GOPATH}/bin:${PATH}"
+          - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
+          - checkout
+          - cache restore frontend-dependencies
+          - cd cmd/ui/frontend && yarn install && yarn build && cd -
+      jobs:
+        - name: "golangci-lint"
+          commands:
+            - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
+            - git fetch origin main
+            - golangci-lint run --config .golangci.yml ./...
