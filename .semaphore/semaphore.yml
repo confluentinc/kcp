@@ -21,7 +21,6 @@ global_job_config:
       - sem-version node 24.6.0
       - npm install -g yarn@1.22.22
       - sem-version go 1.25.8
-      - cd ~
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -70,12 +69,10 @@ blocks:
       prologue:
         commands:
           - sem-version go 1.25.8
-          - cd ~
           - export "GOPATH=$(go env GOPATH)"
           - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
           - export "PATH=${GOPATH}/bin:${PATH}"
           - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
-          - checkout
           - cache restore frontend-dependencies
           - cd cmd/ui/frontend && yarn install && yarn build && cd -
       jobs:
