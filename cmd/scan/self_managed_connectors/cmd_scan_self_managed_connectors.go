@@ -2,7 +2,6 @@ package self_managed_connectors
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 
@@ -188,7 +187,7 @@ func normaliseConnectURL(url string) string {
 	}
 
 	normalisedUrl := "http://" + url
-	slog.Info(fmt.Sprintf("Adding protocol scheme 'http://' to provided Connect URL: %s", normalisedUrl))
+	fmt.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
 
 	return normalisedUrl
 }

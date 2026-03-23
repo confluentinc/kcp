@@ -3,7 +3,6 @@ package discover
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -37,7 +36,7 @@ func NewRegionDiscoverer(mskService RegionDiscovererMSKService, costService Regi
 }
 
 func (rd *RegionDiscoverer) Discover(ctx context.Context, region string, skipCosts bool) (*types.DiscoveredRegion, error) {
-	slog.Info("🔍 discovering region", "region", region)
+	fmt.Printf("🔍 Discovering region %s\n", region)
 	discoveredRegion := types.DiscoveredRegion{
 		Name: region,
 	}
@@ -51,7 +50,7 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string, skipCos
 	discoveredRegion.Configurations = configurations
 
 	if skipCosts {
-		slog.Info("⏭️ skipping cost discovery")
+		fmt.Printf("  ⏭️  Skipping cost discovery\n")
 		discoveredRegion.Costs = types.CostInformation{}
 	} else {
 		regionCosts, err := rd.discoverCosts(ctx, region)
@@ -98,7 +97,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 }
 
 func (rd *RegionDiscoverer) discoverClusterArns(ctx context.Context, maxResults int32) ([]string, error) {
-	slog.Info("🔍 listing clusters")
+	fmt.Printf("  🔍 Listing clusters\n")
 
 	clusters, err := rd.mskService.ListClusters(ctx, maxResults)
 	if err != nil {
