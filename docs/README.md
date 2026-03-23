@@ -1335,6 +1335,7 @@ One of the following combinations is required - `--state-file` + `--cluster-arn`
 
 - `--needs-private-link`: Whether the infrastructure needs private link setup
 - `--subnet-cidrs`: Subnet CIDRs for private link (required when `--needs-private-link=true`)
+- `--use-existing-route53-zone`: Use an existing Route53 Private Hosted Zone instead of creating a new one (default: false, only applies to dedicated clusters).
 
 **Optional Arguments**:
 
@@ -1358,6 +1359,10 @@ kcp create-asset target-infra \
 
 **Output:**
 The command creates a directory (default: `target-infra`) containing Terraform configurations that will provision a Confluent Cloud setup based on the provided flags.
+
+##### Route53 DNS for Enterprise Private Link
+
+Enterprise clusters use the **ingress Private Link Gateway** pattern, which provides a unique DNS domain per access point. Each cluster gets its own Route53 Private Hosted Zone automatically — no shared zones, no conflicts when deploying multiple enterprise clusters in the same VPC.
 
 ---
 
