@@ -25,3 +25,18 @@ module "private_link" {
   environment_id     = module.confluent_cloud.environment_id
 }
 
+data "confluent_endpoint" "private_kafka_endpoints" {
+  filter {
+    environment {
+      id = module.confluent_cloud.environment_id
+    }
+    service    = "KAFKA"
+    resource   = module.confluent_cloud.cluster_id
+    cloud      = "AWS"
+    region     = var.aws_region
+    is_private = true
+  }
+
+  depends_on = [module.private_link]
+}
+

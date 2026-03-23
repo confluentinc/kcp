@@ -46,3 +46,15 @@ output "vpc_endpoint_id" {
   sensitive   = false
 }
 
+output "private_kafka_bootstrap_endpoint" {
+  value       = [for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "BOOTSTRAP"][0]
+  description = "Gateway-specific bootstrap endpoint for Private Link access (use this instead of cluster_bootstrap_endpoint)"
+  sensitive   = false
+}
+
+output "private_kafka_rest_endpoint" {
+  value       = [for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "REST"][0]
+  description = "Gateway-specific REST endpoint for Private Link access (use this instead of cluster_rest_endpoint)"
+  sensitive   = false
+}
+
