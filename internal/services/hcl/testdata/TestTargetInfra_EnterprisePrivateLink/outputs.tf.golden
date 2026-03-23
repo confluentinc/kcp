@@ -10,18 +10,6 @@ output "cluster_id" {
   sensitive   = false
 }
 
-output "cluster_bootstrap_endpoint" {
-  value       = module.confluent_cloud.cluster_bootstrap_endpoint
-  description = "Bootstrap endpoint of the Kafka cluster"
-  sensitive   = false
-}
-
-output "cluster_rest_endpoint" {
-  value       = module.confluent_cloud.cluster_rest_endpoint
-  description = "REST endpoint of the Kafka cluster"
-  sensitive   = false
-}
-
 output "service_account_id" {
   value       = module.confluent_cloud.service_account_id
   description = "ID of the service account"
@@ -46,15 +34,15 @@ output "vpc_endpoint_id" {
   sensitive   = false
 }
 
-output "private_kafka_bootstrap_endpoint" {
+output "cluster_bootstrap_endpoint" {
   value       = [for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "BOOTSTRAP"][0]
-  description = "Gateway-specific bootstrap endpoint for Private Link access (use this instead of cluster_bootstrap_endpoint)"
+  description = "Gateway-specific bootstrap endpoint for Private Link access"
   sensitive   = false
 }
 
-output "private_kafka_rest_endpoint" {
+output "cluster_rest_endpoint" {
   value       = [for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "REST"][0]
-  description = "Gateway-specific REST endpoint for Private Link access (use this instead of cluster_rest_endpoint)"
+  description = "Gateway-specific REST endpoint for Private Link access"
   sensitive   = false
 }
 
