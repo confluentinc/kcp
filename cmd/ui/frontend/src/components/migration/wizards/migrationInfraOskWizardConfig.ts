@@ -37,10 +37,6 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
           schema: {
             type: 'object',
             properties: {
-              source_type: {
-                type: 'string',
-                default: 'osk',
-              },
               has_public_brokers: {
                 type: 'boolean',
                 title: 'Are your Kafka brokers publicly accessible?',
@@ -53,9 +49,6 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
             required: ['has_public_brokers'],
           },
           uiSchema: {
-            source_type: {
-              'ui:widget': 'hidden',
-            },
             has_public_brokers: {
               'ui:widget': 'radio',
             },
