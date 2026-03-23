@@ -100,7 +100,7 @@ export const MSKSourceSection = ({ regions }: MSKSourceSectionProps) => {
                     return (
                       <button
                         key={cluster.name}
-                        onClick={() => selectCluster(region.name, clusterArn!)}
+                        onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
                         className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors ${
                           isSelected
                             ? 'bg-blue-100 dark:bg-accent/20 text-blue-900 dark:text-accent border border-blue-200 dark:border-accent'

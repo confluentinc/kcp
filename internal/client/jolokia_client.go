@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -41,7 +42,9 @@ func WithJolokiaTLS(caCertFile string, insecureSkipVerify bool) JolokiaOption {
 		// Load custom CA certificate if provided
 		if caCertFile != "" {
 			caCert, err := os.ReadFile(caCertFile)
-			if err == nil {
+			if err != nil {
+				slog.Warn("failed to read Jolokia CA certificate file, proceeding without custom CA", "path", caCertFile, "error", err)
+			} else {
 				caCertPool := x509.NewCertPool()
 				if caCertPool.AppendCertsFromPEM(caCert) {
 					tlsConfig.RootCAs = caCertPool

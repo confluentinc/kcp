@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -42,7 +43,9 @@ func WithPrometheusTLS(caCertFile string, insecureSkipVerify bool) PrometheusOpt
 
 		if caCertFile != "" {
 			caCert, err := os.ReadFile(caCertFile)
-			if err == nil {
+			if err != nil {
+				slog.Warn("failed to read Prometheus CA certificate file, proceeding without custom CA", "path", caCertFile, "error", err)
+			} else {
 				caCertPool := x509.NewCertPool()
 				if caCertPool.AppendCertsFromPEM(caCert) {
 					tlsConfig.RootCAs = caCertPool
