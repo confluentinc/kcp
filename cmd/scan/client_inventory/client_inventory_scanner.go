@@ -58,7 +58,7 @@ func NewClientInventoryScanner(s3Service S3Service, state types.State, opts Clie
 }
 
 func (cis *ClientInventoryScanner) Run() error {
-	slog.Info("🚀 starting client inventory scan", "s3_uri", cis.opts.S3Uri)
+	fmt.Printf("🚀 Starting client inventory scan for %s\n", cis.opts.S3Uri)
 
 	ctx := context.Background()
 
@@ -73,7 +73,7 @@ func (cis *ClientInventoryScanner) Run() error {
 	}
 
 	if len(logFiles) == 0 {
-		slog.Info("no log files found to process")
+		fmt.Printf("  ⏭️  No log files found to process\n")
 		return nil
 	}
 
@@ -100,7 +100,7 @@ func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket st
 			continue
 		}
 
-		slog.Info(fmt.Sprintf("parsed log file %s: found %d matching log lines", file, len(requestsMetadata)))
+		fmt.Printf("  🔍 Parsed log file %s: found %d matching log lines\n", file, len(requestsMetadata))
 
 		for _, metadata := range requestsMetadata {
 			// we cannot guarantee that the client id is unique as it may not be set on clients

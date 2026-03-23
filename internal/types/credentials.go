@@ -78,6 +78,18 @@ func (c *Credentials) ToYaml() ([]byte, error) {
 	return yamlData, nil
 }
 
+// FindClusterByArn searches all regions for a cluster matching the given ARN.
+func (c *Credentials) FindClusterByArn(arn string) (*ClusterAuth, error) {
+	for _, region := range c.Regions {
+		for i, cluster := range region.Clusters {
+			if cluster.Arn == arn {
+				return &region.Clusters[i], nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("cluster with ARN %q not found in credentials file", arn)
+}
+
 func (c Credentials) Validate() (bool, []error) {
 	errs := []error{}
 
