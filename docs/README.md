@@ -24,6 +24,7 @@
       - [`kcp create-asset migrate-schemas`](#kcp-create-asset-migrate-schemas)
       - [`kcp create-asset migrate-topics`](#kcp-create-asset-migrate-topics)
       - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
+      - [`kcp create-asset target-infra`](#kcp-create-asset-target-infra)
     - [`kcp migration`](#kcp-migration)
       - [`kcp migration init`](#kcp-migration-init)
       - [`kcp migration execute`](#kcp-migration-execute)
@@ -583,6 +584,7 @@ The `kcp create-asset` command includes the following sub-commands:
 - `migrate-schemas`
 - `migrate-topics`
 - `reverse-proxy`
+- `target-infra`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -1610,6 +1612,25 @@ Initialize a new migration by validating infrastructure and persisting migration
 - `--fenced-cr-yaml`: Path to the gateway CR YAML that blocks traffic during migration.
 - `--switchover-cr-yaml`: Path to the gateway CR YAML that routes traffic to Confluent Cloud.
 
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
+
 **Optional Arguments**:
 
 - `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
@@ -1630,7 +1651,8 @@ kcp migration init \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
   --fenced-cr-yaml gateway-fenced.yaml \
-  --switchover-cr-yaml gateway-switchover.yaml
+  --switchover-cr-yaml gateway-switchover.yaml \
+  --use-sasl-iam
 ```
 
 > [!NOTE]
@@ -1648,8 +1670,27 @@ Execute an initialized migration through its remaining workflow steps. This comm
 - `--lag-threshold`: Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.
 - `--cluster-api-key`: API key for authenticating with the destination cluster.
 - `--cluster-api-secret`: API secret for authenticating with the destination cluster.
-- `--credentials-file`: Credentials YAML file for MSK cluster authentication.
+- `--source-cluster-arn`: ARN of the source MSK cluster.
 - `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
 
 **Optional Arguments**:
 
@@ -1663,8 +1704,9 @@ kcp migration execute \
   --lag-threshold 0 \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --credentials-file credentials.yaml \
-  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092
+  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+  --use-sasl-iam
 ```
 
 > [!NOTE]
@@ -1683,9 +1725,27 @@ Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kaf
 - `--cluster-link-name`: Cluster link name.
 - `--cluster-api-key`: Cluster link API key.
 - `--cluster-api-secret`: Cluster link API secret.
-- `--credentials-file`: Credentials YAML file for MSK cluster authentication.
 - `--source-cluster-arn`: ARN of the source MSK cluster.
 - `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
 
 **Optional Arguments**:
 
@@ -1700,9 +1760,9 @@ kcp migration status \
   --cluster-link-name my-cluster-link \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --credentials-file credentials.yaml \
   --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092
+  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+  --use-sasl-iam
 ```
 
 **Features**:
