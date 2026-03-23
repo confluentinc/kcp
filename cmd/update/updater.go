@@ -75,15 +75,15 @@ func (u *Updater) Run() error {
 
 	// Step 4: Check if already up to date
 	if latest.LessOrEqual(currentVersion) {
-		slog.Info(fmt.Sprintf("✅ Your installed version (%s) is already the latest available", currentVersion))
+		fmt.Printf("✅ Your installed version (%s) is already the latest available\n", currentVersion)
 		return nil
 	}
 
-	slog.Info(fmt.Sprintf("✅ New version available: %s", latest.Version()))
+	fmt.Printf("✅ New version available: %s\n", latest.Version())
 
 	// Step 5: If --check-only flag is set, just report available update and exit
 	if u.opts.CheckOnly {
-		slog.Info(fmt.Sprintf("Update available from %s to %s. Run without --check-only to update.", currentVersion, latest.Version()))
+		fmt.Printf("Update available from %s to %s. Run without --check-only to update.\n", currentVersion, latest.Version())
 		return nil
 	}
 
@@ -93,14 +93,14 @@ func (u *Updater) Run() error {
 		return nil
 	}
 
-	slog.Info(fmt.Sprintf("🚀 Updating from %s --> %s", currentVersion, latest.Version()))
+	fmt.Printf("🚀 Updating from %s --> %s\n", currentVersion, latest.Version())
 
 	// Step 7: Download and install the latest version
 	if err := selfupdate.UpdateTo(context.Background(), latest.AssetURL, latest.AssetName, exePath); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully updated kcp to %s", latest.Version()))
+	fmt.Printf("✅ Successfully updated kcp to %s\n", latest.Version())
 
 	return nil
 }

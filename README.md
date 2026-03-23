@@ -32,6 +32,7 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 - **Scan** scan and identify resources in existing Kafka deployments.
 - **Create** reports for migration planning and cost analysis.
 - **Generate** migration assets and infrastructure configurations.
+- **Migrate** execute end-to-end migrations with real-time offset monitoring and resumable workflows.
 
 ### Key Features
 
@@ -40,6 +41,7 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 | **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                             |
 | **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                          |
 | **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud. |
+| **Migration Execution**     | FSM-driven migration workflow with lag monitoring, gateway fencing, and topic promotion. |
 | **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.             |
 
 ### Documentation
@@ -54,7 +56,7 @@ The recommended way to install kcp is by downloading the latest release binary. 
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Make
 - Node
 - Yarn

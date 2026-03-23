@@ -122,6 +122,48 @@ func TestExtractRegionFromS3Uri(t *testing.T) {
 	}
 }
 
+func TestExtractRegionFromArn(t *testing.T) {
+	tests := []struct {
+		name     string
+		arn      string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "valid provisioned cluster ARN",
+			arn:      "arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123",
+			expected: "us-east-1",
+		},
+		{
+			name:     "valid eu-west ARN",
+			arn:      "arn:aws:kafka:eu-west-1:987654321098:cluster/prod-cluster/def-456",
+			expected: "eu-west-1",
+		},
+		{
+			name:    "invalid ARN format",
+			arn:     "not-an-arn",
+			wantErr: true,
+		},
+		{
+			name:    "empty ARN",
+			arn:     "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ExtractRegionFromArn(tt.arn)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestExtractClusterNameFromS3Uri(t *testing.T) {
 	tests := []struct {
 		name           string

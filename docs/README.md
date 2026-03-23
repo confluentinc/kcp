@@ -24,6 +24,12 @@
       - [`kcp create-asset migrate-schemas`](#kcp-create-asset-migrate-schemas)
       - [`kcp create-asset migrate-topics`](#kcp-create-asset-migrate-topics)
       - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
+      - [`kcp create-asset target-infra`](#kcp-create-asset-target-infra)
+    - [`kcp migration`](#kcp-migration)
+      - [`kcp migration init`](#kcp-migration-init)
+      - [`kcp migration execute`](#kcp-migration-execute)
+      - [`kcp migration status`](#kcp-migration-status)
+      - [`kcp migration list`](#kcp-migration-list)
     - [`kcp ui`](#kcp-ui)
     - [`kcp update`](#kcp-update)
 
@@ -578,6 +584,7 @@ The `kcp create-asset` command includes the following sub-commands:
 - `migrate-schemas`
 - `migrate-topics`
 - `reverse-proxy`
+- `target-infra`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -1564,6 +1571,226 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 > [!NOTE]
 > A `README.md` is generated in the `reverse-proxy` directory to further assist in setting up the reverse proxy on your local machine to view the private networked Confluent Cloud cluster.
+
+---
+
+### `kcp migration`
+
+The `kcp migration` command provides tools for executing end-to-end Kafka migrations from MSK to Confluent Cloud using CPC Gateway. It includes the following sub-commands:
+
+- `init`
+- `execute`
+- `status`
+- `list`
+
+The migration workflow follows a defined lifecycle managed by a finite state machine:
+
+1. **Initialize** — validate cluster link and gateway CRs, persist migration config
+2. **Check Lags** — compare source and destination offsets until lag is below threshold
+3. **Fence Gateway** — apply fenced gateway CR to block traffic during cutover
+4. **Promote Topics** — promote mirror topics at zero lag
+5. **Switch Gateway** — apply switchover gateway CR to route traffic to Confluent Cloud
+
+If execution is interrupted at any step, re-running `kcp migration execute` resumes from the last completed step.
+
+---
+
+#### `kcp migration init`
+
+Initialize a new migration by validating infrastructure and persisting migration state. This command validates the cluster link and mirror topics on the destination cluster, fetches the current gateway CR from Kubernetes, validates consistency across the gateway CRs, and writes the migration configuration to the state file.
+
+**Required Arguments**:
+
+- `--k8s-namespace`: Kubernetes namespace where the gateway is deployed.
+- `--passthrough-cr-name`: Name of the passthrough gateway custom resource in Kubernetes.
+- `--source-cluster-arn`: ARN of the source MSK cluster.
+- `--cluster-id`: Confluent Cloud destination cluster ID (e.g. `lkc-abc123`).
+- `--cluster-rest-endpoint`: REST endpoint of the destination Confluent Cloud cluster.
+- `--cluster-link-name`: Name of the cluster link on the destination cluster.
+- `--cluster-api-key`: API key for authenticating with the destination cluster.
+- `--cluster-api-secret`: API secret for authenticating with the destination cluster.
+- `--fenced-cr-yaml`: Path to the gateway CR YAML that blocks traffic during migration.
+- `--switchover-cr-yaml`: Path to the gateway CR YAML that routes traffic to Confluent Cloud.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
+
+**Optional Arguments**:
+
+- `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
+- `--skip-validate`: Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources.
+- `--kube-path`: Path to the Kubernetes config file (default: `~/.kube/config`).
+- `--topics`: Topics to migrate (comma separated list or repeated flag).
+
+**Example Usage**
+
+```shell
+kcp migration init \
+  --k8s-namespace my-namespace \
+  --passthrough-cr-name my-gateway \
+  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cluster-id lkc-abc123 \
+  --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+  --cluster-link-name my-cluster-link \
+  --cluster-api-key ABCDEFGHIJKLMNOP \
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+  --fenced-cr-yaml gateway-fenced.yaml \
+  --switchover-cr-yaml gateway-switchover.yaml \
+  --use-sasl-iam
+```
+
+> [!NOTE]
+> All flags can be provided via environment variables using uppercase names with underscores (e.g. `CLUSTER_API_KEY`).
+
+---
+
+#### `kcp migration execute`
+
+Execute an initialized migration through its remaining workflow steps. This command resumes a migration from its current state, progressing through lag checking, gateway fencing, topic promotion, and gateway switchover.
+
+**Required Arguments**:
+
+- `--migration-id`: ID of the migration to execute (from `kcp migration list`).
+- `--lag-threshold`: Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.
+- `--cluster-api-key`: API key for authenticating with the destination cluster.
+- `--cluster-api-secret`: API secret for authenticating with the destination cluster.
+- `--source-cluster-arn`: ARN of the source MSK cluster.
+- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
+
+**Optional Arguments**:
+
+- `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
+
+**Example Usage**
+
+```shell
+kcp migration execute \
+  --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  --lag-threshold 0 \
+  --cluster-api-key ABCDEFGHIJKLMNOP \
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+  --use-sasl-iam
+```
+
+> [!NOTE]
+> Credentials (`--cluster-api-key`, `--cluster-api-secret`) are intentionally not stored in the state file and must be provided each time for security.
+
+---
+
+#### `kcp migration status`
+
+Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kafka offsets to show real-time migration lag per topic and partition. This is a standalone monitoring tool that does not require a prior `kcp migration init`.
+
+**Required Arguments**:
+
+- `--rest-endpoint`: Cluster link REST endpoint.
+- `--cluster-id`: Cluster link cluster ID.
+- `--cluster-link-name`: Cluster link name.
+- `--cluster-api-key`: Cluster link API key.
+- `--cluster-api-secret`: Cluster link API secret.
+- `--source-cluster-arn`: ARN of the source MSK cluster.
+- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
+
+**Optional Arguments**:
+
+- `--poll-interval`: Poll interval in seconds, between 1 and 60 (default: `1`).
+
+**Example Usage**
+
+```shell
+kcp migration status \
+  --rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+  --cluster-id lkc-abc123 \
+  --cluster-link-name my-cluster-link \
+  --cluster-api-key ABCDEFGHIJKLMNOP \
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+  --use-sasl-iam
+```
+
+**Features**:
+
+- **Real-time Offset Comparison**: Shows source and destination log-end offsets per partition
+- **Per-Topic Lag**: Aggregated lag displayed per topic with drill-down to partition level
+- **Auto-refresh**: Polls at configurable intervals with live updates
+- **Keyboard Navigation**: Scroll through topics, toggle partition detail view
+
+---
+
+#### `kcp migration list`
+
+Display all migrations from the migration state file, showing migration IDs, current state, gateway configuration, and topics.
+
+**Optional Arguments**:
+
+- `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
+
+**Example Usage**
+
+```shell
+# List all migrations from the default state file
+kcp migration list
+
+# List from a specific state file
+kcp migration list --migration-state-file /path/to/state.json
+```
 
 ---
 
