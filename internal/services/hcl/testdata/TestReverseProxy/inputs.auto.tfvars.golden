@@ -1,0 +1,4 @@
+aws_region                                 = "us-east-1"
+public_subnet_cidr                         = "10.0.30.0/24"
+vpc_id                                     = "vpc-0123456789abcdef0"
+confluent_cloud_cluster_bootstrap_endpoint = "pkc-abc123.us-east-1.aws.confluent.cloud:9092"

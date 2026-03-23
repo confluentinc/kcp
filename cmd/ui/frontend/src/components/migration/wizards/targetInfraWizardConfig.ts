@@ -348,6 +348,13 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 maxItems: 3,
                 default: ['', '', ''],
               },
+              use_existing_route53_zone: {
+                type: 'boolean',
+                title: 'Use existing Route53 hosted zone',
+                description:
+                  'Enable this if a Route53 hosted zone already exists for this VPC and Confluent domain, to avoid conflicts.',
+                default: false,
+              },
             },
             required: ['vpc_id', 'subnet_cidr_ranges'],
           },
@@ -364,6 +371,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 orderable: false,
                 removable: false,
               },
+            },
+            use_existing_route53_zone: {
+              'ui:widget': 'checkbox',
             },
           },
         },
