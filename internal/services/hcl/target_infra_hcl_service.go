@@ -144,6 +144,23 @@ func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterW
 
 		WriteModuleInputs(privateLinkBody, modules.GetTargetClusterPrivateLinkVariables(), request)
 		rootBody.AppendNewline()
+
+		// For enterprise clusters with gateways, look up the gateway-specific private endpoints.
+		// The cluster's default endpoints use the old PLATT domain which doesn't resolve through
+		// the gateway's Route53 zone. The confluent_endpoint data source returns the correct
+		// gateway-specific endpoints (e.g., lkc-xxx-apyyy.region.aws.accesspoint.glb.confluent.cloud).
+		if request.ClusterType == "enterprise" {
+			rootBody.AppendBlock(confluent.GenerateEndpointDataSource(
+				"private_kafka_endpoints",
+				fmt.Sprintf("module.confluent_cloud.%s", "environment_id"),
+				"KAFKA",
+				fmt.Sprintf("module.confluent_cloud.%s", "cluster_id"),
+				"AWS",
+				modules.VarAWSRegion,
+				"module.private_link",
+			))
+			rootBody.AppendNewline()
+		}
 	}
 
 	return string(f.Bytes())
@@ -205,6 +222,23 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 				Sensitive:   o.Sensitive,
 				Value:       fmt.Sprintf("module.private_link.%s", o.Name),
 			})
+		}
+
+		// For enterprise clusters with gateways, output the gateway-specific private endpoints.
+		// These should be used instead of the cluster's default endpoints for Private Link access.
+		if request.ClusterType == "enterprise" {
+			rootOutputs = append(rootOutputs,
+				types.TerraformOutput{
+					Name:        "private_kafka_bootstrap_endpoint",
+					Description: "Gateway-specific bootstrap endpoint for Private Link access (use this instead of cluster_bootstrap_endpoint)",
+					Value:       `[for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "BOOTSTRAP"][0]`,
+				},
+				types.TerraformOutput{
+					Name:        "private_kafka_rest_endpoint",
+					Description: "Gateway-specific REST endpoint for Private Link access (use this instead of cluster_rest_endpoint)",
+					Value:       `[for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "REST"][0]`,
+				},
+			)
 		}
 	}
 
