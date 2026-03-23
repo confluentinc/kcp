@@ -200,9 +200,17 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 	})
 
 	var rootOutputs []types.TerraformOutput
+	// For enterprise clusters with Private Link, the default cluster endpoints use
+	// *.aws.private.confluent.cloud which does not resolve via the gateway Route53
+	// Private Hosted Zone. Replace them with gateway-specific endpoints that resolve
+	// through the VPC endpoint.
+	skipDefaultEndpoints := request.NeedsPrivateLink && request.ClusterType == "enterprise"
 	for _, o := range confluentCloudOutputs {
 		// Skip network-internal outputs that are only used for module-to-module wiring
 		if o.Name == "network_id" || o.Name == "network_dns_domain" || o.Name == "network_private_link_endpoint_service" || o.Name == "network_zones" {
+			continue
+		}
+		if skipDefaultEndpoints && (o.Name == "cluster_bootstrap_endpoint" || o.Name == "cluster_rest_endpoint") {
 			continue
 		}
 		rootOutputs = append(rootOutputs, types.TerraformOutput{
@@ -224,21 +232,19 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 			})
 		}
 
-		// For enterprise clusters with gateways, output the gateway-specific private endpoints.
-		// These resolve through the Private Link VPC endpoint and must be used for
-		// migration-infra cluster links (--target-bootstrap-endpoint and --target-rest-endpoint)
-		// instead of the default cluster endpoints which use the *.aws.private.confluent.cloud
-		// domain that does not resolve via the gateway Route53 Private Hosted Zone.
+		// For enterprise clusters with gateways, output the gateway-specific endpoints
+		// as the canonical cluster endpoints. These must be used for migration-infra
+		// cluster links (--target-bootstrap-endpoint and --target-rest-endpoint).
 		if request.ClusterType == "enterprise" {
 			rootOutputs = append(rootOutputs,
 				types.TerraformOutput{
-					Name:        "private_kafka_bootstrap_endpoint",
-					Description: "Gateway-specific bootstrap endpoint for Private Link access (use this instead of cluster_bootstrap_endpoint)",
+					Name:        "cluster_bootstrap_endpoint",
+					Description: "Gateway-specific bootstrap endpoint for Private Link access",
 					Value:       `[for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "BOOTSTRAP"][0]`,
 				},
 				types.TerraformOutput{
-					Name:        "private_kafka_rest_endpoint",
-					Description: "Gateway-specific REST endpoint for Private Link access (use this instead of cluster_rest_endpoint)",
+					Name:        "cluster_rest_endpoint",
+					Description: "Gateway-specific REST endpoint for Private Link access",
 					Value:       `[for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "REST"][0]`,
 				},
 			)
