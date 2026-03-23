@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -40,7 +41,7 @@ func TestPrometheusClient_QueryRange_Success(t *testing.T) {
 	start := time.Unix(1710000000, 0)
 	end := time.Unix(1710007200, 0)
 
-	results, err := client.QueryRange("test_metric", start, end, time.Hour)
+	results, err := client.QueryRange(context.Background(),"test_metric", start, end, time.Hour)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
@@ -82,13 +83,13 @@ func TestPrometheusClient_QueryRange_WithBasicAuth(t *testing.T) {
 
 	// Without auth — should fail
 	noAuthClient := NewPrometheusClient(server.URL)
-	_, err := noAuthClient.QueryRange("test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	_, err := noAuthClient.QueryRange(context.Background(),"test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "401")
 
 	// With auth — should succeed
 	authClient := NewPrometheusClient(server.URL, WithPrometheusBasicAuth("promuser", "prompass"))
-	results, err := authClient.QueryRange("test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	results, err := authClient.QueryRange(context.Background(),"test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.InDelta(t, 100.0, results[0].Values[0].Value, 0.01)
@@ -109,7 +110,7 @@ func TestPrometheusClient_QueryRange_WithTLS(t *testing.T) {
 	defer server.Close()
 
 	client := NewPrometheusClient(server.URL, WithPrometheusTLS("", true))
-	results, err := client.QueryRange("test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	results, err := client.QueryRange(context.Background(),"test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	require.NoError(t, err)
 	assert.Empty(t, results)
 }
@@ -122,7 +123,7 @@ func TestPrometheusClient_QueryRange_ServerError(t *testing.T) {
 	defer server.Close()
 
 	client := NewPrometheusClient(server.URL)
-	_, err := client.QueryRange("test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	_, err := client.QueryRange(context.Background(),"test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
 }
@@ -142,14 +143,14 @@ func TestPrometheusClient_QueryRange_EmptyResult(t *testing.T) {
 	defer server.Close()
 
 	client := NewPrometheusClient(server.URL)
-	results, err := client.QueryRange("test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	results, err := client.QueryRange(context.Background(),"test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	require.NoError(t, err)
 	assert.Empty(t, results)
 }
 
 func TestPrometheusClient_QueryRange_ConnectionRefused(t *testing.T) {
 	client := NewPrometheusClient("http://localhost:19999")
-	_, err := client.QueryRange("test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	_, err := client.QueryRange(context.Background(),"test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to query Prometheus")
 }
@@ -180,7 +181,7 @@ func TestPrometheusClient_QueryRange_FiltersNaNAndInf(t *testing.T) {
 	defer server.Close()
 
 	client := NewPrometheusClient(server.URL)
-	results, err := client.QueryRange("test_metric", time.Unix(1710000000, 0), time.Unix(1710014400, 0), time.Hour)
+	results, err := client.QueryRange(context.Background(),"test_metric", time.Unix(1710000000, 0), time.Unix(1710014400, 0), time.Hour)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
@@ -202,7 +203,7 @@ func TestPrometheusClient_QueryRange_ErrorStatus(t *testing.T) {
 	defer server.Close()
 
 	client := NewPrometheusClient(server.URL)
-	_, err := client.QueryRange("invalid{", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	_, err := client.QueryRange(context.Background(),"invalid{", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Prometheus query failed")
 }

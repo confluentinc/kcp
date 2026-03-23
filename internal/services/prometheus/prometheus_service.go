@@ -81,7 +81,7 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		if strings.Contains(query, "%s") {
 			query = fmt.Sprintf(query, rateWindow)
 		}
-		results, err := s.client.QueryRange(query, start, end, step)
+		results, err := s.client.QueryRange(ctx, query, start, end, step)
 		if err != nil {
 			slog.Warn("Prometheus query failed, skipping metric", "label", mq.Label, "error", err)
 			continue

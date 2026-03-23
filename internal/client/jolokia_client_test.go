@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -32,7 +33,7 @@ func TestJolokiaClient_ReadMBean_Success(t *testing.T) {
 	defer server.Close()
 
 	client := NewJolokiaClient(server.URL)
-	values, err := client.ReadMBean("kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
+	values, err := client.ReadMBean(context.Background(),"kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
 
 	require.NoError(t, err)
 	assert.Equal(t, 1234.5, values["OneMinuteRate"])
@@ -69,13 +70,13 @@ func TestJolokiaClient_ReadMBean_WithJolokiaBasicAuth(t *testing.T) {
 
 	// Test without auth - should fail
 	clientNoAuth := NewJolokiaClient(server.URL)
-	_, err := clientNoAuth.ReadMBean("test:type=Test")
+	_, err := clientNoAuth.ReadMBean(context.Background(),"test:type=Test")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 401")
 
 	// Test with auth - should succeed
 	clientWithAuth := NewJolokiaClient(server.URL, WithJolokiaBasicAuth(expectedUsername, expectedPassword))
-	values, err := clientWithAuth.ReadMBean("test:type=Test")
+	values, err := clientWithAuth.ReadMBean(context.Background(),"test:type=Test")
 	require.NoError(t, err)
 	assert.Equal(t, "authenticated", values["test"])
 }
@@ -93,7 +94,7 @@ func TestJolokiaClient_ReadMBean_ServerError(t *testing.T) {
 	defer server.Close()
 
 	client := NewJolokiaClient(server.URL)
-	_, err := client.ReadMBean("kafka.server:type=Invalid")
+	_, err := client.ReadMBean(context.Background(),"kafka.server:type=Invalid")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Jolokia error")
@@ -104,7 +105,7 @@ func TestJolokiaClient_ReadMBean_ServerError(t *testing.T) {
 func TestJolokiaClient_ReadMBean_ConnectionRefused(t *testing.T) {
 	// Connect to a port that's not listening
 	client := NewJolokiaClient("http://localhost:1")
-	_, err := client.ReadMBean("test:type=Test")
+	_, err := client.ReadMBean(context.Background(),"test:type=Test")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to make request")
@@ -129,7 +130,7 @@ func TestJolokiaClient_ReadMBean_URLEncoding(t *testing.T) {
 	defer server.Close()
 
 	client := NewJolokiaClient(server.URL)
-	_, err := client.ReadMBean("kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
+	_, err := client.ReadMBean(context.Background(),"kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
 	require.NoError(t, err)
 }
 
@@ -145,12 +146,12 @@ func TestJolokiaClient_ReadMBean_WithTLS(t *testing.T) {
 
 	// Without TLS config — should fail (self-signed cert)
 	clientNoTLS := NewJolokiaClient(server.URL)
-	_, err := clientNoTLS.ReadMBean("test:type=Test")
+	_, err := clientNoTLS.ReadMBean(context.Background(),"test:type=Test")
 	require.Error(t, err)
 
 	// With insecure skip verify — should succeed
 	clientInsecure := NewJolokiaClient(server.URL, WithJolokiaTLS("", true))
-	values, err := clientInsecure.ReadMBean("test:type=Test")
+	values, err := clientInsecure.ReadMBean(context.Background(),"test:type=Test")
 	require.NoError(t, err)
 	assert.Equal(t, 12345.0, values["Count"])
 }
@@ -172,7 +173,7 @@ func TestJolokiaClient_ReadMBean_WithTLSAndAuth(t *testing.T) {
 
 	// TLS only, no auth — should fail 401
 	clientTLSOnly := NewJolokiaClient(server.URL, WithJolokiaTLS("", true))
-	_, err := clientTLSOnly.ReadMBean("test:type=Test")
+	_, err := clientTLSOnly.ReadMBean(context.Background(),"test:type=Test")
 	require.Error(t, err)
 
 	// TLS + auth — should succeed
@@ -180,7 +181,7 @@ func TestJolokiaClient_ReadMBean_WithTLSAndAuth(t *testing.T) {
 		WithJolokiaTLS("", true),
 		WithJolokiaBasicAuth("monitor", "secret"),
 	)
-	values, err := clientBoth.ReadMBean("test:type=Test")
+	values, err := clientBoth.ReadMBean(context.Background(),"test:type=Test")
 	require.NoError(t, err)
 	assert.Equal(t, 99.0, values["Count"])
 }
@@ -206,7 +207,7 @@ func TestJolokiaClient_ReadMBean_WithTLSCustomCA(t *testing.T) {
 		},
 	}
 
-	values, err := client.ReadMBean("test:type=Test")
+	values, err := client.ReadMBean(context.Background(),"test:type=Test")
 	require.NoError(t, err)
 	assert.Equal(t, 42.0, values["Value"])
 }
@@ -232,7 +233,7 @@ func TestJolokiaClient_ReadMBeanAggregate_Success(t *testing.T) {
 	defer server.Close()
 
 	client := NewJolokiaClient(server.URL)
-	total, err := client.ReadMBeanAggregate("kafka.log:type=Log,name=Size,*", "Value")
+	total, err := client.ReadMBeanAggregate(context.Background(),"kafka.log:type=Log,name=Size,*", "Value")
 
 	require.NoError(t, err)
 	assert.Equal(t, 6000.0, total) // 1000 + 2000 + 3000
@@ -252,7 +253,7 @@ func TestJolokiaClient_ReadMBeanAggregate_DirectValues(t *testing.T) {
 	defer server.Close()
 
 	client := NewJolokiaClient(server.URL)
-	total, err := client.ReadMBeanAggregate("kafka.server:type=socket-server-metrics,*", "connection-count")
+	total, err := client.ReadMBeanAggregate(context.Background(),"kafka.server:type=socket-server-metrics,*", "connection-count")
 
 	require.NoError(t, err)
 	assert.Equal(t, 8.0, total) // 5 + 3
@@ -276,12 +277,12 @@ func TestJolokiaClient_ReadMBeanAggregate_WithAuth(t *testing.T) {
 
 	// Without auth — should fail
 	clientNoAuth := NewJolokiaClient(server.URL)
-	_, err := clientNoAuth.ReadMBeanAggregate("test:*", "Value")
+	_, err := clientNoAuth.ReadMBeanAggregate(context.Background(),"test:*", "Value")
 	require.Error(t, err)
 
 	// With auth — should succeed
 	clientAuth := NewJolokiaClient(server.URL, WithJolokiaBasicAuth("admin", "pass"))
-	total, err := clientAuth.ReadMBeanAggregate("test:*", "Value")
+	total, err := clientAuth.ReadMBeanAggregate(context.Background(),"test:*", "Value")
 	require.NoError(t, err)
 	assert.Equal(t, 100.0, total)
 }
@@ -296,7 +297,7 @@ func TestJolokiaClient_ReadMBeanAggregate_ServerError(t *testing.T) {
 	defer server.Close()
 
 	client := NewJolokiaClient(server.URL)
-	_, err := client.ReadMBeanAggregate("nonexistent:*", "Value")
+	_, err := client.ReadMBeanAggregate(context.Background(),"nonexistent:*", "Value")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "InstanceNotFoundException")

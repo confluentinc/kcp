@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -85,13 +86,13 @@ type jolokiaResponse struct {
 // ReadMBean queries a Jolokia endpoint for JMX MBean data
 // mbeanPath is the MBean ObjectName (e.g., "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
 // Returns the "value" map from the Jolokia response
-func (c *JolokiaClient) ReadMBean(mbeanPath string) (map[string]any, error) {
+func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[string]any, error) {
 	// Construct URL - do NOT URL-encode the mbean path
 	// Jolokia expects the raw ObjectName format in the URL path
 	url := fmt.Sprintf("%s/read/%s", c.baseURL, mbeanPath)
 
 	// Create HTTP request
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -136,10 +137,10 @@ func (c *JolokiaClient) ReadMBean(mbeanPath string) (map[string]any, error) {
 // ReadMBeanAggregate queries a wildcard MBean pattern and sums a numeric attribute
 // across all matching MBeans. Used for metrics like log size (per-partition) and
 // connection count (per-listener) that need to be aggregated.
-func (c *JolokiaClient) ReadMBeanAggregate(mbeanPattern string, attribute string) (float64, error) {
+func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern string, attribute string) (float64, error) {
 	url := fmt.Sprintf("%s/read/%s/%s", c.baseURL, mbeanPattern, attribute)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}

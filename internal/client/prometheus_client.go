@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -105,7 +106,7 @@ type prometheusMatrixResult struct {
 }
 
 // QueryRange executes a Prometheus range query and returns parsed results
-func (c *PrometheusClient) QueryRange(query string, start, end time.Time, step time.Duration) ([]PrometheusMetricResult, error) {
+func (c *PrometheusClient) QueryRange(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]PrometheusMetricResult, error) {
 	params := url.Values{}
 	params.Set("query", query)
 	params.Set("start", fmt.Sprintf("%d", start.Unix()))
@@ -113,7 +114,7 @@ func (c *PrometheusClient) QueryRange(query string, start, end time.Time, step t
 	params.Set("step", fmt.Sprintf("%d", int(step.Seconds())))
 
 	reqURL := fmt.Sprintf("%s/api/v1/query_range?%s", c.baseURL, params.Encode())
-	req, err := http.NewRequest("GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

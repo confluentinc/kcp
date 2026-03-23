@@ -84,7 +84,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 
 	for _, mb := range counterMBeans {
 		for _, brokerClient := range s.clients {
-			value, err := brokerClient.ReadMBean(mb.MBean)
+			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
 				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
 				continue
@@ -99,7 +99,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 
 	for _, mb := range gaugeMBeans {
 		for _, brokerClient := range s.clients {
-			value, err := brokerClient.ReadMBean(mb.MBean)
+			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
 				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
 				continue
@@ -115,7 +115,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 	for _, amb := range aggregateMBeans {
 		var total float64
 		for _, brokerClient := range s.clients {
-			val, err := brokerClient.ReadMBeanAggregate(amb.MBean, amb.Attribute)
+			val, err := brokerClient.ReadMBeanAggregate(ctx, amb.MBean, amb.Attribute)
 			if err != nil {
 				slog.Warn("Failed to read aggregate MBean", "mbean", amb.Name, "error", err)
 				continue
