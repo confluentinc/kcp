@@ -39,8 +39,11 @@ blocks:
       epilogue:
         on_pass:
           commands:
-            - cache delete frontend-dependencies;
-            - cache store frontend-dependencies node_modules/;
+            - >-
+              if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ]; then
+                cache delete frontend-dependencies;
+                cache store frontend-dependencies node_modules/;
+              fi
 
   - name: "test and security scan"
     dependencies: ["resolve frontend dependencies"]
