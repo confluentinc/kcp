@@ -104,17 +104,17 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("Connect API client not initialized")
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting self-managed connector scan for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn)))
+	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
 		return fmt.Errorf("failed to list connectors: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("🔍 found %d connectors", len(connectorNames)))
+	fmt.Printf("  🔍 Found %d connectors\n", len(connectorNames))
 
 	if len(connectorNames) == 0 {
-		slog.Info(fmt.Sprintf("⏭️ no connectors found for cluster %s, skipping", utils.ExtractClusterNameFromArn(s.ClusterArn)))
+		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
 		return nil
 	}
 
@@ -128,7 +128,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		connectors = append(connectors, connector)
 	}
 
-	slog.Info(fmt.Sprintf("✅ successfully retrieved connector details for %d connectors", len(connectors)))
+	fmt.Printf("  ✅ Successfully retrieved connector details for %d connectors\n", len(connectors))
 
 	if err := s.updateStateWithConnectors(connectors); err != nil {
 		return fmt.Errorf("failed to update state: %v", err)
@@ -138,7 +138,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ self-managed connector scan complete for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn)))
+	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
 	return nil
 }
 
@@ -266,7 +266,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 		for j, cluster := range region.Clusters {
 			if cluster.Arn == s.ClusterArn {
 				s.State.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
-				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", utils.ExtractClusterNameFromArn(s.ClusterArn)))
+				fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
 
 				return nil
 			}
