@@ -39,6 +39,7 @@ blocks:
         - name: "run tests"
           commands:
             - make test
+            - cache store frontend-dist-$SEMAPHORE_GIT_SHA cmd/ui/frontend/dist
 
         - name: "trivy scan"
           commands:
@@ -55,6 +56,7 @@ blocks:
           - export "PATH=${GOPATH}/bin:${PATH}"
           - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
           - checkout
+          - cache restore frontend-dist-$SEMAPHORE_GIT_SHA
       jobs:
         - name: "golangci-lint"
           commands:
