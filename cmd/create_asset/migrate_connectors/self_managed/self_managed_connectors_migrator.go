@@ -186,7 +186,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("api request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var response TranslateResponse

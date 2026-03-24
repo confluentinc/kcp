@@ -561,7 +561,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			region:                          "us-west-2",
 			opts:                            []AdminOption{WithIAMAuth()},
 			expectError:                     true,
-			errorContains:                   "Failed to create admin client",
+			errorContains:                   "failed to create admin client",
 		},
 	}
 
@@ -591,7 +591,7 @@ func TestNewKafkaAdmin_DefaultConfiguration(t *testing.T) {
 	if err != nil {
 		// The error should be related to creating the admin client, not auth type
 		assert.NotContains(t, err.Error(), "Auth type")
-		assert.Contains(t, err.Error(), "Failed to create admin client")
+		assert.Contains(t, err.Error(), "failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
 		admin.Close()
@@ -612,7 +612,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	if err != nil {
 		// The error should be related to creating the admin client, not auth type
 		assert.NotContains(t, err.Error(), "Auth type")
-		assert.Contains(t, err.Error(), "Failed to create admin client")
+		assert.Contains(t, err.Error(), "failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
 		admin.Close()

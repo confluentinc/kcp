@@ -26,7 +26,7 @@ func ValidateAWSZones(awsZonesStr string) ([]AWSZone, error) {
 
 	// Validate that AWSZones is not empty
 	if awsZonesStr == "" {
-		return nil, fmt.Errorf("AWS_ZONES environment variable is required but not set")
+		return nil, fmt.Errorf("environment variable AWS_ZONES is required but not set")
 	}
 
 	for zone := range strings.SplitSeq(awsZonesStr, ",") {

@@ -206,7 +206,7 @@ func TestSelfManagedConnectorsScanner_Run_NilClient(t *testing.T) {
 	}
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Connect API client not initialized")
+	assert.Contains(t, err.Error(), "connect API client not initialized")
 }
 
 func TestSelfManagedConnectorsScanner_GetConnectorDetails_Success(t *testing.T) {

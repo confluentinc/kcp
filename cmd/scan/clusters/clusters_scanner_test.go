@@ -302,7 +302,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				},
 			},
 			wantErr:    true,
-			wantErrMsg: "failed to get broker addresses for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: No SASL/IAM brokers found in the cluster",
+			wantErrMsg: "failed to get broker addresses for cluster: arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123 in region: us-east-1: no SASL/IAM brokers found in the cluster",
 		},
 		{
 			name: "createKafkaAdmin returns error",
@@ -346,7 +346,7 @@ func TestClustersScanner_scanCluster(t *testing.T) {
 				},
 			},
 			wantErr:    true,
-			wantErrMsg: "failed to create Kafka admin: failed to create Kafka admin: Failed to create admin client: authType=SASL/SCRAM brokerAddresses=[broker1:9092 broker2:9092] error=kafka: invalid configuration (Net.SASL.User must not be empty when SASL is enabled)",
+			wantErrMsg: "failed to create Kafka admin: failed to create Kafka admin: failed to create admin client: authType=SASL/SCRAM brokerAddresses=[broker1:9092 broker2:9092] error=kafka: invalid configuration (Net.SASL.User must not be empty when SASL is enabled)",
 		},
 	}
 
