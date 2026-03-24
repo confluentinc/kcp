@@ -1,5 +1,5 @@
 import type { Region } from '@/types'
-import type { ProcessedOSKCluster } from '@/types/osk'
+import type { ProcessedOSKSource } from '@/types/osk'
 
 /**
  * Source type discriminator
@@ -11,13 +11,6 @@ export type SourceType = 'msk' | 'osk'
  */
 export interface ProcessedMSKSource {
   regions: Region[]
-}
-
-/**
- * Processed OSK Source (contains OSK clusters)
- */
-export interface ProcessedOSKSource {
-  clusters: ProcessedOSKCluster[]
 }
 
 /**
