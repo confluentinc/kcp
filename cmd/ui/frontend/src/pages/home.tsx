@@ -31,6 +31,7 @@ export const Home = () => {
   const setError = useAppStore((state) => state.setError)
   const clearSelection = useAppStore((state) => state.clearSelection)
   const selectSummary = useAppStore((state) => state.selectSummary)
+  const selectOSKCluster = useAppStore((state) => state.selectOSKCluster)
 
   // Check for pre-loaded state on mount
   useEffect(() => {
@@ -46,6 +47,13 @@ export const Home = () => {
           const mskSource = response.sources.find((s: any) => s.type === 'msk' && s.msk_data !== undefined)
           if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
             selectSummary()
+          } else {
+            // Fallback: auto-select first OSK cluster if no MSK sources
+            const oskSource = response.sources.find((s: any) => s.type === 'osk' && s.osk_data !== undefined)
+            const firstCluster = oskSource?.osk_data?.clusters?.[0]
+            if (firstCluster) {
+              selectOSKCluster(firstCluster.id)
+            }
           }
         }
       } catch {
@@ -54,7 +62,7 @@ export const Home = () => {
     }
 
     checkPreloadedState()
-  }, [sessionId, setKcpState, selectSummary])
+  }, [sessionId, setKcpState, selectSummary, selectOSKCluster])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -84,6 +92,13 @@ export const Home = () => {
             const mskSource = result.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
             if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
               selectSummary()
+            } else {
+              // Fallback: auto-select first OSK cluster if no MSK sources
+              const oskSource = result.sources.find((s) => s.type === 'osk' && s.osk_data !== undefined)
+              const firstCluster = oskSource?.osk_data?.clusters?.[0]
+              if (firstCluster) {
+                selectOSKCluster(firstCluster.id)
+              }
             }
           } else {
             throw new Error('Invalid response format from server')
