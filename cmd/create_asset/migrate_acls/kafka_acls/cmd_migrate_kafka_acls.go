@@ -68,10 +68,10 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 		return nil
 	})
 
-	aclsCmd.MarkFlagRequired("state-file")
-	aclsCmd.MarkFlagRequired("cluster-arn")
-	aclsCmd.MarkFlagRequired("target-cluster-id")
-	aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
+	_ = aclsCmd.MarkFlagRequired("state-file")
+	_ = aclsCmd.MarkFlagRequired("cluster-arn")
+	_ = aclsCmd.MarkFlagRequired("target-cluster-id")
+	_ = aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
 	return aclsCmd
 }

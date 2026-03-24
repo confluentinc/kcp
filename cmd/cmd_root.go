@@ -156,8 +156,8 @@ func checkWritePermissions() error {
 	}
 
 	// Defer works on a LIFO execution order.
-	defer os.Remove(testFile.Name())
-	defer testFile.Close()
+	defer func() { _ = os.Remove(testFile.Name()) }()
+	defer func() { _ = testFile.Close() }()
 
 	return nil
 }

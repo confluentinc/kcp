@@ -191,7 +191,7 @@ func (m *Markdown) Print(opts ...PrintOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %v", options.ToFile, err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		_, err = m.WriteTo(file)
 		if err != nil {

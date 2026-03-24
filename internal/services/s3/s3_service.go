@@ -80,14 +80,14 @@ func (s *S3Service) DownloadAndDecompressLogFile(ctx context.Context, bucket, ke
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s: %w", key, err)
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	// Decompress the gzipped content
 	gzipReader, err := gzip.NewReader(result.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader for %s: %w", key, err)
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 
 	content, err := io.ReadAll(gzipReader)
 	if err != nil {

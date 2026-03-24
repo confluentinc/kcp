@@ -67,7 +67,7 @@ func NewBastionHostCmd() *cobra.Command {
 
 	bastionHostCmd.MarkFlagsRequiredTogether("region", "vpc-id")
 
-	bastionHostCmd.MarkFlagRequired("bastion-host-cidr")
+	_ = bastionHostCmd.MarkFlagRequired("bastion-host-cidr")
 
 	return bastionHostCmd
 }

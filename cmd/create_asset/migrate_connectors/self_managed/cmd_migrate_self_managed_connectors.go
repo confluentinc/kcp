@@ -68,11 +68,11 @@ func NewMigrateSelfManagedConnectorsCmd() *cobra.Command {
 		return nil
 	})
 
-	selfManagedConnectorsCmd.MarkFlagRequired("state-file")
-	selfManagedConnectorsCmd.MarkFlagRequired("cc-environment-id")
-	selfManagedConnectorsCmd.MarkFlagRequired("cc-cluster-id")
-	selfManagedConnectorsCmd.MarkFlagRequired("cc-api-key")
-	selfManagedConnectorsCmd.MarkFlagRequired("cc-api-secret")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("state-file")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cc-environment-id")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cc-cluster-id")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cc-api-key")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cc-api-secret")
 
 	return selfManagedConnectorsCmd
 }

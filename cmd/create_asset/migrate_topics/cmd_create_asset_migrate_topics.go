@@ -70,11 +70,11 @@ func NewMigrateTopicsCmd() *cobra.Command {
 		return nil
 	})
 
-	migrationCmd.MarkFlagRequired("state-file")
-	migrationCmd.MarkFlagRequired("cluster-arn")
-	migrationCmd.MarkFlagRequired("target-cluster-id")
-	migrationCmd.MarkFlagRequired("target-cluster-rest-endpoint")
-	migrationCmd.MarkFlagRequired("target-cluster-link-name")
+	_ = migrationCmd.MarkFlagRequired("state-file")
+	_ = migrationCmd.MarkFlagRequired("cluster-arn")
+	_ = migrationCmd.MarkFlagRequired("target-cluster-id")
+	_ = migrationCmd.MarkFlagRequired("target-cluster-rest-endpoint")
+	_ = migrationCmd.MarkFlagRequired("target-cluster-link-name")
 
 	return migrationCmd
 }

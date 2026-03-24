@@ -56,8 +56,8 @@ func NewScanClientInventoryCmd() *cobra.Command {
 		return nil
 	})
 
-	clientInventoryCmd.MarkFlagRequired("s3-uri")
-	clientInventoryCmd.MarkFlagRequired("state-file")
+	_ = clientInventoryCmd.MarkFlagRequired("s3-uri")
+	_ = clientInventoryCmd.MarkFlagRequired("state-file")
 
 	return clientInventoryCmd
 }
