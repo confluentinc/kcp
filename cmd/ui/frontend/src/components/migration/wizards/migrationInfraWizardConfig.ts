@@ -67,7 +67,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'save_step_data',
             },
             {
-              target: 'private_migration_method_question',
+              target: 'target_cluster_type_question',
               guard: 'has_private_cc_endpoints',
               actions: 'save_step_data',
             },
@@ -135,6 +135,49 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
           },
         },
       },
+      target_cluster_type_question: {
+        meta: {
+          title: 'Private Migration | Target Cluster Type',
+          description: 'External outbound cluster linking is only supported for Enterprise clusters.',
+          schema: {
+            type: 'object',
+            properties: {
+              target_cluster_type: {
+                type: 'string',
+                title: 'What is your Confluent Cloud target cluster type?',
+                oneOf: [
+                  { title: 'Enterprise', const: 'enterprise' },
+                  { title: 'Dedicated', const: 'dedicated' },
+                ],
+              },
+            },
+            required: ['target_cluster_type'],
+          },
+          uiSchema: {
+            target_cluster_type: {
+              'ui:widget': 'radio',
+            },
+          },
+        },
+        on: {
+          NEXT: [
+            {
+              target: 'private_migration_method_question',
+              guard: 'target_cluster_is_enterprise',
+              actions: 'save_step_data',
+            },
+            {
+              target: 'private_link_internet_gateway_question',
+              guard: 'target_cluster_is_dedicated',
+              actions: 'save_step_data',
+            },
+          ],
+          BACK: {
+            target: 'confluent_cloud_endpoints_question',
+            actions: 'undo_save_step_data',
+          },
+        },
+      },
       private_migration_method_question: {
         meta: {
           title: 'Private Migration | Method',
@@ -173,7 +216,7 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             }
           ],
           BACK: {
-            target: 'confluent_cloud_endpoints_question',
+            target: 'target_cluster_type_question',
             actions: 'undo_save_step_data',
           },
         },
@@ -361,10 +404,18 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             target: 'jump_cluster_networking_inputs',
             actions: 'save_step_data',
           },
-          BACK: {
-            target: 'private_migration_method_question',
-            actions: 'undo_save_step_data',
-          },
+          BACK: [
+            {
+              target: 'private_migration_method_question',
+              guard: 'came_from_private_migration_method_question',
+              actions: 'undo_save_step_data',
+            },
+            {
+              target: 'target_cluster_type_question',
+              guard: 'came_from_target_cluster_type_question',
+              actions: 'undo_save_step_data',
+            },
+          ],
         },
       },
       jump_cluster_networking_inputs: {
@@ -729,6 +780,18 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       },
       selected_msk_jump_cluster_authentication_iam: ({ event }) => {
         return event.data?.msk_jump_cluster_auth_type === 'iam'
+      },
+      target_cluster_is_enterprise: ({ event }) => {
+        return event.data?.target_cluster_type === 'enterprise'
+      },
+      target_cluster_is_dedicated: ({ event }) => {
+        return event.data?.target_cluster_type === 'dedicated'
+      },
+      came_from_private_migration_method_question: ({ context }) => {
+        return context.previousStep === 'private_migration_method_question'
+      },
+      came_from_target_cluster_type_question: ({ context }) => {
+        return context.previousStep === 'target_cluster_type_question'
       },
       came_from_external_outbound_cluster_linking_inputs: ({ context }) => {
         return context.previousStep === 'external_outbound_cluster_linking_inputs'

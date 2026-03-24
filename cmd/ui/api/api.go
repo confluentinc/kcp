@@ -244,6 +244,14 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
+	// Block external outbound cluster linking for dedicated clusters
+	if !req.HasPublicMskEndpoints && !req.UseJumpClusters && req.TargetClusterType == "dedicated" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Unsupported configuration",
+			"message": "External outbound cluster linking (Type 2) is not supported for dedicated clusters. Please use jump clusters (Type 3 or Type 4) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible.",
+		})
+	}
+
 	if req.HasPublicMskEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{

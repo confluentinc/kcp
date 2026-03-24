@@ -1433,6 +1433,11 @@ _Private MSK Endpoints:_
 - Type 3: Jump Cluster [SASL/SCRAM]
 - Type 4: Jump Cluster [IAM]
 
+> **Note:** External Outbound Cluster Linking (Type 2) is only supported for
+> Enterprise clusters. Dedicated clusters with private MSK endpoints must use
+> Jump Clusters (Type 3 or Type 4). Dedicated clusters with public MSK endpoints
+> can use Type 1 (Cluster Link).
+
 **Example Usage**
 
 > [!NOTE]

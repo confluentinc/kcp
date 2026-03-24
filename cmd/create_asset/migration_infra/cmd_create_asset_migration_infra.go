@@ -40,6 +40,7 @@ var (
 	jumpClusterSetupHostSubnetCidr net.IPNet
 
 	jumpClusterIamAuthRoleName string
+	targetClusterType          string
 )
 
 func NewMigrationInfraCmd() *cobra.Command {
@@ -74,6 +75,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	baseFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "The name of the cluster link that will be created as part of the migration.")
 	baseFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID.")
 	baseFlags.StringVar(&targetRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint.")
+	baseFlags.StringVar(&targetClusterType, "target-cluster-type", "", "The Confluent Cloud target cluster type ('dedicated' or 'enterprise').")
 	migrationInfraCmd.Flags().AddFlagSet(baseFlags)
 	groups[baseFlags] = "Base Flags"
 
@@ -128,9 +130,11 @@ Available Migration Types:
   Public MSK Endpoints:
     Type 1: Cluster Link [SASL/SCRAM]
   Private MSK Endpoints:
-    Type 2: External Outbound Cluster Link [SASL/SCRAM]
+    Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only)
     Type 3: Jump Cluster [SASL/SCRAM]
     Type 4: Jump Cluster [IAM]
+
+Note: Type 2 is only supported for Enterprise clusters. Dedicated clusters with private MSK endpoints must use Type 3 or Type 4.
 
 Refer to the kcp docs for more information on each migration type.
 		`)
@@ -165,6 +169,10 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	targetType, err := types.ToMigrationType(migrationInfraType)
 	if err != nil {
 		return fmt.Errorf("invalid --type: %v", err)
+	}
+
+	if targetType == types.ExternalOutboundClusterLink && targetClusterType == "dedicated" {
+		return fmt.Errorf("external outbound cluster linking (Type 2) is not supported for dedicated clusters. Please use jump clusters (Type 3 or Type 4) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible")
 	}
 
 	switch targetType {

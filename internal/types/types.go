@@ -196,6 +196,7 @@ type MigrationWizardRequest struct {
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
 	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
 	ClusterLinkName              string `json:"cluster_link_name"`
+	TargetClusterType            string `json:"target_cluster_type"`
 }
 
 type ExtOutboundClusterKafkaBroker struct {
