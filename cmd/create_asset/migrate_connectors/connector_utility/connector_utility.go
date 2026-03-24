@@ -69,7 +69,7 @@ func (cu *ConnectorUtility) Run() error {
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(connectorConfigs); err != nil {
-			file.Close()
+			_ = file.Close()
 			return fmt.Errorf("failed to encode connectors to JSON for cluster %s: %w", clusterArn, err)
 		}
 

@@ -52,8 +52,8 @@ func NewMigrateSchemasCmd() *cobra.Command {
 		return nil
 	})
 
-	migrateSchemasCmd.MarkFlagRequired("state-file")
-	migrateSchemasCmd.MarkFlagRequired("url")
+	_ = migrateSchemasCmd.MarkFlagRequired("state-file")
+	_ = migrateSchemasCmd.MarkFlagRequired("url")
 
 	return migrateSchemasCmd
 }
