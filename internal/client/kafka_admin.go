@@ -579,7 +579,7 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 
 	saramaKafkaVersion, err := sarama.ParseKafkaVersion(kafkaVersion)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to parse Kafka version: %v", err)
+		return nil, fmt.Errorf("failed to parse Kafka version: %v", err)
 	}
 
 	saramaConfig := sarama.NewConfig()
@@ -597,15 +597,15 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	case types.AuthTypeTLS:
 		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to configure TLS authentication: %v", err)
+			return nil, fmt.Errorf("failed to configure TLS authentication: %v", err)
 		}
 	default:
-		return nil, fmt.Errorf("Auth type: %v not yet supported", config.authType)
+		return nil, fmt.Errorf("auth type: %v not yet supported", config.authType)
 	}
 
 	admin, err := sarama.NewClusterAdmin(brokerAddresses, saramaConfig)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
+		return nil, fmt.Errorf("failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
 	}
 
 	return &KafkaAdminClient{

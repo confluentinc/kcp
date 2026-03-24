@@ -101,7 +101,7 @@ func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectT
 
 func (s *SelfManagedConnectorsScanner) Run() error {
 	if s.client == nil {
-		return fmt.Errorf("Connect API client not initialized")
+		return fmt.Errorf("connect API client not initialized")
 	}
 
 	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
