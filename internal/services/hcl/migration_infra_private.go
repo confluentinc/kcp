@@ -99,10 +99,13 @@ You will be prompted for the following credentials during ` + "`terraform apply`
 | ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
 | ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	switch request.MskJumpClusterAuthType {
+	case "sasl_scram":
 		credentialsSection += `
 | ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
 | ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
+	case "unauth_tls":
+		// No additional credentials needed for unauthenticated TLS
 	}
 
 	return `# Migration Infrastructure - Jump Cluster Setup
@@ -191,9 +194,10 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	switch request.MskJumpClusterAuthType {
+	case "sasl_scram", "unauth_tls":
 		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
-	} else {
+	default:
 		return aws.GenerateJumpClusterSaslIamSetupHostUserDataTpl()
 	}
 }
@@ -222,7 +226,32 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	}))
 	rootBody.AppendNewline()
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	commonUserDataArgs := map[string]hclwrite.Tokens{
+		"confluent_cloud_cluster_id":                 utils.TokensForVarReference(modules.VarConfluentCloudClusterID),
+		"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(modules.VarConfluentCloudClusterBootstrapEndpoint),
+		"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(modules.VarConfluentCloudClusterRestEndpoint),
+		"confluent_cloud_cluster_key":                utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
+		"confluent_cloud_cluster_secret":             utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
+		"msk_cluster_id":                             utils.TokensForVarReference(modules.VarMSKClusterID),
+		"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
+		"cluster_link_name":                          utils.TokensForVarReference(modules.VarClusterLinkName),
+	}
+
+	optionalBlocks := aws.OptionalBlocksConfig{
+		"root_block_device": {
+			"volume_size": utils.TokensForVarReference(modules.VarJumpClusterBrokerStorage),
+			"volume_type": cty.StringVal("gp3"),
+		},
+		"metadata_options": {
+			"http_tokens":                 cty.StringVal("required"),
+			"http_put_response_hop_limit": cty.NumberIntVal(10),
+		},
+	}
+
+	switch request.MskJumpClusterAuthType {
+	case "sasl_scram":
+		commonUserDataArgs["msk_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
+		commonUserDataArgs["msk_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
 			"data.aws_ami.red_hat_linux_ami.id",
@@ -233,30 +262,24 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			"jump-cluster-with-cluster-links-user-data.tpl",
 			"",
 			false,
-			map[string]hclwrite.Tokens{
-				"confluent_cloud_cluster_id":                 utils.TokensForVarReference(modules.VarConfluentCloudClusterID),
-				"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(modules.VarConfluentCloudClusterBootstrapEndpoint),
-				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(modules.VarConfluentCloudClusterRestEndpoint),
-				"confluent_cloud_cluster_key":                utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
-				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
-				"msk_cluster_id":                             utils.TokensForVarReference(modules.VarMSKClusterID),
-				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
-				"msk_sasl_scram_username":                    utils.TokensForVarReference(modules.VarMSKSaslScramUsername),
-				"msk_sasl_scram_password":                    utils.TokensForVarReference(modules.VarMSKSaslScramPassword),
-				"cluster_link_name":                          utils.TokensForVarReference(modules.VarClusterLinkName),
-			},
-			aws.OptionalBlocksConfig{
-				"root_block_device": {
-					"volume_size": utils.TokensForVarReference(modules.VarJumpClusterBrokerStorage),
-					"volume_type": cty.StringVal("gp3"),
-				},
-				"metadata_options": {
-					"http_tokens":                 cty.StringVal("required"),
-					"http_put_response_hop_limit": cty.NumberIntVal(10),
-				},
-			},
+			commonUserDataArgs,
+			optionalBlocks,
 		))
-	} else {
+	case "unauth_tls":
+		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
+			"jump_cluster",
+			"data.aws_ami.red_hat_linux_ami.id",
+			modules.VarJumpClusterInstanceType,
+			modules.VarJumpClusterBrokerSubnetIDs,
+			modules.VarJumpClusterSecurityGroupIDs,
+			modules.VarJumpClusterSSHKeyPairName,
+			"jump-cluster-with-cluster-links-user-data.tpl",
+			"",
+			false,
+			commonUserDataArgs,
+			optionalBlocks,
+		))
+	default: // iam
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
 			"data.aws_ami.red_hat_linux_ami.id",
@@ -267,26 +290,8 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			"jump-cluster-with-cluster-links-user-data.tpl",
 			modules.VarJumpClusterIAMAuthRoleName,
 			false,
-			map[string]hclwrite.Tokens{
-				"confluent_cloud_cluster_id":                 utils.TokensForVarReference(modules.VarConfluentCloudClusterID),
-				"confluent_cloud_cluster_bootstrap_endpoint": utils.TokensForVarReference(modules.VarConfluentCloudClusterBootstrapEndpoint),
-				"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(modules.VarConfluentCloudClusterRestEndpoint),
-				"confluent_cloud_cluster_key":                utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
-				"confluent_cloud_cluster_secret":             utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
-				"msk_cluster_id":                             utils.TokensForVarReference(modules.VarMSKClusterID),
-				"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
-				"cluster_link_name":                          utils.TokensForVarReference(modules.VarClusterLinkName),
-			},
-			aws.OptionalBlocksConfig{
-				"root_block_device": {
-					"volume_size": utils.TokensForVarReference(modules.VarJumpClusterBrokerStorage),
-					"volume_type": cty.StringVal("gp3"),
-				},
-				"metadata_options": {
-					"http_tokens":                 cty.StringVal("required"),
-					"http_put_response_hop_limit": cty.NumberIntVal(10),
-				},
-			},
+			commonUserDataArgs,
+			optionalBlocks,
 		))
 	}
 	rootBody.AppendNewline()
@@ -295,9 +300,12 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterClusterLinksUserDataTpl(authType string) string {
-	if authType == "sasl_scram" {
+	switch authType {
+	case "sasl_scram":
 		return aws.GenerateJumpClusterWithSaslScramClusterLinksUserDataTpl()
-	} else {
+	case "unauth_tls":
+		return aws.GenerateJumpClusterWithUnauthTlsClusterLinksUserDataTpl()
+	default:
 		return aws.GenerateJumpClusterWithIamClusterLinksUserDataTpl()
 	}
 }

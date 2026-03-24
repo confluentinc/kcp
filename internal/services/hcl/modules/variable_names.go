@@ -53,7 +53,5 @@ const (
 	// External Outbound Cluster Link module variables
 	VarSubnetID                      = "subnet_id"
 	VarSecurityGroupID               = "security_group_id"
-	VarTargetClusterAPIKey           = "target_cluster_api_key"
-	VarTargetClusterAPISecret        = "target_cluster_api_secret"
 	VarMSKClusterBootstrapServers    = "msk_cluster_bootstrap_servers"
 )

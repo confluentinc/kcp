@@ -1375,13 +1375,13 @@ Enterprise clusters use the **ingress Private Link Gateway** pattern, which prov
 
 #### `kcp create-asset migration-infra`
 
-This command generates the required Terraform to provision your migration environment. The `--type` flag will determine how the Confluent Platform jump cluster will authenticate with MSK - using either IAM or SASL/SCRAM - as well some aspects of the networking to connect to an existing Private Link setup between the AWS VPC and Confluent Cloud.
+This command generates the required Terraform to provision your migration environment. The `--type` flag determines the migration method and authentication mechanism used to connect to MSK.
 
 **Required Arguments**:
 
 - `--state-file`: Path to kcp-state.json file
 - `--cluster-arn`: The cluster-arn to target
-- `--type`: The type of authentication to use to establish the cluster link between AWS MSK and Confluent Platform jump cluster
+- `--type`: The migration infrastructure type (1-6). See Type Options below.
 
 **Base Migration Flags**:
 
@@ -1394,13 +1394,13 @@ This command generates the required Terraform to provision your migration enviro
 - `--existing-internet-gateway`: Whether to use an existing internet gateway. (default: false)
 - `--output-dir`: The directory to output the migration infrastructure assets to. (default: 'migration-infra')
 
-**Type Two Flags**:
+**Type 2/3 Flags** (External Outbound Cluster Link):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--subnet-id`: [Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default: MSK broker #1 subnet).
 - `--security-group-id`: [Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).
 
-**Type Three Flags**:
+**Type 4/5 Flags** (Jump Cluster — SASL/SCRAM and Unauthenticated TLS):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
@@ -1410,7 +1410,7 @@ This command generates the required Terraform to provision your migration enviro
 - `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
 - `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
 
-**Type Four Flags**:
+**Type 6 Flags** (Jump Cluster — IAM):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
@@ -1429,31 +1429,36 @@ _Public MSK Endpoints:_
 
 _Private MSK Endpoints:_
 
-- Type 2: External Outbound Cluster Link [SASL/SCRAM]
-- Type 3: Jump Cluster [SASL/SCRAM]
-- Type 4: Jump Cluster [IAM]
+- Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise only)
+- Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise only)
+- Type 4: Jump Cluster [SASL/SCRAM]
+- Type 5: Jump Cluster [Unauthenticated TLS]
+- Type 6: Jump Cluster [IAM]
 
-> **Note:** External Outbound Cluster Linking (Type 2) is only supported for
+> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for
 > Enterprise clusters. Dedicated clusters with private MSK endpoints must use
-> Jump Clusters (Type 3 or Type 4). Dedicated clusters with public MSK endpoints
+> Jump Clusters (Type 4, 5, or 6). Dedicated clusters with public MSK endpoints
 > can use Type 1 (Cluster Link).
+>
+> **Breaking change:** Types have been renumbered from the previous 1-4 scheme.
+> Former Type 3 (Jump Cluster SASL/SCRAM) is now Type 4, and former Type 4 (Jump Cluster IAM) is now Type 6.
 
 **Example Usage**
 
 > [!NOTE]
-> The example below uses `--type 3` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Type 3 requires an existing VPC endpoint (`--existing-private-link-vpce-id`) for the Private Link connection between the jump cluster and Confluent Cloud.
+> The example below uses `--type 4` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Type 4 requires an existing VPC endpoint (`--existing-private-link-vpce-id`) for the Private Link connection between the jump cluster and Confluent Cloud.
 
 ```bash
 kcp create-asset migration-infra /
 --state-file kcp-state.json /
 --cluster-arn arn:aws:kafka:us-east-1:XXX:cluster/XXX/1a2345b6-bf9f-4670-b13b-710985f5645d-5 /
 --existing-internet-gateway /
---output-dir type-3 /
---type 3 /
+--output-dir type-4 /
+--type 4 /
 --existing-private-link-vpce-id vpce-0abc123def456789 /
 --jump-cluster-broker-subnet-cidr 10.0.101.0/24,10.0.102.0/24,10.0.103.0/24 /
 --jump-cluster-setup-host-subnet-cidr 10.0.104.0/24 /
---cluster-link-name type-3-link /
+--cluster-link-name type-4-link /
 --target-environment-id env-a1bcde /
 --target-cluster-id lkc-w89xyz /
 --target-rest-endpoint https://lkc-w89xyz.XXX.aws.private.confluent.cloud:443 /

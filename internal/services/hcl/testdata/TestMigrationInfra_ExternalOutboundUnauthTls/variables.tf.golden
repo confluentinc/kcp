@@ -76,15 +76,3 @@ variable "msk_cluster_bootstrap_servers" {
   description = "Bootstrap brokers of the MSK cluster that data will be migrated to."
 }
 
-variable "msk_sasl_scram_username" {
-  type        = string
-  description = "SASL SCRAM username of the source MSK cluster that data will be migrated from."
-  sensitive   = true
-}
-
-variable "msk_sasl_scram_password" {
-  type        = string
-  description = "SASL SCRAM password of the source MSK cluster that data will be migrated from."
-  sensitive   = true
-}
-

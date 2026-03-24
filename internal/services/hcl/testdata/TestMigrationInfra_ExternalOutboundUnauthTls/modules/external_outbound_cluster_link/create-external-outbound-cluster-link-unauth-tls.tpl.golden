@@ -24,15 +24,7 @@ curl --request POST \
       },
       {
         "name": "security.protocol",
-        "value": "SASL_SSL"
-      },
-      {
-        "name": "sasl.mechanism",
-        "value": "SCRAM-SHA-512"
-      },
-      {
-        "name": "sasl.jaas.config",
-        "value": "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${msk_sasl_scram_username}\" password=\"${msk_sasl_scram_password}\";"
+        "value": "SSL"
       }
     ]
   }'

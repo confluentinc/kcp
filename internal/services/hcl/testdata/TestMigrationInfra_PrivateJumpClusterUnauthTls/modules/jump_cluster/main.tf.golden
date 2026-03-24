@@ -1,0 +1,56 @@
+data "aws_ami" "red_hat_linux_ami" {
+  owners      = ["309956199498"]
+  most_recent = true
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+  filter {
+    name   = "name"
+    values = ["RHEL-9.6.0_HVM_GA-*"]
+  }
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+resource "aws_instance" "jump_cluster" {
+  for_each                    = { for idx, subnet_id in var.jump_cluster_broker_subnet_ids : "broker-${idx}" => subnet_id }
+  ami                         = data.aws_ami.red_hat_linux_ami.id
+  instance_type               = var.jump_cluster_instance_type
+  subnet_id                   = each.value
+  vpc_security_group_ids      = [var.jump_cluster_security_group_ids]
+  key_name                    = var.jump_cluster_ssh_key_pair_name
+  associate_public_ip_address = false
+
+  user_data = each.key == "broker-0" ? templatefile("${path.module}/jump-cluster-with-cluster-links-user-data.tpl",  {
+    cluster_link_name                          = var.cluster_link_name
+    confluent_cloud_cluster_bootstrap_endpoint = var.confluent_cloud_cluster_bootstrap_endpoint
+    confluent_cloud_cluster_id                 = var.confluent_cloud_cluster_id
+    confluent_cloud_cluster_key                = var.confluent_cloud_cluster_api_key
+    confluent_cloud_cluster_rest_endpoint      = var.confluent_cloud_cluster_rest_endpoint
+    confluent_cloud_cluster_secret             = var.confluent_cloud_cluster_api_secret
+    msk_cluster_bootstrap_brokers              = var.msk_cluster_bootstrap_brokers
+    msk_cluster_id                             = var.msk_cluster_id
+  }) : null
+
+  metadata_options {
+    http_put_response_hop_limit = 10
+    http_tokens                 = "required"
+  }
+  root_block_device {
+    volume_size = var.jump_cluster_broker_storage
+    volume_type = "gp3"
+  }
+
+  tags = {
+    Name = "jump_cluster"
+  }
+}
+

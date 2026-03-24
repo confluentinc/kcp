@@ -99,10 +99,10 @@ func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastr
 		Modules: []types.MigrationInfraTerraformModule{
 			{
 				Name:        "external_outbound_cluster_link",
-				MainTf:      mi.generateExternalOutboundClusterLinkMainTf(),
+				MainTf:      mi.generateExternalOutboundClusterLinkMainTf(request),
 				VariablesTf: mi.generateExternalOutboundClusterLinkVariablesTf(request),
 				AdditionalFiles: map[string]string{
-					"create-external-outbound-cluster-link.tpl": mi.generateCreateExternalOutboundClusterLinkTpl(),
+					mi.externalOutboundClusterLinkTemplateFileName(request): mi.generateCreateExternalOutboundClusterLinkTpl(request),
 				},
 			},
 		},

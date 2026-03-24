@@ -167,9 +167,12 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				if request.MskJumpClusterAuthType == "sasl_scram" {
+				switch request.MskJumpClusterAuthType {
+				case "sasl_scram":
 					return request.MskSaslScramBootstrapServers
-				} else {
+				case "unauth_tls":
+					return request.MskUnauthTlsBootstrapServers
+				default:
 					return request.MskSaslIamBootstrapServers
 				}
 			},

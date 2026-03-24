@@ -80,7 +80,7 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForExternalOutboundCl
 // External Outbound Cluster Linking Module Generation (Private)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() string {
+func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf(request types.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -92,6 +92,24 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 	}))
 	rootBody.AppendNewline()
 
+	templateName := "create-external-outbound-cluster-link.tpl"
+	userDataArgs := map[string]hclwrite.Tokens{
+		"confluent_cloud_cluster_api_key":    utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
+		"confluent_cloud_cluster_api_secret": utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
+		"target_cluster_rest_endpoint":  utils.TokensForVarReference(modules.VarTargetClusterRestEndpoint),
+		"target_cluster_id":             utils.TokensForVarReference(modules.VarTargetClusterID),
+		"cluster_link_name":             utils.TokensForVarReference(modules.VarClusterLinkName),
+		"msk_cluster_id":                utils.TokensForVarReference(modules.VarMSKClusterID),
+		"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
+	}
+
+	if request.MskJumpClusterAuthType == "unauth_tls" {
+		templateName = "create-external-outbound-cluster-link-unauth-tls.tpl"
+	} else {
+		userDataArgs["msk_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
+		userDataArgs["msk_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
+	}
+
 	rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResource(
 		"external_outbound_cluster_link",
 		"data.aws_ami.amzn_linux_ami.id",
@@ -99,19 +117,9 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf() 
 		modules.VarSubnetID,
 		modules.VarSecurityGroupID,
 		"", // No keypair needed as user will never need to access instance.
-		"create-external-outbound-cluster-link.tpl",
+		templateName,
 		false,
-		map[string]hclwrite.Tokens{
-			"target_cluster_api_key":        utils.TokensForVarReference(modules.VarTargetClusterAPIKey),
-			"target_cluster_api_secret":     utils.TokensForVarReference(modules.VarTargetClusterAPISecret),
-			"target_cluster_rest_endpoint":  utils.TokensForVarReference(modules.VarTargetClusterRestEndpoint),
-			"target_cluster_id":             utils.TokensForVarReference(modules.VarTargetClusterID),
-			"cluster_link_name":             utils.TokensForVarReference(modules.VarClusterLinkName),
-			"msk_cluster_id":                utils.TokensForVarReference(modules.VarMSKClusterID),
-			"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
-			"msk_sasl_scram_username":       utils.TokensForVarReference(modules.VarMSKSaslScramUsername),
-			"msk_sasl_scram_password":       utils.TokensForVarReference(modules.VarMSKSaslScramPassword),
-		},
+		userDataArgs,
 		nil,
 	))
 	rootBody.AppendNewline()
@@ -123,6 +131,16 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkVariables
 	return GenerateVariablesTf(modules.GetExternalOutboundClusterLinkingModuleVariableDefinitions(request))
 }
 
-func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl() string {
+func (mi *MigrationInfraHCLService) externalOutboundClusterLinkTemplateFileName(request types.MigrationWizardRequest) string {
+	if request.MskJumpClusterAuthType == "unauth_tls" {
+		return "create-external-outbound-cluster-link-unauth-tls.tpl"
+	}
+	return "create-external-outbound-cluster-link.tpl"
+}
+
+func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl(request types.MigrationWizardRequest) string {
+	if request.MskJumpClusterAuthType == "unauth_tls" {
+		return aws.GenerateCreateExternalOutboundClusterLinkUnauthTlsTpl()
+	}
 	return aws.GenerateCreateExternalOutboundClusterLinkTpl()
 }

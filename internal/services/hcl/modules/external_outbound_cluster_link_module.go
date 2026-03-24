@@ -31,9 +31,9 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			Condition:        nil,
 		},
 		{
-			Name: "target_cluster_api_key",
+			Name: "confluent_cloud_cluster_api_key",
 			Definition: types.TerraformVariable{
-				Name:        "target_cluster_api_key",
+				Name:        "confluent_cloud_cluster_api_key",
 				Description: "API key of the Confluent Cloud cluster that data will be migrated to.",
 				Sensitive:   true,
 				Type:        "string",
@@ -44,9 +44,9 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			Condition:        nil,
 		},
 		{
-			Name: "target_cluster_api_secret",
+			Name: "confluent_cloud_cluster_api_secret",
 			Definition: types.TerraformVariable{
-				Name:        "target_cluster_api_secret",
+				Name:        "confluent_cloud_cluster_api_secret",
 				Description: "API secret of the Confluent Cloud cluster that data will be migrated to.",
 				Sensitive:   true,
 				Type:        "string",
@@ -117,6 +117,9 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				if request.MskJumpClusterAuthType == "unauth_tls" {
+					return request.MskUnauthTlsBootstrapServers
+				}
 				return request.MskSaslScramBootstrapServers
 			},
 			Condition:        nil,
@@ -132,7 +135,9 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.MskJumpClusterAuthType != "unauth_tls"
+			},
 		},
 		{
 			Name: "msk_sasl_scram_password",
@@ -145,7 +150,9 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.MskJumpClusterAuthType != "unauth_tls"
+			},
 		},
 	}
 }
