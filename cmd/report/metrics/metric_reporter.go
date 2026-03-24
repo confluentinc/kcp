@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -44,7 +43,7 @@ func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *Me
 }
 
 func (r *MetricReporter) Run() error {
-	slog.Info("🔍 processing clusters", "clusters", r.clusterArns, "startDate", r.startDate, "endDate", r.endDate)
+	fmt.Printf("🔍 Processing clusters: %v (from %s to %s)\n", r.clusterArns, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
 
 	processedState := r.reportService.ProcessState(*r.state)
 	processedClusterMetrics := []types.ProcessedClusterMetrics{}

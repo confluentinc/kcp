@@ -1,0 +1,27 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  exclusions:
+    paths:
+      - cmd/ui/frontend
+      - dist
+      - vendor
+    generated: lax
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - gocritic
+    - misspell
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  new-from-rev: main

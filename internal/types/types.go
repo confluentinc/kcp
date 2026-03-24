@@ -35,6 +35,7 @@ const (
 	AuthTypeTLS                      AuthType = "TLS"
 	AuthTypeUnauthenticatedPlaintext AuthType = "Unauthenticated (Plaintext)"
 	AuthTypeUnauthenticatedTLS       AuthType = "Unauthenticated (TLS Encryption)"
+	AuthTypeSASLPlain                AuthType = "SASL/PLAIN"
 )
 
 // SchemaRegistryAuthType represents the different authentication types supported by Schema Registry
@@ -47,7 +48,7 @@ const (
 
 func (a AuthType) IsValid() bool {
 	switch a {
-	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS:
+	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS, AuthTypeSASLPlain:
 		return true
 	default:
 		return false
@@ -68,6 +69,7 @@ func AllAuthTypes() []string {
 		string(AuthTypeTLS),
 		string(AuthTypeUnauthenticatedPlaintext),
 		string(AuthTypeUnauthenticatedTLS),
+		string(AuthTypeSASLPlain),
 	}
 }
 

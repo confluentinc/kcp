@@ -42,16 +42,16 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 }
 
 func (bh *BastionHostAssetGenerator) Run() error {
-	slog.Info("🚀 generating bastion host environment assets")
+	fmt.Printf("🚀 Generating bastion host environment assets\n")
 
-	outputDir := "bastion_host"
-	slog.Info("🔍 creating bastion host directory", "directory", outputDir)
+	outputDir := filepath.Join("bastion_host")
+	slog.Debug("creating bastion host directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create bastion host directory: %w", err)
 	}
 
 	assetsDir := "assets"
-	slog.Info("🔍 copying assets to target directory", "from", assetsDir, "to", outputDir)
+	slog.Debug("copying assets to target directory", "from", assetsDir, "to", outputDir)
 	if err := bh.copyFiles(assetsDir, outputDir); err != nil {
 		return fmt.Errorf("failed to copy bastion host files: %w", err)
 	}
@@ -60,7 +60,7 @@ func (bh *BastionHostAssetGenerator) Run() error {
 		return fmt.Errorf("failed to generate tfvars files: %w", err)
 	}
 
-	slog.Info("✅ bastion host environment assets generated successfully", "directory", outputDir)
+	fmt.Printf("✅ Bastion host environment assets generated successfully: %s\n", outputDir)
 
 	return nil
 }
@@ -155,6 +155,6 @@ func (bh *BastionHostAssetGenerator) generateInputsTfvars(terraformDir string) e
 		return fmt.Errorf("failed to write tfvars file: %w", err)
 	}
 
-	slog.Info("✅ generated inputs tfvars file from template", "file", tfvarsPath)
+	slog.Debug("generated inputs tfvars file from template", "file", tfvarsPath)
 	return nil
 }

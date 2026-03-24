@@ -74,7 +74,7 @@ func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *Self
 
 func (mc *SelfManagedConnectorMigrator) Run() error {
 	if len(mc.Connectors) == 0 {
-		slog.Warn("⚠️ No self-managed connectors found to migrate for the MSK cluster.")
+		slog.Warn("no self-managed connectors found to migrate for the MSK cluster")
 		return nil
 	}
 
@@ -84,7 +84,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		}
 	}
 
-	slog.Info(fmt.Sprintf("Found %d connector(s) to migrate", len(mc.Connectors)))
+	fmt.Printf("🔍 Found %d connector(s) to migrate\n", len(mc.Connectors))
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {
@@ -101,13 +101,13 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	for _, connector := range mc.Connectors {
 		translatedConfig, warnings, err := mc.translateConnectorConfig(connector)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("⚠️ Failed to translate connector %s: %v", connector.Name, err))
+			slog.Warn(fmt.Sprintf("failed to translate connector %s: %v", connector.Name, err))
 			continue
 		}
 
 		if warnings != nil {
 			if len(warnings) > 0 {
-				slog.Info(fmt.Sprintf("⚠️ %d validation warnings for connector %s", len(warnings), connector.Name))
+				slog.Warn(fmt.Sprintf("%d validation warnings for connector %s", len(warnings), connector.Name))
 			}
 		}
 
@@ -132,10 +132,10 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 			return fmt.Errorf("failed to execute template for connector %s: %w", connector.Name, err)
 		}
 
-		slog.Info(fmt.Sprintf("✅ Generated: %s", filename))
+		slog.Debug(fmt.Sprintf("generated: %s", filename))
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully generated connector files for %d connectors in %s", len(mc.Connectors), mc.OutputDir))
+	fmt.Printf("✅ Successfully generated connector files for %d connectors in %s\n", len(mc.Connectors), mc.OutputDir)
 
 	return nil
 }

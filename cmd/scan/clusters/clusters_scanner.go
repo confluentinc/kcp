@@ -42,7 +42,7 @@ func (cs *ClustersScanner) Run() error {
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {
 			if err := cs.scanCluster(regionAuth.Name, clusterAuth); err != nil {
-				slog.Info("⏭️ skipping cluster", "cluster", clusterAuth.Name, "error", err)
+				fmt.Printf("⏭️  Skipping cluster %s: %v\n", clusterAuth.Name, err)
 				continue
 			}
 		}
@@ -70,7 +70,7 @@ func (cs *ClustersScanner) scanCluster(region string, clusterAuth types.ClusterA
 		return fmt.Errorf("failed to determine auth type for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterAuth.Arn, authType))
+	fmt.Printf("🚀 Starting broker scan for %s using %s authentication\n", clusterAuth.Arn, authType)
 
 	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
@@ -94,7 +94,7 @@ func (cs *ClustersScanner) scanCluster(region string, clusterAuth types.ClusterA
 		return fmt.Errorf("failed to scan Kafka resources: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterAuth.Arn))
+	fmt.Printf("✅ Broker scan complete for %s\n", clusterAuth.Arn)
 
 	return nil
 }
