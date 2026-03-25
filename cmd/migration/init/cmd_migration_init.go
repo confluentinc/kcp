@@ -18,7 +18,7 @@ var (
 	skipValidate       bool
 
 	k8sNamespace      string
-	passthroughCrName string
+	initialCrName string
 	kubeConfigPath    string
 
 	sourceClusterArn    string
@@ -68,7 +68,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
-	requiredFlags.StringVar(&passthroughCrName, "passthrough-cr-name", "", "Name of the passthrough gateway custom resource in Kubernetes.")
+	requiredFlags.StringVar(&initialCrName, "initial-cr-name", "", "Name of the initial gateway custom resource in Kubernetes.")
 	requiredFlags.StringVar(&sourceClusterArn, "source-cluster-arn", "", "ARN of the source MSK cluster.")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
@@ -138,7 +138,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 
 	migrationInitCmd.MarkFlagRequired("source-cluster-arn")
 	migrationInitCmd.MarkFlagRequired("k8s-namespace")
-	migrationInitCmd.MarkFlagRequired("passthrough-cr-name")
+	migrationInitCmd.MarkFlagRequired("initial-cr-name")
 	migrationInitCmd.MarkFlagRequired("cluster-id")
 	migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
 	migrationInitCmd.MarkFlagRequired("cluster-link-name")
@@ -211,7 +211,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
 		SourceClusterArn:    sourceClusterArn,
 		K8sNamespace:        k8sNamespace,
-		PassthroughCrName:   passthroughCrName,
+		InitialCrName:       initialCrName,
 		KubeConfigPath:      kubeConfigPathResolved,
 		ClusterId:           clusterId,
 		ClusterRestEndpoint: clusterRestEndpoint,
