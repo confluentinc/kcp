@@ -104,8 +104,6 @@ You will be prompted for the following credentials during ` + "`terraform apply`
 		credentialsSection += `
 | ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
 | ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
-	case "unauth_tls":
-		// No additional credentials needed for unauthenticated TLS
 	}
 
 	return `# Migration Infrastructure - Jump Cluster Setup
@@ -195,7 +193,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
 	switch request.MskJumpClusterAuthType {
-	case "sasl_scram", "unauth_tls":
+	case "sasl_scram":
 		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
 	default:
 		return aws.GenerateJumpClusterSaslIamSetupHostUserDataTpl()
@@ -265,20 +263,6 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 			commonUserDataArgs,
 			optionalBlocks,
 		))
-	case "unauth_tls":
-		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
-			"jump_cluster",
-			"data.aws_ami.red_hat_linux_ami.id",
-			modules.VarJumpClusterInstanceType,
-			modules.VarJumpClusterBrokerSubnetIDs,
-			modules.VarJumpClusterSecurityGroupIDs,
-			modules.VarJumpClusterSSHKeyPairName,
-			"jump-cluster-with-cluster-links-user-data.tpl",
-			"",
-			false,
-			commonUserDataArgs,
-			optionalBlocks,
-		))
 	default: // iam
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
@@ -303,8 +287,6 @@ func (mi *MigrationInfraHCLService) generateJumpClusterClusterLinksUserDataTpl(a
 	switch authType {
 	case "sasl_scram":
 		return aws.GenerateJumpClusterWithSaslScramClusterLinksUserDataTpl()
-	case "unauth_tls":
-		return aws.GenerateJumpClusterWithUnauthTlsClusterLinksUserDataTpl()
 	default:
 		return aws.GenerateJumpClusterWithIamClusterLinksUserDataTpl()
 	}

@@ -190,7 +190,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	case types.ExternalOutboundClusterLink, types.ExternalOutboundClusterLinkUnauthTls:
 		// No additional flags beyond target-environment-id.
 
-	case types.JumpClusterSaslScram, types.JumpClusterUnauthTls:
+	case types.JumpClusterSaslScram:
 		cmd.MarkFlagRequired("target-bootstrap-endpoint")
 		cmd.MarkFlagRequired("existing-private-link-vpce-id")
 		cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
@@ -377,33 +377,6 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.MskJumpClusterAuthType = "sasl_scram"
 		opts.MigrationWizardRequest.MskSaslScramBootstrapServers = bootstrapBrokers
 
-	case types.JumpClusterUnauthTls:
-		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
-		opts.MigrationWizardRequest.UseJumpClusters = true
-
-		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
-			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d). You should provide as many CIDRs as the MSK cluster has broker nodes.", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
-		}
-
-		if jumpClusterInstanceType == "" {
-			jumpClusterInstanceType = strings.TrimPrefix(aws.ToString(cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.InstanceType), "kafka.")
-		}
-
-		if jumpClusterBrokerStorage == 0 {
-			jumpClusterBrokerStorage = int(*cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
-		}
-
-		opts.MigrationWizardRequest.TargetBootstrapEndpoint = targetBootstrapEndpoint
-		opts.MigrationWizardRequest.ExistingPrivateLinkVpceId = existingPrivateLinkVpceId
-
-		opts.MigrationWizardRequest.JumpClusterBrokerSubnetCidr = convertIpToStrings(jumpClusterBrokerSubnetCidr)
-		opts.MigrationWizardRequest.JumpClusterSetupHostSubnetCidr = jumpClusterSetupHostSubnetCidr.String()
-		opts.MigrationWizardRequest.JumpClusterInstanceType = jumpClusterInstanceType
-		opts.MigrationWizardRequest.JumpClusterBrokerStorage = jumpClusterBrokerStorage
-
-		opts.MigrationWizardRequest.MskJumpClusterAuthType = "unauth_tls"
-		opts.MigrationWizardRequest.MskUnauthTlsBootstrapServers = bootstrapBrokers
-
 	case types.JumpClusterIam:
 		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = true
@@ -453,9 +426,6 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 	case types.JumpClusterSaslScram:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 		authMethod = "SASL/SCRAM"
-	case types.JumpClusterUnauthTls:
-		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringTls)
-		authMethod = "Unauthenticated TLS"
 	case types.JumpClusterIam:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslIam)
 		authMethod = "IAM"

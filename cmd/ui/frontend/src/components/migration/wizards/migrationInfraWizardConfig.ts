@@ -702,7 +702,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
                 title: 'MSK Jump Cluster Authentication Type',
                 oneOf: [
                   { title: 'SASL/SCRAM', const: 'sasl_scram' },
-                  { title: 'Unauthenticated TLS', const: 'unauth_tls' },
                   { title: 'IAM', const: 'iam' },
                 ],
               },
@@ -720,11 +719,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
             {
               target: 'msk_jump_cluster_authentication_sasl_scram',
               guard: 'selected_msk_jump_cluster_authentication_sasl_scram',
-              actions: 'save_step_data',
-            },
-            {
-              target: 'msk_jump_cluster_authentication_unauth_tls',
-              guard: 'selected_msk_jump_cluster_authentication_unauth_tls',
               actions: 'save_step_data',
             },
             {
@@ -789,89 +783,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               'ui:disabled': true,
             },
             msk_sasl_scram_bootstrap_servers: {
-              'ui:disabled': true,
-            },
-            msk_region: {
-              'ui:disabled': true,
-            },
-            target_environment_id: {
-              'ui:placeholder': 'e.g., env-xxxxxx',
-            },
-            target_cluster_id: {
-              'ui:placeholder': 'e.g., lkc-xxxxxx',
-            },
-            target_rest_endpoint: {
-              'ui:placeholder': 'e.g., https://xxx.xxx.aws.confluent.cloud:443',
-            },
-            target_bootstrap_endpoint: {
-              'ui:placeholder': 'e.g., xxx.xxx.aws.confluent.cloud:9092',
-            },
-            cluster_link_name: {
-              'ui:placeholder': 'e.g., msk-to-cc-migration-link',
-            },
-          },
-        },
-        on: {
-          NEXT: {
-            target: 'confirmation',
-            actions: 'save_step_data',
-          },
-          BACK: {
-            target: 'msk_jump_cluster_authentication_question',
-            actions: 'undo_save_step_data',
-          },
-        },
-      },
-      msk_jump_cluster_authentication_unauth_tls: {
-        meta: {
-          title: 'Private Migration | Jump Cluster - Authentication (Unauthenticated TLS)',
-          description: 'Configure the jump cluster to connect to MSK using unauthenticated TLS (port 9094, security.protocol=SSL).',
-          schema: {
-            type: 'object',
-            properties: {
-              msk_cluster_id: {
-                type: 'string',
-                title: 'MSK Cluster ID',
-                default: cluster?.kafka_admin_client_information?.cluster_id || 'failed to retrieve MSK cluster ID from statefile.'
-              },
-              msk_unauth_tls_bootstrap_servers: {
-                type: 'string',
-                title: 'MSK Bootstrap Servers (TLS)',
-                default: cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringTls || 'failed to retrieve MSK TLS bootstrap servers from statefile.'
-              },
-              msk_region: {
-                type: 'string',
-                title: 'MSK Region',
-                default: cluster?.region || 'failed to retrieve AWS region from statefile.'
-              },
-              target_environment_id: {
-                type: 'string',
-                title: 'Confluent Cloud Environment ID',
-              },
-              target_cluster_id: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster ID'
-              },
-              target_rest_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster REST Endpoint'
-              },
-              target_bootstrap_endpoint: {
-                type: 'string',
-                title: 'Confluent Cloud Cluster Bootstrap Endpoint'
-              },
-              cluster_link_name: {
-                type: 'string',
-                title: 'Cluster Link Name (created during migration)'
-              },
-            },
-            required: ['msk_cluster_id', 'msk_unauth_tls_bootstrap_servers', 'msk_region', 'target_environment_id', 'target_cluster_id', 'target_rest_endpoint', 'target_bootstrap_endpoint', 'cluster_link_name'],
-          },
-          uiSchema: {
-            msk_cluster_id: {
-              'ui:disabled': true,
-            },
-            msk_unauth_tls_bootstrap_servers: {
               'ui:disabled': true,
             },
             msk_region: {
@@ -1027,11 +938,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
               actions: 'undo_save_step_data',
             },
             {
-              target: 'msk_jump_cluster_authentication_unauth_tls',
-              guard: 'came_from_msk_jump_cluster_authentication_unauth_tls',
-              actions: 'undo_save_step_data',
-            },
-            {
               target: 'msk_jump_cluster_authentication_iam',
               guard: 'came_from_msk_jump_cluster_authentication_iam',
               actions: 'undo_save_step_data',
@@ -1070,9 +976,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       selected_msk_jump_cluster_authentication_sasl_scram: ({ event }) => {
         return event.data?.msk_jump_cluster_auth_type === 'sasl_scram'
       },
-      selected_msk_jump_cluster_authentication_unauth_tls: ({ event }) => {
-        return event.data?.msk_jump_cluster_auth_type === 'unauth_tls'
-      },
       selected_msk_jump_cluster_authentication_iam: ({ event }) => {
         return event.data?.msk_jump_cluster_auth_type === 'iam'
       },
@@ -1096,9 +999,6 @@ export const createMigrationInfraWizardConfig = (clusterArn: string): WizardConf
       },
       came_from_msk_jump_cluster_authentication_sasl_scram: ({ context }) => {
         return context.previousStep === 'msk_jump_cluster_authentication_sasl_scram'
-      },
-      came_from_msk_jump_cluster_authentication_unauth_tls: ({ context }) => {
-        return context.previousStep === 'msk_jump_cluster_authentication_unauth_tls'
       },
       came_from_msk_jump_cluster_authentication_iam: ({ context }) => {
         return context.previousStep === 'msk_jump_cluster_authentication_iam'

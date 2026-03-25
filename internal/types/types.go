@@ -99,13 +99,12 @@ const (
 	ExternalOutboundClusterLink           MigrationType = 2
 	ExternalOutboundClusterLinkUnauthTls  MigrationType = 3
 	JumpClusterSaslScram                  MigrationType = 4
-	JumpClusterUnauthTls                  MigrationType = 5
 	JumpClusterIam                        MigrationType = 6
 )
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkUnauthTls, JumpClusterSaslScram, JumpClusterUnauthTls, JumpClusterIam:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkUnauthTls, JumpClusterSaslScram, JumpClusterIam:
 		return true
 	default:
 		return false
