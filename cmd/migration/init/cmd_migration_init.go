@@ -17,9 +17,9 @@ var (
 	migrationStateFile string
 	skipValidate       bool
 
-	k8sNamespace      string
-	initialCrName string
-	kubeConfigPath    string
+	k8sNamespace   string
+	initialCrName  string
+	kubeConfigPath string
 
 	sourceClusterArn    string
 	clusterId           string
