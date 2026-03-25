@@ -69,7 +69,7 @@ func NewDiscoverCmd() *cobra.Command {
 		return nil
 	})
 
-	discoverCmd.MarkFlagRequired("region")
+	_ = discoverCmd.MarkFlagRequired("region")
 
 	return discoverCmd
 }

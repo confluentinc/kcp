@@ -207,10 +207,8 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		if clusterAvailability == "MULTI_ZONE" && clusterCku < 2 {
 			return fmt.Errorf("invalid value for --cluster-cku: MULTI_ZONE availability requires >= 2 CKUs, got %d", clusterCku)
 		}
-	} else {
-		if clusterId == "" {
-			return fmt.Errorf("required flag `--cluster-id` not set when `--needs-cluster=false`")
-		}
+	} else if clusterId == "" {
+		return fmt.Errorf("required flag `--cluster-id` not set when `--needs-cluster=false`")
 	}
 
 	if needsPrivateLink {
