@@ -24,10 +24,9 @@ type MigrationConfig struct {
 	ClusterLinkConfigs map[string]string `json:"cluster_link_configs"`
 
 	// Gateway CR configuration
-	PassthroughCrName string `json:"passthrough_cr_name"`
-	K8sNamespace      string `json:"k8s_namespace"`
-	InitialCrYAML     []byte `json:"initial_cr_yaml"`
-	FencedCrYAML      []byte `json:"fenced_cr_yaml"`
-	SwitchoverCrYAML  []byte `json:"switchover_cr_yaml"`
+	InitialCrName    string `json:"initial_cr_name"`
+	K8sNamespace     string `json:"k8s_namespace"`
+	InitialCrYAML    []byte `json:"initial_cr_yaml"`
+	FencedCrYAML     []byte `json:"fenced_cr_yaml"`
+	SwitchoverCrYAML []byte `json:"switchover_cr_yaml"`
 }
-
