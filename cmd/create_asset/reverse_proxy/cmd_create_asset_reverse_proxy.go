@@ -58,10 +58,10 @@ func NewReverseProxyCmd() *cobra.Command {
 		return nil
 	})
 
-	reverseProxyCmd.MarkFlagRequired("reverse-proxy-cidr")
-	reverseProxyCmd.MarkFlagRequired("region")
-	reverseProxyCmd.MarkFlagRequired("vpc-id")
-	reverseProxyCmd.MarkFlagRequired("bootstrap-endpoint")
+	_ = reverseProxyCmd.MarkFlagRequired("reverse-proxy-cidr")
+	_ = reverseProxyCmd.MarkFlagRequired("region")
+	_ = reverseProxyCmd.MarkFlagRequired("vpc-id")
+	_ = reverseProxyCmd.MarkFlagRequired("bootstrap-endpoint")
 
 	return reverseProxyCmd
 }

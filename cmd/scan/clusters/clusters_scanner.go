@@ -141,7 +141,7 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	case types.AuthTypeTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey))
 	default:
-		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 
 	if err != nil {
@@ -187,7 +187,7 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 			})
 		}
 	}
-	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster availabe to prove this.
+	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster available to prove this.
 	if len(data) > 0 {
 		md.AddHeading("Topics", 2)
 		md.AddTable(headers, data)

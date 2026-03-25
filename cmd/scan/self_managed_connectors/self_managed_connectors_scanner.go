@@ -101,7 +101,7 @@ func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectT
 
 func (s *SelfManagedConnectorsScanner) Run() error {
 	if s.client == nil {
-		return fmt.Errorf("Connect API client not initialized")
+		return fmt.Errorf("connect API client not initialized")
 	}
 
 	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
@@ -181,7 +181,7 @@ func (c *HTTPConnectClient) ListConnectors() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -210,7 +210,7 @@ func (c *HTTPConnectClient) GetConnectorConfig(name string) (map[string]any, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -239,7 +239,7 @@ func (c *HTTPConnectClient) GetConnectorStatus(name string) (map[string]any, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

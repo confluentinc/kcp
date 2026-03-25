@@ -386,8 +386,8 @@ func TestWriteReportCommands(t *testing.T) {
 				t.Fatalf("failed to create temp file: %v", err)
 			}
 			tmpFilePath := tmpFile.Name()
-			tmpFile.Close()
-			defer os.Remove(tmpFilePath)
+			_ = tmpFile.Close()
+			defer func() { _ = os.Remove(tmpFilePath) }()
 
 			// Call the method
 			err = tt.state.WriteReportCommands(tmpFilePath, tt.stateFilePath)

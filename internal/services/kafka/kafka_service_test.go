@@ -33,7 +33,7 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 			},
 			clusterType: kafkatypes.ClusterTypeProvisioned,
 			wantErr:     true,
-			wantErrMsg:  "Failed to describe kafka cluster: cluster connection failed",
+			wantErrMsg:  "failed to describe kafka cluster: cluster connection failed",
 		},
 		{
 			name: "scanClusterTopics returns error",
@@ -49,7 +49,7 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 			},
 			clusterType: kafkatypes.ClusterTypeProvisioned,
 			wantErr:     true,
-			wantErrMsg:  "Failed to list topics with configs: failed to connect to brokers",
+			wantErrMsg:  "failed to list topics with configs: failed to connect to brokers",
 		},
 		{
 			name: "serverless cluster skips ACL scan successfully",
@@ -99,7 +99,7 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 			},
 			clusterType: kafkatypes.ClusterTypeProvisioned,
 			wantErr:     true,
-			wantErrMsg:  "Failed to list acls: ACL authorization failed",
+			wantErrMsg:  "failed to list acls: ACL authorization failed",
 		},
 		{
 			name: "successful full scan for provisioned cluster",
@@ -211,7 +211,7 @@ func TestKafkaService_scanClusterTopics(t *testing.T) {
 				},
 			},
 			wantErr:    true,
-			wantErrMsg: "Failed to list topics with configs: network timeout",
+			wantErrMsg: "failed to list topics with configs: network timeout",
 			wantTopics: nil,
 		},
 		{
@@ -320,7 +320,7 @@ func TestKafkaService_describeKafkaCluster(t *testing.T) {
 				},
 			},
 			wantErr:      true,
-			wantErrMsg:   "Failed to describe kafka cluster: cluster unreachable",
+			wantErrMsg:   "failed to describe kafka cluster: cluster unreachable",
 			wantMetadata: nil,
 		},
 		{
@@ -376,7 +376,7 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 				},
 			},
 			wantErr:    true,
-			wantErrMsg: "Failed to list acls: connection failed",
+			wantErrMsg: "failed to list acls: connection failed",
 		},
 		{
 			name: "successful ACL scan and flattening",
