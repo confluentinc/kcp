@@ -109,12 +109,12 @@ interrupted, re-running this command will resume from the last completed step.`,
 		return nil
 	})
 
-	migrationExecuteCmd.MarkFlagRequired("migration-id")
-	migrationExecuteCmd.MarkFlagRequired("lag-threshold")
-	migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
-	migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
-	migrationExecuteCmd.MarkFlagRequired("source-cluster-arn")
-	migrationExecuteCmd.MarkFlagRequired("cc-bootstrap")
+	_ = migrationExecuteCmd.MarkFlagRequired("migration-id")
+	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
+	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
+	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
+	_ = migrationExecuteCmd.MarkFlagRequired("source-cluster-arn")
+	_ = migrationExecuteCmd.MarkFlagRequired("cc-bootstrap")
 
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
@@ -127,14 +127,14 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	}
 
 	if useSaslScram {
-		cmd.MarkFlagRequired("sasl-scram-username")
-		cmd.MarkFlagRequired("sasl-scram-password")
+		_ = cmd.MarkFlagRequired("sasl-scram-username")
+		_ = cmd.MarkFlagRequired("sasl-scram-password")
 	}
 
 	if useTls {
-		cmd.MarkFlagRequired("tls-ca-cert")
-		cmd.MarkFlagRequired("tls-client-cert")
-		cmd.MarkFlagRequired("tls-client-key")
+		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		_ = cmd.MarkFlagRequired("tls-client-cert")
+		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
 
 	return nil

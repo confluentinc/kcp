@@ -136,16 +136,16 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 		return nil
 	})
 
-	migrationInitCmd.MarkFlagRequired("source-cluster-arn")
-	migrationInitCmd.MarkFlagRequired("k8s-namespace")
-	migrationInitCmd.MarkFlagRequired("initial-cr-name")
-	migrationInitCmd.MarkFlagRequired("cluster-id")
-	migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
-	migrationInitCmd.MarkFlagRequired("cluster-link-name")
-	migrationInitCmd.MarkFlagRequired("cluster-api-key")
-	migrationInitCmd.MarkFlagRequired("cluster-api-secret")
-	migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
-	migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
+	_ = migrationInitCmd.MarkFlagRequired("source-cluster-arn")
+	_ = migrationInitCmd.MarkFlagRequired("k8s-namespace")
+	_ = migrationInitCmd.MarkFlagRequired("initial-cr-name")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-id")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-link-name")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-api-key")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-api-secret")
+	_ = migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
+	_ = migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
@@ -158,14 +158,14 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if useSaslScram {
-		cmd.MarkFlagRequired("sasl-scram-username")
-		cmd.MarkFlagRequired("sasl-scram-password")
+		_ = cmd.MarkFlagRequired("sasl-scram-username")
+		_ = cmd.MarkFlagRequired("sasl-scram-password")
 	}
 
 	if useTls {
-		cmd.MarkFlagRequired("tls-ca-cert")
-		cmd.MarkFlagRequired("tls-client-cert")
-		cmd.MarkFlagRequired("tls-client-key")
+		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		_ = cmd.MarkFlagRequired("tls-client-cert")
+		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
 
 	return nil
