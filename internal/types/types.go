@@ -95,15 +95,16 @@ type ConnectTlsAuth struct {
 type MigrationType int
 
 const (
-	PublicMskEndpoints          MigrationType = 1
-	ExternalOutboundClusterLink MigrationType = 2
-	JumpClusterSaslScram        MigrationType = 3
-	JumpClusterIam              MigrationType = 4
+	PublicMskEndpoints                    MigrationType = 1
+	ExternalOutboundClusterLink           MigrationType = 2
+	ExternalOutboundClusterLinkUnauthTls  MigrationType = 3
+	JumpClusterSaslScram                  MigrationType = 4
+	JumpClusterIam                        MigrationType = 6
 )
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkUnauthTls, JumpClusterSaslScram, JumpClusterIam:
 		return true
 	default:
 		return false
@@ -136,10 +137,11 @@ type TargetClusterWizardRequest struct {
 	ClusterType         string   `json:"cluster_type"`
 	ClusterAvailability string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
 	ClusterCku          int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
-	NeedsPrivateLink    bool     `json:"needs_private_link"`
-	PreventDestroy      bool     `json:"prevent_destroy"`
-	VpcId               string   `json:"vpc_id"`
-	SubnetCidrRanges    []string `json:"subnet_cidr_ranges"`
+	NeedsPrivateLink      bool     `json:"needs_private_link"`
+	UseExistingRoute53Zone bool   `json:"use_existing_route53_zone"`
+	PreventDestroy        bool     `json:"prevent_destroy"`
+	VpcId                 string   `json:"vpc_id"`
+	SubnetCidrRanges      []string `json:"subnet_cidr_ranges"`
 }
 
 type TerraformFiles struct {
@@ -189,12 +191,14 @@ type MigrationWizardRequest struct {
 	JumpClusterIamAuthRoleName   string `json:"jump_cluster_iam_auth_role_name"`
 	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
 	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
+	MskUnauthTlsBootstrapServers string `json:"msk_unauth_tls_bootstrap_servers"`
 	MskRegion                    string `json:"msk_region"`
 	TargetEnvironmentId          string `json:"target_environment_id"`
 	TargetClusterId              string `json:"target_cluster_id"`
 	TargetRestEndpoint           string `json:"target_rest_endpoint"`
 	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
 	ClusterLinkName              string `json:"cluster_link_name"`
+	TargetClusterType            string `json:"target_cluster_type"`
 }
 
 type ExtOutboundClusterKafkaBroker struct {

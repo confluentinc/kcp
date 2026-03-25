@@ -30,7 +30,9 @@ var SchemaExporterVariables = []types.TerraformVariable{
 	{Name: VarSubjects, Description: "List of subjects to export", Sensitive: false, Type: "list(string)"},
 }
 
-func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig) *hclwrite.Block {
+// GenerateSchemaExporter creates a confluent_schema_exporter resource block.
+// schemaRegistryClusterID overrides the random placeholder ID when non-empty (for deterministic tests).
+func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig, schemaRegistryClusterID ...string) *hclwrite.Block {
 	resourceName := "kcp_schema_exporter"
 	exporterBlock := hclwrite.NewBlock("resource", []string{"confluent_schema_exporter", resourceName})
 
@@ -41,7 +43,11 @@ func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig) *
 	// schema_registry_cluster block
 	schemaRegistryClusterBlock := hclwrite.NewBlock("schema_registry_cluster", nil)
 	schemaRegistryClusterBlock.Body().AppendUnstructuredTokens(utils.TokensForComment("# a value is required for the exporter - just using random string\n"))
-	schemaRegistryClusterBlock.Body().SetAttributeValue("id", cty.StringVal(utils.RandomString(8)))
+	clusterID := utils.RandomString(8)
+	if len(schemaRegistryClusterID) > 0 && schemaRegistryClusterID[0] != "" {
+		clusterID = schemaRegistryClusterID[0]
+	}
+	schemaRegistryClusterBlock.Body().SetAttributeValue("id", cty.StringVal(clusterID))
 	exporterBlock.Body().AppendBlock(schemaRegistryClusterBlock)
 	exporterBlock.Body().AppendNewline()
 

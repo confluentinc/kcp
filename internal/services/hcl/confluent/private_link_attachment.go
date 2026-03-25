@@ -21,6 +21,44 @@ func GeneratePrivateLinkAttachmentResource(tfResourceName, displayName, awsRegio
 	return privateLinkAttachmentBlock
 }
 
+// GenerateIngressGatewayResource generates a confluent_gateway resource with aws_ingress_private_link_gateway.
+// Replaces GeneratePrivateLinkAttachmentResource for enterprise clusters.
+func GenerateIngressGatewayResource(tfResourceName, displayName, awsRegionVarName, environmentIdVarName string) *hclwrite.Block {
+	gatewayBlock := hclwrite.NewBlock("resource", []string{"confluent_gateway", tfResourceName})
+	gatewayBlock.Body().SetAttributeValue("display_name", cty.StringVal(displayName))
+
+	environmentBlock := hclwrite.NewBlock("environment", nil)
+	environmentBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(environmentIdVarName))
+	gatewayBlock.Body().AppendBlock(environmentBlock)
+
+	ingressBlock := hclwrite.NewBlock("aws_ingress_private_link_gateway", nil)
+	ingressBlock.Body().SetAttributeRaw("region", utils.TokensForVarReference(awsRegionVarName))
+	gatewayBlock.Body().AppendBlock(ingressBlock)
+
+	return gatewayBlock
+}
+
+// GenerateAccessPointResource generates a confluent_access_point resource with aws_ingress_private_link_endpoint.
+// Replaces GeneratePrivateLinkAttachmentConnectionResource for enterprise clusters.
+func GenerateAccessPointResource(tfResourceName, displayName, environmentIdVarName, vpcEndpointIdRef, gatewayIdRef string) *hclwrite.Block {
+	accessPointBlock := hclwrite.NewBlock("resource", []string{"confluent_access_point", tfResourceName})
+	accessPointBlock.Body().SetAttributeValue("display_name", cty.StringVal(displayName))
+
+	environmentBlock := hclwrite.NewBlock("environment", nil)
+	environmentBlock.Body().SetAttributeRaw("id", utils.TokensForVarReference(environmentIdVarName))
+	accessPointBlock.Body().AppendBlock(environmentBlock)
+
+	gatewayBlock := hclwrite.NewBlock("gateway", nil)
+	gatewayBlock.Body().SetAttributeRaw("id", utils.TokensForResourceReference(gatewayIdRef))
+	accessPointBlock.Body().AppendBlock(gatewayBlock)
+
+	ingressBlock := hclwrite.NewBlock("aws_ingress_private_link_endpoint", nil)
+	ingressBlock.Body().SetAttributeRaw("vpc_endpoint_id", utils.TokensForResourceReference(vpcEndpointIdRef))
+	accessPointBlock.Body().AppendBlock(ingressBlock)
+
+	return accessPointBlock
+}
+
 func GeneratePrivateLinkAttachmentConnectionResource(tfResourceName, displayName, targetEnvironmentIdVarName, vpcEndpointIdRef, privateLinkAttachmentIdRef string) *hclwrite.Block {
 	privateLinkAttachmentConnectionBlock := hclwrite.NewBlock("resource", []string{"confluent_private_link_attachment_connection", tfResourceName})
 	privateLinkAttachmentConnectionBlock.Body().SetAttributeValue("display_name", cty.StringVal(displayName))

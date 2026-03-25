@@ -3,6 +3,7 @@ package aws
 import (
 	_ "embed"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/utils"
@@ -25,11 +26,17 @@ func GenerateAmiDataResource(tfResourceName, owners string, mostRecent bool, fil
 	body.SetAttributeValue("most_recent", cty.BoolVal(mostRecent))
 	body.AppendNewline()
 
-	for filterName, filterValue := range filters {
+	filterNames := make([]string, 0, len(filters))
+	for name := range filters {
+		filterNames = append(filterNames, name)
+	}
+	sort.Strings(filterNames)
+
+	for _, filterName := range filterNames {
 		filterBlock := body.AppendNewBlock("filter", nil)
 		filterBody := filterBlock.Body()
 		filterBody.SetAttributeValue("name", cty.StringVal(filterName))
-		filterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal(filterValue)}))
+		filterBody.SetAttributeValue("values", cty.ListVal([]cty.Value{cty.StringVal(filters[filterName])}))
 	}
 
 	return resourceBlock
@@ -155,7 +162,14 @@ func appendOptionalBlocks(instanceBody *hclwrite.Body, optionalBlocks OptionalBl
 		return
 	}
 
-	for blockName, attributes := range optionalBlocks {
+	blockNames := make([]string, 0, len(optionalBlocks))
+	for name := range optionalBlocks {
+		blockNames = append(blockNames, name)
+	}
+	sort.Strings(blockNames)
+
+	for _, blockName := range blockNames {
+		attributes := optionalBlocks[blockName]
 		if len(attributes) == 0 {
 			continue
 		}
@@ -163,7 +177,14 @@ func appendOptionalBlocks(instanceBody *hclwrite.Body, optionalBlocks OptionalBl
 		block := instanceBody.AppendNewBlock(blockName, nil)
 		blockBody := block.Body()
 
-		for attrName, attrValue := range attributes {
+		attrNames := make([]string, 0, len(attributes))
+		for name := range attributes {
+			attrNames = append(attrNames, name)
+		}
+		sort.Strings(attrNames)
+
+		for _, attrName := range attrNames {
+			attrValue := attributes[attrName]
 			switch v := attrValue.(type) {
 			case cty.Value:
 				blockBody.SetAttributeValue(attrName, v)
@@ -195,6 +216,9 @@ var jumpClusterWithIamClusterLinksUserDataTpl string
 //go:embed ec2_user_data_templates/create-external-outbound-cluster-link.tpl
 var createExternalOutboundClusterLinkTpl string
 
+//go:embed ec2_user_data_templates/create-external-outbound-cluster-link-unauth-tls.tpl
+var createExternalOutboundClusterLinkUnauthTlsTpl string
+
 func GenerateJumpClusterSaslScramSetupHostUserDataTpl() string {
 	return jumpClusterSaslScramSetupHostUserDataTpl
 }
@@ -213,6 +237,10 @@ func GenerateJumpClusterWithIamClusterLinksUserDataTpl() string {
 
 func GenerateCreateExternalOutboundClusterLinkTpl() string {
 	return createExternalOutboundClusterLinkTpl
+}
+
+func GenerateCreateExternalOutboundClusterLinkUnauthTlsTpl() string {
+	return createExternalOutboundClusterLinkUnauthTlsTpl
 }
 
 // ProvisionerConfig represents configuration for a provisioner block
