@@ -21,10 +21,10 @@ import (
 // State represents the raw input data structure (kcp-state.json file)
 // This is what gets fed INTO the frontend/API for processing
 type State struct {
-	Regions          []DiscoveredRegion   `json:"regions"`
+	Regions          []DiscoveredRegion     `json:"regions"`
 	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo         `json:"kcp_build_info"`
-	Timestamp        time.Time            `json:"timestamp"`
+	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
+	Timestamp        time.Time              `json:"timestamp"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for State to handle
@@ -677,7 +677,7 @@ type Subject struct {
 // SchemaRegistriesState holds schema registries organized by type
 type SchemaRegistriesState struct {
 	ConfluentSchemaRegistry []SchemaRegistryInformation     `json:"confluent_schema_registry,omitempty"`
-	AWSGlue                []GlueSchemaRegistryInformation  `json:"aws_glue,omitempty"`
+	AWSGlue                 []GlueSchemaRegistryInformation `json:"aws_glue,omitempty"`
 }
 
 // UpsertConfluentSchemaRegistry inserts or updates a Confluent SR entry, matched by URL
@@ -729,10 +729,10 @@ type GlueSchemaVersion struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Regions          []ProcessedRegion  `json:"regions"`
+	Regions          []ProcessedRegion      `json:"regions"`
 	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo       `json:"kcp_build_info"`
-	Timestamp        time.Time          `json:"timestamp"`
+	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
+	Timestamp        time.Time              `json:"timestamp"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters

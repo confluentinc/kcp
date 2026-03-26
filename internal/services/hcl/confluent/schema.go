@@ -131,7 +131,9 @@ func generateConfluentSchema(resourceName, subjectName, format, schemaFilePath, 
 	body.SetAttributeRaw("depends_on", utils.TokensForList([]string{dependsOn}))
 
 	// lifecycle { prevent_destroy = true }
-	utils.GenerateLifecycleBlock(block, "prevent_destroy", true)
+	if err := utils.GenerateLifecycleBlock(block, "prevent_destroy", true); err != nil {
+		return nil
+	}
 
 	return block
 }

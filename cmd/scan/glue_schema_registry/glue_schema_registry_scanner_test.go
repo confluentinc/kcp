@@ -11,7 +11,7 @@ import (
 )
 
 type mockGlueService struct {
-	getRegistryInfoFn          func(registryName string) (string, error)
+	getRegistryInfoFn           func(registryName string) (string, error)
 	getAllSchemasWithVersionsFn func(registryName string) ([]types.GlueSchema, error)
 }
 
@@ -26,12 +26,12 @@ func (m *mockGlueService) GetAllSchemasWithVersions(registryName string) ([]type
 func TestGlueSchemaRegistryScanner_Run(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write initial state
 	_, err = tmpFile.WriteString(`{"regions":[],"schema_registries":null}`)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	service := &mockGlueService{
 		getRegistryInfoFn: func(registryName string) (string, error) {
@@ -82,12 +82,12 @@ func TestGlueSchemaRegistryScanner_Run(t *testing.T) {
 func TestGlueSchemaRegistryScanner_Run_UpsertExisting(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write state with existing Glue registry
 	_, err = tmpFile.WriteString(`{"regions":[],"schema_registries":{"aws_glue":[{"registry_name":"my-registry","region":"us-east-1","registry_arn":"old-arn","schemas":[]}]}}`)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	service := &mockGlueService{
 		getRegistryInfoFn: func(registryName string) (string, error) {
@@ -122,11 +122,11 @@ func TestGlueSchemaRegistryScanner_Run_UpsertExisting(t *testing.T) {
 func TestGlueSchemaRegistryScanner_Run_RegistryNotFound(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(`{"regions":[]}`)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	service := &mockGlueService{
 		getRegistryInfoFn: func(registryName string) (string, error) {
