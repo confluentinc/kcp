@@ -17,9 +17,9 @@ var (
 	migrationStateFile string
 	skipValidate       bool
 
-	k8sNamespace      string
-	passthroughCrName string
-	kubeConfigPath    string
+	k8sNamespace   string
+	initialCrName  string
+	kubeConfigPath string
 
 	sourceClusterArn    string
 	clusterId           string
@@ -68,7 +68,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
-	requiredFlags.StringVar(&passthroughCrName, "passthrough-cr-name", "", "Name of the passthrough gateway custom resource in Kubernetes.")
+	requiredFlags.StringVar(&initialCrName, "initial-cr-name", "", "Name of the initial gateway custom resource in Kubernetes.")
 	requiredFlags.StringVar(&sourceClusterArn, "source-cluster-arn", "", "ARN of the source MSK cluster.")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
@@ -136,16 +136,16 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 		return nil
 	})
 
-	migrationInitCmd.MarkFlagRequired("source-cluster-arn")
-	migrationInitCmd.MarkFlagRequired("k8s-namespace")
-	migrationInitCmd.MarkFlagRequired("passthrough-cr-name")
-	migrationInitCmd.MarkFlagRequired("cluster-id")
-	migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
-	migrationInitCmd.MarkFlagRequired("cluster-link-name")
-	migrationInitCmd.MarkFlagRequired("cluster-api-key")
-	migrationInitCmd.MarkFlagRequired("cluster-api-secret")
-	migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
-	migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
+	_ = migrationInitCmd.MarkFlagRequired("source-cluster-arn")
+	_ = migrationInitCmd.MarkFlagRequired("k8s-namespace")
+	_ = migrationInitCmd.MarkFlagRequired("initial-cr-name")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-id")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-link-name")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-api-key")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-api-secret")
+	_ = migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
+	_ = migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
@@ -158,14 +158,14 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if useSaslScram {
-		cmd.MarkFlagRequired("sasl-scram-username")
-		cmd.MarkFlagRequired("sasl-scram-password")
+		_ = cmd.MarkFlagRequired("sasl-scram-username")
+		_ = cmd.MarkFlagRequired("sasl-scram-password")
 	}
 
 	if useTls {
-		cmd.MarkFlagRequired("tls-ca-cert")
-		cmd.MarkFlagRequired("tls-client-cert")
-		cmd.MarkFlagRequired("tls-client-key")
+		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		_ = cmd.MarkFlagRequired("tls-client-cert")
+		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
 
 	return nil
@@ -211,7 +211,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
 		SourceClusterArn:    sourceClusterArn,
 		K8sNamespace:        k8sNamespace,
-		PassthroughCrName:   passthroughCrName,
+		InitialCrName:       initialCrName,
 		KubeConfigPath:      kubeConfigPathResolved,
 		ClusterId:           clusterId,
 		ClusterRestEndpoint: clusterRestEndpoint,

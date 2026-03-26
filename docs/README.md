@@ -1602,7 +1602,7 @@ Initialize a new migration by validating infrastructure and persisting migration
 **Required Arguments**:
 
 - `--k8s-namespace`: Kubernetes namespace where the gateway is deployed.
-- `--passthrough-cr-name`: Name of the passthrough gateway custom resource in Kubernetes.
+- `--initial-cr-name`: Name of the initial gateway custom resource in Kubernetes.
 - `--source-cluster-arn`: ARN of the source MSK cluster.
 - `--cluster-id`: Confluent Cloud destination cluster ID (e.g. `lkc-abc123`).
 - `--cluster-rest-endpoint`: REST endpoint of the destination Confluent Cloud cluster.
@@ -1643,7 +1643,7 @@ Initialize a new migration by validating infrastructure and persisting migration
 ```shell
 kcp migration init \
   --k8s-namespace my-namespace \
-  --passthrough-cr-name my-gateway \
+  --initial-cr-name my-gateway \
   --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
   --cluster-id lkc-abc123 \
   --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
