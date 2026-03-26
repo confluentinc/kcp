@@ -50,6 +50,7 @@ export const WIZARD_TYPES = {
   MIGRATION_INFRA: 'migration-infra',
   MIGRATION_SCRIPTS: 'migration-scripts',
   MIGRATE_SCHEMAS: 'migrate-schemas',
+  MIGRATE_GLUE_SCHEMAS: 'migrate-glue-schemas',
   MIGRATE_TOPICS: 'migrate-topics',
   MIGRATE_ACLS: 'migrate-acls',
 } as const
