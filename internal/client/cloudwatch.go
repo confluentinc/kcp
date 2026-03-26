@@ -11,7 +11,7 @@ import (
 func NewCloudWatchClient(region string) (*cloudwatch.Client, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to load AWS config: %v", err)
+		return nil, fmt.Errorf("failed to load AWS config: %v", err)
 	}
 
 	if region != "" {

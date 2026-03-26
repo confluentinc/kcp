@@ -70,8 +70,8 @@ func NewMigrateSchemasCmd() *cobra.Command {
 		return nil
 	})
 
-	migrateSchemasCmd.MarkFlagRequired("state-file")
-	migrateSchemasCmd.MarkFlagRequired("cc-sr-rest-endpoint")
+	_ = migrateSchemasCmd.MarkFlagRequired("state-file")
+	_ = migrateSchemasCmd.MarkFlagRequired("cc-sr-rest-endpoint")
 
 	return migrateSchemasCmd
 }

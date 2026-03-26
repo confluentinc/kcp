@@ -2,6 +2,8 @@ package hcl
 
 import (
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
 	"github.com/confluentinc/kcp/internal/types"
@@ -9,6 +11,16 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+// Confluent Cloud supported ACL resource types.
+// Keys are lowercase to match against strings.ToLower(acl.ResourceType) for case-insensitive comparison.
+// https://docs.confluent.io/cloud/current/security/access-control/acl.html#acl-resources-and-operations-for-ccloud-summary
+var supportedACLResourceTypes = map[string]bool{
+	"topic":           true,
+	"group":           true,
+	"cluster":         true,
+	"transactionalid": true, // matches strings.ToLower("TransactionalId") — no underscore
+}
 
 type MigrationScriptsHCLService struct {
 }
@@ -27,7 +39,7 @@ func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.Mir
 
 func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:           s.generateMigrateACLsMainTf(request),
+		PerPrincipalTf:   s.generatePerPrincipalACLsTf(request),
 		ProvidersTf:      s.generateProvidersTf(),
 		VariablesTf:      s.generateMigrateACLsVariablesTf(),
 		InputsAutoTfvars: s.generateMigrateACLsInputsAutoTfvars(request),
@@ -136,39 +148,56 @@ func (s *MigrationScriptsHCLService) generateMirrorTopicsVariablesTf() string {
 // Migrate ACLs Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) generateMigrateACLsMainTf(request types.MigrateAclsRequest) string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
+func (s *MigrationScriptsHCLService) generatePerPrincipalACLsTf(request types.MigrateAclsRequest) map[string]string {
+	result := make(map[string]string)
 
 	for principal, acls := range request.AclsByPrincipal {
+		f := hclwrite.NewEmptyFile()
+		rootBody := f.Body()
+
 		serviceAccountResourceName := utils.FormatHclResourceName(principal)
 		rootBody.AppendUnstructuredTokens(utils.TokensForComment("// Migrated principal: " + principal))
 		rootBody.AppendNewline()
-		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal, true))
+		rootBody.AppendBlock(confluent.GenerateServiceAccount(serviceAccountResourceName, principal, "Service Account for "+principal, request.PreventDestroy))
 		rootBody.AppendNewline()
 
-		for i, acl := range acls {
-			tfResourceName := utils.FormatHclResourceName(fmt.Sprintf("%s_%s_%s_%d", acl.PermissionType, acl.ResourceType, acl.Operation, i))
+		aclIndex := 0
+		for _, acl := range acls {
+			if !supportedACLResourceTypes[strings.ToLower(acl.ResourceType)] {
+				slog.Warn("skipping unsupported Confluent Cloud ACL resource type", "resource_type", acl.ResourceType, "principal", principal)
+				continue
+			}
+
+			operationSnake := utils.CamelToScreamingSnake(acl.Operation)
+			resourceTypeSnake := utils.CamelToScreamingSnake(acl.ResourceType)
+			patternTypeSnake := utils.CamelToScreamingSnake(acl.ResourcePatternType)
+			permissionSnake := utils.CamelToScreamingSnake(acl.PermissionType)
+			tfResourceName := utils.FormatHclResourceName(fmt.Sprintf("%s_%s_%s_%s_%d", principal, acl.PermissionType, acl.ResourceType, operationSnake, aclIndex))
 
 			rootBody.AppendBlock(confluent.GenerateKafkaACL(
 				tfResourceName,
-				acl.ResourceType,
+				resourceTypeSnake,
 				acl.ResourceName,
-				acl.ResourcePatternType,
+				patternTypeSnake,
 				fmt.Sprintf("User:${confluent_service_account.%s.id}", serviceAccountResourceName),
 				acl.Host,
-				acl.Operation,
-				acl.PermissionType,
+				operationSnake,
+				permissionSnake,
 				"var.confluent_cloud_cluster_id",
 				"var.confluent_cloud_cluster_rest_endpoint",
 				"var.confluent_cloud_cluster_api_key",
 				"var.confluent_cloud_cluster_api_secret",
+				request.PreventDestroy,
 			))
 			rootBody.AppendNewline()
+			aclIndex++
 		}
+
+		fileName := fmt.Sprintf("%s.tf", serviceAccountResourceName)
+		result[fileName] = string(f.Bytes())
 	}
 
-	return string(f.Bytes())
+	return result
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateACLsVariablesTf() string {

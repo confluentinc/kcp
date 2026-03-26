@@ -61,15 +61,16 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) map[string]any {
 	// Collect variables from all modules
 	allVars := []ModuleVariable[types.MigrationWizardRequest]{}
-	if request.HasPublicMskEndpoints {
+	switch {
+	case request.HasPublicMskEndpoints:
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
-	} else if request.UseJumpClusters {
+	case request.UseJumpClusters:
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
-	} else {
+	default:
 		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
@@ -83,15 +84,16 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
 	// Collect variables from all modules
 	allVars := []ModuleVariable[types.MigrationWizardRequest]{}
-	if request.HasPublicMskEndpoints {
+	switch {
+	case request.HasPublicMskEndpoints:
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
-	} else if request.UseJumpClusters {
+	case request.UseJumpClusters:
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
-	} else {
+	default:
 		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)

@@ -64,7 +64,7 @@ func NewReportMetricsCmd() *cobra.Command {
 		return nil
 	})
 
-	reportMetricsCmd.MarkFlagRequired("state-file")
+	_ = reportMetricsCmd.MarkFlagRequired("state-file")
 	// optional but if one is provided, the other must be provided
 	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end", "cluster-arn")
 
@@ -81,14 +81,14 @@ func preRunReportMetrics(cmd *cobra.Command, args []string) error {
 func runReportMetrics(cmd *cobra.Command, args []string) error {
 	opts, err := parseMetricReporterOpts()
 	if err != nil {
-		return fmt.Errorf("❌ failed to parse report opts: %v", err)
+		return fmt.Errorf("failed to parse report opts: %v", err)
 	}
 
 	reportService := report.NewReportService()
 
 	metricReporter := NewMetricReporter(reportService, *opts)
 	if err := metricReporter.Run(); err != nil {
-		return fmt.Errorf("❌ failed to report metrics: %v", err)
+		return fmt.Errorf("failed to report metrics: %v", err)
 	}
 	return nil
 }

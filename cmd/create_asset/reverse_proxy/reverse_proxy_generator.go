@@ -28,10 +28,10 @@ func NewReverseProxyAssetGenerator(opts ReverseProxyOpts) *ReverseProxyAssetGene
 }
 
 func (rp *ReverseProxyAssetGenerator) Run() error {
-	slog.Info("🏁 generating reverse proxy assets")
+	fmt.Printf("🚀 Generating reverse proxy assets\n")
 
 	outputDir := "reverse_proxy"
-	slog.Info("📁 creating reverse proxy directory", "directory", outputDir)
+	slog.Debug("creating reverse proxy directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create reverse proxy directory: %w", err)
 	}
@@ -62,7 +62,7 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	if err := os.WriteFile(userDataPath, []byte(userDataTemplate), 0644); err != nil {
 		return fmt.Errorf("failed to write user-data template: %w", err)
 	}
-	slog.Info("✅ wrote reverse-proxy-user-data.tpl")
+	slog.Debug("wrote reverse-proxy-user-data.tpl")
 
 	// Write shell script from HCL service
 	scriptContent := hclService.GenerateReverseProxyShellScript()
@@ -70,9 +70,9 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
 		return fmt.Errorf("failed to write shell script: %w", err)
 	}
-	slog.Info("✅ wrote generate_dns_entries.sh")
+	slog.Debug("wrote generate_dns_entries.sh")
 
-	slog.Info("✅ reverse proxy assets generated", "directory", outputDir)
+	fmt.Printf("✅ Reverse proxy assets generated: %s\n", outputDir)
 
 	return nil
 }
@@ -82,28 +82,28 @@ func (rp *ReverseProxyAssetGenerator) writeTerraformFiles(outputDir string, file
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-		slog.Info("✅ wrote main.tf")
+		slog.Debug("wrote main.tf")
 	}
 
 	if files.ProvidersTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
 			return fmt.Errorf("failed to write providers.tf: %w", err)
 		}
-		slog.Info("✅ wrote providers.tf")
+		slog.Debug("wrote providers.tf")
 	}
 
 	if files.VariablesTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
-		slog.Info("✅ wrote variables.tf")
+		slog.Debug("wrote variables.tf")
 	}
 
 	if files.InputsAutoTfvars != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(files.InputsAutoTfvars), 0644); err != nil {
 			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
 		}
-		slog.Info("✅ wrote inputs.auto.tfvars")
+		slog.Debug("wrote inputs.auto.tfvars")
 	}
 
 	return nil

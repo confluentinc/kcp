@@ -39,7 +39,7 @@ func (u *Updater) Run() error {
 
 	// Step 1: Skip update check for dev versions unless --force is set
 	if (currentVersion == "" || currentVersion == build_info.DefaultDevVersion) && !u.opts.Force {
-		slog.Info("🤖 Development version detected, skipping update check. Use `--force` to install latest version.")
+		slog.Warn("⚠️ Development version detected, skipping update check. Use `--force` to install latest version.")
 		return nil
 	}
 
@@ -75,32 +75,32 @@ func (u *Updater) Run() error {
 
 	// Step 4: Check if already up to date
 	if latest.LessOrEqual(currentVersion) {
-		slog.Info(fmt.Sprintf("✅ Your installed version (%s) is already the latest available", currentVersion))
+		fmt.Printf("✅ Your installed version (%s) is already the latest available\n", currentVersion)
 		return nil
 	}
 
-	slog.Info(fmt.Sprintf("🎉 New version available: %s", latest.Version()))
+	fmt.Printf("✅ New version available: %s\n", latest.Version())
 
 	// Step 5: If --check-only flag is set, just report available update and exit
 	if u.opts.CheckOnly {
-		slog.Info(fmt.Sprintf("💡 Update available from %s to %s. Run without --check-only to update.", currentVersion, latest.Version()))
+		fmt.Printf("Update available from %s to %s. Run without --check-only to update.\n", currentVersion, latest.Version())
 		return nil
 	}
 
 	// Step 6: Ask for user confirmation unless --force flag is set
-	if !u.opts.Force && !u.askForConfirmation("🤔 Do you want to update now? (y/N): ") {
-		slog.Warn("🚫 Update aborted")
+	if !u.opts.Force && !u.askForConfirmation("Do you want to update now? (y/N): ") {
+		slog.Warn("⚠️ Update aborted")
 		return nil
 	}
 
-	slog.Info(fmt.Sprintf("🚀 Updating from %s --> %s", currentVersion, latest.Version()))
+	fmt.Printf("🚀 Updating from %s --> %s\n", currentVersion, latest.Version())
 
 	// Step 7: Download and install the latest version
 	if err := selfupdate.UpdateTo(context.Background(), latest.AssetURL, latest.AssetName, exePath); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully updated kcp to %s", latest.Version()))
+	fmt.Printf("✅ Successfully updated kcp to %s\n", latest.Version())
 
 	return nil
 }
@@ -114,8 +114,8 @@ func (u *Updater) verifyWritePermissions(path string) error {
 	if err != nil {
 		return fmt.Errorf("insufficient permissions: directory %s is not writable", dir)
 	}
-	defer f.Close()
-	defer os.Remove(testFile)
+	defer func() { _ = f.Close() }()
+	defer func() { _ = os.Remove(testFile) }()
 	return nil
 }
 

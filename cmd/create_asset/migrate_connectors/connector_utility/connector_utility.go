@@ -41,7 +41,7 @@ func NewConnectorUtility(opts ConnectorUtilityOpts) *ConnectorUtility {
 
 func (cu *ConnectorUtility) Run() error {
 	if len(cu.clustersByArn) == 0 {
-		slog.Warn("⚠️ No clusters found to write")
+		slog.Warn("no clusters found to write")
 		return nil
 	}
 
@@ -57,7 +57,7 @@ func (cu *ConnectorUtility) Run() error {
 
 		connectorConfigs := cu.buildConnectorConfigs(cluster)
 		if len(connectorConfigs.Connectors) == 0 {
-			slog.Info(fmt.Sprintf("⏭️ Skipping: %s (no connectors found)", filename))
+			fmt.Printf("  ⏭️ Skipping: %s (no connectors found)\n", filename)
 			continue
 		}
 
@@ -69,7 +69,7 @@ func (cu *ConnectorUtility) Run() error {
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(connectorConfigs); err != nil {
-			file.Close()
+			_ = file.Close()
 			return fmt.Errorf("failed to encode connectors to JSON for cluster %s: %w", clusterArn, err)
 		}
 
@@ -78,16 +78,16 @@ func (cu *ConnectorUtility) Run() error {
 		}
 
 		totalConnectors += len(connectorConfigs.Connectors)
-		slog.Info(fmt.Sprintf("✅ Generated: %s (%d connector(s))", filename, len(connectorConfigs.Connectors)))
+		fmt.Printf("  ✅ Generated: %s (%d connector(s))\n", filename, len(connectorConfigs.Connectors))
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully generated connector config files for %d cluster(s) with %d total connector(s) in %s", len(cu.clustersByArn), totalConnectors, cu.outputDir))
+	fmt.Printf("✅ Successfully generated connector config files for %d cluster(s) with %d total connector(s) in %s\n", len(cu.clustersByArn), totalConnectors, cu.outputDir)
 
 	readmePath := filepath.Join(cu.outputDir, "README.md")
 	if err := cu.generateREADME(readmePath); err != nil {
 		return fmt.Errorf("failed to generate README: %w", err)
 	}
-	
+
 	fmt.Println()
 	color.Green("See the README.md file in the output directory for next steps.")
 
@@ -99,7 +99,7 @@ func (cu *ConnectorUtility) generateREADME(filePath string) error {
 
 	md.AddHeading("Connect Migration Utility", 1)
 	md.AddParagraph(`
-This directory contains connector configuration JSON files extracted from your MSK cluster(s). These JSON configuration files can be used in conjuction with the [connect-migration-utility](https://github.com/confluentinc/connect-migration-utility)
+This directory contains connector configuration JSON files extracted from your MSK cluster(s). These JSON configuration files can be used in conjunction with the [connect-migration-utility](https://github.com/confluentinc/connect-migration-utility)
 to translate MSK Connect and self-managed connector configs before migrating them to Confluent Cloud. `)
 	md.AddParagraph("A blog post on the 'connect-migration-utility' tool can be found [here](https://www.confluent.io/blog/migrate-self-fully-managed-connectors/).")
 

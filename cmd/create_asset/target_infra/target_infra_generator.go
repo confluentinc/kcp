@@ -24,42 +24,42 @@ func (g *TargetInfraGenerator) BuildTerraformProject(project types.MigrationInfr
 		if err := os.WriteFile(filepath.Join(g.OutputDir, "main.tf"), []byte(project.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-		slog.Info("✅ wrote root main.tf")
+		slog.Debug("wrote root main.tf")
 	}
 
 	if project.ProvidersTf != "" {
 		if err := os.WriteFile(filepath.Join(g.OutputDir, "providers.tf"), []byte(project.ProvidersTf), 0644); err != nil {
 			return fmt.Errorf("failed to write providers.tf: %w", err)
 		}
-		slog.Info("✅ wrote root providers.tf")
+		slog.Debug("wrote root providers.tf")
 	}
 
 	if project.VariablesTf != "" {
 		if err := os.WriteFile(filepath.Join(g.OutputDir, "variables.tf"), []byte(project.VariablesTf), 0644); err != nil {
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
-		slog.Info("✅ wrote root variables.tf")
+		slog.Debug("wrote root variables.tf")
 	}
 
 	if project.OutputsTf != "" {
 		if err := os.WriteFile(filepath.Join(g.OutputDir, "outputs.tf"), []byte(project.OutputsTf), 0644); err != nil {
 			return fmt.Errorf("failed to write outputs.tf: %w", err)
 		}
-		slog.Info("✅ wrote root outputs.tf")
+		slog.Debug("wrote root outputs.tf")
 	}
 
 	if project.ReadmeMd != "" {
 		if err := os.WriteFile(filepath.Join(g.OutputDir, "README.md"), []byte(project.ReadmeMd), 0644); err != nil {
 			return fmt.Errorf("failed to write README.md: %w", err)
 		}
-		slog.Info("✅ wrote README.md")
+		slog.Debug("wrote README.md")
 	}
 
 	if project.InputsAutoTfvars != "" {
 		if err := os.WriteFile(filepath.Join(g.OutputDir, "inputs.auto.tfvars"), []byte(project.InputsAutoTfvars), 0644); err != nil {
 			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
 		}
-		slog.Info("✅ wrote root inputs.auto.tfvars")
+		slog.Debug("wrote root inputs.auto.tfvars")
 	}
 
 	for _, module := range project.Modules {
@@ -98,9 +98,8 @@ func (g *TargetInfraGenerator) BuildTerraformProject(project types.MigrationInfr
 			}
 		}
 
-		slog.Info("✅ wrote module", "module", module.Name)
+		slog.Debug("wrote module", "module", module.Name)
 	}
 
 	return nil
 }
-

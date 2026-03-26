@@ -42,14 +42,14 @@ func (cs *ClustersScanner) Run() error {
 	for _, regionAuth := range cs.Credentials.Regions {
 		for _, clusterAuth := range regionAuth.Clusters {
 			if err := cs.scanCluster(regionAuth.Name, clusterAuth); err != nil {
-				slog.Info("⏭️ skipping cluster", "cluster", clusterAuth.Name, "error", err)
+				fmt.Printf("⏭️  Skipping cluster %s: %v\n", clusterAuth.Name, err)
 				continue
 			}
 		}
 	}
 
 	if err := cs.State.PersistStateFile(cs.StateFile); err != nil {
-		return fmt.Errorf("❌ failed to save discovery state: %v", err)
+		return fmt.Errorf("failed to save discovery state: %v", err)
 	}
 
 	if err := cs.outputExecutiveSummary(); err != nil {
@@ -62,19 +62,19 @@ func (cs *ClustersScanner) Run() error {
 func (cs *ClustersScanner) scanCluster(region string, clusterAuth types.ClusterAuth) error {
 	discoveredCluster, err := cs.getClusterFromDiscovery(region, clusterAuth.Arn)
 	if err != nil {
-		return fmt.Errorf("❌ failed to get cluster from discovery state: %v", err)
+		return fmt.Errorf("failed to get cluster from discovery state: %v", err)
 	}
 
 	authType, err := clusterAuth.GetSelectedAuthType()
 	if err != nil {
-		return fmt.Errorf("❌ failed to determine auth type for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
+		return fmt.Errorf("failed to determine auth type for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
 	}
 
-	slog.Info(fmt.Sprintf("🚀 starting broker scan for %s using %s authentication", clusterAuth.Arn, authType))
+	fmt.Printf("🚀 Starting broker scan for %s using %s authentication\n", clusterAuth.Arn, authType)
 
 	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
-		return fmt.Errorf("❌ failed to get broker addresses for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
+		return fmt.Errorf("failed to get broker addresses for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
 	}
 
 	clientBrokerEncryptionInTransit := utils.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
@@ -82,7 +82,7 @@ func (cs *ClustersScanner) scanCluster(region string, clusterAuth types.ClusterA
 
 	kafkaAdmin, err := createKafkaAdmin(authType, brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, clusterAuth)
 	if err != nil {
-		return fmt.Errorf("❌ failed to create Kafka admin: %v", err)
+		return fmt.Errorf("failed to create Kafka admin: %v", err)
 	}
 
 	kafkaService := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
@@ -91,10 +91,10 @@ func (cs *ClustersScanner) scanCluster(region string, clusterAuth types.ClusterA
 	})
 
 	if err := cs.scanKafkaResources(discoveredCluster, kafkaService); err != nil {
-		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
+		return fmt.Errorf("failed to scan Kafka resources: %v", err)
 	}
 
-	slog.Info(fmt.Sprintf("✅ broker scan complete for %s", clusterAuth.Arn))
+	fmt.Printf("✅ Broker scan complete for %s\n", clusterAuth.Arn)
 
 	return nil
 }
@@ -104,7 +104,7 @@ func (cs *ClustersScanner) scanKafkaResources(discoveredCluster *types.Discovere
 
 	kafkaAdminClientInformation, err := kafkaService.ScanKafkaResources(clusterType)
 	if err != nil {
-		return fmt.Errorf("❌ failed to scan Kafka resources: %v", err)
+		return fmt.Errorf("failed to scan Kafka resources: %v", err)
 	}
 	discoveredCluster.KafkaAdminClientInformation = *kafkaAdminClientInformation
 
@@ -141,11 +141,11 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	case types.AuthTypeTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey))
 	default:
-		return nil, fmt.Errorf("❌ Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("❌ failed to create Kafka admin: %v", err)
+		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}
 
 	return &kafkaAdmin, nil
@@ -187,7 +187,7 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 			})
 		}
 	}
-	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster availabe to prove this.
+	// NOTE: In theory, there should always be topics because of the internal topics, but we don't have a test cluster available to prove this.
 	if len(data) > 0 {
 		md.AddHeading("Topics", 2)
 		md.AddTable(headers, data)
@@ -196,21 +196,21 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 	}
 
 	for _, cluster := range allClusters {
-		md.AddHeading("Principals & ACLs - " + cluster.Name, 3)
+		md.AddHeading("Principals & ACLs - "+cluster.Name, 3)
 		headers = []string{"Principal", "Total ACLs"}
 		aclsByPrincipal := make(map[string]int)
 
 		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
 			aclsByPrincipal[acl.Principal]++
 		}
-		
+
 		if len(aclsByPrincipal) > 0 {
 			data = [][]string{}
-		
+
 			for principal, count := range aclsByPrincipal {
 				data = append(data, []string{principal, strconv.Itoa(count)})
 			}
-		
+
 			md.AddTable(headers, data)
 		}
 	}

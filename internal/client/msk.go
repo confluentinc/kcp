@@ -29,7 +29,7 @@ func NewMSKClient(region string, requestsPerSecond float64, burstSize int) (*Rat
 		}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to load AWS config: %v", err)
+		return nil, fmt.Errorf("failed to load AWS config: %v", err)
 	}
 
 	if region != "" {

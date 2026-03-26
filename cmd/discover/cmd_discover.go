@@ -69,7 +69,7 @@ func NewDiscoverCmd() *cobra.Command {
 		return nil
 	})
 
-	discoverCmd.MarkFlagRequired("region")
+	_ = discoverCmd.MarkFlagRequired("region")
 
 	return discoverCmd
 }
@@ -104,7 +104,7 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 	// Check if existing state file exists
 	if _, err := os.Stat(stateFileName); os.IsNotExist(err) {
 		// No state file found - start fresh
-		slog.Info("starting with fresh state")
+		slog.Debug("starting with fresh state")
 	} else if err != nil {
 		// Error checking file - return error
 		return nil, fmt.Errorf("failed to check state file: %v", err)
@@ -114,13 +114,13 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
-		slog.Info("using existing state file", "file", stateFileName)
+		slog.Debug("using existing state file", "file", stateFileName)
 	}
 
 	// Check if existing credentials file exists
 	if _, err := os.Stat(credentialsFileName); os.IsNotExist(err) {
 		// No credentials file found - start fresh
-		slog.Info("starting with fresh credentials")
+		slog.Debug("starting with fresh credentials")
 	} else if err != nil {
 		// Error checking file - return error
 		return nil, fmt.Errorf("failed to check credentials file: %v", err)
@@ -131,7 +131,7 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		if len(errs) > 0 {
 			return nil, fmt.Errorf("failed to load existing credentials file: %v", errs)
 		}
-		slog.Info("using existing credentials file", "file", credentialsFileName)
+		slog.Debug("using existing credentials file", "file", credentialsFileName)
 	}
 
 	return &DiscovererOpts{

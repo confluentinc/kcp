@@ -8,6 +8,7 @@
 export const TAB_IDS = {
   CHART: 'chart',
   TABLE: 'table',
+  QUERY: 'query',
   JSON: 'json',
   CSV: 'csv',
 } as const
@@ -94,9 +95,12 @@ export const DEFAULTS = {
 
 /**
  * AWS Service Names
+ * Source of truth: Go constants in internal/types/state.go (Service* constants)
  */
 export const AWS_SERVICES = {
   MSK: 'Amazon Managed Streaming for Apache Kafka',
+  ELB: 'Amazon Elastic Load Balancing',
+  VPC: 'Amazon Virtual Private Cloud',
 } as const
 
 /**

@@ -40,7 +40,7 @@ func GenerateKafkaClusterResource(tfResourceName, clusterVarName, clusterType, a
 		clusterBlock.Body().AppendNewline()
 	}
 
-	utils.GenerateLifecycleBlock(clusterBlock, "prevent_destroy", preventDestroy)
+	_ = utils.GenerateLifecycleBlock(clusterBlock, "prevent_destroy", preventDestroy)
 
 	return clusterBlock
 }

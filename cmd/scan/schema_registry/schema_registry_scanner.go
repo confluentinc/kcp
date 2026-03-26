@@ -2,7 +2,6 @@ package schema_registry
 
 import (
 	"fmt"
-	"log/slog"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/types"
@@ -39,7 +38,7 @@ func NewSchemaRegistryScanner(schemaRegistryService SchemaRegistryScannerService
 }
 
 func (srs *SchemaRegistryScanner) Run() error {
-	slog.Info("🚀 starting schema registry scanner")
+	fmt.Printf("🚀 Starting schema registry scanner\n")
 
 	defaultCompatibility, err := srs.SchemaRegistryService.GetDefaultCompatibility()
 	if err != nil {

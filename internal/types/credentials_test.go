@@ -95,6 +95,55 @@ regions:
 	}
 }
 
+func TestFindClusterByArn(t *testing.T) {
+	creds := Credentials{
+		Regions: []RegionAuth{
+			{
+				Name: "us-east-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "cluster-a",
+						Arn:  "arn:aws:kafka:us-east-1:123:cluster/a/abc",
+						AuthMethod: AuthMethodConfig{
+							IAM: &IAMConfig{Use: true},
+						},
+					},
+				},
+			},
+			{
+				Name: "eu-west-1",
+				Clusters: []ClusterAuth{
+					{
+						Name: "cluster-b",
+						Arn:  "arn:aws:kafka:eu-west-1:123:cluster/b/def",
+						AuthMethod: AuthMethodConfig{
+							SASLScram: &SASLScramConfig{Use: true, Username: "user", Password: "pass"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("finds existing cluster", func(t *testing.T) {
+		cluster, err := creds.FindClusterByArn("arn:aws:kafka:us-east-1:123:cluster/a/abc")
+		assert.NoError(t, err)
+		assert.Equal(t, "cluster-a", cluster.Name)
+	})
+
+	t.Run("finds cluster in second region", func(t *testing.T) {
+		cluster, err := creds.FindClusterByArn("arn:aws:kafka:eu-west-1:123:cluster/b/def")
+		assert.NoError(t, err)
+		assert.Equal(t, "cluster-b", cluster.Name)
+	})
+
+	t.Run("returns error for missing cluster", func(t *testing.T) {
+		_, err := creds.FindClusterByArn("arn:aws:kafka:us-east-1:123:cluster/missing/xyz")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found in credentials file")
+	})
+}
+
 func TestCredentials_Validate(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -575,7 +624,7 @@ func TestCredentials_Integration(t *testing.T) {
 func createTempFile(t *testing.T, content string) string {
 	tmpFile, err := os.CreateTemp("", "test-creds-*.yaml")
 	require.NoError(t, err)
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 
 	_, err = tmpFile.WriteString(content)
 	require.NoError(t, err)

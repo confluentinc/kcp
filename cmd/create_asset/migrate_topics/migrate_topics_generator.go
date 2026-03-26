@@ -29,7 +29,7 @@ func NewMigrateTopicsAssetGenerator(opts MigrateTopicsOpts) *MigrateTopicsAssetG
 }
 
 func (mt *MigrateTopicsAssetGenerator) Run() error {
-	slog.Info("🏁 generating Terraform files for mirror topics!")
+	fmt.Printf("🚀 Generating Terraform files for mirror topics\n")
 
 	outputDir := mt.opts.OutputDir
 	if outputDir == "" {
@@ -59,7 +59,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 		return fmt.Errorf("failed to write Terraform files: %w", err)
 	}
 
-	slog.Info("✅ migrate topics Terraform files generated", "directory", outputDir, "topics", len(mt.opts.MirrorTopics))
+	fmt.Printf("✅ Migrate topics Terraform files generated: %s (%d topics)\n", outputDir, len(mt.opts.MirrorTopics))
 
 	return nil
 }
@@ -69,21 +69,21 @@ func (mt *MigrateTopicsAssetGenerator) writeTerraformFiles(outputDir string, fil
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-		slog.Info("✅ wrote main.tf")
+		slog.Debug("wrote main.tf")
 	}
 
 	if files.ProvidersTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
 			return fmt.Errorf("failed to write providers.tf: %w", err)
 		}
-		slog.Info("✅ wrote providers.tf")
+		slog.Debug("wrote providers.tf")
 	}
 
 	if files.VariablesTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
 			return fmt.Errorf("failed to write variables.tf: %w", err)
 		}
-		slog.Info("✅ wrote variables.tf")
+		slog.Debug("wrote variables.tf")
 	}
 
 	return nil

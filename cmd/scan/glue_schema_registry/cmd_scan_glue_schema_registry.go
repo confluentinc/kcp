@@ -51,9 +51,9 @@ func NewScanGlueSchemaRegistryCmd() *cobra.Command {
 		return nil
 	})
 
-	glueSchemaRegistryCmd.MarkFlagRequired("state-file")
-	glueSchemaRegistryCmd.MarkFlagRequired("region")
-	glueSchemaRegistryCmd.MarkFlagRequired("registry-name")
+	_ = glueSchemaRegistryCmd.MarkFlagRequired("state-file")
+	_ = glueSchemaRegistryCmd.MarkFlagRequired("region")
+	_ = glueSchemaRegistryCmd.MarkFlagRequired("registry-name")
 
 	return glueSchemaRegistryCmd
 }

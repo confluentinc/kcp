@@ -64,7 +64,7 @@ func NewReportCostsCmd() *cobra.Command {
 		return nil
 	})
 
-	reportCostsCmd.MarkFlagRequired("state-file")
+	_ = reportCostsCmd.MarkFlagRequired("state-file")
 	// optional but if one is provided, the others must be provided
 	reportCostsCmd.MarkFlagsRequiredTogether("start", "end", "region")
 
@@ -81,7 +81,7 @@ func preRunReportCosts(cmd *cobra.Command, args []string) error {
 func runReportCosts(cmd *cobra.Command, args []string) error {
 	opts, err := parseCostReporterOpts()
 	if err != nil {
-		return fmt.Errorf("❌ failed to parse report opts: %v", err)
+		return fmt.Errorf("failed to parse report opts: %v", err)
 	}
 
 	reportService := report.NewReportService()
@@ -89,7 +89,7 @@ func runReportCosts(cmd *cobra.Command, args []string) error {
 
 	costReporter := NewCostReporter(reportService, *markdownService, *opts)
 	if err := costReporter.Run(); err != nil {
-		return fmt.Errorf("❌ failed to report costs: %v", err)
+		return fmt.Errorf("failed to report costs: %v", err)
 	}
 	return nil
 }
