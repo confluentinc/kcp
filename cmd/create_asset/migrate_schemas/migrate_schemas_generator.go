@@ -25,19 +25,22 @@ type SchemaExporter struct {
 }
 
 type MigrateSchemasOpts struct {
-	SchemaRegistry types.SchemaRegistryInformation
-	Exporters      []SchemaExporter
+	SchemaRegistry   types.SchemaRegistryInformation
+	CCSRRestEndpoint string
+	Exporters        []SchemaExporter
 }
 
 type MigrateSchemasAssetGenerator struct {
-	schemaRegistry types.SchemaRegistryInformation
-	exporters      []SchemaExporter
+	schemaRegistry   types.SchemaRegistryInformation
+	ccSRRestEndpoint string
+	exporters        []SchemaExporter
 }
 
 func NewMigrateSchemasAssetGenerator(opts MigrateSchemasOpts) *MigrateSchemasAssetGenerator {
 	return &MigrateSchemasAssetGenerator{
-		schemaRegistry: opts.SchemaRegistry,
-		exporters:      opts.Exporters,
+		schemaRegistry:   opts.SchemaRegistry,
+		ccSRRestEndpoint: opts.CCSRRestEndpoint,
+		exporters:        opts.Exporters,
 	}
 }
 
@@ -132,11 +135,13 @@ func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string
 		Exporters               []SchemaExporter
 		SourceSchemaRegistryID  string
 		SourceSchemaRegistryURL string
+		CCSRRestEndpoint        string
 	}{
 		Exporters: ms.exporters,
 		// confluent exporter expects an id for the source schema registry
 		SourceSchemaRegistryID:  utils.RandomString(5),
 		SourceSchemaRegistryURL: ms.schemaRegistry.URL,
+		CCSRRestEndpoint:        ms.ccSRRestEndpoint,
 	}
 	// Execute template
 	var buf strings.Builder
