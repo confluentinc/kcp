@@ -46,7 +46,7 @@ func TestGetRegistryInfo_Success(t *testing.T) {
 	}
 
 	service := NewGlueSchemaRegistryService(client)
-	arn, err := service.GetRegistryInfo("my-registry")
+	arn, err := service.GetRegistryInfo(context.Background(), "my-registry")
 
 	require.NoError(t, err)
 	assert.Equal(t, "arn:aws:glue:us-east-1:123456789:registry/my-registry", arn)
@@ -60,7 +60,7 @@ func TestGetRegistryInfo_Error(t *testing.T) {
 	}
 
 	service := NewGlueSchemaRegistryService(client)
-	_, err := service.GetRegistryInfo("nonexistent")
+	_, err := service.GetRegistryInfo(context.Background(), "nonexistent")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent")
@@ -96,7 +96,7 @@ func TestGetAllSchemasWithVersions_Success(t *testing.T) {
 	}
 
 	service := NewGlueSchemaRegistryService(client)
-	schemas, err := service.GetAllSchemasWithVersions("my-registry")
+	schemas, err := service.GetAllSchemasWithVersions(context.Background(), "my-registry")
 
 	require.NoError(t, err)
 	require.Len(t, schemas, 1)
@@ -147,7 +147,7 @@ func TestGetAllSchemasWithVersions_Pagination(t *testing.T) {
 	}
 
 	service := NewGlueSchemaRegistryService(client)
-	schemas, err := service.GetAllSchemasWithVersions("my-registry")
+	schemas, err := service.GetAllSchemasWithVersions(context.Background(), "my-registry")
 
 	require.NoError(t, err)
 	assert.Len(t, schemas, 2)
@@ -166,7 +166,7 @@ func TestGetAllSchemasWithVersions_EmptyRegistry(t *testing.T) {
 	}
 
 	service := NewGlueSchemaRegistryService(client)
-	schemas, err := service.GetAllSchemasWithVersions("empty-registry")
+	schemas, err := service.GetAllSchemasWithVersions(context.Background(), "empty-registry")
 
 	require.NoError(t, err)
 	assert.Empty(t, schemas)

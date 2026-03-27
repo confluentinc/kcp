@@ -8,7 +8,6 @@
     - [`kcp scan`](#kcp-scan)
       - [`kcp scan clusters`](#kcp-scan-clusters)
       - [`kcp scan client-inventory`](#kcp-scan-client-inventory)
-      - [`kcp scan glue-schema-registry`](#kcp-scan-glue-schema-registry)
       - [`kcp scan schema-registry`](#kcp-scan-schema-registry)
     - [`kcp report`](#kcp-report)
       - [`kcp report costs`](#kcp-report-costs)
@@ -293,8 +292,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `clusters`
 - `client-inventory`
-- `glue-schema-registry`
-- `schema-registry`
+- `schema-registry` (supports both Confluent and AWS Glue via `--sr-type`)
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -418,20 +416,22 @@ export S3_URI=<folder-in-s3>
 
 ---
 
-#### `kcp scan glue-schema-registry`
+#### `kcp scan schema-registry --sr-type=glue`
 
 This command scans an AWS Glue Schema Registry to discover all schemas and their versions. Results are added to the state file under the `schema_registries.aws_glue` section for use with the `kcp create-asset migrate-schemas --glue-registry` command.
 
 **Required Arguments**:
 
 - `--state-file`: The path to the kcp state file where the Glue Schema Registry information will be written to
+- `--sr-type`: Must be `glue`
 - `--region`: The AWS region where the Glue Schema Registry is located
 - `--registry-name`: The name of the AWS Glue Schema Registry to scan
 
 **Example Usage**
 
 ```shell
-kcp scan glue-schema-registry \
+kcp scan schema-registry \
+  --sr-type glue \
   --state-file kcp-state.json \
   --region us-east-1 \
   --registry-name my-glue-registry

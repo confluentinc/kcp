@@ -1,6 +1,7 @@
 package schema_registry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -116,7 +117,7 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 	case "confluent":
 		return runScanConfluentSchemaRegistry()
 	case "glue":
-		return runScanGlueSchemaRegistry()
+		return runScanGlueSchemaRegistry(cmd.Context())
 	}
 	return nil
 }
@@ -149,13 +150,13 @@ func runScanConfluentSchemaRegistry() error {
 	return nil
 }
 
-func runScanGlueSchemaRegistry() error {
+func runScanGlueSchemaRegistry(ctx context.Context) error {
 	opts, err := parseGlueOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse scan glue schema registry opts: %v", err)
 	}
 
-	glueClient, err := client.NewGlueClient(opts.Region)
+	glueClient, err := client.NewGlueClient(ctx, opts.Region)
 	if err != nil {
 		return fmt.Errorf("failed to create AWS Glue client: %v", err)
 	}
@@ -163,7 +164,7 @@ func runScanGlueSchemaRegistry() error {
 	glueService := glue_service.NewGlueSchemaRegistryService(glueClient)
 
 	scanner := NewGlueSchemaRegistryScanner(glueService, *opts)
-	if err := scanner.Run(); err != nil {
+	if err := scanner.Run(ctx); err != nil {
 		return fmt.Errorf("failed to scan Glue Schema Registry: %v", err)
 	}
 

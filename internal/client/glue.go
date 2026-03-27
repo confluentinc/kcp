@@ -8,10 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 )
 
-func NewGlueClient(region string) (*glue.Client, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+func NewGlueClient(ctx context.Context, region string) (*glue.Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to load AWS config: %v", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
 	if region != "" {

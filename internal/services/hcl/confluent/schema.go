@@ -2,6 +2,7 @@ package confluent
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,11 +12,19 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+// safePathName sanitizes a name for use in file paths, preventing path traversal
+var unsafePathCharsRegex = regexp.MustCompile(`[^a-zA-Z0-9_\-.]`)
+
+func safePathName(name string) string {
+	return unsafePathCharsRegex.ReplaceAllString(name, "_")
+}
+
 // GlueSchemaVariables defines the variables needed for Glue schema migration resources
 var GlueSchemaVariables = []types.TerraformVariable{
 	{Name: VarConfluentCloudSchemaRegistryURL, Description: "REST endpoint of the target Confluent Cloud Schema Registry", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudSchemaRegistryAPIKey, Description: "API key for the target Confluent Cloud Schema Registry", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudSchemaRegistrySecret, Description: "API secret for the target Confluent Cloud Schema Registry", Sensitive: true, Type: "string"},
+	{Name: "schema_registry_cluster_id", Description: "ID of the Confluent Cloud Schema Registry cluster", Sensitive: false, Type: "string"},
 }
 
 // schemaFormatExtension maps Glue data format strings to file extensions
@@ -46,7 +55,7 @@ func schemaFormatToTerraform(dataFormat string) string {
 // for migrating Glue schemas to Confluent Cloud Schema Registry.
 // Returns a map of filename → content containing both .tf files (e.g., "test.tf") and
 // schema definition files (e.g., "schemas/test/v1.avsc").
-func GenerateGlueSchemaMigrationHCL(schemas []types.GlueSchema) map[string]string {
+func GenerateGlueSchemaMigrationHCL(schemas []types.GlueSchema) (map[string]string, error) {
 	files := make(map[string]string)
 
 	for _, schema := range schemas {
@@ -75,16 +84,21 @@ func GenerateGlueSchemaMigrationHCL(schemas []types.GlueSchema) map[string]strin
 
 		// Generate a confluent_schema resource for each version
 		prevResourceRef := fmt.Sprintf("confluent_subject_config.%s", compatNoneResourceName)
+		safeName := safePathName(schema.SchemaName)
 		for _, version := range versions {
 			versionResourceName := fmt.Sprintf("%s_v%d", resourcePrefix, version.VersionNumber)
 			ext := schemaFormatExtension(schema.DataFormat)
-			schemaFilePath := fmt.Sprintf("./schemas/%s/v%d%s", schema.SchemaName, version.VersionNumber, ext)
+			schemaFilePath := fmt.Sprintf("./schemas/%s/v%d%s", safeName, version.VersionNumber, ext)
 
-			rootBody.AppendBlock(generateConfluentSchema(versionResourceName, schema.SchemaName, format, schemaFilePath, prevResourceRef))
+			block, err := generateConfluentSchema(versionResourceName, schema.SchemaName, format, schemaFilePath, prevResourceRef)
+			if err != nil {
+				return nil, err
+			}
+			rootBody.AppendBlock(block)
 			rootBody.AppendNewline()
 
 			// Write schema definition file
-			fileKey := fmt.Sprintf("schemas/%s/v%d%s", schema.SchemaName, version.VersionNumber, ext)
+			fileKey := fmt.Sprintf("schemas/%s/v%d%s", safeName, version.VersionNumber, ext)
 			files[fileKey] = version.SchemaDefinition
 
 			prevResourceRef = fmt.Sprintf("confluent_schema.%s", versionResourceName)
@@ -95,11 +109,11 @@ func GenerateGlueSchemaMigrationHCL(schemas []types.GlueSchema) map[string]strin
 		files[tfFileName] = string(f.Bytes())
 	}
 
-	return files
+	return files, nil
 }
 
 // generateConfluentSchema creates a confluent_schema resource block
-func generateConfluentSchema(resourceName, subjectName, format, schemaFilePath, dependsOn string) *hclwrite.Block {
+func generateConfluentSchema(resourceName, subjectName, format, schemaFilePath, dependsOn string) (*hclwrite.Block, error) {
 	block := hclwrite.NewBlock("resource", []string{"confluent_schema", resourceName})
 	body := block.Body()
 
@@ -132,10 +146,10 @@ func generateConfluentSchema(resourceName, subjectName, format, schemaFilePath, 
 
 	// lifecycle { prevent_destroy = true }
 	if err := utils.GenerateLifecycleBlock(block, "prevent_destroy", true); err != nil {
-		return nil
+		return nil, fmt.Errorf("failed to generate lifecycle block for %s: %w", resourceName, err)
 	}
 
-	return block
+	return block, nil
 }
 
 // generateSubjectConfig creates a confluent_subject_config resource block

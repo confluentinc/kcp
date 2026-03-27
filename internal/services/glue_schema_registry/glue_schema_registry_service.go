@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,10 +28,10 @@ func NewGlueSchemaRegistryService(client GlueClient) *GlueSchemaRegistryService 
 	return &GlueSchemaRegistryService{client: client}
 }
 
-func (s *GlueSchemaRegistryService) GetRegistryInfo(registryName string) (string, error) {
+func (s *GlueSchemaRegistryService) GetRegistryInfo(ctx context.Context, registryName string) (string, error) {
 	slog.Info("fetching Glue Schema Registry info", "registry_name", registryName)
 
-	output, err := s.client.GetRegistry(context.TODO(), &glue.GetRegistryInput{
+	output, err := s.client.GetRegistry(ctx, &glue.GetRegistryInput{
 		RegistryId: &gluetypes.RegistryId{
 			RegistryName: &registryName,
 		},
@@ -39,79 +40,97 @@ func (s *GlueSchemaRegistryService) GetRegistryInfo(registryName string) (string
 		return "", fmt.Errorf("failed to get Glue Schema Registry %q: %w", registryName, err)
 	}
 
-	arn := ""
-	if output.RegistryArn != nil {
-		arn = *output.RegistryArn
-	}
-
-	return arn, nil
+	return aws.ToString(output.RegistryArn), nil
 }
 
-func (s *GlueSchemaRegistryService) GetAllSchemasWithVersions(registryName string) ([]types.GlueSchema, error) {
+func (s *GlueSchemaRegistryService) GetAllSchemasWithVersions(ctx context.Context, registryName string) ([]types.GlueSchema, error) {
 	slog.Info("listing all schemas in Glue Schema Registry", "registry_name", registryName)
 
-	schemaItems, err := s.listAllSchemas(registryName)
+	schemaItems, err := s.listAllSchemas(ctx, registryName)
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Info("found schemas", "count", len(schemaItems))
 
-	var schemas []types.GlueSchema
-	for _, item := range schemaItems {
-		schemaName := ""
-		if item.SchemaName != nil {
-			schemaName = *item.SchemaName
-		}
+	const maxConcurrency = 10
+	sem := make(chan struct{}, maxConcurrency)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var firstErr error
 
-		schemaArn := ""
-		if item.SchemaArn != nil {
-			schemaArn = *item.SchemaArn
-		}
+	schemas := make([]types.GlueSchema, len(schemaItems))
 
-		slog.Info("fetching versions for schema", "schema_name", schemaName)
+	for i, item := range schemaItems {
+		wg.Add(1)
+		go func(idx int, item gluetypes.SchemaListItem) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		versions, err := s.getSchemaVersions(registryName, schemaName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get versions for schema %q: %w", schemaName, err)
-		}
-
-		var latest *types.GlueSchemaVersion
-		if len(versions) > 0 {
-			// Find the version with the highest version number
-			latestIdx := 0
-			for i, v := range versions {
-				if v.VersionNumber > versions[latestIdx].VersionNumber {
-					latestIdx = i
-				}
+			mu.Lock()
+			if firstErr != nil {
+				mu.Unlock()
+				return
 			}
-			latest = &versions[latestIdx]
-		}
+			mu.Unlock()
 
-		// Determine data format from the latest version if available
-		dataFormat := ""
-		if latest != nil {
-			dataFormat = latest.DataFormat
-		}
+			schemaName := aws.ToString(item.SchemaName)
+			schemaArn := aws.ToString(item.SchemaArn)
 
-		schemas = append(schemas, types.GlueSchema{
-			SchemaName: schemaName,
-			SchemaArn:  schemaArn,
-			DataFormat: dataFormat,
-			Versions:   versions,
-			Latest:     latest,
-		})
+			slog.Info("fetching versions for schema", "schema_name", schemaName)
+
+			versions, err := s.getSchemaVersions(ctx, registryName, schemaName)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("failed to get versions for schema %q: %w", schemaName, err)
+				}
+				mu.Unlock()
+				return
+			}
+
+			var latest *types.GlueSchemaVersion
+			if len(versions) > 0 {
+				latestIdx := 0
+				for i, v := range versions {
+					if v.VersionNumber > versions[latestIdx].VersionNumber {
+						latestIdx = i
+					}
+				}
+				latest = &versions[latestIdx]
+			}
+
+			dataFormat := ""
+			if latest != nil {
+				dataFormat = latest.DataFormat
+			}
+
+			schemas[idx] = types.GlueSchema{
+				SchemaName: schemaName,
+				SchemaArn:  schemaArn,
+				DataFormat: dataFormat,
+				Versions:   versions,
+				Latest:     latest,
+			}
+		}(i, item)
+	}
+
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	return schemas, nil
 }
 
-func (s *GlueSchemaRegistryService) listAllSchemas(registryName string) ([]gluetypes.SchemaListItem, error) {
+func (s *GlueSchemaRegistryService) listAllSchemas(ctx context.Context, registryName string) ([]gluetypes.SchemaListItem, error) {
 	var allSchemas []gluetypes.SchemaListItem
 	var nextToken *string
 
 	for {
-		output, err := s.client.ListSchemas(context.TODO(), &glue.ListSchemasInput{
+		output, err := s.client.ListSchemas(ctx, &glue.ListSchemasInput{
 			RegistryId: &gluetypes.RegistryId{
 				RegistryName: &registryName,
 			},
@@ -132,21 +151,17 @@ func (s *GlueSchemaRegistryService) listAllSchemas(registryName string) ([]gluet
 	return allSchemas, nil
 }
 
-func (s *GlueSchemaRegistryService) getSchemaVersions(registryName, schemaName string) ([]types.GlueSchemaVersion, error) {
-	versionItems, err := s.listAllSchemaVersions(registryName, schemaName)
+func (s *GlueSchemaRegistryService) getSchemaVersions(ctx context.Context, registryName, schemaName string) ([]types.GlueSchemaVersion, error) {
+	versionItems, err := s.listAllSchemaVersions(ctx, registryName, schemaName)
 	if err != nil {
 		return nil, err
 	}
 
 	var versions []types.GlueSchemaVersion
 	for _, item := range versionItems {
-		versionNumber := int64(0)
-		if item.VersionNumber != nil {
-			versionNumber = *item.VersionNumber
-		}
+		versionNumber := aws.ToInt64(item.VersionNumber)
 
-		// Get full schema definition for this version
-		versionOutput, err := s.client.GetSchemaVersion(context.TODO(), &glue.GetSchemaVersionInput{
+		versionOutput, err := s.client.GetSchemaVersion(ctx, &glue.GetSchemaVersionInput{
 			SchemaId: &gluetypes.SchemaId{
 				RegistryName: &registryName,
 				SchemaName:   &schemaName,
@@ -159,28 +174,20 @@ func (s *GlueSchemaRegistryService) getSchemaVersions(registryName, schemaName s
 			return nil, fmt.Errorf("failed to get schema version %d for schema %q: %w", versionNumber, schemaName, err)
 		}
 
-		schemaDefinition := ""
-		if versionOutput.SchemaDefinition != nil {
-			schemaDefinition = *versionOutput.SchemaDefinition
-		}
-
 		createdDate := time.Time{}
 		if versionOutput.CreatedTime != nil {
 			if parsed, parseErr := time.Parse(time.RFC3339, *versionOutput.CreatedTime); parseErr == nil {
 				createdDate = parsed
+			} else {
+				slog.Warn("failed to parse created time", "schema", schemaName, "version", versionNumber, "error", parseErr)
 			}
 		}
 
-		status := ""
-		if versionOutput.Status != "" {
-			status = string(versionOutput.Status)
-		}
-
 		versions = append(versions, types.GlueSchemaVersion{
-			SchemaDefinition: schemaDefinition,
+			SchemaDefinition: aws.ToString(versionOutput.SchemaDefinition),
 			DataFormat:       string(versionOutput.DataFormat),
 			VersionNumber:    versionNumber,
-			Status:           status,
+			Status:           string(versionOutput.Status),
 			CreatedDate:      createdDate,
 		})
 	}
@@ -188,12 +195,12 @@ func (s *GlueSchemaRegistryService) getSchemaVersions(registryName, schemaName s
 	return versions, nil
 }
 
-func (s *GlueSchemaRegistryService) listAllSchemaVersions(registryName, schemaName string) ([]gluetypes.SchemaVersionListItem, error) {
+func (s *GlueSchemaRegistryService) listAllSchemaVersions(ctx context.Context, registryName, schemaName string) ([]gluetypes.SchemaVersionListItem, error) {
 	var allVersions []gluetypes.SchemaVersionListItem
 	var nextToken *string
 
 	for {
-		output, err := s.client.ListSchemaVersions(context.TODO(), &glue.ListSchemaVersionsInput{
+		output, err := s.client.ListSchemaVersions(ctx, &glue.ListSchemaVersionsInput{
 			SchemaId: &gluetypes.SchemaId{
 				RegistryName: &registryName,
 				SchemaName:   &schemaName,

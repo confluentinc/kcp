@@ -21,7 +21,8 @@ func TestGenerateGlueSchemaMigrationHCL_SingleSchemaMultipleVersions(t *testing.
 		},
 	}
 
-	files := GenerateGlueSchemaMigrationHCL(schemas)
+	files, err := GenerateGlueSchemaMigrationHCL(schemas)
+	require.NoError(t, err)
 
 	// Verify per-schema .tf file exists
 	hcl, ok := files["userevent.tf"]
@@ -82,7 +83,8 @@ func TestGenerateGlueSchemaMigrationHCL_VersionOrdering(t *testing.T) {
 		},
 	}
 
-	files := GenerateGlueSchemaMigrationHCL(schemas)
+	files, err := GenerateGlueSchemaMigrationHCL(schemas)
+	require.NoError(t, err)
 
 	hcl := files["testschema.tf"]
 
@@ -117,7 +119,8 @@ func TestGenerateGlueSchemaMigrationHCL_MultipleSchemas(t *testing.T) {
 		},
 	}
 
-	files := GenerateGlueSchemaMigrationHCL(schemas)
+	files, err := GenerateGlueSchemaMigrationHCL(schemas)
+	require.NoError(t, err)
 
 	// Verify separate .tf files for each schema
 	schemaAHcl, ok := files["schemaa.tf"]
@@ -148,7 +151,8 @@ func TestGenerateGlueSchemaMigrationHCL_MultipleSchemas(t *testing.T) {
 }
 
 func TestGenerateGlueSchemaMigrationHCL_EmptySchemas(t *testing.T) {
-	files := GenerateGlueSchemaMigrationHCL([]types.GlueSchema{})
+	files, err := GenerateGlueSchemaMigrationHCL([]types.GlueSchema{})
+	require.NoError(t, err)
 
 	assert.Empty(t, files)
 }
@@ -164,7 +168,8 @@ func TestGenerateGlueSchemaMigrationHCL_CredentialVariableReferences(t *testing.
 		},
 	}
 
-	files := GenerateGlueSchemaMigrationHCL(schemas)
+	files, err := GenerateGlueSchemaMigrationHCL(schemas)
+	require.NoError(t, err)
 	hcl := files["test.tf"]
 
 	// Verify credential variable references appear in both resource types

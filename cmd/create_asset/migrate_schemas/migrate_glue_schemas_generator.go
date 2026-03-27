@@ -5,6 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/fatih/color"
 
 	hclservice "github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
@@ -74,8 +77,19 @@ func (g *MigrateGlueSchemasAssetGenerator) Run() error {
 		}
 
 		// Write per-schema .tf files and schema definition files
+		absOutput, err := filepath.Abs(g.outputDir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve output directory: %w", err)
+		}
 		for filePath, content := range folder.AdditionalFiles {
 			fullPath := filepath.Join(g.outputDir, filePath)
+			absTarget, err := filepath.Abs(fullPath)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path %s: %w", fullPath, err)
+			}
+			if !strings.HasPrefix(absTarget, absOutput+string(filepath.Separator)) && absTarget != absOutput {
+				return fmt.Errorf("path traversal detected: %s escapes output directory", filePath)
+			}
 			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 				return fmt.Errorf("failed to create directory for %s: %w", fullPath, err)
 			}
@@ -86,5 +100,6 @@ func (g *MigrateGlueSchemasAssetGenerator) Run() error {
 	}
 
 	slog.Info("glue schema migration assets generated", "directory", g.outputDir)
+	fmt.Printf("%s Glue schema migration assets generated: %s\n", color.GreenString("✅"), g.outputDir)
 	return nil
 }

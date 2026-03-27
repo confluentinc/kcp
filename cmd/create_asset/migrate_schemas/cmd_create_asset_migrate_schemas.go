@@ -2,6 +2,7 @@ package migrate_schemas
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -15,6 +16,7 @@ var (
 	glueRegistryName string
 	ccSRRestEndpoint string
 	outputDir        string
+	schemasFilter    string
 )
 
 func NewMigrateSchemasCmd() *cobra.Command {
@@ -49,6 +51,7 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "migrate_schemas", "The output directory for the generated assets.")
+	optionalFlags.StringVar(&schemasFilter, "schemas", "", "Comma-separated list of schema names to migrate (default: all schemas). Only applies with --glue-registry.")
 	migrateSchemasCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -185,6 +188,29 @@ func parseMigrateGlueSchemasOpts() (*MigrateGlueSchemasOpts, error) {
 
 	if !found {
 		return nil, fmt.Errorf("glue schema registry %q not found in state file", glueRegistryName)
+	}
+
+	// Filter schemas if --schemas flag is provided
+	if schemasFilter != "" {
+		filterNames := make(map[string]bool)
+		for _, name := range strings.Split(schemasFilter, ",") {
+			trimmed := strings.TrimSpace(name)
+			if trimmed != "" {
+				filterNames[trimmed] = true
+			}
+		}
+
+		var filtered []types.GlueSchema
+		for _, s := range glueRegistry.Schemas {
+			if filterNames[s.SchemaName] {
+				filtered = append(filtered, s)
+			}
+		}
+
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("none of the specified schemas found in registry %q", glueRegistryName)
+		}
+		glueRegistry.Schemas = filtered
 	}
 
 	return &MigrateGlueSchemasOpts{

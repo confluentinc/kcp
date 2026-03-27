@@ -1,14 +1,15 @@
 package schema_registry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type GlueSchemaRegistryScannerService interface {
-	GetRegistryInfo(registryName string) (string, error)
-	GetAllSchemasWithVersions(registryName string) ([]types.GlueSchema, error)
+	GetRegistryInfo(ctx context.Context, registryName string) (string, error)
+	GetAllSchemasWithVersions(ctx context.Context, registryName string) ([]types.GlueSchema, error)
 }
 
 type GlueSchemaRegistryScannerOpts struct {
@@ -37,15 +38,15 @@ func NewGlueSchemaRegistryScanner(glueService GlueSchemaRegistryScannerService, 
 	}
 }
 
-func (s *GlueSchemaRegistryScanner) Run() error {
+func (s *GlueSchemaRegistryScanner) Run(ctx context.Context) error {
 	fmt.Printf("🚀 Starting Glue Schema Registry scanner\n")
 
-	registryArn, err := s.GlueService.GetRegistryInfo(s.RegistryName)
+	registryArn, err := s.GlueService.GetRegistryInfo(ctx, s.RegistryName)
 	if err != nil {
 		return fmt.Errorf("failed to get registry info: %v", err)
 	}
 
-	schemas, err := s.GlueService.GetAllSchemasWithVersions(s.RegistryName)
+	schemas, err := s.GlueService.GetAllSchemasWithVersions(ctx, s.RegistryName)
 	if err != nil {
 		return fmt.Errorf("failed to get schemas: %v", err)
 	}

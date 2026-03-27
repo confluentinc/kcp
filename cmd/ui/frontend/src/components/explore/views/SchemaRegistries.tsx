@@ -4,6 +4,22 @@ import { Button } from '@/components/common/ui/button'
 import { Tabs } from '@/components/common/Tabs'
 import type { SchemaRegistriesState, GlueSchemaRegistry, GlueSchema, GlueSchemaVersion } from '@/types/api/state'
 
+function useToggleSet() {
+  const [set, setSet] = useState<Set<string>>(new Set())
+  const toggle = (key: string) => {
+    setSet(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+  return [set, toggle] as const
+}
+
 interface SchemaVersion {
   schema: string
   id: number
@@ -102,28 +118,8 @@ const ConfluentRegistryCard = ({
   registry: ConfluentSchemaRegistry
   registryIndex: number
 }) => {
-  const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set())
-  const [expandedVersions, setExpandedVersions] = useState<Set<string>>(new Set())
-
-  const toggleSubject = (subjectKey: string) => {
-    const newExpanded = new Set(expandedSubjects)
-    if (newExpanded.has(subjectKey)) {
-      newExpanded.delete(subjectKey)
-    } else {
-      newExpanded.add(subjectKey)
-    }
-    setExpandedSubjects(newExpanded)
-  }
-
-  const toggleVersion = (versionKey: string) => {
-    const newExpanded = new Set(expandedVersions)
-    if (newExpanded.has(versionKey)) {
-      newExpanded.delete(versionKey)
-    } else {
-      newExpanded.add(versionKey)
-    }
-    setExpandedVersions(newExpanded)
-  }
+  const [expandedSubjects, toggleSubject] = useToggleSet()
+  const [expandedVersions, toggleVersion] = useToggleSet()
 
   return (
     <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors">
@@ -300,28 +296,8 @@ const GlueRegistryCard = ({
   registry: GlueSchemaRegistry
   registryIndex: number
 }) => {
-  const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set())
-  const [expandedVersions, setExpandedVersions] = useState<Set<string>>(new Set())
-
-  const toggleSchema = (schemaKey: string) => {
-    const newExpanded = new Set(expandedSchemas)
-    if (newExpanded.has(schemaKey)) {
-      newExpanded.delete(schemaKey)
-    } else {
-      newExpanded.add(schemaKey)
-    }
-    setExpandedSchemas(newExpanded)
-  }
-
-  const toggleVersion = (versionKey: string) => {
-    const newExpanded = new Set(expandedVersions)
-    if (newExpanded.has(versionKey)) {
-      newExpanded.delete(versionKey)
-    } else {
-      newExpanded.add(versionKey)
-    }
-    setExpandedVersions(newExpanded)
-  }
+  const [expandedSchemas, toggleSchema] = useToggleSet()
+  const [expandedVersions, toggleVersion] = useToggleSet()
 
   return (
     <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors">
@@ -518,10 +494,15 @@ const copyToClipboard = (text: string) => {
   navigator.clipboard.writeText(text)
 }
 
+const formatSchemaCache = new Map<string, string>()
 const formatSchema = (schema: string) => {
+  if (formatSchemaCache.has(schema)) return formatSchemaCache.get(schema)!
+  let result: string
   try {
-    return JSON.stringify(JSON.parse(schema), null, 2)
+    result = JSON.stringify(JSON.parse(schema), null, 2)
   } catch {
-    return schema
+    result = schema
   }
+  formatSchemaCache.set(schema, result)
+  return result
 }

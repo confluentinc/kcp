@@ -1,6 +1,7 @@
 package schema_registry
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -11,16 +12,16 @@ import (
 )
 
 type mockGlueService struct {
-	getRegistryInfoFn           func(registryName string) (string, error)
-	getAllSchemasWithVersionsFn func(registryName string) ([]types.GlueSchema, error)
+	getRegistryInfoFn           func(ctx context.Context, registryName string) (string, error)
+	getAllSchemasWithVersionsFn func(ctx context.Context, registryName string) ([]types.GlueSchema, error)
 }
 
-func (m *mockGlueService) GetRegistryInfo(registryName string) (string, error) {
-	return m.getRegistryInfoFn(registryName)
+func (m *mockGlueService) GetRegistryInfo(ctx context.Context, registryName string) (string, error) {
+	return m.getRegistryInfoFn(ctx, registryName)
 }
 
-func (m *mockGlueService) GetAllSchemasWithVersions(registryName string) ([]types.GlueSchema, error) {
-	return m.getAllSchemasWithVersionsFn(registryName)
+func (m *mockGlueService) GetAllSchemasWithVersions(ctx context.Context, registryName string) ([]types.GlueSchema, error) {
+	return m.getAllSchemasWithVersionsFn(ctx, registryName)
 }
 
 func TestGlueSchemaRegistryScanner_Run(t *testing.T) {
@@ -34,10 +35,10 @@ func TestGlueSchemaRegistryScanner_Run(t *testing.T) {
 	require.NoError(t, tmpFile.Close())
 
 	service := &mockGlueService{
-		getRegistryInfoFn: func(registryName string) (string, error) {
+		getRegistryInfoFn: func(ctx context.Context, registryName string) (string, error) {
 			return "arn:aws:glue:us-east-1:123456789:registry/my-registry", nil
 		},
-		getAllSchemasWithVersionsFn: func(registryName string) ([]types.GlueSchema, error) {
+		getAllSchemasWithVersionsFn: func(ctx context.Context, registryName string) ([]types.GlueSchema, error) {
 			return []types.GlueSchema{
 				{
 					SchemaName: "UserSchema",
@@ -62,7 +63,7 @@ func TestGlueSchemaRegistryScanner_Run(t *testing.T) {
 		RegistryName: "my-registry",
 	})
 
-	err = scanner.Run()
+	err = scanner.Run(context.Background())
 	require.NoError(t, err)
 
 	// Verify state was persisted
@@ -90,10 +91,10 @@ func TestGlueSchemaRegistryScanner_Run_UpsertExisting(t *testing.T) {
 	require.NoError(t, tmpFile.Close())
 
 	service := &mockGlueService{
-		getRegistryInfoFn: func(registryName string) (string, error) {
+		getRegistryInfoFn: func(ctx context.Context, registryName string) (string, error) {
 			return "new-arn", nil
 		},
-		getAllSchemasWithVersionsFn: func(registryName string) ([]types.GlueSchema, error) {
+		getAllSchemasWithVersionsFn: func(ctx context.Context, registryName string) ([]types.GlueSchema, error) {
 			return []types.GlueSchema{{SchemaName: "NewSchema", DataFormat: "JSON"}}, nil
 		},
 	}
@@ -108,7 +109,7 @@ func TestGlueSchemaRegistryScanner_Run_UpsertExisting(t *testing.T) {
 		RegistryName: "my-registry",
 	})
 
-	err = scanner.Run()
+	err = scanner.Run(context.Background())
 	require.NoError(t, err)
 
 	updatedState, err := types.NewStateFromFile(tmpFile.Name())
@@ -129,7 +130,7 @@ func TestGlueSchemaRegistryScanner_Run_RegistryNotFound(t *testing.T) {
 	require.NoError(t, tmpFile.Close())
 
 	service := &mockGlueService{
-		getRegistryInfoFn: func(registryName string) (string, error) {
+		getRegistryInfoFn: func(ctx context.Context, registryName string) (string, error) {
 			return "", fmt.Errorf("registry not found")
 		},
 	}
@@ -144,7 +145,7 @@ func TestGlueSchemaRegistryScanner_Run_RegistryNotFound(t *testing.T) {
 		RegistryName: "nonexistent",
 	})
 
-	err = scanner.Run()
+	err = scanner.Run(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get registry info")
 }
