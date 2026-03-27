@@ -65,8 +65,10 @@ tmp
 scratch/
 scp-to-ec2.sh
 
-# claude plans
+# claude skills generated directories
 plans/
+brainstorms/
+ideation/
 
 # git worktrees
 .worktrees/

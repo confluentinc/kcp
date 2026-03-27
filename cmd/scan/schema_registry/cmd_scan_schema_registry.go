@@ -168,8 +168,6 @@ func runScanGlueSchemaRegistry(ctx context.Context) error {
 		return fmt.Errorf("failed to scan Glue Schema Registry: %v", err)
 	}
 
-	fmt.Printf("✅ Successfully scanned Glue Schema Registry\n")
-
 	return nil
 }
 

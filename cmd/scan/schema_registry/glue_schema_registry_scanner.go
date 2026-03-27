@@ -46,11 +46,17 @@ func (s *GlueSchemaRegistryScanner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to get registry info: %v", err)
 	}
 
+	fmt.Printf("🔍 Fetching schemas from registry %q...\n", s.RegistryName)
+
 	schemas, err := s.GlueService.GetAllSchemasWithVersions(ctx, s.RegistryName)
 	if err != nil {
 		return fmt.Errorf("failed to get schemas: %v", err)
 	}
 
+	totalVersions := 0
+	for _, schema := range schemas {
+		totalVersions += len(schema.Versions)
+	}
 	glueRegistryInfo := types.GlueSchemaRegistryInformation{
 		RegistryName: s.RegistryName,
 		RegistryArn:  registryArn,
@@ -67,5 +73,6 @@ func (s *GlueSchemaRegistryScanner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
+	fmt.Printf("✅ Successfully scanned Glue Schema Registry %q (%d schemas, %d versions)\n", s.RegistryName, len(schemas), totalVersions)
 	return nil
 }
