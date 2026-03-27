@@ -1,4 +1,15 @@
 
+variable "confluent_cloud_api_key" {
+  description = "Confluent Cloud API Key"
+  type        = string
+}
+
+variable "confluent_cloud_api_secret" {
+  description = "Confluent Cloud API Secret"
+  type        = string
+  sensitive   = true
+}
+
 variable "exporters" {
   description = "List of schema migration requests"
   type = list(object({
@@ -31,8 +42,8 @@ variable "source_schema_registry_password" {
   sensitive   = true
 }
 
-variable "target_schema_registry_url" {
-  description = "URL of the Confluent Cloud target schema registry"
+variable "cc_sr_rest_endpoint" {
+  description = "REST endpoint of the Confluent Cloud target schema registry"
   type        = string
 }
 
