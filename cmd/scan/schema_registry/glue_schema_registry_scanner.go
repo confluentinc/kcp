@@ -1,8 +1,7 @@
-package glue_schema_registry
+package schema_registry
 
 import (
 	"fmt"
-	"log/slog"
 
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -39,21 +38,17 @@ func NewGlueSchemaRegistryScanner(glueService GlueSchemaRegistryScannerService, 
 }
 
 func (s *GlueSchemaRegistryScanner) Run() error {
-	slog.Info("starting Glue Schema Registry scanner", "registry_name", s.RegistryName, "region", s.Region)
+	fmt.Printf("🚀 Starting Glue Schema Registry scanner\n")
 
 	registryArn, err := s.GlueService.GetRegistryInfo(s.RegistryName)
 	if err != nil {
 		return fmt.Errorf("failed to get registry info: %v", err)
 	}
 
-	slog.Info("found Glue Schema Registry", "registry_arn", registryArn)
-
 	schemas, err := s.GlueService.GetAllSchemasWithVersions(s.RegistryName)
 	if err != nil {
 		return fmt.Errorf("failed to get schemas: %v", err)
 	}
-
-	slog.Info("discovered schemas", "count", len(schemas))
 
 	glueRegistryInfo := types.GlueSchemaRegistryInformation{
 		RegistryName: s.RegistryName,

@@ -1,4 +1,4 @@
-package glue_schema_registry
+package schema_registry
 
 import (
 	"fmt"
