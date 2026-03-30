@@ -10,15 +10,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/offset"
 )
+
+const maxHistory = 30
+
+// sparkline characters from lowest to highest
+var sparkBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 // --- Messages ---
 
 type fetchResultMsg struct {
-	topics       []clusterlink.MirrorTopic
-	topicOffsets map[string]*topicOffsetData
-	err          error
+	topics []clusterlink.MirrorTopic
+	err    error
 }
 
 type tickMsg time.Time
@@ -26,39 +29,29 @@ type flashDoneMsg struct{}
 
 // --- Model ---
 
-type topicOffsetData struct {
-	sourceOffsets      map[int32]int64
-	destinationOffsets map[int32]int64
-}
-
 type model struct {
-	sourceOffset       *offset.Service
-	destinationOffset  *offset.Service
-	clService      clusterlink.Service
-	clConfig       clusterlink.Config
-	region         string
+	service        clusterlink.Service
+	config         clusterlink.Config
 	topics         []clusterlink.MirrorTopic
-	topicOffsets   map[string]*topicOffsetData
 	err            error
 	loading        bool
 	lastUpdated    time.Time
+	lagHistory     map[string][]int
 	pollSeconds    int
 	showPartitions bool
+	flashUpdated   bool
 	scrollOffset   int
 	width          int
 	height         int
 }
 
-func newModel(sourceOffset, destinationOffset *offset.Service, clSvc clusterlink.Service, clCfg clusterlink.Config, region string, pollSeconds int) model {
+func newModel(svc clusterlink.Service, cfg clusterlink.Config, pollSeconds int) model {
 	return model{
-		sourceOffset:      sourceOffset,
-		destinationOffset: destinationOffset,
-		clService:    clSvc,
-		clConfig:     clCfg,
-		region:       region,
-		pollSeconds:  pollSeconds,
-		topicOffsets: make(map[string]*topicOffsetData),
-		loading:      true,
+		service:     svc,
+		config:      cfg,
+		pollSeconds: pollSeconds,
+		lagHistory:  make(map[string][]int),
+		loading:     true,
 	}
 }
 
@@ -69,7 +62,7 @@ func newProgram(m model) *tea.Program {
 // --- Init ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchCmd(m.sourceOffset, m.destinationOffset, m.clService, m.clConfig), tea.WindowSize())
+	return tea.Batch(fetchCmd(m.service, m.config), tea.WindowSize())
 }
 
 // --- Update ---
@@ -87,7 +80,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if !m.loading {
 				m.loading = true
-				return m, fetchCmd(m.sourceOffset, m.destinationOffset, m.clService, m.clConfig)
+				return m, fetchCmd(m.service, m.config)
 			}
 			return m, nil
 		case "+", "=":
@@ -119,16 +112,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
+			// keep retrying on next tick
 			return m, scheduleTick(m.pollSeconds)
 		}
 		m.err = nil
 		m.topics = msg.topics
-		m.topicOffsets = msg.topicOffsets
 		m.lastUpdated = time.Now()
+		m.flashUpdated = true
+
+		// update lag history
+		for _, t := range m.topics {
+			total := 0
+			for _, l := range t.MirrorLags {
+				total += l.Lag
+			}
+			h := m.lagHistory[t.MirrorTopicName]
+			h = append(h, total)
+			if len(h) > maxHistory {
+				h = h[len(h)-maxHistory:]
+			}
+			m.lagHistory[t.MirrorTopicName] = h
+		}
 
 		return m, tea.Batch(scheduleTick(m.pollSeconds), scheduleFlashDone())
 
 	case flashDoneMsg:
+		m.flashUpdated = false
 		return m, nil
 
 	case tickMsg:
@@ -136,7 +145,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
-		return m, fetchCmd(m.sourceOffset, m.destinationOffset, m.clService, m.clConfig)
+		return m, fetchCmd(m.service, m.config)
 	}
 
 	return m, nil
@@ -146,16 +155,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // Confluent brand-inspired color palette
 const (
-	confluentNavy    = "#172B4D"
-	confluentBlue    = "#1993D1"
-	confluentLtBlue  = "#6CB4EE"
-	confluentSlate   = "#8B9CB6"
-	confluentMutedFg = "#7B8CA5"
-	confluentGreen   = "#2ECC71"
-	confluentAmber   = "#F5A623"
-	confluentRed     = "#E74C3C"
-	confluentYellow  = "#F1C40F"
-	confluentWhite   = "#FFFFFF"
+	confluentNavy    = "#172B4D" // dark navy – title bar background
+	confluentBlue    = "#1993D1" // medium blue – primary accent
+	confluentLtBlue  = "#6CB4EE" // light blue – config labels
+	confluentSlate   = "#8B9CB6" // blue-grey – table headers, help text
+	confluentMutedFg = "#7B8CA5" // muted blue-grey – partition details
+	confluentGreen   = "#2ECC71" // green – success, ACTIVE, zero lag
+	confluentAmber   = "#F5A623" // amber – positive lag, warnings
+	confluentRed     = "#E74C3C" // red – errors, FAILED
+	confluentYellow  = "#F1C40F" // yellow – PAUSED status
+	confluentWhite   = "#FFFFFF" // white – title text, config values
 )
 
 // Styles
@@ -195,6 +204,9 @@ var (
 	lagPositiveStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(confluentAmber))
 
+	sparkStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(confluentBlue))
+
 	indicatorRunning = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(confluentBlue)).
 				Render("●")
@@ -218,18 +230,18 @@ func (m model) View() string {
 	var b strings.Builder
 
 	// Title
-	b.WriteString(titleStyle.Render("Migration Lag Monitor"))
+	b.WriteString(titleStyle.Render("Mirror Topic Lag Monitor"))
 	b.WriteString("\n\n")
 
 	// Config summary
-	b.WriteString(configLabelStyle.Render("     Source: "))
-	b.WriteString(configValueStyle.Render(fmt.Sprintf("MSK (%s)", m.region)))
+	b.WriteString(configLabelStyle.Render("  REST Endpoint: "))
+	b.WriteString(configValueStyle.Render(m.config.RestEndpoint))
 	b.WriteString("\n")
-	b.WriteString(configLabelStyle.Render("       Dest: "))
-	b.WriteString(configValueStyle.Render("Confluent Cloud"))
+	b.WriteString(configLabelStyle.Render("     Cluster ID: "))
+	b.WriteString(configValueStyle.Render(m.config.ClusterID))
 	b.WriteString("\n")
-	b.WriteString(configLabelStyle.Render("       Link: "))
-	b.WriteString(configValueStyle.Render(m.clConfig.LinkName))
+	b.WriteString(configLabelStyle.Render("      Link Name: "))
+	b.WriteString(configValueStyle.Render(m.config.LinkName))
 	b.WriteString("\n\n")
 
 	// Status line
@@ -244,19 +256,25 @@ func (m model) View() string {
 
 	if !m.lastUpdated.IsZero() {
 		ts := m.lastUpdated.Format("15:04:05")
-		b.WriteString(fmt.Sprintf("  |  Last updated: %s", ts))
+		if m.flashUpdated {
+			b.WriteString("  |  ")
+			b.WriteString(statusActiveStyle.Render(fmt.Sprintf("Last updated: %s", ts)))
+		} else {
+			fmt.Fprintf(&b, "  |  Last updated: %s", ts)
+		}
 	}
 	b.WriteString("\n\n")
 
 	// Error
 	if m.err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("  Error: %v", m.err)))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
+		b.WriteString("  Check your cluster link credentials and REST endpoint.\n\n")
 	}
 
 	// Table
 	if len(m.topics) > 0 {
-		b.WriteString(renderTable(m.topics, m.topicOffsets, m.showPartitions))
+		b.WriteString(renderTable(m.topics, m.lagHistory, m.showPartitions))
 	} else if m.err == nil && !m.loading {
 		b.WriteString("  No mirror topics found.\n")
 	}
@@ -307,16 +325,7 @@ func (m model) View() string {
 
 // --- Table Rendering ---
 
-// topicRow holds pre-computed values for a single topic row.
-type topicRow struct {
-	name   string
-	status string
-	source int64
-	dest   int64
-	lag    int64
-}
-
-func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffsetData, showPartitions bool) string {
+func renderTable(topics []clusterlink.MirrorTopic, history map[string][]int, showPartitions bool) string {
 	// Sort: ACTIVE first, then alphabetically
 	sorted := make([]clusterlink.MirrorTopic, len(topics))
 	copy(sorted, topics)
@@ -329,219 +338,128 @@ func renderTable(topics []clusterlink.MirrorTopic, offsets map[string]*topicOffs
 		return sorted[i].MirrorTopicName < sorted[j].MirrorTopicName
 	})
 
-	// Pre-compute row data
-	rows := make([]topicRow, len(sorted))
-	for i, t := range sorted {
-		od := offsets[t.MirrorTopicName]
-		var src, dst, lag int64
-		if od != nil {
-			src = sumOffsets(od.sourceOffsets)
-			dst = sumOffsets(od.destinationOffsets)
-			lag = totalOffsetLag(od)
-		}
-		rows[i] = topicRow{
-			name:   t.MirrorTopicName,
-			status: t.MirrorStatus,
-			source: src,
-			dest:   dst,
-			lag:    lag,
-		}
-	}
-
-	// Calculate column widths from header labels and data
+	// Calculate column widths
 	nameW := len("TOPIC NAME")
 	statusW := len("STATUS")
-	sourceW := len("SOURCE_OFFSET")
-	destW := len("DESTINATION_OFFSET")
-	lagW := len("LAG")
+	lagW := len("TOTAL LAG")
+	trendW := maxHistory // sparkline width
 
-	var totalLagVal int64
-
-	for _, r := range rows {
-		if len(r.name) > nameW {
-			nameW = len(r.name)
+	for _, t := range sorted {
+		if len(t.MirrorTopicName) > nameW {
+			nameW = len(t.MirrorTopicName)
 		}
-		if len(r.status) > statusW {
-			statusW = len(r.status)
+		if len(t.MirrorStatus) > statusW {
+			statusW = len(t.MirrorStatus)
 		}
-		if w := len(formatLag64(r.source)); w > sourceW {
-			sourceW = w
+		lagStr := formatLag(totalLag(t))
+		if len(lagStr) > lagW {
+			lagW = len(lagStr)
 		}
-		if w := len(formatLag64(r.dest)); w > destW {
-			destW = w
-		}
-		if w := len(formatLag64(r.lag)); w > lagW {
-			lagW = w
-		}
-		totalLagVal += r.lag
-	}
-
-	totalLagStr := formatLag64(totalLagVal)
-	if len(totalLagStr) > lagW {
-		lagW = len(totalLagStr)
-	}
-	if len("Total Lag:") > nameW {
-		nameW = len("Total Lag:")
 	}
 
 	// Header
 	var b strings.Builder
 	b.WriteString("  ")
 	b.WriteString(headerStyle.Render(padRight("TOPIC NAME", nameW)))
-	b.WriteString("   ")
+	b.WriteString("  ")
 	b.WriteString(headerStyle.Render(padRight("STATUS", statusW)))
-	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("SOURCE_OFFSET", sourceW)))
-	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("DESTINATION_OFFSET", destW)))
-	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(padLeft("LAG", lagW)))
+	b.WriteString("  ")
+	b.WriteString(headerStyle.Render(padLeft("TOTAL LAG", lagW)))
+	b.WriteString("  ")
+	b.WriteString(headerStyle.Render("LAG TREND"))
 	b.WriteString("\n")
 
 	// Separator
 	b.WriteString("  ")
 	b.WriteString(headerStyle.Render(strings.Repeat("─", nameW)))
-	b.WriteString("   ")
+	b.WriteString("  ")
 	b.WriteString(headerStyle.Render(strings.Repeat("─", statusW)))
-	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(strings.Repeat("─", sourceW)))
-	b.WriteString("   ")
-	b.WriteString(headerStyle.Render(strings.Repeat("─", destW)))
-	b.WriteString("   ")
+	b.WriteString("  ")
 	b.WriteString(headerStyle.Render(strings.Repeat("─", lagW)))
+	b.WriteString("  ")
+	b.WriteString(headerStyle.Render(strings.Repeat("─", trendW)))
 	b.WriteString("\n")
 
-	// Pre-compute partition column widths if needed
-	var partNumW, partSrcW, partDstW, partLagW int
+	// Pre-compute partition column widths across all topics
+	partNumW := 2 // minimum "P0"
+	partLagW := 1 // minimum "0"
+	partOffW := 1 // minimum "0"
 	if showPartitions {
-		partNumW = 2
-		partSrcW = 1
-		partDstW = 1
-		partLagW = 1
 		for _, t := range sorted {
-			od := offsets[t.MirrorTopicName]
-			if od == nil {
-				continue
-			}
-			for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destinationOffsets) {
-				if w := len(fmt.Sprintf("P%d", p)); w > partNumW {
-					partNumW = w
+			for _, p := range t.MirrorLags {
+				pnStr := fmt.Sprintf("P%d", p.Partition)
+				if len(pnStr) > partNumW {
+					partNumW = len(pnStr)
 				}
-				srcVal := od.sourceOffsets[p]
-				dstVal := od.destinationOffsets[p]
-				pLag := srcVal - dstVal
-				if pLag < 0 {
-					pLag = 0
+				plStr := formatLag(p.Lag)
+				if len(plStr) > partLagW {
+					partLagW = len(plStr)
 				}
-				if w := len(formatLag64(srcVal)); w > partSrcW {
-					partSrcW = w
-				}
-				if w := len(formatLag64(dstVal)); w > partDstW {
-					partDstW = w
-				}
-				if w := len(formatLag64(pLag)); w > partLagW {
-					partLagW = w
+				poStr := formatLag(p.LastSourceFetchOffset)
+				if len(poStr) > partOffW {
+					partOffW = len(poStr)
 				}
 			}
 		}
 	}
 
-	// Data rows
-	for _, r := range rows {
-		srcStr := formatLag64(r.source)
-		dstStr := formatLag64(r.dest)
-		lagStr := formatLag64(r.lag)
+	// Rows
+	for _, t := range sorted {
+		lag := totalLag(t)
+		lagStr := formatLag(lag)
+		spark := renderSparkline(history[t.MirrorTopicName])
 
 		b.WriteString("  ")
-		b.WriteString(padRight(r.name, nameW))
-		b.WriteString("   ")
-		b.WriteString(padRight(styledStatus(r.status), statusW+statusStyleExtraWidth(r.status)))
-		b.WriteString("   ")
-		b.WriteString(padLeft(srcStr, sourceW))
-		b.WriteString("   ")
-		b.WriteString(padLeft(dstStr, destW))
-		b.WriteString("   ")
-		b.WriteString(padLeftStyled(styledLag64(r.lag, lagStr), lagW, len(lagStr)))
+		b.WriteString(padRight(t.MirrorTopicName, nameW))
+		b.WriteString("  ")
+		b.WriteString(padRight(styledStatus(t.MirrorStatus), statusW+statusStyleExtraWidth(t.MirrorStatus)))
+		b.WriteString("  ")
+		b.WriteString(padLeftStyled(styledLag(lag, lagStr), lagW, len(lagStr)))
+		b.WriteString("  ")
+		b.WriteString(sparkStyle.Render(spark))
 		b.WriteString("\n")
 
 		// Partition detail rows
-		if showPartitions {
-			od := offsets[r.name]
-			if od != nil {
-				for _, p := range offset.SortedPartitionIDs(od.sourceOffsets, od.destinationOffsets) {
-					pnStr := fmt.Sprintf("P%d", p)
-					srcVal := od.sourceOffsets[p]
-					dstVal := od.destinationOffsets[p]
-					pLag := srcVal - dstVal
-					if pLag < 0 {
-						pLag = 0
-					}
-
-					line := fmt.Sprintf("      %s   source: %s   destination: %s   lag: %s",
-						padRight(pnStr, partNumW),
-						padLeft(formatLag64(srcVal), partSrcW),
-						padLeft(formatLag64(dstVal), partDstW),
-						padLeft(formatLag64(pLag), partLagW),
-					)
-					b.WriteString(partitionStyle.Render(line))
-					b.WriteString("\n")
-				}
+		if showPartitions && len(t.MirrorLags) > 0 {
+			// Sort partitions by partition number
+			parts := make([]clusterlink.MirrorLag, len(t.MirrorLags))
+			copy(parts, t.MirrorLags)
+			sort.Slice(parts, func(i, j int) bool {
+				return parts[i].Partition < parts[j].Partition
+			})
+			for _, p := range parts {
+				pLagStr := formatLag(p.Lag)
+				offsetStr := formatLag(p.LastSourceFetchOffset)
+				pnStr := fmt.Sprintf("P%d", p.Partition)
+				b.WriteString(partitionStyle.Render(fmt.Sprintf("      %s  lag: ", padRight(pnStr, partNumW))))
+				b.WriteString(padLeftStyled(styledLag(p.Lag, pLagStr), partLagW, len(pLagStr)))
+				b.WriteString(partitionStyle.Render(fmt.Sprintf("  last fetched offset: %s", padLeft(offsetStr, partOffW))))
+				b.WriteString("\n")
 			}
 		}
 	}
-
-	// Total row
-	b.WriteString("\n  ")
-	b.WriteString(padRight("Total Lag:", nameW))
-	b.WriteString("   ")
-	b.WriteString(strings.Repeat(" ", statusW))
-	b.WriteString("   ")
-	b.WriteString(strings.Repeat(" ", sourceW))
-	b.WriteString("   ")
-	b.WriteString(strings.Repeat(" ", destW))
-	b.WriteString("   ")
-	b.WriteString(padLeftStyled(styledLag64(totalLagVal, totalLagStr), lagW, len(totalLagStr)))
-	b.WriteString("\n")
 
 	return b.String()
 }
 
 // --- Helpers ---
 
-func sumOffsets(offsets map[int32]int64) int64 {
-	var total int64
-	for _, v := range offsets {
-		total += v
+func totalLag(t clusterlink.MirrorTopic) int {
+	total := 0
+	for _, l := range t.MirrorLags {
+		total += l.Lag
 	}
 	return total
 }
 
-func totalOffsetLag(od *topicOffsetData) int64 {
-	var total int64
-	for partition, sourceOffset := range od.sourceOffsets {
-		destinationOffset := od.destinationOffsets[partition]
-		lag := sourceOffset - destinationOffset
-		if lag > 0 {
-			total += lag
-		}
-	}
-	return total
-}
-
-func formatLag64(lag int64) string {
+func formatLag(lag int) string {
 	if lag == 0 {
 		return "0"
 	}
-	negative := lag < 0
-	if negative {
-		lag = -lag
-	}
+	// Format with thousands separators
 	s := fmt.Sprintf("%d", lag)
 	n := len(s)
 	if n <= 3 {
-		if negative {
-			return "-" + s
-		}
 		return s
 	}
 	var result strings.Builder
@@ -551,11 +469,7 @@ func formatLag64(lag int64) string {
 		}
 		result.WriteRune(c)
 	}
-	r := result.String()
-	if negative {
-		return "-" + r
-	}
-	return r
+	return result.String()
 }
 
 func styledStatus(status string) string {
@@ -571,17 +485,46 @@ func styledStatus(status string) string {
 	}
 }
 
-// statusStyleExtraWidth returns the number of extra bytes lipgloss adds beyond the visible text.
+// statusStyleExtraWidth returns the number of extra bytes lipgloss adds beyond the visible text
 func statusStyleExtraWidth(status string) int {
 	styled := styledStatus(status)
 	return len(styled) - len(status)
 }
 
-func styledLag64(lag int64, lagStr string) string {
+func styledLag(lag int, lagStr string) string {
 	if lag > 0 {
 		return lagPositiveStyle.Render(lagStr)
 	}
 	return lagZeroStyle.Render(lagStr)
+}
+
+func renderSparkline(data []int) string {
+	if len(data) == 0 {
+		return "-"
+	}
+	maxVal := 0
+	for _, v := range data {
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+	if maxVal == 0 {
+		// all zeros
+		return strings.Repeat(string(sparkBlocks[0]), len(data))
+	}
+	var sb strings.Builder
+	for _, v := range data {
+		idx := v * (len(sparkBlocks) - 1) / maxVal
+		// Clamp index to valid range to handle negative lag values
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= len(sparkBlocks) {
+			idx = len(sparkBlocks) - 1
+		}
+		sb.WriteRune(sparkBlocks[idx])
+	}
+	return sb.String()
 }
 
 func padRight(s string, width int) string {
@@ -598,7 +541,7 @@ func padLeft(s string, width int) string {
 	return strings.Repeat(" ", width-len(s)) + s
 }
 
-// padLeftStyled right-aligns a styled string given its visible width.
+// padLeftStyled right-aligns a styled string given its visible width
 func padLeftStyled(styled string, width int, visibleLen int) string {
 	if visibleLen >= width {
 		return styled
@@ -608,35 +551,12 @@ func padLeftStyled(styled string, width int, visibleLen int) string {
 
 // --- Commands ---
 
-func fetchCmd(sourceOffset, destinationOffset *offset.Service, clSvc clusterlink.Service, clCfg clusterlink.Config) tea.Cmd {
+func fetchCmd(svc clusterlink.Service, cfg clusterlink.Config) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-
-		// Get mirror topics
-		topics, err := clSvc.ListMirrorTopics(ctx, clCfg)
-		if err != nil {
-			return fetchResultMsg{err: fmt.Errorf("cluster link: %w", err)}
-		}
-
-		// Get offsets for each mirror topic
-		topicOffsets := make(map[string]*topicOffsetData)
-		for _, t := range topics {
-			sourceOffsets, err := sourceOffset.Get(t.MirrorTopicName)
-			if err != nil {
-				return fetchResultMsg{err: fmt.Errorf("source offsets for %s: %w", t.MirrorTopicName, err)}
-			}
-			destinationOffsets, err := destinationOffset.Get(t.MirrorTopicName)
-			if err != nil {
-				return fetchResultMsg{err: fmt.Errorf("dest offsets for %s: %w", t.MirrorTopicName, err)}
-			}
-			topicOffsets[t.MirrorTopicName] = &topicOffsetData{
-				sourceOffsets:      sourceOffsets,
-				destinationOffsets: destinationOffsets,
-			}
-		}
-
-		return fetchResultMsg{topics: topics, topicOffsets: topicOffsets}
+		topics, err := svc.ListMirrorTopics(ctx, cfg)
+		return fetchResultMsg{topics: topics, err: err}
 	}
 }
 
