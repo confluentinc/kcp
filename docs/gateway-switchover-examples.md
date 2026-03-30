@@ -38,7 +38,7 @@ The three source authentication classes have different implications for how the 
 
 ## External References
 
-- Gateway CR reference documentation (TODO: add URL when known)
+- [confluent Gateway Examples](https://github.com/confluentinc/confluent-kubernetes-examples/tree/master/gateway)
 - [Gateway Operator API Reference](https://docs.confluent.io/operator/current/co-api.html#tag/Gateway)
 - [CCloud OAuth identity provider setup](https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/oauth/overview.html)
 - [CCloud mTLS identity provider setup](https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html)
