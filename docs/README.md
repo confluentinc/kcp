@@ -1593,6 +1593,8 @@ The migration workflow follows a defined lifecycle managed by a finite state mac
 
 If execution is interrupted at any step, re-running `kcp migration execute` resumes from the last completed step.
 
+Further details about preparing the Confluent Gateway and yaml files for the various migrations states are provided [here](gateway-switchover-examples.md)
+
 ---
 
 #### `kcp migration init`
