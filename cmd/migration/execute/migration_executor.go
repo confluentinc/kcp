@@ -11,10 +11,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type MigrationExecutorOpts struct {
@@ -24,12 +22,13 @@ type MigrationExecutorOpts struct {
 	LagThreshold       int64
 	ClusterApiKey      string
 	ClusterApiSecret   string
-	CCBootstrap        string
-	SourceClusterArn   string
+	ClusterBootstrap   string
+	SourceBootstrap    string
+	AWSRegion          string
 	AuthType           types.AuthType
-	SaslScramUsername   string
-	SaslScramPassword   string
-	TlsCaCert           string
+	SaslScramUsername  string
+	SaslScramPassword  string
+	TlsCaCert          string
 	TlsClientCert      string
 	TlsClientKey       string
 }
@@ -81,31 +80,11 @@ func (m *MigrationExecutor) Run() error {
 	return nil
 }
 
-func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Service, error) {
+func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
 	authType := m.opts.AuthType
+	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
 
-	region, err := utils.ExtractRegionFromArn(m.opts.SourceClusterArn)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("discovering MSK bootstrap brokers")
-	mskAwsClient, err := client.NewMSKClient(region, 8, 1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create MSK API client: %w", err)
-	}
-
-	mskService := msk.NewMSKService(mskAwsClient)
-	bootstrapOutput, err := mskService.GetBootstrapBrokers(ctx, m.opts.SourceClusterArn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bootstrap brokers: %w", err)
-	}
-
-	awsInfo := types.AWSClientInformation{BootstrapBrokers: *bootstrapOutput}
-	brokerAddresses, err := awsInfo.GetBootstrapBrokersForAuthType(authType)
-	if err != nil {
-		return nil, err
-	}
+	region := m.opts.AWSRegion
 
 	// Build ClusterAuth from flag values
 	clusterAuth := types.ClusterAuth{}
@@ -131,7 +110,7 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Ser
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
 	}
 
-	slog.Debug("connecting to source cluster (MSK)")
+	slog.Debug("connecting to source cluster")
 	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, clusterAuth))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
@@ -143,7 +122,7 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Ser
 
 func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
-	ccBrokers := strings.Split(m.opts.CCBootstrap, ",")
+	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
 	destClient, err := client.NewKafkaClient(ccBrokers, "", client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)
@@ -152,4 +131,3 @@ func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 
 	return offset.NewOffsetService(destClient), nil
 }
-
