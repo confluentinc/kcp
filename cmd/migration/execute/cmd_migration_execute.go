@@ -15,9 +15,7 @@ var (
 	lagThreshold       int64
 	clusterApiKey      string
 	clusterApiSecret   string
-	ccBootstrap        string
-	sourceClusterArn   string
-
+	awsRegion          string
 	useSaslIam                  bool
 	useSaslScram                bool
 	useTls                      bool
@@ -58,8 +56,6 @@ interrupted, re-running this command will resume from the last completed step.`,
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
-	requiredFlags.StringVar(&sourceClusterArn, "source-cluster-arn", "", "ARN of the source MSK cluster.")
-	requiredFlags.StringVar(&ccBootstrap, "cc-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -82,6 +78,13 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
+	// IAM credential flags.
+	iamFlags := pflag.NewFlagSet("iam", pflag.ExitOnError)
+	iamFlags.SortFlags = false
+	iamFlags.StringVar(&awsRegion, "aws-region", "", "AWS region of the source MSK cluster (e.g. us-east-1).")
+	migrationExecuteCmd.Flags().AddFlagSet(iamFlags)
+	groups[iamFlags] = "IAM Flags"
+
 	// TLS credential flags.
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
@@ -94,8 +97,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, iamFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -113,9 +116,6 @@ interrupted, re-running this command will resume from the last completed step.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
-	_ = migrationExecuteCmd.MarkFlagRequired("source-cluster-arn")
-	_ = migrationExecuteCmd.MarkFlagRequired("cc-bootstrap")
-
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationExecuteCmd
@@ -124,6 +124,10 @@ interrupted, re-running this command will resume from the last completed step.`,
 func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	if useSaslIam {
+		_ = cmd.MarkFlagRequired("aws-region")
 	}
 
 	if useSaslScram {
@@ -188,8 +192,9 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		LagThreshold:       lagThreshold,
 		ClusterApiKey:      clusterApiKey,
 		ClusterApiSecret:   clusterApiSecret,
-		CCBootstrap:        ccBootstrap,
-		SourceClusterArn:   sourceClusterArn,
+		CCBootstrap:        config.CCBootstrap,
+		SourceBootstrap:    config.SourceBootstrap,
+		AWSRegion:          awsRegion,
 		AuthType:           resolveAuthType(),
 		SaslScramUsername:   saslScramUsername,
 		SaslScramPassword:   saslScramPassword,
