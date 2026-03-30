@@ -22,7 +22,7 @@ var (
 	kubeConfigPath string
 
 	sourceBootstrap     string
-	ccBootstrap         string
+	clusterBootstrap    string
 	clusterId           string
 	clusterRestEndpoint string
 	clusterLinkName     string
@@ -71,7 +71,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
 	requiredFlags.StringVar(&initialCrName, "initial-cr-name", "", "Name of the initial gateway custom resource in Kubernetes.")
 	requiredFlags.StringVar(&sourceBootstrap, "source-bootstrap", "", "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092,broker2:9092).")
-	requiredFlags.StringVar(&ccBootstrap, "cc-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).")
+	requiredFlags.StringVar(&clusterBootstrap, "cluster-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "Name of the cluster link on the destination cluster.")
@@ -139,7 +139,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	})
 
 	_ = migrationInitCmd.MarkFlagRequired("source-bootstrap")
-	_ = migrationInitCmd.MarkFlagRequired("cc-bootstrap")
+	_ = migrationInitCmd.MarkFlagRequired("cluster-bootstrap")
 	_ = migrationInitCmd.MarkFlagRequired("k8s-namespace")
 	_ = migrationInitCmd.MarkFlagRequired("initial-cr-name")
 	_ = migrationInitCmd.MarkFlagRequired("cluster-id")
@@ -213,7 +213,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	config := &types.MigrationConfig{
 		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
 		SourceBootstrap:     sourceBootstrap,
-		CCBootstrap:         ccBootstrap,
+		ClusterBootstrap:    clusterBootstrap,
 		K8sNamespace:        k8sNamespace,
 		InitialCrName:       initialCrName,
 		KubeConfigPath:      kubeConfigPathResolved,

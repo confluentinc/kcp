@@ -13,7 +13,7 @@ type MigrationConfig struct {
 	SourceBootstrap string `json:"source_bootstrap"`
 
 	// Destination cluster configuration
-	CCBootstrap         string   `json:"cc_bootstrap"`
+	ClusterBootstrap    string   `json:"cluster_bootstrap"`
 	ClusterId           string   `json:"cluster_id"`
 	ClusterRestEndpoint string   `json:"cluster_rest_endpoint"`
 	ClusterLinkName     string   `json:"cluster_link_name"`

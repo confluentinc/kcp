@@ -22,13 +22,13 @@ type MigrationExecutorOpts struct {
 	LagThreshold       int64
 	ClusterApiKey      string
 	ClusterApiSecret   string
-	CCBootstrap        string
+	ClusterBootstrap   string
 	SourceBootstrap    string
 	AWSRegion          string
 	AuthType           types.AuthType
-	SaslScramUsername   string
-	SaslScramPassword   string
-	TlsCaCert           string
+	SaslScramUsername  string
+	SaslScramPassword  string
+	TlsCaCert          string
 	TlsClientCert      string
 	TlsClientKey       string
 }
@@ -122,7 +122,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 
 func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
-	ccBrokers := strings.Split(m.opts.CCBootstrap, ",")
+	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
 	destClient, err := client.NewKafkaClient(ccBrokers, "", client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)
@@ -131,4 +131,3 @@ func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 
 	return offset.NewOffsetService(destClient), nil
 }
-

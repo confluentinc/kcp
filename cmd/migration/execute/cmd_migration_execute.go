@@ -10,12 +10,12 @@ import (
 )
 
 var (
-	migrationStateFile string
-	migrationId        string
-	lagThreshold       int64
-	clusterApiKey      string
-	clusterApiSecret   string
-	awsRegion          string
+	migrationStateFile          string
+	migrationId                 string
+	lagThreshold                int64
+	clusterApiKey               string
+	clusterApiSecret            string
+	awsRegion                   string
 	useSaslIam                  bool
 	useSaslScram                bool
 	useTls                      bool
@@ -192,13 +192,13 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		LagThreshold:       lagThreshold,
 		ClusterApiKey:      clusterApiKey,
 		ClusterApiSecret:   clusterApiSecret,
-		CCBootstrap:        config.CCBootstrap,
+		ClusterBootstrap:   config.ClusterBootstrap,
 		SourceBootstrap:    config.SourceBootstrap,
 		AWSRegion:          awsRegion,
 		AuthType:           resolveAuthType(),
-		SaslScramUsername:   saslScramUsername,
-		SaslScramPassword:   saslScramPassword,
-		TlsCaCert:           tlsCaCert,
+		SaslScramUsername:  saslScramUsername,
+		SaslScramPassword:  saslScramPassword,
+		TlsCaCert:          tlsCaCert,
 		TlsClientCert:      tlsClientCert,
 		TlsClientKey:       tlsClientKey,
 	}
