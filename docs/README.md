@@ -1681,6 +1681,10 @@ Execute an initialized migration through its remaining workflow steps. This comm
 - `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
 - `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
 
+**IAM Flags** (required when `--use-sasl-iam`):
+
+- `--aws-region`: AWS region of the source MSK cluster (e.g. `us-east-1`).
+
 **SASL/SCRAM Flags** (required when `--use-sasl-scram`):
 
 - `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
@@ -1704,7 +1708,8 @@ kcp migration execute \
   --lag-threshold 0 \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --use-sasl-iam
+  --use-sasl-iam \
+  --aws-region us-east-1
 ```
 
 > [!NOTE]

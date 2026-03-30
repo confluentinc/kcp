@@ -24,6 +24,7 @@ type MigrationExecutorOpts struct {
 	ClusterApiSecret   string
 	CCBootstrap        string
 	SourceBootstrap    string
+	AWSRegion          string
 	AuthType           types.AuthType
 	SaslScramUsername   string
 	SaslScramPassword   string
@@ -83,6 +84,8 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 	authType := m.opts.AuthType
 	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
 
+	region := m.opts.AWSRegion
+
 	// Build ClusterAuth from flag values
 	clusterAuth := types.ClusterAuth{}
 	switch authType {
@@ -108,7 +111,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 	}
 
 	slog.Debug("connecting to source cluster")
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, "", client.AdminOptionForAuth(authType, clusterAuth))
+	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, clusterAuth))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
 	}
