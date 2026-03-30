@@ -1743,14 +1743,6 @@ kcp migration lag-check \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
-
-**Features**:
-
-- **Mirror Topic Lag**: Displays per-topic lag reported by the cluster link with drill-down to partition level
-- **Lag Trend Sparkline**: Visual sparkline showing lag history over time per topic
-- **Auto-refresh**: Polls at configurable intervals with live updates
-- **Keyboard Navigation**: Scroll through topics, toggle partition detail view (`p`), refresh (`r`), adjust interval (`+`/`-`)
-
 ---
 
 #### `kcp migration list`
