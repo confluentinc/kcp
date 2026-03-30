@@ -1,4 +1,4 @@
-package status
+package lagcheck
 
 import (
 	"fmt"
@@ -18,17 +18,17 @@ var (
 	pollInterval int
 )
 
-func NewMigrationStatusCmd() *cobra.Command {
+func NewMigrationLagCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status",
+		Use:   "lag-check",
 		Short: "Show mirror topic lag for the cluster link",
 		Long:  "Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal with cluster link credentials. Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.",
-		Example: `  kcp migration status --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx
+		Example: `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx
   All flags can be provided via environment variables (uppercase, with underscores).`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationStatus,
-		RunE:          runMigrationStatus,
+		PreRunE:       preRunMigrationLagCheck,
+		RunE:          runMigrationLagCheck,
 	}
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
@@ -62,11 +62,11 @@ func NewMigrationStatusCmd() *cobra.Command {
 	return cmd
 }
 
-func preRunMigrationStatus(cmd *cobra.Command, args []string) error {
+func preRunMigrationLagCheck(cmd *cobra.Command, args []string) error {
 	return utils.BindEnvToFlags(cmd)
 }
 
-func runMigrationStatus(cmd *cobra.Command, args []string) error {
+func runMigrationLagCheck(cmd *cobra.Command, args []string) error {
 	interval := max(pollInterval, 1)
 	interval = min(interval, 60)
 

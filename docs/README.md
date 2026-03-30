@@ -28,7 +28,7 @@
     - [`kcp migration`](#kcp-migration)
       - [`kcp migration init`](#kcp-migration-init)
       - [`kcp migration execute`](#kcp-migration-execute)
-      - [`kcp migration status`](#kcp-migration-status)
+      - [`kcp migration lag-check`](#kcp-migration-lag-check)
       - [`kcp migration list`](#kcp-migration-list)
     - [`kcp ui`](#kcp-ui)
     - [`kcp update`](#kcp-update)
@@ -1714,9 +1714,12 @@ kcp migration execute \
 
 ---
 
-#### `kcp migration status`
+#### `kcp migration lag-check`
 
-Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kafka offsets to show real-time migration lag per topic and partition. This is a standalone monitoring tool that does not require a prior `kcp migration init`.
+Interactive TUI that displays mirror topic lag for the cluster link. This is a standalone monitoring tool that does not require a prior `kcp migration init`. It uses the Cluster Link REST API to query mirror topic lag.
+
+> [!NOTE]
+> This command uses the **Cluster Link REST API** to retrieve mirror topic lag reported by the cluster link itself. In contrast, `kcp migration execute` uses a **direct offset comparison** between the source (MSK) and destination (Confluent Cloud) Kafka clusters to determine lag during the migration workflow.
 
 **Required Arguments**:
 
@@ -1725,27 +1728,6 @@ Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kaf
 - `--cluster-link-name`: Cluster link name.
 - `--cluster-api-key`: Cluster link API key.
 - `--cluster-api-secret`: Cluster link API secret.
-- `--source-cluster-arn`: ARN of the source MSK cluster.
-- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
-
-**Source Cluster Authentication Flags** (mutually exclusive):
-
-- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
-- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
-- `--use-tls`: Use TLS authentication for the source MSK cluster.
-- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
-- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
-
-**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
-
-- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
-- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
-
-**TLS Flags** (required when `--use-tls`):
-
-- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
-- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
-- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
 
 **Optional Arguments**:
 
@@ -1754,23 +1736,20 @@ Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kaf
 **Example Usage**
 
 ```shell
-kcp migration status \
+kcp migration lag-check \
   --rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
   --cluster-id lkc-abc123 \
   --cluster-link-name my-cluster-link \
   --cluster-api-key ABCDEFGHIJKLMNOP \
-  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
-  --use-sasl-iam
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 **Features**:
 
-- **Real-time Offset Comparison**: Shows source and destination log-end offsets per partition
-- **Per-Topic Lag**: Aggregated lag displayed per topic with drill-down to partition level
+- **Mirror Topic Lag**: Displays per-topic lag reported by the cluster link with drill-down to partition level
+- **Lag Trend Sparkline**: Visual sparkline showing lag history over time per topic
 - **Auto-refresh**: Polls at configurable intervals with live updates
-- **Keyboard Navigation**: Scroll through topics, toggle partition detail view
+- **Keyboard Navigation**: Scroll through topics, toggle partition detail view (`p`), refresh (`r`), adjust interval (`+`/`-`)
 
 ---
 
