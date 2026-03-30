@@ -15,7 +15,7 @@ In the switchover state, the client certificate CN is looked up in the file stor
 | `KUBECTL_NAMESPACE` | Kubernetes namespace for gateway deployment |
 | `OAUTH_CLIENT_ID` | IdP client ID for OAuth authentication |
 | `OAUTH_CLIENT_SECRET` | IdP client secret for OAuth authentication |
-| `CCLOUD_LOGICAL_CLUSTER_ID` | Confluent Cloud logical cluster ID (e.g., `lkc-xxxxx`) |
+| `CCLOUD_LOGICAL_CLUSTER` | Confluent Cloud logical cluster ID (e.g., `lkc-xxxxx`) |
 | `CCLOUD_IDENTITY_POOL_ID` | Confluent Cloud identity pool ID (e.g., `pool-xxxxx`) |
 | `JKS_PASSWORD` | JKS keystore password (default: `changeit`) |
 | `SSL_TRUSTSTORE_PASSWORD` | Client SSL truststore password |

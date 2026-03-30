@@ -199,8 +199,6 @@ spec:
       domain: <gateway-lb-hostname>
 ```
 
-**Note on `nodeIdRanges`:** MSK clusters use `start: 1, end: 3`; Confluent Cloud clusters use `start: 0, end: 17`.
-
 **Note on protocol:** The `gateway_switchover.yaml` uses `SSL://` (not `SASL_SSL://`) for the CCloud endpoint since mTLS authenticates at the TLS layer, not the SASL layer.
 
 ## Client Properties

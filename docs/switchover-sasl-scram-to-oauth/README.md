@@ -8,7 +8,7 @@ The gateway transitions through three states by sequentially applying Custom Res
 
 | State | Description |
 |-------|-------------|
-| **Init** | Two routes: the main client route passes SCRAM traffic through to MSK; the pre-registration route backs against Confluent Cloud and stores SCRAM verifiers in Vault |
+| **Init** | Two routes: the main client route passes SCRAM traffic through to MSK; the pre-registration route is backed by Confluent Cloud and stores SCRAM verifiers in Vault |
 | **Fenced** | Client route fenced (returns `BROKER_NOT_AVAILABLE`), pre-registration route retained |
 | **Switchover** | Single client route with SCRAM→OAuth credential swap to Confluent Cloud |
 

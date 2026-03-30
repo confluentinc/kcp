@@ -107,8 +107,6 @@ spec:
       domain: <gateway-lb-hostname>
 ```
 
-**Note about nodeIdRanges:** MSK uses `start: 1, end: 3` (adjust to match your MSK broker count).
-
 ### gateway_fenced.yaml
 
 Fenced state: blocks all client traffic with `BROKER_NOT_AVAILABLE`. Customize `<msk-bootstrap-server>` and `<gateway-lb-hostname>`.
@@ -162,8 +160,6 @@ spec:
     loadBalancer:
       domain: <gateway-lb-hostname>
 ```
-
-**Note about nodeIdRanges:** MSK uses `start: 1, end: 3` (adjust to match your MSK broker count).
 
 ### gateway_switchover.yaml
 
@@ -230,8 +226,6 @@ spec:
     loadBalancer:
       domain: <gateway-lb-hostname>
 ```
-
-**Note about nodeIdRanges:** CCloud uses `start: 0, end: 17` (adjust for your cluster).
 
 ## Client Properties
 

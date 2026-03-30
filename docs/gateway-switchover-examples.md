@@ -1,6 +1,6 @@
 # Gateway Switchover Examples for KCP Migrations
 
-These are reference examples for configuring Confluent Gateway when using KCP to migrate from Amazon MSK to Confluent Cloud. Each example demonstrates a specific combination of source and target authentication methods, providing reference, but not exhaustive gateway custom resource configurations for a switchover migration.
+These examples illustrate how to configure Confluent Gateway when using KCP to migrate from Amazon MSK to Confluent Cloud. Each example demonstrates a specific combination of source and target authentication methods and provides a representative (but not exhaustive) set of Gateway custom resource configurations for a switchover migration.
 
 ## The Switchover Pattern
 

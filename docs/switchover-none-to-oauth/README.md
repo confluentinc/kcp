@@ -128,8 +128,6 @@ spec:
       domain: <gateway-lb-hostname>
 ```
 
-**Note:** MSK uses `nodeIdRanges` with `start: 1, end: 3`.
-
 ### gateway_fenced.yaml
 
 ```yaml
@@ -255,8 +253,6 @@ spec:
 **Important:** `<token-endpoint-uri>` appears in **two places** and both must be set to the same value:
 1. `spec.podTemplate.envVars[GATEWAY_OPTS].value`
 2. `spec.routes[0].security.cluster.authentication.oauthSettings.tokenEndpointUri`
-
-**Note:** Confluent Cloud uses `nodeIdRanges` with `start: 0, end: 17`.
 
 ## Client Configuration
 

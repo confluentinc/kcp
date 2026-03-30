@@ -8,7 +8,7 @@ The switchover follows a three-state pattern:
 
 | State | YAML | Description |
 |-------|------|-------------|
-| **Initial** | `gateway_init.yaml` | Two routes: the main client route passes SCRAM traffic through to MSK; the pre-registration route backs against Confluent Cloud for registering SCRAM credentials |
+| **Initial** | `gateway_init.yaml` | Two routes: the main client route passes SCRAM traffic through to MSK; the pre-registration route is backed by Confluent Cloud for registering SCRAM credentials |
 | **Fenced** | `gateway_fenced.yaml` | Client route is fenced; pre-registration route remains available |
 | **Switchover** | `gateway_switchover.yaml` | Single client route with auth swap (SCRAM → SASL/PLAIN) routing to Confluent Cloud |
 
@@ -390,8 +390,6 @@ spec:
     loadBalancer:
       domain: <gateway-lb-hostname>
 ```
-
-**Note on `nodeIdRanges`:** MSK clusters use `start: 1, end: 3`; Confluent Cloud clusters use `start: 0, end: 17`. Adjust to match your broker topology.
 
 ## SCRAM Registration
 
