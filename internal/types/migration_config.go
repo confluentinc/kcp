@@ -10,14 +10,14 @@ type MigrationConfig struct {
 	KubeConfigPath string `json:"kube_config_path"`
 
 	// Source cluster configuration
-	SourceClusterArn string `json:"source_cluster_arn"`
+	SourceBootstrap string `json:"source_bootstrap"`
 
-	// Cluster link configuration
+	// Destination cluster configuration
+	CCBootstrap         string   `json:"cc_bootstrap"`
 	ClusterId           string   `json:"cluster_id"`
 	ClusterRestEndpoint string   `json:"cluster_rest_endpoint"`
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
-	AuthMode            string   `json:"auth_mode"`
 
 	// Migration runtime data (populated during initialization)
 	ClusterLinkTopics  []string          `json:"cluster_link_topics"`

@@ -21,7 +21,8 @@ var (
 	initialCrName  string
 	kubeConfigPath string
 
-	sourceClusterArn    string
+	sourceBootstrap     string
+	ccBootstrap         string
 	clusterId           string
 	clusterRestEndpoint string
 	clusterLinkName     string
@@ -69,7 +70,8 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
 	requiredFlags.StringVar(&initialCrName, "initial-cr-name", "", "Name of the initial gateway custom resource in Kubernetes.")
-	requiredFlags.StringVar(&sourceClusterArn, "source-cluster-arn", "", "ARN of the source MSK cluster.")
+	requiredFlags.StringVar(&sourceBootstrap, "source-bootstrap", "", "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092,broker2:9092).")
+	requiredFlags.StringVar(&ccBootstrap, "cc-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
 	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "Name of the cluster link on the destination cluster.")
@@ -136,7 +138,8 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 		return nil
 	})
 
-	_ = migrationInitCmd.MarkFlagRequired("source-cluster-arn")
+	_ = migrationInitCmd.MarkFlagRequired("source-bootstrap")
+	_ = migrationInitCmd.MarkFlagRequired("cc-bootstrap")
 	_ = migrationInitCmd.MarkFlagRequired("k8s-namespace")
 	_ = migrationInitCmd.MarkFlagRequired("initial-cr-name")
 	_ = migrationInitCmd.MarkFlagRequired("cluster-id")
@@ -209,7 +212,8 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	config := &types.MigrationConfig{
 		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
-		SourceClusterArn:    sourceClusterArn,
+		SourceBootstrap:     sourceBootstrap,
+		CCBootstrap:         ccBootstrap,
 		K8sNamespace:        k8sNamespace,
 		InitialCrName:       initialCrName,
 		KubeConfigPath:      kubeConfigPathResolved,
@@ -220,7 +224,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		FencedCrYAML:        fencedCrYAML,
 		SwitchoverCrYAML:    switchoverCrYAML,
 		CurrentState:        types.StateUninitialized,
-		AuthMode:            resolveAuthMode(),
 	}
 
 	// ===== PHASE 3: Early write - upsert migration and write to file =====
@@ -245,23 +248,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✅ Migration initialized: %s\n", config.MigrationId)
 	return nil
-}
-
-func resolveAuthMode() string {
-	switch {
-	case useSaslIam:
-		return string(types.AuthTypeIAM)
-	case useSaslScram:
-		return string(types.AuthTypeSASLSCRAM)
-	case useTls:
-		return string(types.AuthTypeTLS)
-	case useUnauthenticatedTLS:
-		return string(types.AuthTypeUnauthenticatedTLS)
-	case useUnauthenticatedPlaintext:
-		return string(types.AuthTypeUnauthenticatedPlaintext)
-	default:
-		return ""
-	}
 }
 
 func parseMigrationInitializerOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationInitializerOpts {

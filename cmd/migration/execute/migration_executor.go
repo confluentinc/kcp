@@ -11,10 +11,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/services/msk"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type MigrationExecutorOpts struct {
@@ -25,7 +23,7 @@ type MigrationExecutorOpts struct {
 	ClusterApiKey      string
 	ClusterApiSecret   string
 	CCBootstrap        string
-	SourceClusterArn   string
+	SourceBootstrap    string
 	AuthType           types.AuthType
 	SaslScramUsername   string
 	SaslScramPassword   string
@@ -81,31 +79,9 @@ func (m *MigrationExecutor) Run() error {
 	return nil
 }
 
-func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Service, error) {
+func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
 	authType := m.opts.AuthType
-
-	region, err := utils.ExtractRegionFromArn(m.opts.SourceClusterArn)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("discovering MSK bootstrap brokers")
-	mskAwsClient, err := client.NewMSKClient(region, 8, 1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create MSK API client: %w", err)
-	}
-
-	mskService := msk.NewMSKService(mskAwsClient)
-	bootstrapOutput, err := mskService.GetBootstrapBrokers(ctx, m.opts.SourceClusterArn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bootstrap brokers: %w", err)
-	}
-
-	awsInfo := types.AWSClientInformation{BootstrapBrokers: *bootstrapOutput}
-	brokerAddresses, err := awsInfo.GetBootstrapBrokersForAuthType(authType)
-	if err != nil {
-		return nil, err
-	}
+	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
 
 	// Build ClusterAuth from flag values
 	clusterAuth := types.ClusterAuth{}
@@ -131,8 +107,8 @@ func (m *MigrationExecutor) createSourceOffset(ctx context.Context) (*offset.Ser
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
 	}
 
-	slog.Debug("connecting to source cluster (MSK)")
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, clusterAuth))
+	slog.Debug("connecting to source cluster")
+	sourceClient, err := client.NewKafkaClient(brokerAddresses, "", client.AdminOptionForAuth(authType, clusterAuth))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
 	}

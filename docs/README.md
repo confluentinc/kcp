@@ -1603,7 +1603,8 @@ Initialize a new migration by validating infrastructure and persisting migration
 
 - `--k8s-namespace`: Kubernetes namespace where the gateway is deployed.
 - `--initial-cr-name`: Name of the initial gateway custom resource in Kubernetes.
-- `--source-cluster-arn`: ARN of the source MSK cluster.
+- `--source-bootstrap`: Bootstrap server(s) of the source Kafka cluster (e.g. `broker1:9092,broker2:9092`).
+- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint (e.g. `pkc-abc123.us-east-1.aws.confluent.cloud:9092`).
 - `--cluster-id`: Confluent Cloud destination cluster ID (e.g. `lkc-abc123`).
 - `--cluster-rest-endpoint`: REST endpoint of the destination Confluent Cloud cluster.
 - `--cluster-link-name`: Name of the cluster link on the destination cluster.
@@ -1644,7 +1645,8 @@ Initialize a new migration by validating infrastructure and persisting migration
 kcp migration init \
   --k8s-namespace my-namespace \
   --initial-cr-name my-gateway \
-  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9096,b2.my-cluster.kafka.us-east-1.amazonaws.com:9096 \
+  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
   --cluster-id lkc-abc123 \
   --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
   --cluster-link-name my-cluster-link \
@@ -1670,8 +1672,6 @@ Execute an initialized migration through its remaining workflow steps. This comm
 - `--lag-threshold`: Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.
 - `--cluster-api-key`: API key for authenticating with the destination cluster.
 - `--cluster-api-secret`: API secret for authenticating with the destination cluster.
-- `--source-cluster-arn`: ARN of the source MSK cluster.
-- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
 
 **Source Cluster Authentication Flags** (mutually exclusive):
 
@@ -1704,8 +1704,6 @@ kcp migration execute \
   --lag-threshold 0 \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
   --use-sasl-iam
 ```
 
