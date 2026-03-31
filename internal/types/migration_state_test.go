@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMigrationState_WriteAndRead_RoundTrip(t *testing.T) {
@@ -41,92 +44,20 @@ func TestMigrationState_WriteAndRead_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "migration-state.json")
 
-	if err := state.WriteToFile(filePath); err != nil {
-		t.Fatalf("WriteToFile failed: %v", err)
-	}
+	require.NoError(t, state.WriteToFile(filePath), "WriteToFile failed")
 
 	loaded, err := NewMigrationStateFromFile(filePath)
-	if err != nil {
-		t.Fatalf("NewMigrationStateFromFile failed: %v", err)
-	}
+	require.NoError(t, err, "NewMigrationStateFromFile failed")
+	require.Len(t, loaded.Migrations, 2, "expected 2 migrations")
 
-	if len(loaded.Migrations) != 2 {
-		t.Fatalf("expected 2 migrations, got %d", len(loaded.Migrations))
-	}
-
-	// Verify first migration
-	m1 := loaded.Migrations[0]
-	if m1.MigrationId != "mig-001" {
-		t.Errorf("migration 0: expected MigrationId %q, got %q", "mig-001", m1.MigrationId)
-	}
-	if m1.CurrentState != "initialized" {
-		t.Errorf("migration 0: expected CurrentState %q, got %q", "initialized", m1.CurrentState)
-	}
-	if m1.KubeConfigPath != "/home/user/.kube/config" {
-		t.Errorf("migration 0: expected KubeConfigPath %q, got %q", "/home/user/.kube/config", m1.KubeConfigPath)
-	}
-	if m1.SourceBootstrap != "source-broker:9092" {
-		t.Errorf("migration 0: expected SourceBootstrap %q, got %q", "source-broker:9092", m1.SourceBootstrap)
-	}
-	if m1.ClusterBootstrap != "dest-broker:9092" {
-		t.Errorf("migration 0: expected ClusterBootstrap %q, got %q", "dest-broker:9092", m1.ClusterBootstrap)
-	}
-	if m1.ClusterId != "lkc-abc123" {
-		t.Errorf("migration 0: expected ClusterId %q, got %q", "lkc-abc123", m1.ClusterId)
-	}
-	if m1.ClusterRestEndpoint != "https://pkc-abc.us-east-1.aws.confluent.cloud:443" {
-		t.Errorf("migration 0: expected ClusterRestEndpoint %q, got %q", "https://pkc-abc.us-east-1.aws.confluent.cloud:443", m1.ClusterRestEndpoint)
-	}
-	if m1.ClusterLinkName != "my-link" {
-		t.Errorf("migration 0: expected ClusterLinkName %q, got %q", "my-link", m1.ClusterLinkName)
-	}
-	if len(m1.Topics) != 2 || m1.Topics[0] != "orders" || m1.Topics[1] != "payments" {
-		t.Errorf("migration 0: expected Topics [orders payments], got %v", m1.Topics)
-	}
-	if len(m1.ClusterLinkTopics) != 2 || m1.ClusterLinkTopics[0] != "orders" || m1.ClusterLinkTopics[1] != "payments" {
-		t.Errorf("migration 0: expected ClusterLinkTopics [orders payments], got %v", m1.ClusterLinkTopics)
-	}
-	if v, ok := m1.ClusterLinkConfigs["consumer.offset.sync.enable"]; !ok || v != "true" {
-		t.Errorf("migration 0: expected ClusterLinkConfigs to contain consumer.offset.sync.enable=true, got %v", m1.ClusterLinkConfigs)
-	}
-	if m1.InitialCrName != "my-gateway-cr" {
-		t.Errorf("migration 0: expected InitialCrName %q, got %q", "my-gateway-cr", m1.InitialCrName)
-	}
-	if m1.K8sNamespace != "confluent" {
-		t.Errorf("migration 0: expected K8sNamespace %q, got %q", "confluent", m1.K8sNamespace)
-	}
-	if string(m1.InitialCrYAML) != "apiVersion: v1" {
-		t.Errorf("migration 0: expected InitialCrYAML %q, got %q", "apiVersion: v1", string(m1.InitialCrYAML))
-	}
-	if string(m1.FencedCrYAML) != "apiVersion: v1\nfenced: true" {
-		t.Errorf("migration 0: expected FencedCrYAML %q, got %q", "apiVersion: v1\nfenced: true", string(m1.FencedCrYAML))
-	}
-	if string(m1.SwitchoverCrYAML) != "apiVersion: v1\nswitchover: true" {
-		t.Errorf("migration 0: expected SwitchoverCrYAML %q, got %q", "apiVersion: v1\nswitchover: true", string(m1.SwitchoverCrYAML))
-	}
-
-	// Verify second migration
-	m2 := loaded.Migrations[1]
-	if m2.MigrationId != "mig-002" {
-		t.Errorf("migration 1: expected MigrationId %q, got %q", "mig-002", m2.MigrationId)
-	}
-	if m2.CurrentState != "executing" {
-		t.Errorf("migration 1: expected CurrentState %q, got %q", "executing", m2.CurrentState)
-	}
-	if len(m2.Topics) != 1 || m2.Topics[0] != "events" {
-		t.Errorf("migration 1: expected Topics [events], got %v", m2.Topics)
-	}
+	// Use reflect.DeepEqual via testify for full struct comparison
+	assert.Equal(t, state.Migrations[0], loaded.Migrations[0])
+	assert.Equal(t, state.Migrations[1], loaded.Migrations[1])
 
 	// Verify build info round-trips (will be empty strings in test, but should match)
-	if loaded.KcpBuildInfo.Version != state.KcpBuildInfo.Version {
-		t.Errorf("expected build info Version %q, got %q", state.KcpBuildInfo.Version, loaded.KcpBuildInfo.Version)
-	}
-	if loaded.KcpBuildInfo.Commit != state.KcpBuildInfo.Commit {
-		t.Errorf("expected build info Commit %q, got %q", state.KcpBuildInfo.Commit, loaded.KcpBuildInfo.Commit)
-	}
-	if loaded.Timestamp.IsZero() {
-		t.Errorf("expected non-zero Timestamp after round-trip")
-	}
+	assert.Equal(t, state.KcpBuildInfo.Version, loaded.KcpBuildInfo.Version)
+	assert.Equal(t, state.KcpBuildInfo.Commit, loaded.KcpBuildInfo.Commit)
+	assert.False(t, loaded.Timestamp.IsZero(), "expected non-zero Timestamp after round-trip")
 }
 
 func TestMigrationState_WriteToFile_AtomicWrite(t *testing.T) {
@@ -138,20 +69,16 @@ func TestMigrationState_WriteToFile_AtomicWrite(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "migration-state.json")
 
-	if err := state.WriteToFile(filePath); err != nil {
-		t.Fatalf("WriteToFile failed: %v", err)
-	}
+	require.NoError(t, state.WriteToFile(filePath), "WriteToFile failed")
 
 	// Verify the final file exists
-	if _, err := os.Stat(filePath); err != nil {
-		t.Fatalf("expected state file to exist: %v", err)
-	}
+	_, err := os.Stat(filePath)
+	require.NoError(t, err, "expected state file to exist")
 
 	// Verify no .tmp file remains after successful write
 	tmpFile := filePath + ".tmp"
-	if _, err := os.Stat(tmpFile); !os.IsNotExist(err) {
-		t.Errorf("expected .tmp file to not exist after successful write, but it does")
-	}
+	_, err = os.Stat(tmpFile)
+	assert.True(t, os.IsNotExist(err), "expected .tmp file to not exist after successful write")
 }
 
 func TestMigrationState_UpsertMigration_Insert(t *testing.T) {
@@ -168,19 +95,10 @@ func TestMigrationState_UpsertMigration_Insert(t *testing.T) {
 
 	state.UpsertMigration(newMigration)
 
-	if len(state.Migrations) != 2 {
-		t.Fatalf("expected 2 migrations after insert, got %d", len(state.Migrations))
-	}
-
-	if state.Migrations[0].MigrationId != "mig-001" {
-		t.Errorf("expected first migration to remain mig-001, got %q", state.Migrations[0].MigrationId)
-	}
-	if state.Migrations[1].MigrationId != "mig-002" {
-		t.Errorf("expected second migration to be mig-002, got %q", state.Migrations[1].MigrationId)
-	}
-	if state.Migrations[1].CurrentState != "executing" {
-		t.Errorf("expected second migration state %q, got %q", "executing", state.Migrations[1].CurrentState)
-	}
+	require.Len(t, state.Migrations, 2, "expected 2 migrations after insert")
+	assert.Equal(t, "mig-001", state.Migrations[0].MigrationId)
+	assert.Equal(t, "mig-002", state.Migrations[1].MigrationId)
+	assert.Equal(t, "executing", state.Migrations[1].CurrentState)
 }
 
 func TestMigrationState_UpsertMigration_Update(t *testing.T) {
@@ -198,23 +116,12 @@ func TestMigrationState_UpsertMigration_Update(t *testing.T) {
 
 	state.UpsertMigration(updated)
 
-	if len(state.Migrations) != 2 {
-		t.Fatalf("expected 2 migrations after update (not duplicated), got %d", len(state.Migrations))
-	}
-
-	if state.Migrations[0].CurrentState != "executing" {
-		t.Errorf("expected updated migration state %q, got %q", "executing", state.Migrations[0].CurrentState)
-	}
-	if len(state.Migrations[0].Topics) != 2 {
-		t.Errorf("expected updated migration to have 2 topics, got %d", len(state.Migrations[0].Topics))
-	}
+	require.Len(t, state.Migrations, 2, "expected 2 migrations after update (not duplicated)")
+	assert.Equal(t, "executing", state.Migrations[0].CurrentState)
+	assert.Len(t, state.Migrations[0].Topics, 2, "expected updated migration to have 2 topics")
 	// Verify the other migration was not affected
-	if state.Migrations[1].MigrationId != "mig-002" {
-		t.Errorf("expected second migration to remain mig-002, got %q", state.Migrations[1].MigrationId)
-	}
-	if state.Migrations[1].CurrentState != "initialized" {
-		t.Errorf("expected second migration state to remain %q, got %q", "initialized", state.Migrations[1].CurrentState)
-	}
+	assert.Equal(t, "mig-002", state.Migrations[1].MigrationId)
+	assert.Equal(t, "initialized", state.Migrations[1].CurrentState)
 }
 
 func TestMigrationState_GetMigrationById_Found(t *testing.T) {
@@ -225,28 +132,20 @@ func TestMigrationState_GetMigrationById_Found(t *testing.T) {
 	}
 
 	result, err := state.GetMigrationById("mig-002")
-	if err != nil {
-		t.Fatalf("GetMigrationById returned unexpected error: %v", err)
-	}
+	require.NoError(t, err, "GetMigrationById returned unexpected error")
+	require.NotNil(t, result)
 
-	if result.MigrationId != "mig-002" {
-		t.Errorf("expected MigrationId %q, got %q", "mig-002", result.MigrationId)
-	}
-	if result.CurrentState != "executing" {
-		t.Errorf("expected CurrentState %q, got %q", "executing", result.CurrentState)
-	}
-	if result.ClusterId != "lkc-222" {
-		t.Errorf("expected ClusterId %q, got %q", "lkc-222", result.ClusterId)
-	}
-	if len(result.Topics) != 1 || result.Topics[0] != "orders" {
-		t.Errorf("expected Topics [orders], got %v", result.Topics)
-	}
+	assert.Equal(t, "mig-002", result.MigrationId)
+	assert.Equal(t, "executing", result.CurrentState)
+	assert.Equal(t, "lkc-222", result.ClusterId)
+	assert.Equal(t, []string{"orders"}, result.Topics)
 
-	// Verify returned value is a copy (modifying it should not affect the original)
+	// Verify defensive copy: modifying the returned pointer must not affect the original.
+	// GetMigrationById copies the struct before returning a pointer to it,
+	// so mutations to the result should be isolated from the state's slice.
 	result.CurrentState = "completed"
-	if state.Migrations[1].CurrentState != "executing" {
-		t.Errorf("modifying returned pointer should not affect original state, but original changed to %q", state.Migrations[1].CurrentState)
-	}
+	assert.Equal(t, "executing", state.Migrations[1].CurrentState,
+		"modifying returned pointer should not affect original state")
 }
 
 func TestMigrationState_GetMigrationById_NotFound(t *testing.T) {
@@ -256,29 +155,19 @@ func TestMigrationState_GetMigrationById_NotFound(t *testing.T) {
 	}
 
 	result, err := state.GetMigrationById("non-existent")
-	if err == nil {
-		t.Fatal("expected error for non-existent migration ID, got nil")
-	}
-	if result != nil {
-		t.Errorf("expected nil result for non-existent migration ID, got %+v", result)
-	}
+	require.Error(t, err, "expected error for non-existent migration ID")
+	assert.Nil(t, result, "expected nil result for non-existent migration ID")
 }
 
 func TestNewMigrationStateFromFile_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "invalid.json")
 
-	if err := os.WriteFile(filePath, []byte("not valid json {{{"), 0644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte("not valid json {{{"), 0644), "failed to write test file")
 
 	result, err := NewMigrationStateFromFile(filePath)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON, got nil")
-	}
-	if result != nil {
-		t.Errorf("expected nil result for invalid JSON, got %+v", result)
-	}
+	require.Error(t, err, "expected error for invalid JSON")
+	assert.Nil(t, result, "expected nil result for invalid JSON")
 }
 
 func TestNewMigrationStateFromFile_FileNotFound(t *testing.T) {
@@ -286,10 +175,6 @@ func TestNewMigrationStateFromFile_FileNotFound(t *testing.T) {
 	filePath := filepath.Join(dir, "does-not-exist.json")
 
 	result, err := NewMigrationStateFromFile(filePath)
-	if err == nil {
-		t.Fatal("expected error for non-existent file, got nil")
-	}
-	if result != nil {
-		t.Errorf("expected nil result for non-existent file, got %+v", result)
-	}
+	require.Error(t, err, "expected error for non-existent file")
+	assert.Nil(t, result, "expected nil result for non-existent file")
 }

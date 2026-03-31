@@ -6,15 +6,27 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
+// orchestratorOverrides allows tests to customize mock behavior before construction.
+type orchestratorOverrides struct {
+	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
+	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
+	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
+}
+
 // newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
 // The returned config starts at the given initialState.
-func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string) (*MigrationOrchestrator, *types.MigrationConfig, string) {
+// Optional overrides allow customizing mock behavior before construction.
+func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *types.MigrationConfig, string) {
 	t.Helper()
 
 	if len(topics) == 0 {
@@ -38,23 +50,12 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		SwitchoverCrYAML:    []byte("switchover-yaml"),
 	}
 
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
-			return []byte("initial-yaml"), nil
-		},
-		validateGatewayCRsFn: func(initial, fenced, switchover []byte) error {
-			return nil
-		},
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			return nil
-		},
-		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
-			return map[k8stypes.UID]struct{}{
-				"uid-1": {},
-				"uid-2": {},
-			}, nil
-		},
-		waitForGatewayPodsFn: nil, // nil returns nil (success)
+	// Default mock implementations
+	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
+		return []byte("initial-yaml"), nil
+	}
+	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte) error {
+		return nil
 	}
 
 	// ListMirrorTopics returns ACTIVE topics matching config.Topics
@@ -64,6 +65,49 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 			MirrorTopicName: name,
 			MirrorStatus:    clusterlink.MirrorStatusActive,
 		}
+	}
+
+	promoteMirrorTopicsFn := func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		data := make([]struct {
+			MirrorTopicName string `json:"mirror_topic_name"`
+			ErrorMessage    string `json:"error_message,omitempty"`
+			ErrorCode       int    `json:"error_code,omitempty"`
+		}, len(topicNames))
+		for i, name := range topicNames {
+			data[i].MirrorTopicName = name
+		}
+		return &clusterlink.PromoteMirrorTopicsResponse{Data: data}, nil
+	}
+
+	// Apply overrides if provided
+	if len(overrides) > 0 {
+		o := overrides[0]
+		if o.getGatewayYAMLFn != nil {
+			getGatewayYAMLFn = o.getGatewayYAMLFn
+		}
+		if o.applyGatewayYAMLFn != nil {
+			applyGatewayYAMLFn = o.applyGatewayYAMLFn
+		}
+		if o.promoteMirrorTopicsFn != nil {
+			promoteMirrorTopicsFn = o.promoteMirrorTopicsFn
+		}
+	}
+
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: getGatewayYAMLFn,
+		validateGatewayCRsFn: func(initial, fenced, switchover []byte) error {
+			return nil
+		},
+		applyGatewayYAMLFn: applyGatewayYAMLFn,
+		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
+			return map[k8stypes.UID]struct{}{
+				"uid-1": {},
+				"uid-2": {},
+			}, nil
+		},
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+			return nil
+		},
 	}
 
 	cl := &mockClusterLinkService{
@@ -76,17 +120,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		validateTopicsFn: func(reqTopics []string, clusterLinkTopics []string) error {
 			return nil
 		},
-		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
-			data := make([]struct {
-				MirrorTopicName string `json:"mirror_topic_name"`
-				ErrorMessage    string `json:"error_message,omitempty"`
-				ErrorCode       int    `json:"error_code,omitempty"`
-			}, len(topicNames))
-			for i, name := range topicNames {
-				data[i].MirrorTopicName = name
-			}
-			return &clusterlink.PromoteMirrorTopicsResponse{Data: data}, nil
-		},
+		promoteMirrorTopicsFn: promoteMirrorTopicsFn,
 	}
 
 	// Identical offsets => zero lag
@@ -118,13 +152,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *types.MigrationConfig {
 	t.Helper()
 	state, err := types.NewMigrationStateFromFile(stateFilePath)
-	if err != nil {
-		t.Fatalf("failed to load state file: %v", err)
-	}
+	require.NoError(t, err, "failed to load state file")
 	m, err := state.GetMigrationById(migrationID)
-	if err != nil {
-		t.Fatalf("migration %q not found in state file: %v", migrationID, err)
-	}
+	require.NoError(t, err, "migration %q not found in state file", migrationID)
 	return m
 }
 
@@ -133,136 +163,74 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *ty
 func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil)
 
-	if err := orch.Initialize(context.Background(), "api-key", "api-secret"); err != nil {
-		t.Fatalf("Initialize returned error: %v", err)
-	}
+	err := orch.Initialize(context.Background(), "api-key", "api-secret")
+	require.NoError(t, err)
 
-	if config.CurrentState != types.StateInitialized {
-		t.Errorf("expected current state %q, got %q", types.StateInitialized, config.CurrentState)
-	}
+	assert.Equal(t, types.StateInitialized, config.CurrentState)
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateInitialized {
-		t.Errorf("persisted state: expected %q, got %q", types.StateInitialized, persisted.CurrentState)
-	}
+	assert.Equal(t, types.StateInitialized, persisted.CurrentState)
 }
 
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil)
 
-	if err := orch.Execute(context.Background(), 0, "api-key", "api-secret"); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.NoError(t, err)
 
-	if config.CurrentState != types.StateSwitched {
-		t.Errorf("expected final state %q, got %q", types.StateSwitched, config.CurrentState)
-	}
+	assert.Equal(t, types.StateSwitched, config.CurrentState)
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateSwitched {
-		t.Errorf("persisted state: expected %q, got %q", types.StateSwitched, persisted.CurrentState)
-	}
+	assert.Equal(t, types.StateSwitched, persisted.CurrentState)
 }
 
-func TestOrchestrator_Execute_ResumesFromInitialized(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateInitialized, nil)
+func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
+	for _, startState := range []string{types.StateInitialized, types.StateLagsOk, types.StateFenced, types.StatePromoted} {
+		t.Run("from_"+startState, func(t *testing.T) {
+			var getYAMLCalls int32
+			overrides := orchestratorOverrides{
+				getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+					atomic.AddInt32(&getYAMLCalls, 1)
+					return []byte("initial-yaml"), nil
+				},
+			}
 
-	// Track calls to GetGatewayYAML — the init step calls this, so if it's called the
-	// orchestrator did NOT skip the init step.
-	var getYAMLCalls int32
-	orch.workflow.gatewayService.(*mockGatewayService).getGatewayYAMLFn = func(ctx context.Context, namespace, name string) ([]byte, error) {
-		atomic.AddInt32(&getYAMLCalls, 1)
-		return []byte("initial-yaml"), nil
-	}
+			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil, overrides)
 
-	if err := orch.Execute(context.Background(), 0, "api-key", "api-secret"); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
+			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			require.NoError(t, err)
 
-	if config.CurrentState != types.StateSwitched {
-		t.Errorf("expected final state %q, got %q", types.StateSwitched, config.CurrentState)
-	}
+			assert.Equal(t, types.StateSwitched, config.CurrentState)
 
-	if atomic.LoadInt32(&getYAMLCalls) != 0 {
-		t.Errorf("expected GetGatewayYAML not to be called (init step should be skipped), but it was called %d times", getYAMLCalls)
-	}
+			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+			assert.Equal(t, types.StateSwitched, persisted.CurrentState)
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateSwitched {
-		t.Errorf("persisted state: expected %q, got %q", types.StateSwitched, persisted.CurrentState)
-	}
-}
-
-func TestOrchestrator_Execute_ResumesFromLagsOk(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateLagsOk, nil)
-
-	if err := orch.Execute(context.Background(), 0, "api-key", "api-secret"); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
-
-	if config.CurrentState != types.StateSwitched {
-		t.Errorf("expected final state %q, got %q", types.StateSwitched, config.CurrentState)
-	}
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateSwitched {
-		t.Errorf("persisted state: expected %q, got %q", types.StateSwitched, persisted.CurrentState)
-	}
-}
-
-func TestOrchestrator_Execute_ResumesFromFenced(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateFenced, nil)
-
-	if err := orch.Execute(context.Background(), 0, "api-key", "api-secret"); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
-
-	if config.CurrentState != types.StateSwitched {
-		t.Errorf("expected final state %q, got %q", types.StateSwitched, config.CurrentState)
-	}
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateSwitched {
-		t.Errorf("persisted state: expected %q, got %q", types.StateSwitched, persisted.CurrentState)
-	}
-}
-
-func TestOrchestrator_Execute_ResumesFromPromoted(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StatePromoted, nil)
-
-	if err := orch.Execute(context.Background(), 0, "api-key", "api-secret"); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
-
-	if config.CurrentState != types.StateSwitched {
-		t.Errorf("expected final state %q, got %q", types.StateSwitched, config.CurrentState)
-	}
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateSwitched {
-		t.Errorf("persisted state: expected %q, got %q", types.StateSwitched, persisted.CurrentState)
+			// For initialized and later states, init step should be skipped
+			// (GetGatewayYAML is called during init, so 0 calls means init was skipped)
+			if startState == types.StateInitialized {
+				assert.Equal(t, int32(0), atomic.LoadInt32(&getYAMLCalls),
+					"GetGatewayYAML should not be called when resuming from initialized (init step should be skipped)")
+			}
+		})
 	}
 }
 
 // --- Error handling tests ---
 
 func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil)
-
-	// Make GetGatewayYAML fail — this is the first call in Initialize workflow step
-	orch.workflow.gatewayService.(*mockGatewayService).getGatewayYAMLFn = func(ctx context.Context, namespace, name string) ([]byte, error) {
-		return nil, fmt.Errorf("k8s connection refused")
+	overrides := orchestratorOverrides{
+		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+			return nil, fmt.Errorf("k8s connection refused")
+		},
 	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil, overrides)
 
 	err := orch.Initialize(context.Background(), "api-key", "api-secret")
-	if err == nil {
-		t.Fatal("expected Initialize to return an error, got nil")
-	}
+	require.Error(t, err)
 
 	// Config state should NOT have advanced
-	if config.CurrentState != types.StateUninitialized {
-		t.Errorf("expected state to remain %q after error, got %q", types.StateUninitialized, config.CurrentState)
-	}
+	assert.Equal(t, types.StateUninitialized, config.CurrentState)
 
 	// State file should not have been written (persistState is called after fsm.Event,
 	// and fsm.Event returns error when the callback cancels)
@@ -272,8 +240,9 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 		state, _ := types.NewMigrationStateFromFile(stateFilePath)
 		if state != nil {
 			m, getErr := state.GetMigrationById(config.MigrationId)
-			if getErr == nil && m.CurrentState == types.StateInitialized {
-				t.Error("state file should NOT contain migration at initialized state after init failure")
+			if getErr == nil {
+				assert.NotEqual(t, types.StateInitialized, m.CurrentState,
+					"state file should NOT contain migration at initialized state after init failure")
 			}
 		}
 	}
@@ -281,47 +250,39 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 }
 
 func TestOrchestrator_Execute_FenceError(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil)
-
-	// Make ApplyGatewayYAML fail — this is called during FenceGateway (lags_ok -> fenced)
-	// GetGatewayPodUIDs is called first in FenceGateway, so let that succeed.
-	// Then ApplyGatewayYAML fails.
-	orch.workflow.gatewayService.(*mockGatewayService).applyGatewayYAMLFn = func(ctx context.Context, namespace, name string, yaml []byte) error {
-		return fmt.Errorf("apply gateway failed: forbidden")
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+			return fmt.Errorf("apply gateway failed: forbidden")
+		},
 	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil, overrides)
 
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
-	if err == nil {
-		t.Fatal("expected Execute to return an error, got nil")
-	}
+	require.Error(t, err)
 
 	// The orchestrator should have persisted state after each successful step.
 	// Init (uninitialized -> initialized) succeeded and was persisted.
 	// CheckLags (initialized -> lags_ok) succeeded and was persisted.
 	// Fence (lags_ok -> fenced) failed, so the last persisted state should be lags_ok.
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	if persisted.CurrentState != types.StateLagsOk {
-		t.Errorf("expected persisted state %q (last successful), got %q", types.StateLagsOk, persisted.CurrentState)
-	}
+	assert.Equal(t, types.StateLagsOk, persisted.CurrentState)
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateFenced, nil)
-
-	// Make PromoteMirrorTopics fail
-	orch.workflow.clusterLinkService.(*mockClusterLinkService).promoteMirrorTopicsFn = func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
-		return nil, fmt.Errorf("confluent cloud API unavailable")
+	overrides := orchestratorOverrides{
+		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			return nil, fmt.Errorf("confluent cloud API unavailable")
+		},
 	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateFenced, nil, overrides)
 
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
-	if err == nil {
-		t.Fatal("expected Execute to return an error, got nil")
-	}
+	require.Error(t, err)
 
 	// State should remain at fenced — the promote transition was cancelled
-	if config.CurrentState != types.StateFenced {
-		t.Errorf("expected config state to remain %q, got %q", types.StateFenced, config.CurrentState)
-	}
+	assert.Equal(t, types.StateFenced, config.CurrentState)
 
 	// No state file should have been written for this run since no transition succeeded.
 	// (We started at fenced and the first attempted transition fenced->promoted failed.)
@@ -330,8 +291,9 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 		state, _ := types.NewMigrationStateFromFile(stateFilePath)
 		if state != nil {
 			m, getErr := state.GetMigrationById(config.MigrationId)
-			if getErr == nil && m.CurrentState == types.StatePromoted {
-				t.Error("state file should NOT contain migration at promoted state after promote failure")
+			if getErr == nil {
+				assert.NotEqual(t, types.StatePromoted, m.CurrentState,
+					"state file should NOT contain migration at promoted state after promote failure")
 			}
 		}
 	}

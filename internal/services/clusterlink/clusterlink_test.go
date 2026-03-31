@@ -6,9 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,17 +25,11 @@ func TestClassifyMirrorTopics_AllActive(t *testing.T) {
 
 	topicNames, inactiveTopics := ClassifyMirrorTopics(mirrors)
 
-	if len(topicNames) != 3 {
-		t.Fatalf("expected 3 topic names, got %d", len(topicNames))
-	}
+	require.Len(t, topicNames, 3)
 	for i, name := range []string{"topic-a", "topic-b", "topic-c"} {
-		if topicNames[i] != name {
-			t.Errorf("topicNames[%d] = %q, want %q", i, topicNames[i], name)
-		}
+		assert.Equal(t, name, topicNames[i], "topicNames[%d]", i)
 	}
-	if len(inactiveTopics) != 0 {
-		t.Errorf("expected 0 inactive topics, got %d: %v", len(inactiveTopics), inactiveTopics)
-	}
+	assert.Empty(t, inactiveTopics)
 }
 
 func TestClassifyMirrorTopics_MixedStatus(t *testing.T) {
@@ -47,30 +42,20 @@ func TestClassifyMirrorTopics_MixedStatus(t *testing.T) {
 
 	topicNames, inactiveTopics := ClassifyMirrorTopics(mirrors)
 
-	if len(topicNames) != 4 {
-		t.Fatalf("expected 4 topic names, got %d", len(topicNames))
-	}
-	if len(inactiveTopics) != 2 {
-		t.Fatalf("expected 2 inactive topics, got %d", len(inactiveTopics))
-	}
+	require.Len(t, topicNames, 4)
+	require.Len(t, inactiveTopics, 2)
 	// Verify inactive entries contain the topic name and status
-	if !strings.Contains(inactiveTopics[0], "paused-1") || !strings.Contains(inactiveTopics[0], "PAUSED") {
-		t.Errorf("inactive[0] = %q, expected to contain paused-1 and PAUSED", inactiveTopics[0])
-	}
-	if !strings.Contains(inactiveTopics[1], "failed-1") || !strings.Contains(inactiveTopics[1], "FAILED") {
-		t.Errorf("inactive[1] = %q, expected to contain failed-1 and FAILED", inactiveTopics[1])
-	}
+	assert.Contains(t, inactiveTopics[0], "paused-1")
+	assert.Contains(t, inactiveTopics[0], "PAUSED")
+	assert.Contains(t, inactiveTopics[1], "failed-1")
+	assert.Contains(t, inactiveTopics[1], "FAILED")
 }
 
 func TestClassifyMirrorTopics_Empty(t *testing.T) {
 	topicNames, inactiveTopics := ClassifyMirrorTopics(nil)
 
-	if topicNames != nil {
-		t.Errorf("expected nil topicNames, got %v", topicNames)
-	}
-	if inactiveTopics != nil {
-		t.Errorf("expected nil inactiveTopics, got %v", inactiveTopics)
-	}
+	assert.Nil(t, topicNames)
+	assert.Nil(t, inactiveTopics)
 }
 
 func TestGetActiveTopicsWithZeroLag(t *testing.T) {
@@ -94,12 +79,8 @@ func TestGetActiveTopicsWithZeroLag(t *testing.T) {
 
 	result := GetActiveTopicsWithZeroLag(mirrors)
 
-	if len(result) != 1 {
-		t.Fatalf("expected 1 topic, got %d: %v", len(result), result)
-	}
-	if result[0] != "zero-lag-active" {
-		t.Errorf("expected zero-lag-active, got %q", result[0])
-	}
+	require.Len(t, result, 1)
+	assert.Equal(t, "zero-lag-active", result[0])
 }
 
 func TestGetActiveTopicsWithZeroLag_NonZeroLag(t *testing.T) {
@@ -118,9 +99,7 @@ func TestGetActiveTopicsWithZeroLag_NonZeroLag(t *testing.T) {
 
 	result := GetActiveTopicsWithZeroLag(mirrors)
 
-	if len(result) != 0 {
-		t.Errorf("expected empty result, got %v", result)
-	}
+	assert.Empty(t, result)
 }
 
 func TestHasActiveTopicsWithNonZeroLag_True(t *testing.T) {
@@ -132,9 +111,7 @@ func TestHasActiveTopicsWithNonZeroLag_True(t *testing.T) {
 		},
 	}
 
-	if !HasActiveTopicsWithNonZeroLag(mirrors) {
-		t.Error("expected true, got false")
-	}
+	assert.True(t, HasActiveTopicsWithNonZeroLag(mirrors))
 }
 
 func TestHasActiveTopicsWithNonZeroLag_AllZero(t *testing.T) {
@@ -151,9 +128,7 @@ func TestHasActiveTopicsWithNonZeroLag_AllZero(t *testing.T) {
 		},
 	}
 
-	if HasActiveTopicsWithNonZeroLag(mirrors) {
-		t.Error("expected false, got true")
-	}
+	assert.False(t, HasActiveTopicsWithNonZeroLag(mirrors))
 }
 
 func TestCountActiveMirrorTopics(t *testing.T) {
@@ -166,9 +141,7 @@ func TestCountActiveMirrorTopics(t *testing.T) {
 	}
 
 	count := CountActiveMirrorTopics(mirrors)
-	if count != 3 {
-		t.Errorf("expected 3, got %d", count)
-	}
+	assert.Equal(t, 3, count)
 }
 
 func TestValidateTopics_AllExist(t *testing.T) {
@@ -177,9 +150,7 @@ func TestValidateTopics_AllExist(t *testing.T) {
 
 	svc := NewConfluentCloudService(nil)
 	err := svc.ValidateTopics(topics, clusterLinkTopics)
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
+	assert.NoError(t, err)
 }
 
 func TestValidateTopics_Missing(t *testing.T) {
@@ -188,12 +159,8 @@ func TestValidateTopics_Missing(t *testing.T) {
 
 	svc := NewConfluentCloudService(nil)
 	err := svc.ValidateTopics(topics, clusterLinkTopics)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "missing-topic") {
-		t.Errorf("error %q should contain 'missing-topic'", err.Error())
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing-topic")
 }
 
 // ---------------------------------------------------------------------------
@@ -206,12 +173,8 @@ func TestListMirrorTopics_Success(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expectedPath := "/kafka/v3/clusters/" + clusterID + "/links/" + linkName + "/mirrors"
-		if r.URL.Path != expectedPath {
-			t.Errorf("request path = %q, want %q", r.URL.Path, expectedPath)
-		}
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %q, want GET", r.Method)
-		}
+		assert.Equal(t, expectedPath, r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
 
 		resp := map[string]interface{}{
 			"data": []map[string]interface{}{
@@ -235,21 +198,11 @@ func TestListMirrorTopics_Success(t *testing.T) {
 	}
 
 	topics, err := svc.ListMirrorTopics(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(topics) != 3 {
-		t.Fatalf("expected 3 topics, got %d", len(topics))
-	}
-	if topics[0].MirrorTopicName != "topic-1" {
-		t.Errorf("topics[0].MirrorTopicName = %q, want topic-1", topics[0].MirrorTopicName)
-	}
-	if topics[1].MirrorStatus != "PAUSED" {
-		t.Errorf("topics[1].MirrorStatus = %q, want PAUSED", topics[1].MirrorStatus)
-	}
-	if topics[2].MirrorLags[0].Lag != 5 {
-		t.Errorf("topics[2].MirrorLags[0].Lag = %d, want 5", topics[2].MirrorLags[0].Lag)
-	}
+	require.NoError(t, err)
+	require.Len(t, topics, 3)
+	assert.Equal(t, "topic-1", topics[0].MirrorTopicName)
+	assert.Equal(t, "PAUSED", topics[1].MirrorStatus)
+	assert.Equal(t, 5, topics[2].MirrorLags[0].Lag)
 }
 
 func TestListMirrorTopics_FiltersByTopics(t *testing.T) {
@@ -277,18 +230,10 @@ func TestListMirrorTopics_FiltersByTopics(t *testing.T) {
 	}
 
 	topics, err := svc.ListMirrorTopics(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(topics) != 2 {
-		t.Fatalf("expected 2 topics, got %d", len(topics))
-	}
-	if topics[0].MirrorTopicName != "topic-1" {
-		t.Errorf("topics[0] = %q, want topic-1", topics[0].MirrorTopicName)
-	}
-	if topics[1].MirrorTopicName != "topic-3" {
-		t.Errorf("topics[1] = %q, want topic-3", topics[1].MirrorTopicName)
-	}
+	require.NoError(t, err)
+	require.Len(t, topics, 2)
+	assert.Equal(t, "topic-1", topics[0].MirrorTopicName)
+	assert.Equal(t, "topic-3", topics[1].MirrorTopicName)
 }
 
 func TestListMirrorTopics_HTTPError(t *testing.T) {
@@ -308,12 +253,8 @@ func TestListMirrorTopics_HTTPError(t *testing.T) {
 	}
 
 	_, err := svc.ListMirrorTopics(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "500") {
-		t.Errorf("error %q should contain status code 500", err.Error())
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "500")
 }
 
 func TestPromoteMirrorTopics_Success(t *testing.T) {
@@ -322,30 +263,18 @@ func TestPromoteMirrorTopics_Success(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expectedPath := "/kafka/v3/clusters/" + clusterID + "/links/" + linkName + "/mirrors:promote"
-		if r.URL.Path != expectedPath {
-			t.Errorf("request path = %q, want %q", r.URL.Path, expectedPath)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
+		assert.Equal(t, expectedPath, r.URL.Path, "request path")
+		assert.Equal(t, http.MethodPost, r.Method, "HTTP method")
 
 		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("failed to read request body: %v", err)
-		}
+		require.NoError(t, err, "reading request body")
 
 		var reqBody struct {
 			MirrorTopicNames []string `json:"mirror_topic_names"`
 		}
-		if err := json.Unmarshal(body, &reqBody); err != nil {
-			t.Fatalf("failed to unmarshal request body: %v", err)
-		}
-		if len(reqBody.MirrorTopicNames) != 2 {
-			t.Errorf("expected 2 topic names in body, got %d", len(reqBody.MirrorTopicNames))
-		}
-		if reqBody.MirrorTopicNames[0] != "orders" || reqBody.MirrorTopicNames[1] != "users" {
-			t.Errorf("unexpected topic names: %v", reqBody.MirrorTopicNames)
-		}
+		require.NoError(t, json.Unmarshal(body, &reqBody), "unmarshalling request body")
+		require.Len(t, reqBody.MirrorTopicNames, 2)
+		assert.Equal(t, []string{"orders", "users"}, reqBody.MirrorTopicNames)
 
 		resp := PromoteMirrorTopicsResponse{
 			Data: []struct {
@@ -372,22 +301,13 @@ func TestPromoteMirrorTopics_Success(t *testing.T) {
 	}
 
 	resp, err := svc.PromoteMirrorTopics(context.Background(), cfg, []string{"orders", "users"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.Data) != 2 {
-		t.Fatalf("expected 2 items in response, got %d", len(resp.Data))
-	}
-	if resp.Data[0].MirrorTopicName != "orders" {
-		t.Errorf("resp.Data[0].MirrorTopicName = %q, want orders", resp.Data[0].MirrorTopicName)
-	}
+	require.NoError(t, err)
+	require.Len(t, resp.Data, 2)
+	assert.Equal(t, "orders", resp.Data[0].MirrorTopicName)
 }
 
 func TestPromoteMirrorTopics_Empty(t *testing.T) {
-	var requestCount int64
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&requestCount, 1)
 		t.Error("server should not receive any request for empty topic list")
 	}))
 	defer server.Close()
@@ -402,15 +322,8 @@ func TestPromoteMirrorTopics_Empty(t *testing.T) {
 	}
 
 	resp, err := svc.PromoteMirrorTopics(context.Background(), cfg, []string{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if atomic.LoadInt64(&requestCount) != 0 {
-		t.Errorf("expected 0 requests, got %d", atomic.LoadInt64(&requestCount))
-	}
+	require.NoError(t, err)
+	require.NotNil(t, resp)
 }
 
 func TestPromoteMirrorTopics_HTTPError(t *testing.T) {
@@ -430,12 +343,8 @@ func TestPromoteMirrorTopics_HTTPError(t *testing.T) {
 	}
 
 	_, err := svc.PromoteMirrorTopics(context.Background(), cfg, []string{"topic-1"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "500") {
-		t.Errorf("error %q should contain status code 500", err.Error())
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "500")
 }
 
 func TestListConfigs_Success(t *testing.T) {
@@ -444,12 +353,8 @@ func TestListConfigs_Success(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expectedPath := "/kafka/v3/clusters/" + clusterID + "/links/" + linkName + "/configs"
-		if r.URL.Path != expectedPath {
-			t.Errorf("request path = %q, want %q", r.URL.Path, expectedPath)
-		}
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %q, want GET", r.Method)
-		}
+		assert.Equal(t, expectedPath, r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
 
 		resp := map[string]interface{}{
 			"data": []map[string]interface{}{
@@ -473,19 +378,9 @@ func TestListConfigs_Success(t *testing.T) {
 	}
 
 	configs, err := svc.ListConfigs(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(configs) != 3 {
-		t.Fatalf("expected 3 configs, got %d", len(configs))
-	}
-	if configs["consumer.offset.sync.enable"] != "true" {
-		t.Errorf("consumer.offset.sync.enable = %q, want true", configs["consumer.offset.sync.enable"])
-	}
-	if configs["acl.sync.enable"] != "false" {
-		t.Errorf("acl.sync.enable = %q, want false", configs["acl.sync.enable"])
-	}
-	if configs["topic.config.sync"] != "true" {
-		t.Errorf("topic.config.sync = %q, want true", configs["topic.config.sync"])
-	}
+	require.NoError(t, err)
+	require.Len(t, configs, 3)
+	assert.Equal(t, "true", configs["consumer.offset.sync.enable"])
+	assert.Equal(t, "false", configs["acl.sync.enable"])
+	assert.Equal(t, "true", configs["topic.config.sync"])
 }

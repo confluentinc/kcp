@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -23,7 +24,7 @@ func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name
 	if m.getGatewayYAMLFn != nil {
 		return m.getGatewayYAMLFn(ctx, namespace, name)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
 }
 
 func (m *mockGatewayService) ValidateGatewayCRs(initial, fenced, switchover []byte) error {
@@ -44,21 +45,21 @@ func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, na
 	if m.applyGatewayYAMLFn != nil {
 		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml)
 	}
-	return nil
+	return fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
 }
 
 func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
 	if m.getGatewayPodUIDsFn != nil {
 		return m.getGatewayPodUIDsFn(ctx, namespace, name)
 	}
-	return map[k8stypes.UID]struct{}{}, nil
+	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
 }
 
 func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, pollInterval, timeout, onProgress)
 	}
-	return nil
+	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
 }
 
 // mockClusterLinkService implements clusterlink.Service using function fields for test control.
@@ -73,28 +74,28 @@ func (m *mockClusterLinkService) ListMirrorTopics(ctx context.Context, config cl
 	if m.listMirrorTopicsFn != nil {
 		return m.listMirrorTopicsFn(ctx, config)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("mockClusterLinkService.ListMirrorTopics not configured")
 }
 
 func (m *mockClusterLinkService) ListConfigs(ctx context.Context, config clusterlink.Config) (map[string]string, error) {
 	if m.listConfigsFn != nil {
 		return m.listConfigsFn(ctx, config)
 	}
-	return map[string]string{}, nil
+	return nil, fmt.Errorf("mockClusterLinkService.ListConfigs not configured")
 }
 
 func (m *mockClusterLinkService) ValidateTopics(topics []string, clusterLinkTopics []string) error {
 	if m.validateTopicsFn != nil {
 		return m.validateTopicsFn(topics, clusterLinkTopics)
 	}
-	return nil
+	return fmt.Errorf("mockClusterLinkService.ValidateTopics not configured")
 }
 
 func (m *mockClusterLinkService) PromoteMirrorTopics(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 	if m.promoteMirrorTopicsFn != nil {
 		return m.promoteMirrorTopicsFn(ctx, config, topicNames)
 	}
-	return &clusterlink.PromoteMirrorTopicsResponse{}, nil
+	return nil, fmt.Errorf("mockClusterLinkService.PromoteMirrorTopics not configured")
 }
 
 // mockOffsetProvider implements offset.Provider using a function field for test control.
@@ -106,5 +107,5 @@ func (m *mockOffsetProvider) Get(topic string) (map[int32]int64, error) {
 	if m.getFn != nil {
 		return m.getFn(topic)
 	}
-	return map[int32]int64{}, nil
+	return nil, fmt.Errorf("mockOffsetProvider.Get not configured")
 }

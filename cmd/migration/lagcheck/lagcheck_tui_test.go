@@ -4,21 +4,20 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 )
 
 func TestFormatLag_Zero(t *testing.T) {
 	got := formatLag(0)
-	if got != "0" {
-		t.Errorf("formatLag(0) = %q, want %q", got, "0")
-	}
+	assert.Equal(t, "0", got)
 }
 
 func TestFormatLag_Small(t *testing.T) {
 	got := formatLag(999)
-	if got != "999" {
-		t.Errorf("formatLag(999) = %q, want %q", got, "999")
-	}
+	assert.Equal(t, "999", got)
 }
 
 func TestFormatLag_Thousands(t *testing.T) {
@@ -31,17 +30,13 @@ func TestFormatLag_Thousands(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := formatLag(tc.input)
-		if got != tc.want {
-			t.Errorf("formatLag(%d) = %q, want %q", tc.input, got, tc.want)
-		}
+		assert.Equal(t, tc.want, got, "formatLag(%d)", tc.input)
 	}
 }
 
 func TestFormatLag_Millions(t *testing.T) {
 	got := formatLag(1000000)
-	if got != "1,000,000" {
-		t.Errorf("formatLag(1000000) = %q, want %q", got, "1,000,000")
-	}
+	assert.Equal(t, "1,000,000", got)
 }
 
 func TestTotalLag(t *testing.T) {
@@ -55,9 +50,7 @@ func TestTotalLag(t *testing.T) {
 		},
 	}
 	got := totalLag(topic)
-	if got != 600 {
-		t.Errorf("totalLag() = %d, want 600", got)
-	}
+	assert.Equal(t, 600, got)
 }
 
 func TestTotalLag_Empty(t *testing.T) {
@@ -67,24 +60,17 @@ func TestTotalLag_Empty(t *testing.T) {
 		MirrorLags:      []clusterlink.MirrorLag{},
 	}
 	got := totalLag(topic)
-	if got != 0 {
-		t.Errorf("totalLag() = %d, want 0", got)
-	}
+	assert.Equal(t, 0, got)
 }
 
 func TestRenderSparkline_Empty(t *testing.T) {
 	got := renderSparkline([]int{})
-	if got != "-" {
-		t.Errorf("renderSparkline(empty) = %q, want %q", got, "-")
-	}
+	assert.Equal(t, "-", got)
 }
 
 func TestRenderSparkline_AllZeros(t *testing.T) {
 	got := renderSparkline([]int{0, 0, 0})
-	want := "▁▁▁"
-	if got != want {
-		t.Errorf("renderSparkline(all zeros) = %q, want %q", got, want)
-	}
+	assert.Equal(t, "▁▁▁", got)
 }
 
 func TestRenderSparkline_Ascending(t *testing.T) {
@@ -92,26 +78,18 @@ func TestRenderSparkline_Ascending(t *testing.T) {
 
 	// Should have exactly 3 runes
 	runeCount := utf8.RuneCountInString(got)
-	if runeCount != 3 {
-		t.Fatalf("renderSparkline(ascending) has %d runes, want 3", runeCount)
-	}
+	require.Equal(t, 3, runeCount, "renderSparkline(ascending) rune count")
 
 	runes := []rune(got)
 	lowest := sparkBlocks[0]                   // ▁
 	highest := sparkBlocks[len(sparkBlocks)-1] // █
 
-	if runes[0] != lowest {
-		t.Errorf("first rune = %c, want %c (lowest block)", runes[0], lowest)
-	}
-	if runes[2] != highest {
-		t.Errorf("last rune = %c, want %c (highest block)", runes[2], highest)
-	}
+	assert.Equal(t, lowest, runes[0], "first rune should be lowest block")
+	assert.Equal(t, highest, runes[2], "last rune should be highest block")
 }
 
 func TestRenderSparkline_SingleValue(t *testing.T) {
 	got := renderSparkline([]int{100})
 	want := string(sparkBlocks[len(sparkBlocks)-1]) // █
-	if got != want {
-		t.Errorf("renderSparkline(single) = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }

@@ -8,6 +8,8 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ===========================================================================
@@ -50,19 +52,11 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
+	require.NoError(t, err)
 
-	if string(config.InitialCrYAML) != "initial-yaml" {
-		t.Errorf("expected InitialCrYAML to be 'initial-yaml', got %q", config.InitialCrYAML)
-	}
-	if len(config.ClusterLinkTopics) != 3 {
-		t.Errorf("expected 3 cluster link topics, got %d", len(config.ClusterLinkTopics))
-	}
-	if config.ClusterLinkConfigs["bootstrap.servers"] != "broker:9092" {
-		t.Errorf("expected cluster link config 'bootstrap.servers'='broker:9092', got %q", config.ClusterLinkConfigs["bootstrap.servers"])
-	}
+	assert.Equal(t, "initial-yaml", string(config.InitialCrYAML))
+	assert.Len(t, config.ClusterLinkTopics, 3)
+	assert.Equal(t, "broker:9092", config.ClusterLinkConfigs["bootstrap.servers"])
 }
 
 func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
@@ -80,12 +74,8 @@ func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if got := err.Error(); got != "failed to get initial CR YAML: k8s unreachable" {
-		t.Errorf("unexpected error message: %s", got)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "failed to get initial CR YAML: k8s unreachable", err.Error())
 }
 
 func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
@@ -116,12 +106,8 @@ func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
-	if err == nil {
-		t.Fatal("expected error for inactive topics, got nil")
-	}
-	if got := err.Error(); got != "1 mirror topics are not active: topic-b (status: PAUSED)" {
-		t.Errorf("unexpected error: %s", got)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "1 mirror topics are not active: topic-b (status: PAUSED)", err.Error())
 }
 
 func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
@@ -155,12 +141,8 @@ func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
-	if err == nil {
-		t.Fatal("expected validation error, got nil")
-	}
-	if got := err.Error(); got != "failed to validate topics in cluster link: topic topic-x not found in cluster link" {
-		t.Errorf("unexpected error: %s", got)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "failed to validate topics in cluster link: topic topic-x not found in cluster link", err.Error())
 }
 
 func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
@@ -196,19 +178,13 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
+	require.NoError(t, err)
 
-	if len(config.Topics) != 3 {
-		t.Fatalf("expected 3 discovered topics, got %d", len(config.Topics))
-	}
+	require.Len(t, config.Topics, 3)
 
 	expected := map[string]bool{"orders": true, "payments": true, "users": true}
 	for _, topic := range config.Topics {
-		if !expected[topic] {
-			t.Errorf("unexpected topic %q in discovered topics", topic)
-		}
+		assert.True(t, expected[topic], "unexpected topic %q in discovered topics", topic)
 	}
 }
 
@@ -237,17 +213,23 @@ func TestWorkflow_CheckLags_ImmediatelyBelowThreshold(t *testing.T) {
 	}
 
 	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
+	require.NoError(t, err)
 }
 
 func TestWorkflow_CheckLags_NoTopics(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}
 
-	sourceOffset := &mockOffsetProvider{}
-	destOffset := &mockOffsetProvider{}
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{}, nil
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{}, nil
+		},
+	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
 	config := &types.MigrationConfig{
@@ -255,9 +237,7 @@ func TestWorkflow_CheckLags_NoTopics(t *testing.T) {
 	}
 
 	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
+	require.NoError(t, err)
 }
 
 func TestWorkflow_CheckLags_NilOffsetServices(t *testing.T) {
@@ -270,12 +250,8 @@ func TestWorkflow_CheckLags_NilOffsetServices(t *testing.T) {
 	}
 
 	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
-	if err == nil {
-		t.Fatal("expected error for nil offset services, got nil")
-	}
-	if got := err.Error(); got != "source and destination offset services are required" {
-		t.Errorf("unexpected error: %s", got)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "source and destination offset services are required", err.Error())
 }
 
 func TestWorkflow_CheckLags_ContextCancelled(t *testing.T) {
@@ -303,12 +279,32 @@ func TestWorkflow_CheckLags_ContextCancelled(t *testing.T) {
 	cancel() // pre-cancel
 
 	err := wf.CheckLags(ctx, config, 10, "key", "secret")
-	if err == nil {
-		t.Fatal("expected context cancelled error, got nil")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestWorkflow_CheckLags_DestinationAhead(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
 	}
-	if err != context.Canceled {
-		t.Errorf("expected context.Canceled, got: %v", err)
+	destOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 200}, nil // ahead of source
+		},
 	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	config := &types.MigrationConfig{
+		Topics: []string{"topic-1"},
+	}
+
+	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	require.NoError(t, err, "negative lag (destination ahead) should be treated as 0 and pass threshold")
 }
 
 // ===========================================================================
@@ -353,12 +349,9 @@ func TestWorkflow_PromoteTopics_AllAtZeroLag(t *testing.T) {
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-	if !promoted["topic-1"] || !promoted["topic-2"] {
-		t.Errorf("expected both topics promoted, got: %v", promoted)
-	}
+	require.NoError(t, err)
+	assert.True(t, promoted["topic-1"], "topic-1 should have been promoted")
+	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
 }
 
 func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
@@ -404,14 +397,10 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
-	if err != nil {
-		t.Fatalf("expected nil error (retry should succeed), got: %v", err)
-	}
+	require.NoError(t, err, "retry should succeed")
 
 	finalCallCount := atomic.LoadInt64(&callCount)
-	if finalCallCount < 2 {
-		t.Errorf("expected at least 2 promote calls (initial + retry), got %d", finalCallCount)
-	}
+	assert.GreaterOrEqual(t, finalCallCount, int64(2), "expected at least 2 promote calls (initial + retry)")
 }
 
 func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
@@ -450,13 +439,8 @@ func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
-	if err == nil {
-		t.Fatal("expected error after max retries, got nil")
-	}
-	expected := "topic topic-1 failed promotion after 3 attempts: persistent error"
-	if got := err.Error(); got != expected {
-		t.Errorf("unexpected error:\n  got:  %s\n  want: %s", got, expected)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "topic topic-1 failed promotion after 3 attempts: persistent error", err.Error())
 }
 
 func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
@@ -469,12 +453,8 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
-	if err == nil {
-		t.Fatal("expected error for nil offset services, got nil")
-	}
-	if got := err.Error(); got != "source and destination offset services are required" {
-		t.Errorf("unexpected error: %s", got)
-	}
+	require.Error(t, err)
+	assert.Equal(t, "source and destination offset services are required", err.Error())
 }
 
 // ===========================================================================
@@ -496,9 +476,7 @@ func TestFormatLag64(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("%d", tc.input), func(t *testing.T) {
 			got := formatLag64(tc.input)
-			if got != tc.expected {
-				t.Errorf("formatLag64(%d) = %q, want %q", tc.input, got, tc.expected)
-			}
+			assert.Equal(t, tc.expected, got, "formatLag64(%d)", tc.input)
 		})
 	}
 }
