@@ -27,4 +27,5 @@ func TestReverseProxy(t *testing.T) {
 	fileMap["generate_dns_entries.sh"] = service.GenerateReverseProxyShellScript()
 
 	assertMatchesGoldenFiles(t, "TestReverseProxy", fileMap)
+	validateTerraformProject(t, fileMap)
 }

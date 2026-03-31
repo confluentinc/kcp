@@ -22,6 +22,7 @@ func TestMigrationInfra_Public(t *testing.T) {
 	project := service.GenerateTerraformModules(request)
 	files := projectToFiles(project)
 	assertMatchesGoldenFiles(t, "TestMigrationInfra_Public", files)
+	validateTerraformProject(t, files)
 }
 
 func TestMigrationInfra_PrivateJumpCluster(t *testing.T) {
@@ -50,6 +51,7 @@ func TestMigrationInfra_PrivateJumpCluster(t *testing.T) {
 	project := service.GenerateTerraformModules(request)
 	files := projectToFiles(project)
 	assertMatchesGoldenFiles(t, "TestMigrationInfra_PrivateJumpCluster", files)
+	validateTerraformProject(t, files)
 }
 
 func TestMigrationInfra_ExternalOutbound(t *testing.T) {
@@ -81,6 +83,7 @@ func TestMigrationInfra_ExternalOutbound(t *testing.T) {
 	project := service.GenerateTerraformModules(request)
 	files := projectToFiles(project)
 	assertMatchesGoldenFiles(t, "TestMigrationInfra_ExternalOutbound", files)
+	validateTerraformProject(t, files)
 }
 
 func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
@@ -114,5 +117,6 @@ func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
 	project := service.GenerateTerraformModules(request)
 	files := projectToFiles(project)
 	assertMatchesGoldenFiles(t, "TestMigrationInfra_ExternalOutboundUnauthTls", files)
+	validateTerraformProject(t, files)
 }
 
