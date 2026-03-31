@@ -97,7 +97,7 @@ func TestRenderSparkline_Ascending(t *testing.T) {
 	}
 
 	runes := []rune(got)
-	lowest := sparkBlocks[0]                 // ▁
+	lowest := sparkBlocks[0]                   // ▁
 	highest := sparkBlocks[len(sparkBlocks)-1] // █
 
 	if runes[0] != lowest {
