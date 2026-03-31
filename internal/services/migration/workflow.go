@@ -18,8 +18,8 @@ import (
 type MigrationWorkflow struct {
 	gatewayService     gateway.Service
 	clusterLinkService clusterlink.Service
-	sourceOffset       *offset.Service
-	destinationOffset  *offset.Service
+	sourceOffset       offset.Provider
+	destinationOffset  offset.Provider
 }
 
 func NewMigrationWorkflow(
@@ -35,8 +35,8 @@ func NewMigrationWorkflow(
 func NewMigrationWorkflowWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-	sourceOffset *offset.Service,
-	destinationOffset *offset.Service,
+	sourceOffset offset.Provider,
+	destinationOffset offset.Provider,
 ) *MigrationWorkflow {
 	return &MigrationWorkflow{
 		gatewayService:     gatewayService,
