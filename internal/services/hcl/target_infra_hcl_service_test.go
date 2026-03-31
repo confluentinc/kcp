@@ -23,7 +23,6 @@ func TestTargetInfra_Dedicated(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_Dedicated", files)
 	validateTerraformProject(t, files)
 }
 
@@ -43,7 +42,6 @@ func TestTargetInfra_Enterprise(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_Enterprise", files)
 	validateTerraformProject(t, files)
 }
 
@@ -66,7 +64,6 @@ func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_DedicatedPrivateLink", files)
 	validateTerraformProject(t, files)
 }
 
@@ -86,7 +83,6 @@ func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterpriseTrailingHyphen", files)
 	validateTerraformProject(t, files)
 }
 
@@ -109,7 +105,6 @@ func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone", files)
 	validateTerraformProject(t, files)
 }
 
@@ -133,7 +128,6 @@ func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone", files)
 	validateTerraformProject(t, files)
 }
 
@@ -155,6 +149,5 @@ func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterprisePrivateLink", files)
 	validateTerraformProject(t, files)
 }

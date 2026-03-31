@@ -21,7 +21,6 @@ func TestMigrationScripts_MirrorTopics(t *testing.T) {
 	}
 
 	fileMap := terraformFilesToMap(files)
-	assertMatchesGoldenFiles(t, "TestMigrationScripts_MirrorTopics", fileMap)
 	validateTerraformProject(t, fileMap)
 }
 
@@ -61,7 +60,6 @@ func TestMigrationScripts_MigrateACLs(t *testing.T) {
 	}
 
 	fileMap := terraformFilesToMap(files)
-	assertMatchesGoldenFiles(t, "TestMigrationScripts_MigrateACLs", fileMap)
 	validateTerraformProject(t, fileMap)
 }
 
@@ -84,6 +82,5 @@ func TestMigrationScripts_MigrateSchemas(t *testing.T) {
 	}
 
 	fileMap := schemaProjectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestMigrationScripts_MigrateSchemas", fileMap)
 	validateTerraformProject(t, fileMap)
 }

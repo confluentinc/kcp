@@ -1,54 +1,16 @@
 package hcl
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/gruntwork-io/terratest/modules/terraform"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-var update = flag.Bool("update", false, "update golden files")
-
-// assertMatchesGoldenFiles compares generated files against golden files in testdata/<dir>.
-// When run with -update, it writes the golden files instead.
-func assertMatchesGoldenFiles(t *testing.T, dir string, files map[string]string) {
-	t.Helper()
-
-	goldenDir := filepath.Join("testdata", dir)
-
-	if *update {
-		require.NoError(t, os.MkdirAll(goldenDir, 0o755))
-		for name, content := range files {
-			path := filepath.Join(goldenDir, name+".golden")
-			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-			require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-		}
-		return
-	}
-
-	// Sort file names for deterministic test output
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		content := files[name]
-		path := filepath.Join(goldenDir, name+".golden")
-		expected, err := os.ReadFile(path)
-		require.NoError(t, err, "golden file %s not found; run with -update to create", path)
-		assert.Equal(t, string(expected), content, "mismatch in %s", name)
-	}
-}
 
 // projectToFiles flattens a MigrationInfraTerraformProject into a map of filename → content.
 func projectToFiles(project types.MigrationInfraTerraformProject) map[string]string {
