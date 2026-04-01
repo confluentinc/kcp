@@ -59,12 +59,6 @@ fi
 # Point kubectl at the minikube cluster
 eval "$(minikube docker-env --profile "${PROFILE}" 2>/dev/null || true)"
 
-# Authenticate with Docker Hub to avoid rate limiting (credentials provided by CI)
-if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
-  echo "Logging in to Docker Hub..."
-  docker login --username "$DOCKERHUB_USER" --password "$DOCKERHUB_APIKEY"
-fi
-
 KUBECONFIG_PATH="${HOME}/.kube/config"
 
 echo "Minikube is running."
@@ -72,6 +66,18 @@ echo "Minikube is running."
 # --- Namespace ---
 echo "Creating namespace..."
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/namespace.yaml"
+
+# --- Docker Hub credentials (avoids rate limiting in CI) ---
+if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
+  echo "Configuring Docker Hub image pull credentials..."
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" create secret docker-registry dockerhub-credentials \
+    --docker-server=https://index.docker.io/v1/ \
+    --docker-username="$DOCKERHUB_USER" \
+    --docker-password="$DOCKERHUB_APIKEY" \
+    --dry-run=client -o yaml | kubectl --context "${PROFILE}" apply -f -
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" patch serviceaccount default \
+    -p '{"imagePullSecrets": [{"name": "dockerhub-credentials"}]}'
+fi
 
 # --- CFK Operator ---
 echo "Installing CFK operator..."
