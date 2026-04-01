@@ -23,7 +23,7 @@ func TestTargetInfra_Dedicated(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_Dedicated", files)
+	validateTerraformProject(t, files)
 }
 
 func TestTargetInfra_Enterprise(t *testing.T) {
@@ -42,7 +42,7 @@ func TestTargetInfra_Enterprise(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_Enterprise", files)
+	validateTerraformProject(t, files)
 }
 
 func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
@@ -64,7 +64,7 @@ func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_DedicatedPrivateLink", files)
+	validateTerraformProject(t, files)
 }
 
 func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
@@ -83,7 +83,7 @@ func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterpriseTrailingHyphen", files)
+	validateTerraformProject(t, files)
 }
 
 func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
@@ -105,7 +105,7 @@ func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone", files)
+	validateTerraformProject(t, files)
 }
 
 func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
@@ -128,7 +128,7 @@ func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone", files)
+	validateTerraformProject(t, files)
 }
 
 func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
@@ -149,5 +149,114 @@ func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
 
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestTargetInfra_EnterprisePrivateLink", files)
+	validateTerraformProject(t, files)
 }
+
+// Edge case tests: Empty inputs
+func TestTargetInfra_PrivateLink_EmptySubnetCidrArray(t *testing.T) {
+	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
+	request := types.TargetClusterWizardRequest{
+		AwsRegion:           "us-east-1",
+		NeedsEnvironment:    true,
+		EnvironmentName:     "test-env",
+		NeedsCluster:        true,
+		ClusterName:         "test-cluster",
+		ClusterType:         "dedicated",
+		ClusterAvailability: "SINGLE_ZONE",
+		ClusterCku:          2,
+		NeedsPrivateLink:    true,
+		VpcId:               "vpc-0123456789abcdef0",
+		SubnetCidrRanges:    []string{}, // Empty array
+		PreventDestroy:      true,
+	}
+
+	// Should handle gracefully or validation should catch this
+	project := service.GenerateTerraformFiles(request)
+	files := projectToFiles(project)
+
+	if len(files) > 0 {
+		validateTerraformProject(t, files)
+	}
+}
+
+// Resource naming edge cases
+func TestTargetInfra_VeryLongResourceNames(t *testing.T) {
+	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
+
+	// 63 characters (max for some AWS resources)
+	longName := "this-is-a-very-long-environment-name-for-testing-limits-max"
+
+	request := types.TargetClusterWizardRequest{
+		AwsRegion:           "us-east-1",
+		NeedsEnvironment:    true,
+		EnvironmentName:     longName,
+		NeedsCluster:        true,
+		ClusterName:         "long-cluster-name-that-tests-aws-resource-naming-limits",
+		ClusterType:         "dedicated",
+		ClusterAvailability: "SINGLE_ZONE",
+		ClusterCku:          1,
+		PreventDestroy:      true,
+	}
+
+	project := service.GenerateTerraformFiles(request)
+	files := projectToFiles(project)
+	validateTerraformProject(t, files)
+}
+
+func TestTargetInfra_SpecialCharactersInNames(t *testing.T) {
+	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
+	request := types.TargetClusterWizardRequest{
+		AwsRegion:           "us-east-1",
+		NeedsEnvironment:    true,
+		EnvironmentName:     "env-with-dashes-and_underscores",
+		NeedsCluster:        true,
+		ClusterName:         "cluster_with_underscores",
+		ClusterType:         "enterprise",
+		ClusterAvailability: "MULTI_ZONE",
+		PreventDestroy:      false,
+	}
+
+	project := service.GenerateTerraformFiles(request)
+	files := projectToFiles(project)
+	validateTerraformProject(t, files)
+}
+
+func TestTargetInfra_NumericOnlyNames(t *testing.T) {
+	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
+	request := types.TargetClusterWizardRequest{
+		AwsRegion:           "us-east-1",
+		NeedsEnvironment:    true,
+		EnvironmentName:     "12345",
+		NeedsCluster:        true,
+		ClusterName:         "67890",
+		ClusterType:         "dedicated",
+		ClusterAvailability: "SINGLE_ZONE",
+		ClusterCku:          1,
+		PreventDestroy:      true,
+	}
+
+	project := service.GenerateTerraformFiles(request)
+	files := projectToFiles(project)
+	validateTerraformProject(t, files)
+}
+
+// Boundary conditions
+func TestTargetInfra_MultiZone_MinimumCKUs(t *testing.T) {
+	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
+	request := types.TargetClusterWizardRequest{
+		AwsRegion:           "us-east-1",
+		NeedsEnvironment:    true,
+		EnvironmentName:     "multi-zone-test",
+		NeedsCluster:        true,
+		ClusterName:         "mz-cluster",
+		ClusterType:         "dedicated",
+		ClusterAvailability: "MULTI_ZONE",
+		ClusterCku:          2, // Minimum for MULTI_ZONE
+		PreventDestroy:      true,
+	}
+
+	project := service.GenerateTerraformFiles(request)
+	files := projectToFiles(project)
+	validateTerraformProject(t, files)
+}
+

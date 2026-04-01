@@ -127,7 +127,7 @@ func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyReques
 	rootBody.AppendNewline()
 
 	// Route table association
-	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource("public_rt_association", "aws_subnet.public_subnet.id", "aws_route_table.public_rt.id"))
+	rootBody.AppendBlock(aws.GenerateRouteTableAssociationResource("public_rt_association", "aws_subnet.public_subnet", "aws_route_table.public_rt"))
 	rootBody.AppendNewline()
 
 	// Security group
