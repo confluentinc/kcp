@@ -95,11 +95,11 @@ type ConnectTlsAuth struct {
 type MigrationType int
 
 const (
-	PublicMskEndpoints                    MigrationType = 1
-	ExternalOutboundClusterLink           MigrationType = 2
-	ExternalOutboundClusterLinkUnauthTls  MigrationType = 3
-	JumpClusterSaslScram                  MigrationType = 4
-	JumpClusterIam                        MigrationType = 6
+	PublicMskEndpoints                   MigrationType = 1
+	ExternalOutboundClusterLink          MigrationType = 2
+	ExternalOutboundClusterLinkUnauthTls MigrationType = 3
+	JumpClusterSaslScram                 MigrationType = 4
+	JumpClusterIam                       MigrationType = 6
 )
 
 func (m MigrationType) IsValid() bool {
@@ -128,20 +128,20 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	AwsRegion           string   `json:"aws_region"`
-	NeedsEnvironment    bool     `json:"needs_environment"`
-	EnvironmentName     string   `json:"environment_name"`
-	EnvironmentId       string   `json:"environment_id"`
-	NeedsCluster        bool     `json:"needs_cluster"`
-	ClusterName         string   `json:"cluster_name"`
-	ClusterType         string   `json:"cluster_type"`
-	ClusterAvailability string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
-	ClusterCku          int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
-	NeedsPrivateLink      bool     `json:"needs_private_link"`
-	UseExistingRoute53Zone bool   `json:"use_existing_route53_zone"`
-	PreventDestroy        bool     `json:"prevent_destroy"`
-	VpcId                 string   `json:"vpc_id"`
-	SubnetCidrRanges      []string `json:"subnet_cidr_ranges"`
+	AwsRegion              string   `json:"aws_region"`
+	NeedsEnvironment       bool     `json:"needs_environment"`
+	EnvironmentName        string   `json:"environment_name"`
+	EnvironmentId          string   `json:"environment_id"`
+	NeedsCluster           bool     `json:"needs_cluster"`
+	ClusterName            string   `json:"cluster_name"`
+	ClusterType            string   `json:"cluster_type"`
+	ClusterAvailability    string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
+	ClusterCku             int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
+	NeedsPrivateLink       bool     `json:"needs_private_link"`
+	UseExistingRoute53Zone bool     `json:"use_existing_route53_zone"`
+	PreventDestroy         bool     `json:"prevent_destroy"`
+	VpcId                  string   `json:"vpc_id"`
+	SubnetCidrRanges       []string `json:"subnet_cidr_ranges"`
 }
 
 type TerraformFiles struct {

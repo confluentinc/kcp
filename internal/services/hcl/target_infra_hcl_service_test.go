@@ -89,18 +89,18 @@ func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
 func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
-		AwsRegion:             "eu-west-1",
-		NeedsEnvironment:      true,
-		EnvironmentName:       "eu-prod",
-		NeedsCluster:          true,
-		ClusterName:           "eu-cluster",
-		ClusterType:           "enterprise",
-		ClusterAvailability:   "MULTI_ZONE",
-		NeedsPrivateLink:      true,
+		AwsRegion:              "eu-west-1",
+		NeedsEnvironment:       true,
+		EnvironmentName:        "eu-prod",
+		NeedsCluster:           true,
+		ClusterName:            "eu-cluster",
+		ClusterType:            "enterprise",
+		ClusterAvailability:    "MULTI_ZONE",
+		NeedsPrivateLink:       true,
 		UseExistingRoute53Zone: true,
-		VpcId:                 "vpc-eu-0123456789abcdef0",
-		SubnetCidrRanges:      []string{"10.0.10.0/24", "10.0.11.0/24", "10.0.12.0/24"},
-		PreventDestroy:        false,
+		VpcId:                  "vpc-eu-0123456789abcdef0",
+		SubnetCidrRanges:       []string{"10.0.10.0/24", "10.0.11.0/24", "10.0.12.0/24"},
+		PreventDestroy:         false,
 	}
 
 	project := service.GenerateTerraformFiles(request)
@@ -111,19 +111,19 @@ func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
 func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
-		AwsRegion:             "us-east-1",
-		NeedsEnvironment:      true,
-		EnvironmentName:       "production",
-		NeedsCluster:          true,
-		ClusterName:           "prod-cluster-pl",
-		ClusterType:           "dedicated",
-		ClusterAvailability:   "SINGLE_ZONE",
-		ClusterCku:            2,
-		NeedsPrivateLink:      true,
+		AwsRegion:              "us-east-1",
+		NeedsEnvironment:       true,
+		EnvironmentName:        "production",
+		NeedsCluster:           true,
+		ClusterName:            "prod-cluster-pl",
+		ClusterType:            "dedicated",
+		ClusterAvailability:    "SINGLE_ZONE",
+		ClusterCku:             2,
+		NeedsPrivateLink:       true,
 		UseExistingRoute53Zone: true,
-		VpcId:                 "vpc-0123456789abcdef0",
-		SubnetCidrRanges:      []string{"10.0.1.0/24", "10.0.2.0/24"},
-		PreventDestroy:        true,
+		VpcId:                  "vpc-0123456789abcdef0",
+		SubnetCidrRanges:       []string{"10.0.1.0/24", "10.0.2.0/24"},
+		PreventDestroy:         true,
 	}
 
 	project := service.GenerateTerraformFiles(request)

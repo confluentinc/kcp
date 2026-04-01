@@ -50,15 +50,16 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 
 func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVariable[types.MigrationWizardRequest] {
 	var allVars []ModuleVariable[types.MigrationWizardRequest]
-	if request.HasPublicMskEndpoints {
+	switch {
+	case request.HasPublicMskEndpoints:
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
-	} else if request.UseJumpClusters {
+	case request.UseJumpClusters:
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetNetworkingVariables()...)
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
-	} else {
+	default:
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
 		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)

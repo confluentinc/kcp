@@ -62,7 +62,7 @@ func NewConnectorUtilityCmd() *cobra.Command {
 		return nil
 	})
 
-	connectorUtilityCmd.MarkFlagRequired("state-file")
+	_ = connectorUtilityCmd.MarkFlagRequired("state-file")
 
 	return connectorUtilityCmd
 }

@@ -155,12 +155,12 @@ Refer to the kcp docs for more information on each migration type.
 		return nil
 	})
 
-	migrationInfraCmd.MarkFlagRequired("state-file")
-	migrationInfraCmd.MarkFlagRequired("cluster-arn")
-	migrationInfraCmd.MarkFlagRequired("type")
-	migrationInfraCmd.MarkFlagRequired("cluster-link-name")
-	migrationInfraCmd.MarkFlagRequired("target-cluster-id")
-	migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
+	_ = migrationInfraCmd.MarkFlagRequired("state-file")
+	_ = migrationInfraCmd.MarkFlagRequired("cluster-arn")
+	_ = migrationInfraCmd.MarkFlagRequired("type")
+	_ = migrationInfraCmd.MarkFlagRequired("cluster-link-name")
+	_ = migrationInfraCmd.MarkFlagRequired("target-cluster-id")
+	_ = migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
 
 	return migrationInfraCmd
 }
@@ -180,7 +180,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	}
 
 	if targetType != types.PublicMskEndpoints {
-		cmd.MarkFlagRequired("target-environment-id")
+		_ = cmd.MarkFlagRequired("target-environment-id")
 	}
 
 	switch targetType {
@@ -191,17 +191,17 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 		// No additional flags beyond target-environment-id.
 
 	case types.JumpClusterSaslScram:
-		cmd.MarkFlagRequired("target-bootstrap-endpoint")
-		cmd.MarkFlagRequired("existing-private-link-vpce-id")
-		cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
-		cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
+		_ = cmd.MarkFlagRequired("target-bootstrap-endpoint")
+		_ = cmd.MarkFlagRequired("existing-private-link-vpce-id")
+		_ = cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
+		_ = cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
 
 	case types.JumpClusterIam:
-		cmd.MarkFlagRequired("target-bootstrap-endpoint")
-		cmd.MarkFlagRequired("existing-private-link-vpce-id")
-		cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
-		cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
-		cmd.MarkFlagRequired("jump-cluster-iam-auth-role-name")
+		_ = cmd.MarkFlagRequired("target-bootstrap-endpoint")
+		_ = cmd.MarkFlagRequired("existing-private-link-vpce-id")
+		_ = cmd.MarkFlagRequired("jump-cluster-broker-subnet-cidr")
+		_ = cmd.MarkFlagRequired("jump-cluster-setup-host-subnet-cidr")
+		_ = cmd.MarkFlagRequired("jump-cluster-iam-auth-role-name")
 	}
 
 	return nil
@@ -240,7 +240,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	if cluster.AWSClientInformation.MskClusterConfig.Provisioned == nil {
-		return nil, fmt.Errorf("cluster %s has no provisioned configuration. This could be because the cluster is a serverless cluster which is not supported for migration.", cluster.Name)
+		return nil, fmt.Errorf("cluster %s has no provisioned configuration, this could be because the cluster is a serverless cluster which is not supported for migration", cluster.Name)
 	}
 
 	// Recurring statefile values.
@@ -248,7 +248,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	region := aws.ToString(&cluster.Region)
 
 	if aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID) == "" {
-		return nil, fmt.Errorf("cluster %s has no cluster ID. This could be because the cluster has not had the `kcp scan cluster` command run against it.", cluster.Name)
+		return nil, fmt.Errorf("cluster %s has no cluster ID, this could be because the cluster has not had the `kcp scan cluster` command run against it", cluster.Name)
 	}
 	mskClusterId := aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID)
 
@@ -355,7 +355,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.UseJumpClusters = true
 
 		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
-			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d). You should provide as many CIDRs as the MSK cluster has broker nodes.", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
+			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d), you should provide as many CIDRs as the MSK cluster has broker nodes", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
 		}
 
 		if jumpClusterInstanceType == "" {
@@ -382,7 +382,7 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.UseJumpClusters = true
 
 		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
-			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d). You should provide as many CIDRs as the MSK cluster has broker nodes.", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
+			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d), you should provide as many CIDRs as the MSK cluster has broker nodes", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
 		}
 
 		if jumpClusterInstanceType == "" {
@@ -443,7 +443,7 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
 	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 	if bootstrapStr == "" {
-		return nil, fmt.Errorf("SASL/SCRAM bootstrap brokers string is empty for cluster %s", cluster.Name)
+		return nil, fmt.Errorf("sasl/scram bootstrap brokers string is empty for cluster %s", cluster.Name)
 	}
 
 	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9096)

@@ -115,4 +115,3 @@ func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
 	files := projectToFiles(project)
 	assertMatchesGoldenFiles(t, "TestMigrationInfra_ExternalOutboundUnauthTls", files)
 }
-
