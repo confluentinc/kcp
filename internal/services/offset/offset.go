@@ -8,6 +8,11 @@ import (
 	"github.com/IBM/sarama"
 )
 
+// Provider abstracts offset retrieval for testability.
+type Provider interface {
+	Get(topic string) (map[int32]int64, error)
+}
+
 // Service provides offset operations against a Kafka cluster.
 type Service struct {
 	client sarama.Client

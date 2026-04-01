@@ -16,10 +16,12 @@ import (
 )
 
 type MigrationWorkflow struct {
-	gatewayService     gateway.Service
-	clusterLinkService clusterlink.Service
-	sourceOffset       *offset.Service
-	destinationOffset  *offset.Service
+	gatewayService      gateway.Service
+	clusterLinkService  clusterlink.Service
+	sourceOffset        offset.Provider
+	destinationOffset   offset.Provider
+	lagPollInterval     time.Duration
+	promotePollInterval time.Duration
 }
 
 func NewMigrationWorkflow(
@@ -27,22 +29,26 @@ func NewMigrationWorkflow(
 	clusterLinkService clusterlink.Service,
 ) *MigrationWorkflow {
 	return &MigrationWorkflow{
-		gatewayService:     gatewayService,
-		clusterLinkService: clusterLinkService,
+		gatewayService:      gatewayService,
+		clusterLinkService:  clusterLinkService,
+		lagPollInterval:     2 * time.Second,
+		promotePollInterval: 5 * time.Second,
 	}
 }
 
 func NewMigrationWorkflowWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-	sourceOffset *offset.Service,
-	destinationOffset *offset.Service,
+	sourceOffset offset.Provider,
+	destinationOffset offset.Provider,
 ) *MigrationWorkflow {
 	return &MigrationWorkflow{
-		gatewayService:     gatewayService,
-		clusterLinkService: clusterLinkService,
-		sourceOffset:       sourceOffset,
-		destinationOffset:  destinationOffset,
+		gatewayService:      gatewayService,
+		clusterLinkService:  clusterLinkService,
+		sourceOffset:        sourceOffset,
+		destinationOffset:   destinationOffset,
+		lagPollInterval:     2 * time.Second,
+		promotePollInterval: 5 * time.Second,
 	}
 }
 
@@ -136,8 +142,7 @@ func (s *MigrationWorkflow) CheckLags(
 		return nil
 	}
 
-	pollInterval := 2 * time.Second
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(s.lagPollInterval)
 	defer ticker.Stop()
 
 	startTime := time.Now()
@@ -277,8 +282,6 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 		Topics:       config.Topics,
 	}
 
-	pollInterval := 5 * time.Second
-
 	// Track which topics still need promotion
 	remaining := make(map[string]bool)
 	retryCount := make(map[string]int)
@@ -321,11 +324,11 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			fmt.Printf("   ↳ Waiting for lag to reach zero (%d topics remaining)...\n",
 				len(remaining))
 			slog.Debug("no topics at zero lag yet, waiting",
-				"remaining", len(remaining), "pollInterval", pollInterval)
+				"remaining", len(remaining), "pollInterval", s.promotePollInterval)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(pollInterval):
+			case <-time.After(s.promotePollInterval):
 				continue
 			}
 		}
@@ -370,11 +373,11 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			}
 		}
 
-		slog.Debug("waiting for promotion to complete before next check", "pollInterval", pollInterval)
+		slog.Debug("waiting for promotion to complete before next check", "pollInterval", s.promotePollInterval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(pollInterval):
+		case <-time.After(s.promotePollInterval):
 		}
 	}
 }

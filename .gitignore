@@ -65,7 +65,8 @@ tmp
 scratch/
 scp-to-ec2.sh
 
-# claude skills generated directories
+# claude
+.claude/
 plans/
 brainstorms/
 ideation/
