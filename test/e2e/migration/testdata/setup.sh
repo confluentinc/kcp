@@ -58,6 +58,13 @@ fi
 
 # Point kubectl at the minikube cluster
 eval "$(minikube docker-env --profile "${PROFILE}" 2>/dev/null || true)"
+
+# Authenticate with Docker Hub to avoid rate limiting (credentials provided by CI)
+if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
+  echo "Logging in to Docker Hub..."
+  docker login --username "$DOCKERHUB_USER" --password "$DOCKERHUB_APIKEY"
+fi
+
 KUBECONFIG_PATH="${HOME}/.kube/config"
 
 echo "Minikube is running."
