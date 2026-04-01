@@ -103,6 +103,32 @@ make test-cov
 make test-cov-ui
 ```
 
+### E2E Integration Tests (Migration)
+
+The migration commands have end-to-end tests that run against a real CFK (Confluent for Kubernetes) cluster in Minikube.
+
+**Prerequisites:**
+
+- [Docker](https://docs.docker.com/get-docker/) with at least **8 GB memory** allocated
+- [Minikube](https://minikube.sigs.k8s.io/docs/start/)
+- [Helm](https://helm.sh/docs/intro/install/)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+
+```bash
+# Set up Minikube cluster with CFK, Kafka clusters, Gateway, and cluster link
+make e2e-setup
+
+# Run the E2E tests
+make ci-e2e-tests
+
+# Tear down the infrastructure
+make e2e-teardown
+```
+
+The setup creates a Minikube cluster (`kcp-e2e` profile) with 4 CPUs and 8 GB RAM, deploys source and destination Kafka clusters, a Gateway, and a cluster link. The kcp binary is built for Linux and runs inside the cluster to avoid TLS/DNS issues.
+
+Setup typically takes 10-15 minutes depending on image pull times. The test timeout is 15 minutes.
+
 ### Linting & Pre-commit Hooks
 
 ```bash
