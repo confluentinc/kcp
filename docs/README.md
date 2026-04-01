@@ -1593,7 +1593,13 @@ The migration workflow follows a defined lifecycle managed by a finite state mac
 
 If execution is interrupted at any step, re-running `kcp migration execute` resumes from the last completed step.
 
-Further details about preparing the Confluent Gateway and YAML files for the various migration states are provided [here](gateway-switchover-examples.md).
+#### Supporting Documentation
+
+- **[Gateway Switchover Examples](gateway-switchover-examples.md)**
+  Provides example Gateway CR YAML files for each supported authentication combination, covering the initial, fenced, and switchover states required by `kcp migration init`. Use this as a starting point when authoring your own Gateway CRs.
+
+- **[Migration Reference Guide](getting-started-with-zero-cut-migrations.md)**
+  An end-to-end reference for the KCP + Gateway migration approach. Covers how the components fit together (KCP CLI, CC Gateway, Cluster Linking), infrastructure and networking prerequisites, the full authentication support matrix including IAM pre-migration paths, and operational guidance for planning and executing client cutovers.
 
 ---
 
