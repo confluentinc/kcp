@@ -1,0 +1,41 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  labels:
+    app.kubernetes.io/name: confluent-for-kubernetes
+    app.kubernetes.io/managed-by: kcp-e2e
+  name: migration-gateway
+  namespace: confluent
+spec:
+  replicas: 1
+  image:
+    application: confluentinc/confluent-gateway-for-cloud:1.2.0-1-ubi9
+    init: confluentinc/confluent-init-container:3.2.1
+  podTemplate:
+    envVars:
+      - name: GATEWAY_ROOT_LOG_LEVEL
+        value: DEBUG
+  streamingDomains:
+    - name: source-kafka-cluster
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: UNAUTHED
+            endpoint: PLAINTEXT://source-kafka.confluent.svc.cluster.local:9071
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 0
+  routes:
+    - name: migration-route
+      endpoint: migration-gateway.confluent.svc.cluster.local:9595
+      brokerIdentificationStrategy:
+        type: port
+      streamingDomain:
+        name: source-kafka-cluster
+        bootstrapServerId: UNAUTHED
+      security:
+        client:
+          authentication:
+            type: none
+        auth: passthrough
