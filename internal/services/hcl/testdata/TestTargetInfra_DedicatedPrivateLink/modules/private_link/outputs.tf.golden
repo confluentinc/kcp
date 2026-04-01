@@ -1,6 +1,0 @@
-output "vpc_endpoint_id" {
-  value       = aws_vpc_endpoint.cflt_private_link_vpc_endpoint.id
-  description = "ID of the AWS VPC Endpoint for the Private Link connection"
-  sensitive   = false
-}
-
