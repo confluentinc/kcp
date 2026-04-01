@@ -24,6 +24,8 @@ There are three active components in the migration:
 
 **Cluster Linking** runs in Confluent Cloud and replicates topics from the source cluster to the destination in real time, including consumer offset synchronization. At cutover, KCP triggers topic promotion once replication lag reaches zero. Cluster Linking is available on Dedicated and Enterprise cluster types.
 
+![Description](assets/image-20260112-172320.png)
+
 **Prerequisites already in place:** Kubernetes (to host the gateway), a secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) to hold gateway backend credentials, and network connectivity between the gateway and both the source cluster and Confluent Cloud. KCP generates Terraform for any of these that need to be provisioned as part of the migration.
 
 ---
@@ -180,8 +182,6 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 The cutover is three commands run in sequence. Everything else — gateway deployment, Cluster Linking setup, client onboarding to the gateway — must be in place beforehand.
 
-![KCP Migration Architecture](assets/kcp-architecture-overview.png)
-
 KCP sits outside the data path. It configures and orchestrates the gateway (patching Kubernetes CRs to block, reroute, and unblock traffic) and monitors and promotes topics on the Cluster Link. Clients only ever talk to the gateway; they are unaware of KCP or the cutover happening underneath them.
 
 ### Prerequisites
@@ -192,6 +192,8 @@ Before running any `kcp migration` command, confirm the following are in place:
 - **Cluster Linking** active: cluster link in CC, mirror topics replicating for all topics in the group, consumer offset sync enabled
 - **KCP** has `CloudClusterAdmin` + `MetricsViewer` on the CC cluster and `get`/`patch`/`update` on the Gateway CR in Kubernetes
 
+![Description](assets/image-20260112-174645.png)
+
 ---
 
 ### Step 1: Prepare Gateway CRs
@@ -199,6 +201,8 @@ Before running any `kcp migration` command, confirm the following are in place:
 Before init, you need three gateway CR files ready on disk. The **initial CR** is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The **fenced CR** is a modified version that blocks all traffic on the route and returns `BROKER_NOT_AVAILABLE` to clients. The **switchover CR** is another version that points the route at Confluent Cloud instead of the source cluster.
 
 KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to `kcp migration init`. Working examples for every supported auth combination are in the KCP repo at [`docs/switchover-*`](https://github.com/confluentinc/kcp/tree/main/docs).
+
+![Description](assets/image-20260112-174757.png)
 
 ---
 
@@ -241,5 +245,13 @@ Performs the cutover in four automatic phases. The operation is resumable: if in
 | **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked | First retry succeeds; clients now on CC |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
+
+Steps:
+![Description](assets/image-20260112-175128.png)
+![Description](assets/image-20260112-175142.png)
+![Description](assets/image-20260112-175201.png)
+![Description](assets/image-20260112-175219.png)
+![Description](assets/image-20260112-175233.png)
+![Description](assets/image-20260112-175246.png)
 
 Full flag reference: [`kcp migration execute --help`](https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration)
