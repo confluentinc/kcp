@@ -57,6 +57,13 @@ blocks:
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - |
+              if [ "$SKIP_TERRAFORM_VALIDATION" = "true" ]; then
+                echo "ERROR: SKIP_TERRAFORM_VALIDATION cannot be set in CI"
+                echo "This environment variable is for local development only."
+                echo "All tests must run with full Terraform validation in CI."
+                exit 1
+              fi
             - make test
 
         - name: "trivy scan"
