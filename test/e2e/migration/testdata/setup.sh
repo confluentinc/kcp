@@ -75,6 +75,10 @@ if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
     --docker-username="$DOCKERHUB_USER" \
     --docker-password="$DOCKERHUB_APIKEY" \
     --dry-run=client -o yaml | kubectl --context "${PROFILE}" apply -f -
+  echo "  Waiting for default service account..."
+  until kubectl --context "${PROFILE}" -n "${NAMESPACE}" get serviceaccount default &>/dev/null; do
+    sleep 1
+  done
   kubectl --context "${PROFILE}" -n "${NAMESPACE}" patch serviceaccount default \
     -p '{"imagePullSecrets": [{"name": "dockerhub-credentials"}]}'
 fi
