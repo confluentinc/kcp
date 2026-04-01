@@ -8,6 +8,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ReverseProxyOpts struct {
@@ -31,6 +32,9 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	fmt.Printf("🚀 Generating reverse proxy assets\n")
 
 	outputDir := "reverse_proxy"
+	if err := utils.ValidateOutputDir(outputDir, false); err != nil {
+		return err
+	}
 	slog.Debug("creating reverse proxy directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create reverse proxy directory: %w", err)

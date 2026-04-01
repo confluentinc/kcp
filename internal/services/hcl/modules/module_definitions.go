@@ -1,22 +1,17 @@
 package modules
 
 import (
+	"log/slog"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
-
-type VariableDefinition interface {
-	GetName() string
-	GetDefinition() types.TerraformVariable
-}
-
-type ModuleOutputDefinition struct {
-	Name       string
-	Definition types.TerraformOutput
-}
 
 // ModuleVariable is a generic definition for module variables.
 // R is the request type (e.g. TargetClusterWizardRequest or MigrationWizardRequest).
 type ModuleVariable[R any] struct {
+	// Name is the module input attribute name (the key in the module block).
+	// This may differ from Definition.Name (the root-level variable name).
+	// WriteModuleInputs uses Name for the attribute key and Definition.Name for the var. reference.
 	Name             string
 	Definition       types.TerraformVariable
 	ValueExtractor   func(request R) any  // Extracts the value from FE request payload. If nil, it's not a root-level variable.
@@ -24,43 +19,37 @@ type ModuleVariable[R any] struct {
 	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
 }
 
-func (m ModuleVariable[R]) GetName() string {
-	return m.Name
-}
-
-func (m ModuleVariable[R]) GetDefinition() types.TerraformVariable {
-	return m.Definition
-}
+// NOTE: VariableSchema migration is partially complete. Variables shared across modules
+// (provider, cluster link, vpc, security group, SSH key pair) use VariableSchema.
+// Remaining module-specific variables (jump cluster, networking, confluent cloud,
+// private link, external outbound) still define types.TerraformVariable inline.
 
 // ============================================================================
 // Target Cluster
 // ============================================================================
 
-func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardRequest) map[string]any {
-	allVars := []ModuleVariable[types.TargetClusterWizardRequest]{}
-	allVars = append(allVars, GetTargetClusterProviderVariables()...) // aws_region
-	allVars = append(allVars, GetConfluentCloudVariables()...)        // region
-	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
-
-	return extractVariableValues(allVars, request)
-}
-
-func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
-	allVars := []ModuleVariable[types.TargetClusterWizardRequest]{}
+func collectTargetClusterVars() []ModuleVariable[types.TargetClusterWizardRequest] {
+	var allVars []ModuleVariable[types.TargetClusterWizardRequest]
 	allVars = append(allVars, GetTargetClusterProviderVariables()...)
 	allVars = append(allVars, GetConfluentCloudVariables()...)
 	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
+	return allVars
+}
 
-	return extractVariableDefinitions(allVars, request)
+func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardRequest) map[string]any {
+	return extractVariableValues(collectTargetClusterVars(), request)
+}
+
+func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
+	return extractVariableDefinitions(collectTargetClusterVars(), request)
 }
 
 // ============================================================================
 // Migration Infrastructure
 // ============================================================================
 
-func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) map[string]any {
-	// Collect variables from all modules
-	allVars := []ModuleVariable[types.MigrationWizardRequest]{}
+func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVariable[types.MigrationWizardRequest] {
+	var allVars []ModuleVariable[types.MigrationWizardRequest]
 	switch {
 	case request.HasPublicMskEndpoints:
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
@@ -71,36 +60,19 @@ func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) m
 		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
 		allVars = append(allVars, GetJumpClusterVariables()...)
 	default:
-		// External outbound cluster linking
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
 		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
 		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
-
-	return extractVariableValues(allVars, request)
+	return allVars
 }
 
-// Collects all root-level variable definitions from all modules.
-func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	// Collect variables from all modules
-	allVars := []ModuleVariable[types.MigrationWizardRequest]{}
-	switch {
-	case request.HasPublicMskEndpoints:
-		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
-		allVars = append(allVars, GetClusterLinkVariables()...)
-	case request.UseJumpClusters:
-		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
-		allVars = append(allVars, GetNetworkingVariables()...)
-		allVars = append(allVars, GetJumpClusterSetupHostVariables()...)
-		allVars = append(allVars, GetJumpClusterVariables()...)
-	default:
-		// External outbound cluster linking
-		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
-		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
-		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
-	}
+func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) map[string]any {
+	return extractVariableValues(collectMigrationInfraVars(request), request)
+}
 
-	return extractVariableDefinitions(allVars, request)
+func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+	return extractVariableDefinitions(collectMigrationInfraVars(request), request)
 }
 
 // ============================================================================
@@ -127,39 +99,30 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 		// Only include non-empty values, keyed by Definition.Name for deduplication
 		switch v := value.(type) {
 		case string:
-			if v != "" {
-				// Check if already exists to avoid silent overwrites
-				if existing, exists := values[varDef.Definition.Name]; exists {
-					// If values match, it's fine (deduplication working as expected)
-					if existing != v {
-						// Optional: log warning or error about conflicting values
-						// For now, first-wins strategy (don't overwrite)
-						continue
-					}
-				}
-				values[varDef.Definition.Name] = v
+			if v == "" {
+				continue
 			}
 		case []string:
-			if len(v) > 0 {
-				if _, exists := values[varDef.Definition.Name]; !exists {
-					values[varDef.Definition.Name] = v
-				}
-			}
-		case bool:
-			if _, exists := values[varDef.Definition.Name]; !exists {
-				values[varDef.Definition.Name] = v
-			}
-		case int:
-			if _, exists := values[varDef.Definition.Name]; !exists {
-				values[varDef.Definition.Name] = v
+			if len(v) == 0 {
+				continue
 			}
 		case []types.ExtOutboundClusterKafkaBroker:
-			if len(v) > 0 {
-				if _, exists := values[varDef.Definition.Name]; !exists {
-					values[varDef.Definition.Name] = v
-				}
+			if len(v) == 0 {
+				continue
+			}
+		case int:
+			if v == 0 {
+				continue
 			}
 		}
+
+		if _, exists := values[varDef.Definition.Name]; exists {
+			slog.Warn("conflicting variable values, keeping first occurrence",
+				"variable", varDef.Definition.Name,
+			)
+			continue
+		}
+		values[varDef.Definition.Name] = value
 	}
 
 	return values
@@ -191,45 +154,3 @@ func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) [
 	return definitions
 }
 
-func toVariableDefinitions[R any](vars []ModuleVariable[R]) []VariableDefinition {
-	result := make([]VariableDefinition, len(vars))
-	for i, v := range vars {
-		result[i] = v
-	}
-	return result
-}
-
-func GetModuleVariableName(moduleName string, varName string) string {
-	var variables []VariableDefinition
-
-	switch moduleName {
-	case "provider_variables":
-		variables = toVariableDefinitions(GetPrivateMigrationProviderVariables())
-	case "jump_cluster_setup_host":
-		variables = toVariableDefinitions(GetJumpClusterSetupHostVariables())
-	case "jump_cluster":
-		variables = toVariableDefinitions(GetJumpClusterVariables())
-	case "networking":
-		variables = toVariableDefinitions(GetNetworkingVariables())
-	case "cluster_link":
-		variables = toVariableDefinitions(GetClusterLinkVariables())
-	case "confluent_cloud":
-		variables = toVariableDefinitions(GetConfluentCloudVariables())
-	case "private_link_target_cluster":
-		variables = toVariableDefinitions(GetTargetClusterPrivateLinkVariables())
-	case "ext_outbound_cluster_link":
-		variables = toVariableDefinitions(GetExternalOutboundClusterLinkingVariables())
-	case "msk_private_cluster_link":
-		variables = toVariableDefinitions(GetMskPrivateClusterLinkVariables())
-	default:
-		return "<variable not found>"
-	}
-
-	for _, varDef := range variables {
-		if varDef.GetName() == varName {
-			return varDef.GetName()
-		}
-	}
-
-	return "<variable not found>"
-}
