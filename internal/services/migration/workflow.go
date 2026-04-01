@@ -16,12 +16,12 @@ import (
 )
 
 type MigrationWorkflow struct {
-	gatewayService       gateway.Service
-	clusterLinkService   clusterlink.Service
-	sourceOffset         offset.Provider
-	destinationOffset    offset.Provider
-	lagPollInterval      time.Duration
-	promotePollInterval  time.Duration
+	gatewayService      gateway.Service
+	clusterLinkService  clusterlink.Service
+	sourceOffset        offset.Provider
+	destinationOffset   offset.Provider
+	lagPollInterval     time.Duration
+	promotePollInterval time.Duration
 }
 
 func NewMigrationWorkflow(
