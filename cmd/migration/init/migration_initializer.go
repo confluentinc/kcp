@@ -2,6 +2,7 @@ package init
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 
@@ -12,11 +13,12 @@ import (
 )
 
 type MigrationInitializerOpts struct {
-	MigrationStateFile string
-	MigrationState     types.MigrationState
-	MigrationConfig    types.MigrationConfig
-	ClusterApiKey      string
-	ClusterApiSecret   string
+	MigrationStateFile    string
+	MigrationState        types.MigrationState
+	MigrationConfig       types.MigrationConfig
+	ClusterApiKey         string
+	ClusterApiSecret      string
+	InsecureSkipTLSVerify bool
 }
 
 type MigrationInitializer struct {
@@ -32,8 +34,17 @@ func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitialize
 func (m *MigrationInitializer) Run() error {
 	config := m.opts.MigrationConfig
 
+	httpClient := http.DefaultClient
+	if m.opts.InsecureSkipTLSVerify {
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-controlled flag
+			},
+		}
+	}
+
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
-	clusterLinkService := clusterlink.NewConfluentCloudService(http.DefaultClient)
+	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	workflow := migration.NewMigrationWorkflow(gatewayService, clusterLinkService)
 
 	orchestrator := migration.NewMigrationOrchestrator(
