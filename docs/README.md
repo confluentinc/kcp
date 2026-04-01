@@ -1580,7 +1580,7 @@ The `kcp migration` command provides tools for executing end-to-end Kafka migrat
 
 - `init`
 - `execute`
-- `status`
+- `lag-check`
 - `list`
 
 The migration workflow follows a defined lifecycle managed by a finite state machine:
@@ -1748,6 +1748,7 @@ kcp migration lag-check \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
+
 ---
 
 #### `kcp migration list`
