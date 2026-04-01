@@ -1,0 +1,19 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaRestClass
+metadata:
+  name: source-kafka-rest-class
+  namespace: confluent
+spec:
+  kafkaClusterRef:
+    name: source-kafka
+    namespace: confluent
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaRestClass
+metadata:
+  name: destination-kafka-rest-class
+  namespace: confluent
+spec:
+  kafkaClusterRef:
+    name: destination-kafka
+    namespace: confluent
