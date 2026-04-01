@@ -53,7 +53,7 @@ export const Explore = () => {
     }
 
     if (selectedView === 'schema-registries') {
-      return <SchemaRegistries schemaRegistries={schemaRegistries} />
+      return <SchemaRegistries schemaRegistriesState={schemaRegistries} />
     }
 
     return null

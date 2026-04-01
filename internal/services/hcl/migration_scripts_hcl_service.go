@@ -96,6 +96,22 @@ func (s *MigrationScriptsHCLService) generateProvidersTf() string {
 	return string(f.Bytes())
 }
 
+// appendVariableBlocks writes Terraform variable blocks for each TerraformVariable to the given HCL body
+func appendVariableBlocks(rootBody *hclwrite.Body, vars []types.TerraformVariable) {
+	for _, v := range vars {
+		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
+		variableBody := variableBlock.Body()
+		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
+		if v.Description != "" {
+			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
+		}
+		if v.Sensitive {
+			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
+		}
+		rootBody.AppendNewline()
+	}
+}
+
 // ============================================================================
 // Migrate Topics Generation Methods
 // ============================================================================
@@ -262,7 +278,58 @@ func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() stri
 }
 
 // ============================================================================
-// Migrate Schemas Generation Methods
+// Migrate Glue Schemas Generation Methods
+// ============================================================================
+
+func (s *MigrationScriptsHCLService) GenerateMigrateGlueSchemasFiles(request types.MigrateGlueSchemasRequest) (types.MigrationScriptsTerraformProject, error) {
+	ms := types.MigrationScriptsTerraformProject{}
+	folders := []types.MigrationScriptsTerraformFolder{}
+
+	for _, registry := range request.GlueRegistries {
+		if !registry.Migrate || len(registry.Schemas) == 0 {
+			continue
+		}
+
+		generatedFiles, err := confluent.GenerateGlueSchemaMigrationHCL(registry.Schemas)
+		if err != nil {
+			return types.MigrationScriptsTerraformProject{}, fmt.Errorf("failed to generate HCL for Glue registry %q: %w", registry.RegistryName, err)
+		}
+		folder := types.MigrationScriptsTerraformFolder{
+			Name:             registry.RegistryName,
+			ProvidersTf:      s.generateProvidersTf(),
+			VariablesTf:      s.generateMigrateGlueSchemasVariablesTf(),
+			InputsAutoTfvars: s.generateMigrateGlueSchemasInputsAutoTfvars(request.ConfluentCloudSchemaRegistryURL),
+			AdditionalFiles:  generatedFiles,
+		}
+
+		folders = append(folders, folder)
+	}
+
+	ms.Folders = folders
+	return ms, nil
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateGlueSchemasVariablesTf() string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	appendVariableBlocks(rootBody, confluent.ConfluentProviderVariables)
+	appendVariableBlocks(rootBody, confluent.GlueSchemaVariables)
+
+	return string(f.Bytes())
+}
+
+func (s *MigrationScriptsHCLService) generateMigrateGlueSchemasInputsAutoTfvars(confluentCloudSchemaRegistryURL string) string {
+	f := hclwrite.NewEmptyFile()
+	rootBody := f.Body()
+
+	rootBody.SetAttributeValue(confluent.VarConfluentCloudSchemaRegistryURL, cty.StringVal(confluentCloudSchemaRegistryURL))
+
+	return string(f.Bytes())
+}
+
+// ============================================================================
+// Migrate Schemas Generation Methods (Confluent Schema Exporter)
 // ============================================================================
 
 func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(schemaRegistry types.SchemaRegistryExporterConfig) string {
@@ -288,7 +355,7 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string 
 	requiredProvidersBody.SetAttributeRaw(confluent.GenerateRequiredProviderTokens())
 	rootBody.AppendNewline()
 
-	rootBody.AppendBlock(confluent.GenerateEmptyProviderBlock())
+	rootBody.AppendBlock(confluent.GenerateProviderBlock())
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
@@ -298,19 +365,8 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string 
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	for _, v := range confluent.SchemaExporterVariables {
-		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
-		variableBody := variableBlock.Body()
-
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
-		if v.Description != "" {
-			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
-		}
-		if v.Sensitive {
-			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
-		}
-		rootBody.AppendNewline()
-	}
+	appendVariableBlocks(rootBody, confluent.ConfluentProviderVariables)
+	appendVariableBlocks(rootBody, confluent.SchemaExporterVariables)
 
 	return string(f.Bytes())
 }

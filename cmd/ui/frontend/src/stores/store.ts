@@ -3,7 +3,7 @@ import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import type { Cluster, Region } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
-import type { ProcessedState, SchemaRegistry } from '@/types/api/state'
+import type { ProcessedState, SchemaRegistry, SchemaRegistriesState, GlueSchemaRegistry } from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
 import { getClusterArn } from '@/lib/clusterUtils'
@@ -39,6 +39,7 @@ interface MigrationAssets {
     [WIZARD_TYPES.MIGRATION_INFRA]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATION_SCRIPTS]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATE_SCHEMAS]: TerraformFiles | null
+    [WIZARD_TYPES.MIGRATE_GLUE_SCHEMAS]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATE_TOPICS]: TerraformFiles | null
     [WIZARD_TYPES.MIGRATE_ACLS]: TerraformFiles | null
   }
@@ -512,7 +513,7 @@ export const useAppStore = create<AppState>()(
 
 // Stable empty arrays and objects to prevent infinite re-renders
 const EMPTY_REGIONS: Region[] = []
-const EMPTY_SCHEMA_REGISTRIES: SchemaRegistry[] = []
+const EMPTY_SCHEMA_REGISTRIES: SchemaRegistriesState = {}
 const DEFAULT_DATE_FILTERS: DateFilters = {
   startDate: undefined,
   endDate: undefined,
@@ -542,7 +543,7 @@ export const useRegions = () => useAppStore((state) => state.kcpState?.regions ?
  * Get schema registries from KCP state
  */
 export const useSchemaRegistries = () =>
-  useAppStore((state) => state.kcpState?.schema_registries ?? EMPTY_SCHEMA_REGISTRIES)
+  useAppStore((state) => state.kcpState?.schema_registries ?? EMPTY_SCHEMA_REGISTRIES) as SchemaRegistriesState
 
 /**
  * Get the currently selected cluster with its region name
@@ -684,14 +685,26 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
   return null
 }
 
-// Utility function to get all schema registries from state
+// Utility function to get all Confluent schema registries from state (used by migration wizard)
 export const getAllSchemaRegistries = (): SchemaRegistry[] => {
   const state = useAppStore.getState()
   const kcpState = state.kcpState
 
-  if (!kcpState?.schema_registries) {
+  if (!kcpState?.schema_registries?.confluent_schema_registry) {
     return []
   }
 
-  return kcpState.schema_registries
+  return kcpState.schema_registries.confluent_schema_registry
+}
+
+// Utility function to get all AWS Glue schema registries from state (used by migration wizard)
+export const getAllGlueSchemaRegistries = (): GlueSchemaRegistry[] => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState?.schema_registries?.aws_glue) {
+    return []
+  }
+
+  return kcpState.schema_registries.aws_glue
 }

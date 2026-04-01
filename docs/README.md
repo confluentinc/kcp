@@ -292,7 +292,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `clusters`
 - `client-inventory`
-- `schema-registry`
+- `schema-registry` (supports both Confluent and AWS Glue via `--sr-type`)
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -412,6 +412,57 @@ Alternatively, the following environment variables need to be set:
 
 ```shell
 export S3_URI=<folder-in-s3>
+```
+
+---
+
+#### `kcp scan schema-registry --sr-type=glue`
+
+This command scans an AWS Glue Schema Registry to discover all schemas and their versions. Results are added to the state file under the `schema_registries.aws_glue` section for use with the `kcp create-asset migrate-schemas --glue-registry` command.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the Glue Schema Registry information will be written to
+- `--sr-type`: Must be `glue`
+- `--region`: The AWS region where the Glue Schema Registry is located
+- `--registry-name`: The name of the AWS Glue Schema Registry to scan
+
+**Example Usage**
+
+```shell
+kcp scan schema-registry \
+  --sr-type glue \
+  --state-file kcp-state.json \
+  --region us-east-1 \
+  --registry-name my-glue-registry
+```
+
+**Output:**
+The command appends the following Glue Schema Registry information to the kcp-state.json file:
+
+- Registry name, ARN, and region
+- All schemas within the registry
+- All versions for each schema, including schema definitions and data formats
+
+This command requires the following permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GlueSchemaRegistryScanPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetRegistry",
+        "glue:ListSchemas",
+        "glue:ListSchemaVersions",
+        "glue:GetSchemaVersion"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
 ```
 
 ---
@@ -1462,30 +1513,56 @@ The command creates a directory (default: `migration-infra`) containing Terrafor
 
 #### `kcp create-asset migrate-schemas`
 
-This command generates Terraform assets for migrating Schema Registry schemas to Confluent Cloud using Schema Exporters.
+This command generates Terraform assets for migrating schemas to Confluent Cloud. It supports two sources: Confluent Schema Registry (using Schema Exporters) and AWS Glue Schema Registry (using `confluent_schema` resources).
 
 **Required Arguments**:
 
 - `--state-file`: The path to the kcp state file where the schema registry information has been written to
-- `--url`: The URL of the schema registry to migrate schemas from
+- `--cc-sr-rest-endpoint`: The REST endpoint of the Confluent Cloud target schema registry
+
+**Source Flags** (one required):
+
+- `--url`: The URL of a Confluent Schema Registry to migrate schemas from (uses schema exporter)
+- `--glue-registry`: The name of an AWS Glue Schema Registry to migrate schemas from (uses `confluent_schema` resources)
+
+**Optional Arguments**:
+
+- `--output-dir`: The output directory for the generated assets (default: `migrate_schemas`)
 
 **Example Usage**:
 
 ```shell
+# From Confluent Schema Registry
 kcp create-asset migrate-schemas \
   --state-file kcp-state.json \
-  --url https://my-schema-registry.example.com
+  --url https://my-schema-registry.example.com \
+  --cc-sr-rest-endpoint https://psrc-xxxxx.us-east-2.aws.confluent.cloud
+
+# From AWS Glue Schema Registry
+kcp create-asset migrate-schemas \
+  --state-file kcp-state.json \
+  --glue-registry my-glue-registry \
+  --cc-sr-rest-endpoint https://psrc-xxxxx.us-east-2.aws.confluent.cloud
 ```
 
-**Output:**
+**Output (Confluent Schema Registry):**
 The command creates a `migrate_schemas` directory containing Terraform files:
 
 - `main.tf` - Terraform configuration defining `confluent_schema_exporter` resources for schema migration
 - `variables.tf` - Input variable definitions for source and destination Schema Registry details
 - `inputs.auto.tfvars` - Auto-populated variable values from the kcp state file
 
-**What it does:**
 The generated Terraform configuration creates Schema Exporter resources that continuously sync schemas from your source Schema Registry to Confluent Cloud's Schema Registry. By default, it exports all subjects (`:*:`) with context type `NONE`.
+
+**Output (AWS Glue Schema Registry):**
+The command creates a `migrate_schemas` directory containing Terraform files:
+
+- Per-schema `.tf` files - Each file defines `confluent_subject_config` (compatibility set to `NONE`) and `confluent_schema` resources with `depends_on` chains for ordered version registration
+- `variables.tf` - Input variable definitions for Confluent Cloud Schema Registry credentials
+- `inputs.auto.tfvars` - Auto-populated variable values
+- `schemas/` directory - Schema definition files referenced by `file()` in the Terraform resources
+
+The generated Terraform creates individual `confluent_schema` resources for each schema version, preserving version history through ordered `depends_on` chains. Schema definitions are written to local files and referenced via `file()`.
 
 **Next Steps:**
 
@@ -1493,7 +1570,7 @@ The generated Terraform configuration creates Schema Exporter resources that con
 2. Review and customize the Terraform configuration if needed
 3. Run `terraform init` to initialize the Terraform workspace
 4. Run `terraform plan` to preview the changes
-5. Run `terraform apply` to create the Schema Exporters
+5. Run `terraform apply` to create the Schema Exporters or schema resources
 
 ---
 
