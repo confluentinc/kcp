@@ -8,17 +8,33 @@ PROFILE="kcp-e2e"
 NAMESPACE="confluent"
 HELM_REPO="https://packages.confluent.io/helm"
 CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1514.19}"
-WAIT_TIMEOUT="${WAIT_TIMEOUT:-600s}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
 # wait_for_pods waits until at least one pod matching the label exists, then
-# waits for all matching pods to be Ready.
+# waits for all matching pods to be Ready, printing status every 15s.
 wait_for_pods() {
   local label="$1"
   echo "  Waiting for pods with label ${label} to appear..."
   until kubectl --context "${PROFILE}" -n "${NAMESPACE}" get pod -l "${label}" --no-headers 2>/dev/null | grep -q .; do
     sleep 5
   done
-  kubectl --context "${PROFILE}" -n "${NAMESPACE}" wait --for=condition=Ready pod -l "${label}" --timeout="${WAIT_TIMEOUT}"
+
+  echo "  Waiting for pods with label ${label} to be Ready (timeout: ${WAIT_TIMEOUT})..."
+  local deadline=$((SECONDS + ${WAIT_TIMEOUT%s}))
+  while true; do
+    if kubectl --context "${PROFILE}" -n "${NAMESPACE}" wait --for=condition=Ready pod -l "${label}" --timeout=15s 2>/dev/null; then
+      echo "  ✓ Pods with label ${label} are Ready"
+      return 0
+    fi
+    if [ $SECONDS -ge $deadline ]; then
+      echo "  ✗ Timed out waiting for pods with label ${label}"
+      kubectl --context "${PROFILE}" -n "${NAMESPACE}" describe pod -l "${label}" | tail -30
+      return 1
+    fi
+    echo "  [$(date +%H:%M:%S)] Pods with label ${label}:"
+    kubectl --context "${PROFILE}" -n "${NAMESPACE}" get pod -l "${label}" -o wide --no-headers 2>/dev/null || true
+    kubectl --context "${PROFILE}" -n "${NAMESPACE}" get events --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' 2>/dev/null | grep -i "${label%%=*}" | tail -3 || true
+  done
 }
 
 echo "=== KCP E2E Test Setup ==="
