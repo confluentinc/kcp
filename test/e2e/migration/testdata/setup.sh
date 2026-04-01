@@ -107,8 +107,10 @@ kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/source-kraftcontroller
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/destination-kraftcontroller.yaml"
 echo "Waiting for KRaft controllers..."
 wait_for_pods "app=source-kraftcontroller" &
+pid1=$!
 wait_for_pods "app=destination-kraftcontroller" &
-wait
+pid2=$!
+wait $pid1 $pid2 || { echo "FATAL: KRaft controllers failed to start, aborting setup"; exit 1; }
 
 # --- Kafka Brokers (parallel) ---
 echo "Deploying Kafka brokers..."
@@ -116,8 +118,10 @@ kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/source-kafka.yaml"
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/destination-kafka.yaml"
 echo "Waiting for Kafka brokers..."
 wait_for_pods "app=source-kafka" &
+pid1=$!
 wait_for_pods "app=destination-kafka" &
-wait
+pid2=$!
+wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup"; exit 1; }
 
 # --- Gateway ---
 echo "Deploying Gateway..."
