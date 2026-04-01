@@ -77,6 +77,8 @@ blocks:
           # Upgrade kubectl to v1.30.0 (agent has 1.23.6, we need 1.30.0 for K8s compatibility)
           - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
           - sudo install kubectl /usr/local/bin/kubectl
+          # Restore cached minikube preloads (K8s tarballs) to skip re-download
+          - cache restore minikube-cache
       jobs:
         - name: "migration e2e"
           commands:
@@ -88,6 +90,9 @@ blocks:
         always:
           commands:
             - make e2e-teardown
+        on_pass:
+          commands:
+            - cache store minikube-cache ~/.minikube/cache/
 
   - name: "lint"
     dependencies: ["resolve frontend dependencies"]

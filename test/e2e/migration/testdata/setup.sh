@@ -8,6 +8,9 @@ PROFILE="kcp-e2e"
 NAMESPACE="confluent"
 HELM_REPO="https://packages.confluent.io/helm"
 CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1514.19}"
+CP_SERVER_TAG="${CP_SERVER_TAG:-8.1.2}"
+INIT_CONTAINER_TAG="${INIT_CONTAINER_TAG:-3.2.1}"
+GATEWAY_TAG="${GATEWAY_TAG:-1.2.0-1-ubi9}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
 # wait_for_pods waits until at least one pod matching the label exists, then
@@ -62,6 +65,15 @@ eval "$(minikube docker-env --profile "${PROFILE}" 2>/dev/null || true)"
 KUBECONFIG_PATH="${HOME}/.kube/config"
 
 echo "Minikube is running."
+
+# --- Pre-pull images in background (speeds up later helm install / kubectl apply) ---
+echo "Pre-pulling container images in background..."
+docker pull "docker.io/confluentinc/confluent-operator:${CFK_CHART_VERSION}" &>/dev/null &
+docker pull "docker.io/confluentinc/cp-server:${CP_SERVER_TAG}" &>/dev/null &
+docker pull "docker.io/confluentinc/confluent-init-container:${INIT_CONTAINER_TAG}" &>/dev/null &
+docker pull "docker.io/confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" &>/dev/null &
+docker pull "docker.io/alpine:3.20" &>/dev/null &
+echo "  (images pulling in background)"
 
 # --- Namespace ---
 echo "Creating namespace..."
