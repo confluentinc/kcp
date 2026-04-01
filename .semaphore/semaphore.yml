@@ -28,14 +28,18 @@ global_job_config:
       - checkout
 
 blocks:
-  - name: "resolve frontend dependencies"
+  - name: "resolve dependencies"
     dependencies: []
     task:
       jobs:
-        - name: "dependencies"
+        - name: "frontend dependencies"
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install
+        - name: "go dependencies"
+          commands:
+            - cache restore go-mod-cache
+            - go mod download
       epilogue:
         on_pass:
           commands:
@@ -43,10 +47,12 @@ blocks:
               if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ]; then
                 cache delete frontend-dependencies;
                 cache store frontend-dependencies node_modules/;
+                cache delete go-mod-cache;
+                cache store go-mod-cache $(go env GOMODCACHE);
               fi
 
   - name: "test and security scan"
-    dependencies: ["resolve frontend dependencies"]
+    dependencies: ["resolve dependencies"]
     task:
       env_vars:
         - name: TRIVY_DB_REPOSITORIES
@@ -56,6 +62,7 @@ blocks:
         - name: "run tests"
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test
 
@@ -63,8 +70,35 @@ blocks:
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
 
+  - name: "e2e migration tests"
+    dependencies: ["resolve dependencies"]
+    task:
+      agent:
+        machine:
+          type: s1-prod-ubuntu24-04-amd64-2
+      prologue:
+        commands:
+          # Minikube is not pre-installed on Semaphore agents
+          - curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          - sudo install minikube-linux-amd64 /usr/local/bin/minikube
+          # Upgrade kubectl to v1.30.0 (agent has 1.23.6, we need 1.30.0 for K8s compatibility)
+          - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+          - sudo install kubectl /usr/local/bin/kubectl
+      jobs:
+        - name: "migration e2e"
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make e2e-setup
+            - make ci-e2e-tests
+      epilogue:
+        always:
+          commands:
+            - make e2e-teardown
+
   - name: "lint"
-    dependencies: ["resolve frontend dependencies"]
+    dependencies: ["resolve dependencies"]
     task:
       prologue:
         commands:
