@@ -1,0 +1,55 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  labels:
+    app.kubernetes.io/name: confluent-for-kubernetes
+    app.kubernetes.io/managed-by: kcp-e2e
+  name: migration-gateway
+  namespace: confluent
+spec:
+  replicas: 1
+  image:
+    application: confluentinc/confluent-gateway-for-cloud:1.2.0-1-ubi9
+    init: confluentinc/confluent-init-container:3.2.1
+  podTemplate:
+    envVars:
+      - name: GATEWAY_ROOT_LOG_LEVEL
+        value: DEBUG
+  secretStores:
+    - name: file-store
+      provider:
+        type: File
+        configSecretRef: file-store-config
+        clientCredentialsRef: file-store-noauth-credentials
+  streamingDomains:
+    - name: destination-kafka-cluster
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: SASL_PLAIN
+            endpoint: SASL_SSL://destination-kafka.confluent.svc.cluster.local:9071
+            tls:
+              secretRef: destination-kafka-tls
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 0
+  routes:
+    - name: migration-route
+      endpoint: migration-gateway.confluent.svc.cluster.local:9595
+      brokerIdentificationStrategy:
+        type: port
+      streamingDomain:
+        name: destination-kafka-cluster
+        bootstrapServerId: SASL_PLAIN
+      security:
+        auth: swap
+        secretStore: file-store
+        client:
+          authentication:
+            type: none
+        cluster:
+          authentication:
+            type: plain
+            jaasConfigPassThrough:
+              secretRef: plain-jaas
