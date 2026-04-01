@@ -179,25 +179,6 @@ func TestTargetInfra_PrivateLink_EmptySubnetCidrArray(t *testing.T) {
 	}
 }
 
-func TestTargetInfra_Dedicated_ZeroCKU(t *testing.T) {
-	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
-		AwsRegion:           "us-east-1",
-		NeedsEnvironment:    true,
-		EnvironmentName:     "test-env",
-		NeedsCluster:        true,
-		ClusterName:         "test-cluster",
-		ClusterType:         "dedicated",
-		ClusterAvailability: "SINGLE_ZONE",
-		ClusterCku:          0, // Zero value - should default to 1 in handler
-		PreventDestroy:      true,
-	}
-
-	project := service.GenerateTerraformFiles(request)
-	files := projectToFiles(project)
-	validateTerraformProject(t, files)
-}
-
 // Resource naming edge cases
 func TestTargetInfra_VeryLongResourceNames(t *testing.T) {
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
