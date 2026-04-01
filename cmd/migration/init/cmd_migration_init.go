@@ -30,8 +30,9 @@ var (
 	clusterApiSecret    string
 	topics              []string
 
-	fencedCrYamlPath     string
-	switchoverCrYamlPath string
+	fencedCrYamlPath      string
+	switchoverCrYamlPath  string
+	insecureSkipTLSVerify bool
 
 	useSaslIam                  bool
 	useSaslScram                bool
@@ -89,6 +90,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
+	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -252,10 +254,11 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 func parseMigrationInitializerOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationInitializerOpts {
 	return MigrationInitializerOpts{
-		MigrationStateFile: migrationStateFile,
-		MigrationState:     migrationState,
-		MigrationConfig:    config,
-		ClusterApiKey:      clusterApiKey,
-		ClusterApiSecret:   clusterApiSecret,
+		MigrationStateFile:    migrationStateFile,
+		MigrationState:        migrationState,
+		MigrationConfig:       config,
+		ClusterApiKey:         clusterApiKey,
+		ClusterApiSecret:      clusterApiSecret,
+		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 	}
 }
