@@ -1,4 +1,0 @@
-aws_region       = "us-west-2"
-cluster_name     = "staging-cluster"
-cluster_type     = "enterprise"
-environment_name = "staging"
