@@ -137,6 +137,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	}
 
 	workflow := NewMigrationWorkflowWithOffsets(gw, cl, srcOffset, dstOffset)
+	workflow.lagPollInterval = time.Millisecond
+	workflow.promotePollInterval = time.Millisecond
 
 	stateDir := t.TempDir()
 	stateFilePath := filepath.Join(stateDir, "migration-state.json")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/types"
@@ -341,6 +342,7 @@ func TestWorkflow_PromoteTopics_AllAtZeroLag(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
 	config := &types.MigrationConfig{
 		Topics:              []string{"topic-1", "topic-2"},
 		ClusterRestEndpoint: "https://cluster",
@@ -389,6 +391,7 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
 	config := &types.MigrationConfig{
 		Topics:              []string{"topic-1", "topic-2"},
 		ClusterRestEndpoint: "https://cluster",
@@ -431,6 +434,7 @@ func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
 	config := &types.MigrationConfig{
 		Topics:              []string{"topic-1"},
 		ClusterRestEndpoint: "https://cluster",
