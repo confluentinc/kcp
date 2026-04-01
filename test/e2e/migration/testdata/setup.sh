@@ -80,13 +80,18 @@ helm repo update
 if helm status confluent-operator --namespace "${NAMESPACE}" --kube-context "${PROFILE}" &>/dev/null; then
   echo "CFK operator already installed, skipping..."
 else
+  HELM_DEBUG=""
+  if [ -n "${CI:-}" ]; then
+    HELM_DEBUG="--debug"
+  fi
   helm install confluent-operator confluentinc/confluent-for-kubernetes \
     --namespace "${NAMESPACE}" \
     --kube-context "${PROFILE}" \
     --version "${CFK_CHART_VERSION}" \
     --set namespaced=false \
     --wait \
-    --timeout "${WAIT_TIMEOUT}"
+    --timeout "${WAIT_TIMEOUT}" \
+    ${HELM_DEBUG}
 fi
 
 echo "Waiting for CFK operator to be ready..."
