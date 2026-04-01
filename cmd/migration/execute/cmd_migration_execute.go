@@ -25,9 +25,10 @@ var (
 	saslScramUsername string
 	saslScramPassword string
 
-	tlsCaCert     string
-	tlsClientCert string
-	tlsClientKey  string
+	tlsCaCert             string
+	tlsClientCert         string
+	tlsClientKey          string
+	insecureSkipTLSVerify bool
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -56,6 +57,7 @@ interrupted, re-running this command will resume from the last completed step.`,
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
+	requiredFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -186,20 +188,21 @@ func resolveAuthType() types.AuthType {
 
 func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
-		MigrationStateFile: migrationStateFile,
-		MigrationState:     migrationState,
-		MigrationConfig:    config,
-		LagThreshold:       lagThreshold,
-		ClusterApiKey:      clusterApiKey,
-		ClusterApiSecret:   clusterApiSecret,
-		ClusterBootstrap:   config.ClusterBootstrap,
-		SourceBootstrap:    config.SourceBootstrap,
-		AWSRegion:          awsRegion,
-		AuthType:           resolveAuthType(),
-		SaslScramUsername:  saslScramUsername,
-		SaslScramPassword:  saslScramPassword,
-		TlsCaCert:          tlsCaCert,
-		TlsClientCert:      tlsClientCert,
-		TlsClientKey:       tlsClientKey,
+		MigrationStateFile:    migrationStateFile,
+		MigrationState:        migrationState,
+		MigrationConfig:       config,
+		LagThreshold:          lagThreshold,
+		ClusterApiKey:         clusterApiKey,
+		ClusterApiSecret:      clusterApiSecret,
+		ClusterBootstrap:      config.ClusterBootstrap,
+		SourceBootstrap:       config.SourceBootstrap,
+		AWSRegion:             awsRegion,
+		AuthType:              resolveAuthType(),
+		SaslScramUsername:     saslScramUsername,
+		SaslScramPassword:     saslScramPassword,
+		TlsCaCert:             tlsCaCert,
+		TlsClientCert:         tlsClientCert,
+		TlsClientKey:          tlsClientKey,
+		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 	}
 }
