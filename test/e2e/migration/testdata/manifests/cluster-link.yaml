@@ -1,0 +1,18 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: ClusterLink
+metadata:
+  name: e2e-link
+  namespace: confluent
+spec:
+  sourceKafkaCluster:
+    kafkaRestClassRef:
+      name: source-kafka-rest-class
+    bootstrapEndpoint: source-kafka.confluent.svc.cluster.local:9071
+  destinationKafkaCluster:
+    kafkaRestClassRef:
+      name: destination-kafka-rest-class
+  mirrorTopics:
+    - name: e2e-test-topic
+  configs:
+    consumer.offset.sync.enable: "true"
+    consumer.offset.sync.ms: "1000"
