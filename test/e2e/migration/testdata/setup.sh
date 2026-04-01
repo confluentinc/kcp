@@ -141,7 +141,8 @@ for i in $(seq 1 60); do
     break
   fi
   if [ "$i" -eq 60 ]; then
-    echo "WARNING: Topic did not reach CREATED state within timeout, continuing anyway..."
+    echo "FATAL: Topic did not reach CREATED state within timeout"
+    exit 1
   fi
   sleep 5
 done
@@ -162,7 +163,8 @@ for i in $(seq 1 60); do
     break
   fi
   if [ "$i" -eq 60 ]; then
-    echo "WARNING: Cluster link did not reach CREATED state within timeout, continuing anyway..."
+    echo "FATAL: Cluster link did not reach CREATED state within timeout"
+    exit 1
   fi
   sleep 5
 done
