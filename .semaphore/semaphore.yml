@@ -43,13 +43,10 @@ blocks:
       epilogue:
         on_pass:
           commands:
-            - >-
-              if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ]; then
-                cache delete frontend-dependencies;
-                cache store frontend-dependencies node_modules/;
-                cache delete go-mod-cache;
-                cache store go-mod-cache $(go env GOMODCACHE);
-              fi
+            - cache delete frontend-dependencies || true
+            - cache store frontend-dependencies node_modules/
+            - cache delete go-mod-cache || true
+            - cache store go-mod-cache $(go env GOMODCACHE)
 
   - name: "test and security scan"
     dependencies: ["resolve dependencies"]
