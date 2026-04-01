@@ -66,6 +66,12 @@ KUBECONFIG_PATH="${HOME}/.kube/config"
 
 echo "Minikube is running."
 
+# --- Docker Hub auth (avoids rate limiting for pre-pulls and kubelet pulls) ---
+if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
+  echo "Authenticating Docker Hub in minikube..."
+  echo "${DOCKERHUB_APIKEY}" | docker login --username "${DOCKERHUB_USER}" --password-stdin &>/dev/null
+fi
+
 # --- Pre-pull images in background (speeds up later helm install / kubectl apply) ---
 echo "Pre-pulling container images in background..."
 docker pull "docker.io/confluentinc/confluent-operator:${CFK_CHART_VERSION}" &>/dev/null &
