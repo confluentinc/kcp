@@ -17,14 +17,15 @@ import (
 
 // AdminConfig holds the configuration for creating a Kafka admin client
 type AdminConfig struct {
-	authType        types.AuthType
-	username        string
-	password        string
-	awsAccessKey    string
-	awsAccessSecret string
-	caCertFile      string
-	clientCertFile  string
-	clientKeyFile   string
+	authType           types.AuthType
+	username           string
+	password           string
+	awsAccessKey       string
+	awsAccessSecret    string
+	caCertFile         string
+	clientCertFile     string
+	clientKeyFile      string
+	insecureSkipVerify bool
 }
 
 // AdminOption is a function type for configuring the Kafka admin client
@@ -76,6 +77,13 @@ func WithSASLPlainAuth(username, password string) AdminOption {
 	}
 }
 
+// WithInsecureSkipVerify disables TLS certificate verification.
+func WithInsecureSkipVerify() AdminOption {
+	return func(config *AdminConfig) {
+		config.insecureSkipVerify = true
+	}
+}
+
 // AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
 func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
 	switch authType {
@@ -95,19 +103,19 @@ func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) 
 	}
 }
 
-func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) {
+func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
 	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 	config.Net.SASL.Enable = true
 	config.Net.SASL.Mechanism = sarama.SASLTypeOAuth
 	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
 }
 
-func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string) {
+func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, insecureSkipVerify bool) {
 	slog.Info("🔍 configuring SASL/SCRAM authentication")
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
@@ -116,20 +124,20 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	config.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
 }
 
-func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string) {
+func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, insecureSkipVerify bool) {
 	slog.Info("configuring SASL/PLAIN authentication")
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
 	config.Net.SASL.Mechanism = sarama.SASLTypePlaintext
 }
 
-func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
+func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, insecureSkipVerify bool) {
 	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
 	config.Net.TLS.Enable = withTLSEncryption
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 }
 
 func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string) error {
@@ -540,15 +548,15 @@ func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption
 
 	switch config.authType {
 	case types.AuthTypeIAM:
-		configureSASLTypeOAuthAuthentication(saramaConfig, region)
+		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipVerify)
 	case types.AuthTypeSASLSCRAM:
-		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
+		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.insecureSkipVerify)
 	case types.AuthTypeSASLPlain:
-		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password)
+		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, config.insecureSkipVerify)
 	case types.AuthTypeUnauthenticatedTLS:
-		configureUnauthenticatedAuthentication(saramaConfig, true)
+		configureUnauthenticatedAuthentication(saramaConfig, true, config.insecureSkipVerify)
 	case types.AuthTypeUnauthenticatedPlaintext:
-		configureUnauthenticatedAuthentication(saramaConfig, false)
+		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipVerify)
 	case types.AuthTypeTLS:
 		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile); err != nil {
 			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
@@ -587,13 +595,13 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 
 	switch config.authType {
 	case types.AuthTypeIAM:
-		configureSASLTypeOAuthAuthentication(saramaConfig, region)
+		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipVerify)
 	case types.AuthTypeSASLSCRAM:
-		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password)
+		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.insecureSkipVerify)
 	case types.AuthTypeUnauthenticatedTLS:
-		configureUnauthenticatedAuthentication(saramaConfig, true)
+		configureUnauthenticatedAuthentication(saramaConfig, true, config.insecureSkipVerify)
 	case types.AuthTypeUnauthenticatedPlaintext:
-		configureUnauthenticatedAuthentication(saramaConfig, false)
+		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipVerify)
 	case types.AuthTypeTLS:
 		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
 		if err != nil {
