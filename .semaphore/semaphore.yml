@@ -32,7 +32,7 @@ blocks:
     dependencies: []
     task:
       jobs:
-        - name: "dependencies"
+        - name: "frontend dependencies"
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install
@@ -62,6 +62,37 @@ blocks:
         - name: "trivy scan"
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+  - name: "e2e migration tests"
+    dependencies: ["resolve frontend dependencies"]
+    task:
+      agent:
+        machine:
+          type: s1-prod-ubuntu24-04-amd64-2
+      prologue:
+        commands:
+          # Minikube is not pre-installed on Semaphore agents
+          - curl -LO https://storage.googleapis.com/minikube/releases/v1.35.0/minikube-linux-amd64
+          - sudo install minikube-linux-amd64 /usr/local/bin/minikube
+          # Upgrade kubectl to v1.30.0 (agent has 1.23.6, we need 1.30.0 for K8s compatibility)
+          - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+          - sudo install kubectl /usr/local/bin/kubectl
+          # Restore cached minikube preloads (K8s tarballs) to skip re-download
+          - cache restore minikube-cache
+      jobs:
+        - name: "migration e2e"
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make e2e-setup
+            - make ci-e2e-tests
+      epilogue:
+        always:
+          commands:
+            - make e2e-teardown
+        on_pass:
+          commands:
+            - cache store minikube-cache ~/.minikube/cache/
 
   - name: "lint"
     dependencies: ["resolve frontend dependencies"]

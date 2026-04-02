@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: confluent
+  labels:
+    app.kubernetes.io/managed-by: kcp-e2e
