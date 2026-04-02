@@ -14,6 +14,7 @@ var (
 	stateFile        string
 	url              string
 	glueRegistryName string
+	glueRegion       string
 	ccSRRestEndpoint string
 	outputDir        string
 	schemasFilter    string
@@ -44,6 +45,7 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	sourceFlags.SortFlags = false
 	sourceFlags.StringVar(&url, "url", "", "The URL of a Confluent Schema Registry to migrate schemas from (uses schema exporter).")
 	sourceFlags.StringVar(&glueRegistryName, "glue-registry", "", "The name of an AWS Glue Schema Registry to migrate schemas from (uses confluent_schema resources).")
+	sourceFlags.StringVar(&glueRegion, "region", "", "The AWS region of the Glue Schema Registry (required when the same registry name exists in multiple regions).")
 	migrateSchemasCmd.Flags().AddFlagSet(sourceFlags)
 	groups[sourceFlags] = "Source Flags (one required)"
 
@@ -180,6 +182,9 @@ func parseMigrateGlueSchemasOpts() (*MigrateGlueSchemasOpts, error) {
 	if state.SchemaRegistries != nil {
 		for _, gr := range state.SchemaRegistries.AWSGlue {
 			if gr.RegistryName == glueRegistryName {
+				if glueRegion != "" && gr.Region != glueRegion {
+					continue
+				}
 				matches = append(matches, gr.Region)
 				if !found {
 					glueRegistry = gr
@@ -190,6 +195,9 @@ func parseMigrateGlueSchemasOpts() (*MigrateGlueSchemasOpts, error) {
 	}
 
 	if !found {
+		if glueRegion != "" {
+			return nil, fmt.Errorf("glue schema registry %q in region %q not found in state file", glueRegistryName, glueRegion)
+		}
 		return nil, fmt.Errorf("glue schema registry %q not found in state file", glueRegistryName)
 	}
 
