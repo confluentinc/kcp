@@ -314,7 +314,7 @@ func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
 	config := sarama.NewConfig()
 	region := "us-west-2"
 
-	configureSASLTypeOAuthAuthentication(config, region)
+	configureSASLTypeOAuthAuthentication(config, region, false)
 
 	// Verify SASL/OAuth configuration
 	assert.True(t, config.Net.TLS.Enable)
@@ -334,7 +334,7 @@ func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
 	username := "test-user"
 	password := "test-pass"
 
-	configureSASLTypeSCRAMAuthentication(config, username, password)
+	configureSASLTypeSCRAMAuthentication(config, username, password, false)
 
 	// Verify SASL/SCRAM configuration
 	assert.True(t, config.Net.TLS.Enable)
@@ -380,7 +380,7 @@ func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 
 			// Determine if TLS should be enabled based on the encryption type
 			withTLSEncryption := tt.clientBrokerEncryptionInTransit != kafkatypes.ClientBrokerPlaintext
-			configureUnauthenticatedAuthentication(config, withTLSEncryption)
+			configureUnauthenticatedAuthentication(config, withTLSEncryption, false)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			if tt.expectedTLSEnabled {
@@ -438,7 +438,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
 
-			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile)
+			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile, false)
 
 			if tt.expectError {
 				require.Error(t, err)
