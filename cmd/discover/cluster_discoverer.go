@@ -97,7 +97,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		return nil, nil, err
 	}
 	if cluster.ClusterInfo == nil {
-		return nil, nil, fmt.Errorf("DescribeClusterV2 returned nil ClusterInfo for %s", clusterArn)
+		return nil, nil, fmt.Errorf("describeClusterV2 returned nil ClusterInfo for %s", clusterArn)
 	}
 	awsClientInfo.MskClusterConfig = *cluster.ClusterInfo
 
@@ -383,7 +383,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 		return nil, fmt.Errorf("failed to get clusters: %v", err)
 	}
 	if cluster.ClusterInfo == nil {
-		return nil, fmt.Errorf("DescribeClusterV2 returned nil ClusterInfo for %s", clusterArn)
+		return nil, fmt.Errorf("describeClusterV2 returned nil ClusterInfo for %s", clusterArn)
 	}
 
 	followerFetching, err := cd.mskService.IsFetchFromFollowerEnabled(context.Background(), *cluster.ClusterInfo)

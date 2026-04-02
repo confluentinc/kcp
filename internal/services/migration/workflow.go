@@ -16,10 +16,12 @@ import (
 )
 
 type MigrationWorkflow struct {
-	gatewayService     gateway.Service
-	clusterLinkService clusterlink.Service
-	sourceOffset       *offset.Service
-	destinationOffset  *offset.Service
+	gatewayService      gateway.Service
+	clusterLinkService  clusterlink.Service
+	sourceOffset        offset.Provider
+	destinationOffset   offset.Provider
+	lagPollInterval     time.Duration
+	promotePollInterval time.Duration
 }
 
 func NewMigrationWorkflow(
@@ -27,22 +29,26 @@ func NewMigrationWorkflow(
 	clusterLinkService clusterlink.Service,
 ) *MigrationWorkflow {
 	return &MigrationWorkflow{
-		gatewayService:     gatewayService,
-		clusterLinkService: clusterLinkService,
+		gatewayService:      gatewayService,
+		clusterLinkService:  clusterLinkService,
+		lagPollInterval:     2 * time.Second,
+		promotePollInterval: 5 * time.Second,
 	}
 }
 
 func NewMigrationWorkflowWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-	sourceOffset *offset.Service,
-	destinationOffset *offset.Service,
+	sourceOffset offset.Provider,
+	destinationOffset offset.Provider,
 ) *MigrationWorkflow {
 	return &MigrationWorkflow{
-		gatewayService:     gatewayService,
-		clusterLinkService: clusterLinkService,
-		sourceOffset:       sourceOffset,
-		destinationOffset:  destinationOffset,
+		gatewayService:      gatewayService,
+		clusterLinkService:  clusterLinkService,
+		sourceOffset:        sourceOffset,
+		destinationOffset:   destinationOffset,
+		lagPollInterval:     2 * time.Second,
+		promotePollInterval: 5 * time.Second,
 	}
 }
 
@@ -54,7 +60,7 @@ func (s *MigrationWorkflow) Initialize(
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
 	// Fetch the initial CR YAML from k8s
-	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName)
+	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName)
 	if err != nil {
 		return fmt.Errorf("failed to get initial CR YAML: %w", err)
 	}
@@ -136,8 +142,7 @@ func (s *MigrationWorkflow) CheckLags(
 		return nil
 	}
 
-	pollInterval := 2 * time.Second
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(s.lagPollInterval)
 	defer ticker.Stop()
 
 	startTime := time.Now()
@@ -224,16 +229,16 @@ func formatLag64(n int64) string {
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic
 func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Debug("fencing gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
+	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
-	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.PassthroughCrName)
+	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
 	if err != nil {
 		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
 	}
 
 	// Step 2: Apply the fenced CR YAML
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName, config.FencedCrYAML); err != nil {
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
@@ -249,7 +254,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 	fmt.Printf("   ↳ Waiting for pod rollout (0/%d pods replaced)...\n", initialPodCount)
 	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 
@@ -276,8 +281,6 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 		APISecret:    clusterApiSecret,
 		Topics:       config.Topics,
 	}
-
-	pollInterval := 5 * time.Second
 
 	// Track which topics still need promotion
 	remaining := make(map[string]bool)
@@ -321,11 +324,11 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			fmt.Printf("   ↳ Waiting for lag to reach zero (%d topics remaining)...\n",
 				len(remaining))
 			slog.Debug("no topics at zero lag yet, waiting",
-				"remaining", len(remaining), "pollInterval", pollInterval)
+				"remaining", len(remaining), "pollInterval", s.promotePollInterval)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(pollInterval):
+			case <-time.After(s.promotePollInterval):
 				continue
 			}
 		}
@@ -370,27 +373,27 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 			}
 		}
 
-		slog.Debug("waiting for promotion to complete before next check", "pollInterval", pollInterval)
+		slog.Debug("waiting for promotion to complete before next check", "pollInterval", s.promotePollInterval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(pollInterval):
+		case <-time.After(s.promotePollInterval):
 		}
 	}
 }
 
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent Cloud
 func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
-	slog.Debug("switching gateway", "gateway", config.PassthroughCrName, "namespace", config.K8sNamespace)
+	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
-	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.PassthroughCrName)
+	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
 	if err != nil {
 		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
 	}
 
 	// Step 2: Apply the switchover CR YAML
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.PassthroughCrName, config.SwitchoverCrYAML); err != nil {
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")
@@ -406,7 +409,7 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.Mig
 	fmt.Printf("   ↳ Waiting for pod rollout (0/%d pods replaced)...\n", initialPodCount)
 	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
 
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.PassthroughCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
+	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
 		return fmt.Errorf("failed waiting for gateway pods: %w", err)
 	}
 

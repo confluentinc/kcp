@@ -80,7 +80,7 @@ func (ml *MigrationLister) displayMigration(index int, migration types.Migration
 	// Gateway
 	fmt.Printf("    %s %s\n",
 		color.HiBlackString("Gateway:"),
-		color.WhiteString("%s/%s", migration.K8sNamespace, migration.PassthroughCrName))
+		color.WhiteString("%s/%s", migration.K8sNamespace, migration.InitialCrName))
 
 	// Cluster Link
 	fmt.Printf("    %s %s\n",

@@ -330,7 +330,7 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 	if err != nil {
 		return "", fmt.Errorf("failed to open broker connection: %v", err)
 	}
-	defer brokerConn.Close()
+	defer func() { _ = brokerConn.Close() }()
 
 	// Request metadata from the broker
 	metadataReq := &sarama.MetadataRequest{Version: 7}
@@ -379,7 +379,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	partitions, err := consumer.Partitions(topicName)
 	if err != nil {
@@ -434,7 +434,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 			}
 		}
 
-		partitionConsumer.Close()
+		_ = partitionConsumer.Close()
 	}
 
 	return connectorConfigs, nil
@@ -448,7 +448,7 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	partitions, err := consumer.Partitions(topicName)
 	if err != nil {
@@ -519,7 +519,7 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 			}
 		}
 
-		partitionConsumer.Close()
+		_ = partitionConsumer.Close()
 	}
 
 	return connectorStatuses, nil
@@ -579,7 +579,7 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 
 	saramaKafkaVersion, err := sarama.ParseKafkaVersion(kafkaVersion)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to parse Kafka version: %v", err)
+		return nil, fmt.Errorf("failed to parse Kafka version: %v", err)
 	}
 
 	saramaConfig := sarama.NewConfig()
@@ -597,15 +597,15 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	case types.AuthTypeTLS:
 		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to configure TLS authentication: %v", err)
+			return nil, fmt.Errorf("failed to configure TLS authentication: %v", err)
 		}
 	default:
-		return nil, fmt.Errorf("Auth type: %v not yet supported", config.authType)
+		return nil, fmt.Errorf("auth type: %v not yet supported", config.authType)
 	}
 
 	admin, err := sarama.NewClusterAdmin(brokerAddresses, saramaConfig)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
+		return nil, fmt.Errorf("failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
 	}
 
 	return &KafkaAdminClient{

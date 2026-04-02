@@ -99,8 +99,7 @@ You will be prompted for the following credentials during ` + "`terraform apply`
 | ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
 | ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
 
-	switch request.MskJumpClusterAuthType {
-	case "sasl_scram":
+	if request.MskJumpClusterAuthType == "sasl_scram" {
 		credentialsSection += `
 | ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
 | ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
@@ -402,4 +401,3 @@ func (mi *MigrationInfraHCLService) generateNetworkingOutputsTf() string {
 func (mi *MigrationInfraHCLService) generateNetworkingVersionsTf() string {
 	return GenerateVersionsTf(aws.AddRequiredProvider)
 }
-

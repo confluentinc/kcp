@@ -128,4 +128,3 @@ func GenerateInputsAutoTfvars(values map[string]any) string {
 
 	return string(f.Bytes())
 }
-

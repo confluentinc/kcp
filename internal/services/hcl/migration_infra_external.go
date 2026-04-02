@@ -96,11 +96,11 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf(re
 	userDataArgs := map[string]hclwrite.Tokens{
 		"confluent_cloud_cluster_api_key":    utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
 		"confluent_cloud_cluster_api_secret": utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
-		"target_cluster_rest_endpoint":  utils.TokensForVarReference(modules.VarTargetClusterRestEndpoint),
-		"target_cluster_id":             utils.TokensForVarReference(modules.VarTargetClusterID),
-		"cluster_link_name":             utils.TokensForVarReference(modules.VarClusterLinkName),
-		"msk_cluster_id":                utils.TokensForVarReference(modules.VarMSKClusterID),
-		"msk_cluster_bootstrap_brokers": utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
+		"target_cluster_rest_endpoint":       utils.TokensForVarReference(modules.VarTargetClusterRestEndpoint),
+		"target_cluster_id":                  utils.TokensForVarReference(modules.VarTargetClusterID),
+		"cluster_link_name":                  utils.TokensForVarReference(modules.VarClusterLinkName),
+		"msk_cluster_id":                     utils.TokensForVarReference(modules.VarMSKClusterID),
+		"msk_cluster_bootstrap_brokers":      utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
 	}
 
 	if request.MskJumpClusterAuthType == "unauth_tls" {

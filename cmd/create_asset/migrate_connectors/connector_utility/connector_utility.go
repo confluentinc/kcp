@@ -75,7 +75,7 @@ func (cu *ConnectorUtility) Run() error {
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(connectorConfigs); err != nil {
-			file.Close()
+			_ = file.Close()
 			return fmt.Errorf("failed to encode connectors to JSON for cluster %s: %w", clusterArn, err)
 		}
 
@@ -105,7 +105,7 @@ func (cu *ConnectorUtility) generateREADME(filePath string) error {
 
 	md.AddHeading("Connect Migration Utility", 1)
 	md.AddParagraph(`
-This directory contains connector configuration JSON files extracted from your MSK cluster(s). These JSON configuration files can be used in conjuction with the [connect-migration-utility](https://github.com/confluentinc/connect-migration-utility)
+This directory contains connector configuration JSON files extracted from your MSK cluster(s). These JSON configuration files can be used in conjunction with the [connect-migration-utility](https://github.com/confluentinc/connect-migration-utility)
 to translate MSK Connect and self-managed connector configs before migrating them to Confluent Cloud. `)
 	md.AddParagraph("A blog post on the 'connect-migration-utility' tool can be found [here](https://www.confluent.io/blog/migrate-self-fully-managed-connectors/).")
 

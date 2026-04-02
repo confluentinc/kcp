@@ -28,7 +28,7 @@
     - [`kcp migration`](#kcp-migration)
       - [`kcp migration init`](#kcp-migration-init)
       - [`kcp migration execute`](#kcp-migration-execute)
-      - [`kcp migration status`](#kcp-migration-status)
+      - [`kcp migration lag-check`](#kcp-migration-lag-check)
       - [`kcp migration list`](#kcp-migration-list)
     - [`kcp ui`](#kcp-ui)
     - [`kcp update`](#kcp-update)
@@ -1595,7 +1595,7 @@ The `kcp migration` command provides tools for executing end-to-end Kafka migrat
 
 - `init`
 - `execute`
-- `status`
+- `lag-check`
 - `list`
 
 The migration workflow follows a defined lifecycle managed by a finite state machine:
@@ -1608,6 +1608,14 @@ The migration workflow follows a defined lifecycle managed by a finite state mac
 
 If execution is interrupted at any step, re-running `kcp migration execute` resumes from the last completed step.
 
+#### Supporting Documentation
+
+- **[Gateway Switchover Examples](gateway-switchover-examples.md)**
+  Provides example Gateway CR YAML files for each supported authentication combination, covering the initial, fenced, and switchover states required by `kcp migration init`. Use this as a starting point when authoring your own Gateway CRs.
+
+- **[Migration Reference Guide](getting-started-with-zero-cut-migrations.md)**
+  An end-to-end reference for the KCP + Gateway migration approach. Covers how the components fit together (KCP CLI, CC Gateway, Cluster Linking), infrastructure and networking prerequisites, the full authentication support matrix including IAM pre-migration paths, and operational guidance for planning and executing client cutovers.
+
 ---
 
 #### `kcp migration init`
@@ -1617,8 +1625,9 @@ Initialize a new migration by validating infrastructure and persisting migration
 **Required Arguments**:
 
 - `--k8s-namespace`: Kubernetes namespace where the gateway is deployed.
-- `--passthrough-cr-name`: Name of the passthrough gateway custom resource in Kubernetes.
-- `--source-cluster-arn`: ARN of the source MSK cluster.
+- `--initial-cr-name`: Name of the initial gateway custom resource in Kubernetes.
+- `--source-bootstrap`: Bootstrap server(s) of the source Kafka cluster (e.g. `broker1:9092,broker2:9092`).
+- `--cluster-bootstrap`: Confluent Cloud Kafka bootstrap endpoint (e.g. `pkc-abc123.us-east-1.aws.confluent.cloud:9092`).
 - `--cluster-id`: Confluent Cloud destination cluster ID (e.g. `lkc-abc123`).
 - `--cluster-rest-endpoint`: REST endpoint of the destination Confluent Cloud cluster.
 - `--cluster-link-name`: Name of the cluster link on the destination cluster.
@@ -1658,8 +1667,9 @@ Initialize a new migration by validating infrastructure and persisting migration
 ```shell
 kcp migration init \
   --k8s-namespace my-namespace \
-  --passthrough-cr-name my-gateway \
-  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --initial-cr-name my-gateway \
+  --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9096,b2.my-cluster.kafka.us-east-1.amazonaws.com:9096 \
+  --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
   --cluster-id lkc-abc123 \
   --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
   --cluster-link-name my-cluster-link \
@@ -1685,8 +1695,6 @@ Execute an initialized migration through its remaining workflow steps. This comm
 - `--lag-threshold`: Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.
 - `--cluster-api-key`: API key for authenticating with the destination cluster.
 - `--cluster-api-secret`: API secret for authenticating with the destination cluster.
-- `--source-cluster-arn`: ARN of the source MSK cluster.
-- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
 
 **Source Cluster Authentication Flags** (mutually exclusive):
 
@@ -1695,6 +1703,10 @@ Execute an initialized migration through its remaining workflow steps. This comm
 - `--use-tls`: Use TLS authentication for the source MSK cluster.
 - `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
 - `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**IAM Flags** (required when `--use-sasl-iam`):
+
+- `--aws-region`: AWS region of the source MSK cluster (e.g. `us-east-1`).
 
 **SASL/SCRAM Flags** (required when `--use-sasl-scram`):
 
@@ -1719,9 +1731,8 @@ kcp migration execute \
   --lag-threshold 0 \
   --cluster-api-key ABCDEFGHIJKLMNOP \
   --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
-  --use-sasl-iam
+  --use-sasl-iam \
+  --aws-region us-east-1
 ```
 
 > [!NOTE]
@@ -1729,9 +1740,12 @@ kcp migration execute \
 
 ---
 
-#### `kcp migration status`
+#### `kcp migration lag-check`
 
-Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kafka offsets to show real-time migration lag per topic and partition. This is a standalone monitoring tool that does not require a prior `kcp migration init`.
+Interactive TUI that displays mirror topic lag for the cluster link. This is a standalone monitoring tool that does not require a prior `kcp migration init`. It uses the Cluster Link REST API to query mirror topic lag.
+
+> [!NOTE]
+> This command uses the **Cluster Link REST API** to retrieve mirror topic lag reported by the cluster link itself. In contrast, `kcp migration execute` uses a **direct offset comparison** between the source (MSK) and destination (Confluent Cloud) Kafka clusters to determine lag during the migration workflow.
 
 **Required Arguments**:
 
@@ -1740,27 +1754,6 @@ Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kaf
 - `--cluster-link-name`: Cluster link name.
 - `--cluster-api-key`: Cluster link API key.
 - `--cluster-api-secret`: Cluster link API secret.
-- `--source-cluster-arn`: ARN of the source MSK cluster.
-- `--cc-bootstrap`: Confluent Cloud Kafka bootstrap endpoint.
-
-**Source Cluster Authentication Flags** (mutually exclusive):
-
-- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
-- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
-- `--use-tls`: Use TLS authentication for the source MSK cluster.
-- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
-- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
-
-**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
-
-- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
-- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
-
-**TLS Flags** (required when `--use-tls`):
-
-- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
-- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
-- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
 
 **Optional Arguments**:
 
@@ -1769,23 +1762,13 @@ Interactive TUI that compares source (MSK) and destination (Confluent Cloud) Kaf
 **Example Usage**
 
 ```shell
-kcp migration status \
+kcp migration lag-check \
   --rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
   --cluster-id lkc-abc123 \
   --cluster-link-name my-cluster-link \
   --cluster-api-key ABCDEFGHIJKLMNOP \
-  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  --source-cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cc-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
-  --use-sasl-iam
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
-
-**Features**:
-
-- **Real-time Offset Comparison**: Shows source and destination log-end offsets per partition
-- **Per-Topic Lag**: Aggregated lag displayed per topic with drill-down to partition level
-- **Auto-refresh**: Polls at configurable intervals with live updates
-- **Keyboard Navigation**: Scroll through topics, toggle partition detail view
 
 ---
 

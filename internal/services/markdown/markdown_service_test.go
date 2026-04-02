@@ -119,7 +119,7 @@ func TestPrintOptions(t *testing.T) {
 
 	// Test file output only
 	tempFile := "test_output.md"
-	defer os.Remove(tempFile) // Clean up after test
+	defer func() { _ = os.Remove(tempFile) }() // Clean up after test
 
 	t.Log("Testing file output only:")
 	err := md.Print(PrintOptions{ToTerminal: false, ToFile: tempFile})

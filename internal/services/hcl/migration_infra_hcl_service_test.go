@@ -292,4 +292,3 @@ func TestMigrationInfra_JumpCluster_FiveSubnets(t *testing.T) {
 	files := projectToFiles(project)
 	validateTerraformProject(t, files)
 }
-

@@ -43,21 +43,21 @@ var (
 )
 
 type TargetInfraOpts struct {
-	NeedsEnvironment    bool
-	EnvironmentName     string
-	EnvironmentId       string
-	NeedsCluster        bool
-	ClusterName         string
-	ClusterId           string
-	ClusterType         string
-	ClusterAvailability string
-	ClusterCku          int
-	AwsRegion           string
-	NeedsPrivateLink      bool
+	NeedsEnvironment       bool
+	EnvironmentName        string
+	EnvironmentId          string
+	NeedsCluster           bool
+	ClusterName            string
+	ClusterId              string
+	ClusterType            string
+	ClusterAvailability    string
+	ClusterCku             int
+	AwsRegion              string
+	NeedsPrivateLink       bool
 	UseExistingRoute53Zone bool
 	PreventDestroy         bool
-	VpcId                 string
-	SubnetCidrs           []string
+	VpcId                  string
+	SubnetCidrs            []string
 }
 
 func NewTargetInfraCmd() *cobra.Command {
@@ -191,10 +191,8 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		if clusterAvailability == "MULTI_ZONE" && clusterCku < 2 {
 			return fmt.Errorf("invalid --cluster-cku: MULTI_ZONE requires >= 2 CKUs, got %d", clusterCku)
 		}
-	} else {
-		if clusterId == "" {
-			return fmt.Errorf("--cluster-id is required without --needs-cluster")
-		}
+	} else if clusterId == "" {
+		return fmt.Errorf("required flag `--cluster-id` not set when `--needs-cluster=false`")
 	}
 
 	if needsPrivateLink {
