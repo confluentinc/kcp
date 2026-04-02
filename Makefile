@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend lint pre-commit-install
+.PHONY: build clean help install fmt test test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend lint pre-commit-install e2e-setup e2e-teardown ci-e2e-tests e2e
 
 # Build the frontend
 build-frontend:
@@ -75,6 +75,12 @@ help:
 	@echo "🔍 lint               - Run Go linters (golangci-lint)"
 	@echo "🔗 pre-commit-install - Install git pre-commit hooks"
 	@echo ""
+	@echo "🔬 E2E Tests:"
+	@echo "🔄 e2e               - Run full E2E lifecycle (setup → test → teardown)"
+	@echo "🏗️  e2e-setup          - Set up Minikube + CFK infrastructure"
+	@echo "🧪 ci-e2e-tests       - Run E2E migration tests"
+	@echo "🧹 e2e-teardown       - Tear down E2E infrastructure"
+	@echo ""
 	@echo "💡 Usage: make <target>"
 
 # Install the binary to /usr/local/bin (requires sudo)
@@ -125,4 +131,27 @@ test-cov:
 test-cov-ui:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
+
+# Run full E2E lifecycle: setup, test, teardown (teardown always runs)
+e2e: e2e-setup
+	@trap 'echo ""; echo "🧹 Tearing down E2E test infrastructure..."; bash test/e2e/migration/testdata/teardown.sh' EXIT; \
+	echo "🧪 Running E2E tests..."; \
+	echo "======================"; \
+	bash -c 'go test -v -tags=e2e -timeout 15m ./test/e2e/...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ E2E tests failed"; else echo "✅ E2E tests passed!"; fi; exit $$exit_code'
+
+# E2E test infrastructure setup (Minikube + CFK + CP clusters)
+e2e-setup:
+	@echo "🏗️  Setting up E2E test infrastructure..."
+	@bash test/e2e/migration/testdata/setup.sh
+
+# E2E test infrastructure teardown
+e2e-teardown:
+	@echo "🧹 Tearing down E2E test infrastructure..."
+	@bash test/e2e/migration/testdata/teardown.sh
+
+# Run E2E tests (requires infrastructure from e2e-setup)
+ci-e2e-tests:
+	@echo "🧪 Running E2E tests..."
+	@echo "======================"
+	@bash -c 'go test -v -tags=e2e -timeout 15m ./test/e2e/...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ E2E tests failed"; else echo "✅ E2E tests passed!"; fi; exit $$exit_code'
 
