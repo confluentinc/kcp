@@ -419,3 +419,47 @@ func TestGenerateMigrateAclsFiles_IAMSourcedOperations(t *testing.T) {
 	// Verify TransactionalId resource type is supported and included
 	assert.Contains(t, content, `"TRANSACTIONAL_ID"`)
 }
+
+// Edge case test: Principal names with special characters
+func TestGenerateMigrateAclsFiles_PrincipalWithSpecialCharacters(t *testing.T) {
+	service := NewMigrationScriptsHCLService()
+	request := types.MigrateAclsRequest{
+		SelectedPrincipals:        []string{"user@example.com", "service.account-123"},
+		TargetClusterId:           "lkc-abc123",
+		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
+		AclsByPrincipal: map[string][]types.Acls{
+			"user@example.com": {
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "User:user@example.com",
+					Host:                "*",
+					Operation:           "Read",
+					PermissionType:      "ALLOW",
+				},
+			},
+			"service.account-123": {
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "User:service.account-123",
+					Host:                "*",
+					Operation:           "Write",
+					PermissionType:      "ALLOW",
+				},
+			},
+		},
+	}
+
+	files, err := service.GenerateMigrateAclsFiles(request)
+	require.NoError(t, err)
+
+	// Files should be created (@ and . might be sanitized in filenames)
+	assert.NotEmpty(t, files.PerPrincipalTf)
+
+	// Validate generated Terraform
+	fileMap := terraformFilesToMap(files)
+	validateTerraformProject(t, fileMap)
+}
