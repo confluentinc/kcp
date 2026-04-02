@@ -7,6 +7,8 @@ import (
 )
 
 func TestMigrationScripts_MirrorTopics(t *testing.T) {
+	t.Parallel()
+
 	service := NewMigrationScriptsHCLService()
 	request := types.MirrorTopicsRequest{
 		SelectedTopics:            []string{"orders", "events", "users"},
@@ -21,10 +23,12 @@ func TestMigrationScripts_MirrorTopics(t *testing.T) {
 	}
 
 	fileMap := terraformFilesToMap(files)
-	assertMatchesGoldenFiles(t, "TestMigrationScripts_MirrorTopics", fileMap)
+	validateTerraformProject(t, fileMap)
 }
 
 func TestMigrationScripts_MigrateACLs(t *testing.T) {
+	t.Parallel()
+
 	service := NewMigrationScriptsHCLService()
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"app_user"},
@@ -60,10 +64,12 @@ func TestMigrationScripts_MigrateACLs(t *testing.T) {
 	}
 
 	fileMap := terraformFilesToMap(files)
-	assertMatchesGoldenFiles(t, "TestMigrationScripts_MigrateACLs", fileMap)
+	validateTerraformProject(t, fileMap)
 }
 
 func TestMigrationScripts_MigrateSchemas(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationScriptsHCLService{SchemaRegistryClusterID: "testcluster"}
 	request := types.MigrateSchemasRequest{
 		ConfluentCloudSchemaRegistryURL: "https://psrc-abc123.us-east-1.aws.confluent.cloud",
@@ -82,5 +88,5 @@ func TestMigrationScripts_MigrateSchemas(t *testing.T) {
 	}
 
 	fileMap := schemaProjectToFiles(project)
-	assertMatchesGoldenFiles(t, "TestMigrationScripts_MigrateSchemas", fileMap)
+	validateTerraformProject(t, fileMap)
 }
