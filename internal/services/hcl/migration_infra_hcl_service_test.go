@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMigrationInfra_Public(t *testing.T) {
@@ -144,9 +145,8 @@ func TestMigrationInfra_JumpCluster_EmptySubnetArray(t *testing.T) {
 	files := projectToFiles(project)
 
 	// Should handle gracefully - either generate valid TF with defaults or skip
-	if len(files) > 0 {
-		validateTerraformProject(t, files)
-	}
+	require.NotEmpty(t, files, "expected files to be generated for edge case")
+	validateTerraformProject(t, files)
 }
 
 func TestMigrationInfra_JumpCluster_ZeroStorage(t *testing.T) {
@@ -199,9 +199,8 @@ func TestMigrationInfra_ExternalOutbound_NilBrokers(t *testing.T) {
 	project := service.GenerateTerraformModules(request)
 	files := projectToFiles(project)
 
-	if len(files) > 0 {
-		validateTerraformProject(t, files)
-	}
+	require.NotEmpty(t, files, "expected files to be generated for edge case")
+	validateTerraformProject(t, files)
 }
 
 // Multi-subnet tests

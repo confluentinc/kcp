@@ -129,6 +129,10 @@ func validateTerraformProject(t *testing.T, files map[string]string) {
 		writePath := filename
 		if strings.HasPrefix(filename, "modules/") {
 			writePath = strings.TrimPrefix(filename, "modules/")
+		} else if strings.HasPrefix(filename, "per_principal/") {
+			writePath = strings.TrimPrefix(filename, "per_principal/")
+		} else if strings.HasPrefix(filename, "folders/") {
+			writePath = strings.TrimPrefix(filename, "folders/")
 		}
 
 		path := filepath.Join(tempDir, writePath)
@@ -153,6 +157,7 @@ func validateTerraformProject(t *testing.T, files map[string]string) {
 			"AWS_DEFAULT_REGION":         "us-east-1",
 			"CONFLUENT_CLOUD_API_KEY":    "fake",
 			"CONFLUENT_CLOUD_API_SECRET": "fake",
+			"TF_PLUGIN_CACHE_DIR":        filepath.Join(os.TempDir(), "terraform-plugin-cache"),
 		},
 	}
 

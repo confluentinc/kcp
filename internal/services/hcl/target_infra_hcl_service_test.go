@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTargetInfra_Dedicated(t *testing.T) {
@@ -174,9 +175,8 @@ func TestTargetInfra_PrivateLink_EmptySubnetCidrArray(t *testing.T) {
 	project := service.GenerateTerraformFiles(request)
 	files := projectToFiles(project)
 
-	if len(files) > 0 {
-		validateTerraformProject(t, files)
-	}
+	require.NotEmpty(t, files, "expected files to be generated for edge case")
+	validateTerraformProject(t, files)
 }
 
 // Resource naming edge cases
