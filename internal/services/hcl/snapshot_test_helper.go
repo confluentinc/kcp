@@ -120,6 +120,12 @@ func validateTerraformProject(t *testing.T, files map[string]string) {
 	// Create temp directory (auto-cleanup after test)
 	tempDir := t.TempDir()
 
+	// Create plugin cache directory if it doesn't exist
+	pluginCacheDir := filepath.Join(os.TempDir(), "terraform-plugin-cache")
+	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
+		t.Logf("Warning: could not create plugin cache directory: %v", err)
+	}
+
 	// Write all generated files to temp directory
 	for filename, content := range files {
 		// The files map has keys like "modules/cluster_link/main.tf", but Terraform
