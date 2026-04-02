@@ -1,0 +1,32 @@
+variable "confluent_cloud_api_key" {
+  type        = string
+  description = "Confluent Cloud API Key"
+}
+
+variable "confluent_cloud_api_secret" {
+  type        = string
+  description = "Confluent Cloud API Secret"
+  sensitive   = true
+}
+
+variable "confluent_cloud_cluster_id" {
+  type        = string
+  description = "Confluent Cloud cluster ID"
+}
+
+variable "confluent_cloud_cluster_rest_endpoint" {
+  type        = string
+  description = "Confluent Cloud cluster REST endpoint"
+}
+
+variable "confluent_cloud_cluster_api_key" {
+  type        = string
+  description = "Confluent Cloud cluster API key"
+}
+
+variable "confluent_cloud_cluster_api_secret" {
+  type        = string
+  description = "Confluent Cloud cluster API secret"
+  sensitive   = true
+}
+

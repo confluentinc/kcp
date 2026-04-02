@@ -1,0 +1,6 @@
+aws_region           = "us-east-1"
+cluster_availability = "SINGLE_ZONE"
+cluster_cku          = 1
+cluster_name         = "prod-cluster"
+cluster_type         = "dedicated"
+environment_name     = "production"
