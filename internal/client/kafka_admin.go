@@ -140,8 +140,8 @@ func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryp
 	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 }
 
-func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string) error {
-	tlsConfig := tls.Config{}
+func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string, insecureSkipVerify bool) error {
+	tlsConfig := tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 
 	cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
 	if err != nil {
@@ -558,7 +558,7 @@ func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption
 	case types.AuthTypeUnauthenticatedPlaintext:
 		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipVerify)
 	case types.AuthTypeTLS:
-		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile); err != nil {
+		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipVerify); err != nil {
 			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
 		}
 	default:
@@ -603,7 +603,7 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	case types.AuthTypeUnauthenticatedPlaintext:
 		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipVerify)
 	case types.AuthTypeTLS:
-		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
+		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipVerify)
 		if err != nil {
 			return nil, fmt.Errorf("failed to configure TLS authentication: %v", err)
 		}

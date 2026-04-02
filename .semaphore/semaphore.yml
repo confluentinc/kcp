@@ -72,7 +72,7 @@ blocks:
       prologue:
         commands:
           # Minikube is not pre-installed on Semaphore agents
-          - curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          - curl -LO https://storage.googleapis.com/minikube/releases/v1.35.0/minikube-linux-amd64
           - sudo install minikube-linux-amd64 /usr/local/bin/minikube
           # Upgrade kubectl to v1.30.0 (agent has 1.23.6, we need 1.30.0 for K8s compatibility)
           - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"

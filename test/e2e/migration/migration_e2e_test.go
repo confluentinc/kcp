@@ -117,13 +117,18 @@ func runKCP(t *testing.T, cfg envConfig, args ...string) (string, string, error)
 func readPodFile(t *testing.T, cfg envConfig, podPath string) []byte {
 	t.Helper()
 
-	cmd := exec.Command("kubectl",
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "kubectl",
 		"--context", cfg.KubeContext,
 		"-n", cfg.Namespace,
 		"exec", cfg.KCPPod, "--",
 		"cat", podPath)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	require.NoError(t, err, "failed to read %s from pod", podPath)
+	require.NoError(t, err, "failed to read %s from pod: %s", podPath, stderr.String())
 	return out
 }
 
@@ -241,6 +246,10 @@ func TestMigrationE2E(t *testing.T) {
 		t.Logf("Migration ID: %s", state.Migrations[0].MigrationID)
 	})
 
+	if t.Failed() {
+		t.FailNow()
+	}
+
 	// --- Step 2: kcp migration execute ---
 	t.Run("execute", func(t *testing.T) {
 		// Get migration ID from state file
@@ -270,6 +279,10 @@ func TestMigrationE2E(t *testing.T) {
 		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
 	})
 
+	if t.Failed() {
+		t.FailNow()
+	}
+
 	// --- Step 3: Verify Gateway CR matches switchover fixture ---
 	t.Run("verify_gateway_cr", func(t *testing.T) {
 		cr := getGatewayCR(t, dynClient, cfg.Namespace, cfg.GatewayName)
@@ -285,7 +298,8 @@ func TestMigrationE2E(t *testing.T) {
 		require.True(t, found, "routes not found in spec")
 		require.Len(t, routes, 1)
 
-		route := routes[0].(map[string]interface{})
+		route, ok := routes[0].(map[string]interface{})
+		require.True(t, ok, "expected route to be a map")
 		_, hasFence := route["fence"]
 		assert.False(t, hasFence, "switchover CR should not have fence config")
 
@@ -295,10 +309,15 @@ func TestMigrationE2E(t *testing.T) {
 		require.True(t, found)
 		require.Len(t, streamingDomains, 1)
 
-		domain := streamingDomains[0].(map[string]interface{})
+		domain, ok := streamingDomains[0].(map[string]interface{})
+		require.True(t, ok, "expected streaming domain to be a map")
 		domainName, _, _ := unstructured.NestedString(domain, "name")
 		assert.Equal(t, "destination-kafka-cluster", domainName, "switchover should point to destination streaming domain")
 	})
+
+	if t.Failed() {
+		t.FailNow()
+	}
 
 	// --- Step 4: Verify Gateway pods rolled out ---
 	t.Run("verify_pod_rollout", func(t *testing.T) {

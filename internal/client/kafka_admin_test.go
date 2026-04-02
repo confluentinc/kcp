@@ -438,7 +438,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
 
-			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile)
+			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile, false)
 
 			if tt.expectError {
 				require.Error(t, err)
