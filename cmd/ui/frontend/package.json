@@ -27,7 +27,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "jszip": "^3.10.1",
-    "lucide-react": "^0.542.0",
+    "lucide-react": "^1.0.0",
     "react": "^19.1.1",
     "react-arborist": "^3.4.3",
     "react-day-picker": "^9.11.0",
