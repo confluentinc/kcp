@@ -115,15 +115,21 @@ The migration commands have end-to-end tests that run against a real CFK (Conflu
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ```bash
-# Set up Minikube cluster with CFK, Kafka clusters, Gateway, and cluster link
-make e2e-setup
-
-# Run the E2E tests
-make ci-e2e-tests
-
-# Tear down the infrastructure
-make e2e-teardown
+# Run the full E2E lifecycle: setup → test → teardown
+make e2e
 ```
+
+This is the recommended way to run E2E tests. Teardown runs automatically when tests finish (pass or fail), so infrastructure won't be left behind.
+
+If you need to run steps individually:
+
+```bash
+make e2e-setup       # Set up Minikube cluster with CFK, Kafka clusters, Gateway, and cluster link
+make ci-e2e-tests    # Run the E2E tests
+make e2e-teardown    # Tear down the infrastructure
+```
+
+If infrastructure persisted from a previous run (e.g. laptop sleep, interrupted test), run `make e2e-teardown` before starting again.
 
 The setup creates a Minikube cluster (`kcp-e2e` profile) with 4 CPUs and 8 GB RAM, deploys source and destination Kafka clusters, a Gateway, and a cluster link. The kcp binary is built for Linux and runs inside the cluster to avoid TLS/DNS issues.
 
