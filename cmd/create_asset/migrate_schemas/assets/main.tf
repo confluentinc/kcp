@@ -1,15 +1,3 @@
-terraform {
-  required_providers {
-    confluent = {
-      source  = "confluentinc/confluent"
-      version = "2.50.0"
-    }
-  }
-}
-
-provider "confluent" {
-}
-
 resource "confluent_schema_exporter" "api_exporters" {
   for_each = { for req in var.exporters : req.name => req }
 
@@ -30,7 +18,7 @@ resource "confluent_schema_exporter" "api_exporters" {
   context      = each.value.context_name
 
   destination_schema_registry_cluster {
-    rest_endpoint = var.target_schema_registry_url
+    rest_endpoint = var.cc_sr_rest_endpoint
     credentials {
       key    = var.target_schema_registry_api_key
       secret = var.target_schema_registry_api_secret
