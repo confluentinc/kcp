@@ -65,7 +65,7 @@ blocks:
                 echo "All tests must run with full Terraform validation in CI."
                 exit 1
               fi
-            - make test
+            - make test GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
 
         - name: "trivy scan"
           commands:

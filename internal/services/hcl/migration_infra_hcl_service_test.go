@@ -8,6 +8,8 @@ import (
 )
 
 func TestMigrationInfra_Public(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:   true,
@@ -26,6 +28,8 @@ func TestMigrationInfra_Public(t *testing.T) {
 }
 
 func TestMigrationInfra_PrivateJumpCluster(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:          false,
@@ -54,6 +58,8 @@ func TestMigrationInfra_PrivateJumpCluster(t *testing.T) {
 }
 
 func TestMigrationInfra_ExternalOutbound(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:      false,
@@ -85,6 +91,8 @@ func TestMigrationInfra_ExternalOutbound(t *testing.T) {
 }
 
 func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:      false,
@@ -119,6 +127,8 @@ func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
 
 // Edge case tests: Empty inputs
 func TestMigrationInfra_JumpCluster_EmptySubnetArray(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:          false,
@@ -150,6 +160,8 @@ func TestMigrationInfra_JumpCluster_EmptySubnetArray(t *testing.T) {
 }
 
 func TestMigrationInfra_JumpCluster_ZeroStorage(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:          false,
@@ -178,6 +190,8 @@ func TestMigrationInfra_JumpCluster_ZeroStorage(t *testing.T) {
 }
 
 func TestMigrationInfra_ExternalOutbound_NilBrokers(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:      false,
@@ -205,6 +219,8 @@ func TestMigrationInfra_ExternalOutbound_NilBrokers(t *testing.T) {
 
 // Multi-subnet tests
 func TestMigrationInfra_JumpCluster_SingleSubnet(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:          false,
@@ -233,6 +249,8 @@ func TestMigrationInfra_JumpCluster_SingleSubnet(t *testing.T) {
 }
 
 func TestMigrationInfra_JumpCluster_TwoSubnets(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:          false,
@@ -261,6 +279,8 @@ func TestMigrationInfra_JumpCluster_TwoSubnets(t *testing.T) {
 }
 
 func TestMigrationInfra_JumpCluster_FiveSubnets(t *testing.T) {
+	t.Parallel()
+
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
 		HasPublicMskEndpoints:       false,

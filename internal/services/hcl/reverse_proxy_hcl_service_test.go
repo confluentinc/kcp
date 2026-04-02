@@ -7,6 +7,8 @@ import (
 )
 
 func TestReverseProxy(t *testing.T) {
+	t.Parallel()
+
 	service := &ReverseProxyHCLService{DeploymentID: "testdeploy"}
 	request := types.ReverseProxyRequest{
 		Region:                                 "us-east-1",

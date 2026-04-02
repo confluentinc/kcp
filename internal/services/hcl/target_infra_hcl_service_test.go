@@ -8,6 +8,8 @@ import (
 )
 
 func TestTargetInfra_Dedicated(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
@@ -28,6 +30,8 @@ func TestTargetInfra_Dedicated(t *testing.T) {
 }
 
 func TestTargetInfra_Enterprise(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-west-2",
@@ -47,6 +51,8 @@ func TestTargetInfra_Enterprise(t *testing.T) {
 }
 
 func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
@@ -69,6 +75,8 @@ func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
 }
 
 func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
@@ -88,6 +96,8 @@ func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
 }
 
 func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:              "eu-west-1",
@@ -110,6 +120,8 @@ func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
 }
 
 func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:              "us-east-1",
@@ -133,6 +145,8 @@ func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
 }
 
 func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "eu-west-1",
@@ -155,6 +169,8 @@ func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
 
 // Edge case tests: Empty inputs
 func TestTargetInfra_PrivateLink_EmptySubnetCidrArray(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
@@ -181,6 +197,8 @@ func TestTargetInfra_PrivateLink_EmptySubnetCidrArray(t *testing.T) {
 
 // Resource naming edge cases
 func TestTargetInfra_VeryLongResourceNames(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 
 	// 63 characters (max for some AWS resources)
@@ -204,6 +222,8 @@ func TestTargetInfra_VeryLongResourceNames(t *testing.T) {
 }
 
 func TestTargetInfra_SpecialCharactersInNames(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
@@ -222,6 +242,8 @@ func TestTargetInfra_SpecialCharactersInNames(t *testing.T) {
 }
 
 func TestTargetInfra_NumericOnlyNames(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
@@ -242,6 +264,8 @@ func TestTargetInfra_NumericOnlyNames(t *testing.T) {
 
 // Boundary conditions
 func TestTargetInfra_MultiZone_MinimumCKUs(t *testing.T) {
+	t.Parallel()
+
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
 	request := types.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
