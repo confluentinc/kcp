@@ -53,6 +53,9 @@ func (s *GlueSchemaRegistryService) GetAllSchemasWithVersions(ctx context.Contex
 
 	slog.Info("found schemas", "count", len(schemaItems))
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	const maxConcurrency = 10
 	sem := make(chan struct{}, maxConcurrency)
 	var mu sync.Mutex
@@ -78,13 +81,14 @@ func (s *GlueSchemaRegistryService) GetAllSchemasWithVersions(ctx context.Contex
 			schemaName := aws.ToString(item.SchemaName)
 			schemaArn := aws.ToString(item.SchemaArn)
 
-			slog.Info("fetching versions for schema", "schema_name", schemaName)
+			slog.Debug("fetching versions for schema", "schema_name", schemaName)
 
 			versions, err := s.getSchemaVersions(ctx, registryName, schemaName)
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = fmt.Errorf("failed to get versions for schema %q: %w", schemaName, err)
+					cancel()
 				}
 				mu.Unlock()
 				return

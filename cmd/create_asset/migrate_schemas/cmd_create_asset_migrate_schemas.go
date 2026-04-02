@@ -176,18 +176,25 @@ func parseMigrateGlueSchemasOpts() (*MigrateGlueSchemasOpts, error) {
 
 	var glueRegistry types.GlueSchemaRegistryInformation
 	found := false
+	var matches []string
 	if state.SchemaRegistries != nil {
 		for _, gr := range state.SchemaRegistries.AWSGlue {
 			if gr.RegistryName == glueRegistryName {
-				glueRegistry = gr
-				found = true
-				break
+				matches = append(matches, gr.Region)
+				if !found {
+					glueRegistry = gr
+					found = true
+				}
 			}
 		}
 	}
 
 	if !found {
 		return nil, fmt.Errorf("glue schema registry %q not found in state file", glueRegistryName)
+	}
+
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("glue schema registry %q exists in multiple regions %v; specify --region to disambiguate", glueRegistryName, matches)
 	}
 
 	// Filter schemas if --schemas flag is provided

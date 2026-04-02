@@ -94,17 +94,27 @@ func preRunScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 
 	switch srType {
 	case "confluent":
-		_ = cmd.MarkFlagRequired("url")
+		if url == "" {
+			return fmt.Errorf("--url is required when --sr-type=confluent")
+		}
 		if useUnauthenticated == useBasicAuth {
 			return fmt.Errorf("exactly one of --use-unauthenticated or --use-basic-auth is required")
 		}
 		if useBasicAuth {
-			_ = cmd.MarkFlagRequired("username")
-			_ = cmd.MarkFlagRequired("password")
+			if username == "" {
+				return fmt.Errorf("--username is required when --use-basic-auth is set")
+			}
+			if password == "" {
+				return fmt.Errorf("--password is required when --use-basic-auth is set")
+			}
 		}
 	case "glue":
-		_ = cmd.MarkFlagRequired("registry-name")
-		_ = cmd.MarkFlagRequired("region")
+		if registryName == "" {
+			return fmt.Errorf("--registry-name is required when --sr-type=glue")
+		}
+		if region == "" {
+			return fmt.Errorf("--region is required when --sr-type=glue")
+		}
 	default:
 		return fmt.Errorf("invalid --sr-type %q: must be 'confluent' or 'glue'", srType)
 	}

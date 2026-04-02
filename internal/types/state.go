@@ -92,6 +92,8 @@ func NewStateFrom(fromState *State) *State {
 		// Copy existing regions to preserve untouched regions
 		workingState.Regions = make([]DiscoveredRegion, len(fromState.Regions))
 		copy(workingState.Regions, fromState.Regions)
+		// Copy schema registries to preserve schema data across discovery runs
+		workingState.SchemaRegistries = fromState.SchemaRegistries
 	}
 
 	return workingState
