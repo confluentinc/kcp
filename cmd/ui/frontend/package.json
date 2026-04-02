@@ -50,7 +50,7 @@
     "globals": "^17.0.0",
     "shadcn": "^4.0.0",
     "tw-animate-css": "^1.3.7",
-    "typescript": "~5.8.3",
+    "typescript": "~6.0.0",
     "typescript-eslint": "^8.39.1",
     "vite": "^7.1.11",
     "vite-plugin-checker": "^0.11.0",
