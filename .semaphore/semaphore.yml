@@ -65,6 +65,8 @@ blocks:
 
   - name: "e2e migration tests"
     dependencies: ["resolve frontend dependencies"]
+    run:
+      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/test/e2e/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       agent:
         machine:
