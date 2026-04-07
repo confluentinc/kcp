@@ -126,6 +126,10 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !useSaslIam && !useSaslScram && !useTls && !useUnauthenticatedTLS && !useUnauthenticatedPlaintext {
+		return fmt.Errorf("at least one source cluster authentication flag is required (--use-sasl-iam, --use-sasl-scram, --use-tls, --use-unauthenticated-tls, --use-unauthenticated-plaintext)")
+	}
+
 	if useSaslIam {
 		_ = cmd.MarkFlagRequired("aws-region")
 	}
