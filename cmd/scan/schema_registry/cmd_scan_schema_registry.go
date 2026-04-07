@@ -1,9 +1,11 @@
 package schema_registry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
+	glue_service "github.com/confluentinc/kcp/internal/services/glue_schema_registry"
 	"github.com/confluentinc/kcp/internal/services/schema_registry"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -14,18 +16,21 @@ import (
 
 var (
 	stateFile          string
+	srType             string
 	url                string
 	useUnauthenticated bool
 	useBasicAuth       bool
 	username           string
 	password           string
+	registryName       string
+	region             string
 )
 
 func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd := &cobra.Command{
 		Use:           "schema-registry",
-		Short:         "Scan schema registry for information",
-		Long:          "Scan schema registry for information including all subjects, their versions, and latest schema metadata.",
+		Short:         "Scan a schema registry for schemas and versions",
+		Long:          "Scan a schema registry (Confluent or AWS Glue) to discover all schemas and their versions. Use --sr-type to select the registry type. Results are added to the state file under schema_registries.",
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanSchemaRegistry,
@@ -34,23 +39,34 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&url, "url", "", "The URL of the schema registry to scan.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file.")
+	requiredFlags.StringVar(&srType, "sr-type", "", "Schema registry type: 'confluent' or 'glue'")
 	schemaRegistryCmd.Flags().AddFlagSet(requiredFlags)
 
-	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
-	authFlags.SortFlags = false
-	authFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
-	authFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use Basic Authentication")
-	authFlags.StringVar(&username, "username", "", "The username to use for Basic Authentication")
-	authFlags.StringVar(&password, "password", "", "The password to use for Basic Authentication")
-	schemaRegistryCmd.Flags().AddFlagSet(authFlags)
+	confluentFlags := pflag.NewFlagSet("confluent", pflag.ExitOnError)
+	confluentFlags.SortFlags = false
+	confluentFlags.StringVar(&url, "url", "", "The URL of the schema registry to scan.")
+	confluentFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
+	confluentFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use Basic Authentication")
+	confluentFlags.StringVar(&username, "username", "", "The username to use for Basic Authentication")
+	confluentFlags.StringVar(&password, "password", "", "The password to use for Basic Authentication")
+	schemaRegistryCmd.Flags().AddFlagSet(confluentFlags)
+
+	glueFlags := pflag.NewFlagSet("glue", pflag.ExitOnError)
+	glueFlags.SortFlags = false
+	glueFlags.StringVar(&registryName, "registry-name", "", "The name of the AWS Glue Schema Registry to scan.")
+	glueFlags.StringVar(&region, "region", "", "The AWS region where the Glue Schema Registry is located.")
+	schemaRegistryCmd.Flags().AddFlagSet(glueFlags)
 
 	schemaRegistryCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags}
-		groupNames := []string{"Required Flags", "Authentication Flags (provide one of the following)"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, confluentFlags, glueFlags}
+		groupNames := []string{
+			"Required Flags",
+			"Confluent Flags (--sr-type=confluent)",
+			"Glue Flags (--sr-type=glue)",
+		}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -60,16 +76,13 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 		}
 
 		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("Glue authentication uses AWS default credentials (environment variables, shared credentials file, or IAM role).")
 
 		return nil
 	})
 
 	_ = schemaRegistryCmd.MarkFlagRequired("state-file")
-	_ = schemaRegistryCmd.MarkFlagRequired("url")
-
-	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated", "use-basic-auth")
-	schemaRegistryCmd.MarkFlagsOneRequired("use-unauthenticated", "use-basic-auth")
-	schemaRegistryCmd.MarkFlagsRequiredTogether("use-basic-auth", "username", "password")
+	_ = schemaRegistryCmd.MarkFlagRequired("sr-type")
 
 	return schemaRegistryCmd
 }
@@ -79,11 +92,48 @@ func preRunScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	switch srType {
+	case "confluent":
+		if url == "" {
+			return fmt.Errorf("--url is required when --sr-type=confluent")
+		}
+		if useUnauthenticated == useBasicAuth {
+			return fmt.Errorf("exactly one of --use-unauthenticated or --use-basic-auth is required")
+		}
+		if useBasicAuth {
+			if username == "" {
+				return fmt.Errorf("--username is required when --use-basic-auth is set")
+			}
+			if password == "" {
+				return fmt.Errorf("--password is required when --use-basic-auth is set")
+			}
+		}
+	case "glue":
+		if registryName == "" {
+			return fmt.Errorf("--registry-name is required when --sr-type=glue")
+		}
+		if region == "" {
+			return fmt.Errorf("--region is required when --sr-type=glue")
+		}
+	default:
+		return fmt.Errorf("invalid --sr-type %q: must be 'confluent' or 'glue'", srType)
+	}
+
 	return nil
 }
 
 func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
-	opts, err := parseScanSchemaRegistryOpts()
+	switch srType {
+	case "confluent":
+		return runScanConfluentSchemaRegistry()
+	case "glue":
+		return runScanGlueSchemaRegistry(cmd.Context())
+	}
+	return nil
+}
+
+func runScanConfluentSchemaRegistry() error {
+	opts, err := parseConfluentOpts()
 	if err != nil {
 		return fmt.Errorf("failed to parse scan schema registry opts: %v", err)
 	}
@@ -110,7 +160,28 @@ func runScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseScanSchemaRegistryOpts() (*SchemaRegistryScannerOpts, error) {
+func runScanGlueSchemaRegistry(ctx context.Context) error {
+	opts, err := parseGlueOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse scan glue schema registry opts: %v", err)
+	}
+
+	glueClient, err := client.NewGlueClient(ctx, opts.Region)
+	if err != nil {
+		return fmt.Errorf("failed to create AWS Glue client: %v", err)
+	}
+
+	glueService := glue_service.NewGlueSchemaRegistryService(glueClient)
+
+	scanner := NewGlueSchemaRegistryScanner(glueService, *opts)
+	if err := scanner.Run(ctx); err != nil {
+		return fmt.Errorf("failed to scan Glue Schema Registry: %v", err)
+	}
+
+	return nil
+}
+
+func parseConfluentOpts() (*SchemaRegistryScannerOpts, error) {
 	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load existing state file: %v", err)
@@ -119,6 +190,22 @@ func parseScanSchemaRegistryOpts() (*SchemaRegistryScannerOpts, error) {
 		StateFile: stateFile,
 		State:     *state,
 		Url:       url,
+	}
+
+	return &opts, nil
+}
+
+func parseGlueOpts() (*GlueSchemaRegistryScannerOpts, error) {
+	state, err := types.NewStateFromFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load existing state file: %v", err)
+	}
+
+	opts := GlueSchemaRegistryScannerOpts{
+		StateFile:    stateFile,
+		State:        *state,
+		Region:       region,
+		RegistryName: registryName,
 	}
 
 	return &opts, nil

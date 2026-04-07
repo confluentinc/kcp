@@ -91,6 +91,7 @@ func (ui *UI) Run() error {
 	e.POST("/assets/migration-scripts/connectors", ui.handleMigrateConnectorsAssets)
 	e.POST("/assets/migration-scripts/topics", ui.handleMigrateTopicsAssets)
 	e.POST("/assets/migration-scripts/schemas", ui.handleMigrateSchemasAssets)
+	e.POST("/assets/migration-scripts/glue-schemas", ui.handleMigrateGlueSchemasAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -560,6 +561,26 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Migration Scripts project",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, migrationScriptsProject)
+}
+
+func (ui *UI) handleMigrateGlueSchemasAssets(c echo.Context) error {
+	var req types.MigrateGlueSchemasRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	migrationScriptsProject, err := ui.migrationScriptsHCLService.GenerateMigrateGlueSchemasFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Glue schema migration project",
 			"message": err.Error(),
 		})
 	}
