@@ -18,12 +18,16 @@ var (
 	awsRegion                   string
 	useSaslIam                  bool
 	useSaslScram                bool
+	useSaslPlain                bool
 	useTls                      bool
 	useUnauthenticatedTLS       bool
 	useUnauthenticatedPlaintext bool
 
 	saslScramUsername string
 	saslScramPassword string
+
+	saslPlainUsername string
+	saslPlainPassword string
 
 	tlsCaCert             string
 	tlsClientCert         string
@@ -71,6 +75,7 @@ interrupted, re-running this command will resume from the last completed step.`,
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useSaslPlain, "use-sasl-plain", false, "Use SASL/PLAIN authentication for the source cluster.")
 	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
@@ -84,6 +89,14 @@ interrupted, re-running this command will resume from the last completed step.`,
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
 	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
+
+	// SASL/PLAIN credential flags.
+	saslPlainFlags := pflag.NewFlagSet("sasl-plain", pflag.ExitOnError)
+	saslPlainFlags.SortFlags = false
+	saslPlainFlags.StringVar(&saslPlainUsername, "sasl-plain-username", "", "SASL/PLAIN username for the source cluster.")
+	saslPlainFlags.StringVar(&saslPlainPassword, "sasl-plain-password", "", "SASL/PLAIN password for the source cluster.")
+	migrationExecuteCmd.Flags().AddFlagSet(saslPlainFlags)
+	groups[saslPlainFlags] = "SASL/PLAIN Flags"
 
 	// IAM credential flags.
 	iamFlags := pflag.NewFlagSet("iam", pflag.ExitOnError)
@@ -104,8 +117,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, iamFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, iamFlags, saslScramFlags, saslPlainFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "SASL/PLAIN Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -123,8 +136,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
-	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
-	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationExecuteCmd
 }
@@ -141,6 +154,11 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+	}
+
+	if useSaslPlain {
+		_ = cmd.MarkFlagRequired("sasl-plain-username")
+		_ = cmd.MarkFlagRequired("sasl-plain-password")
 	}
 
 	if useTls {
@@ -181,6 +199,8 @@ func resolveAuthType() types.AuthType {
 		return types.AuthTypeIAM
 	case useSaslScram:
 		return types.AuthTypeSASLSCRAM
+	case useSaslPlain:
+		return types.AuthTypeSASLPlain
 	case useTls:
 		return types.AuthTypeTLS
 	case useUnauthenticatedTLS:
@@ -206,6 +226,8 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		AuthType:              resolveAuthType(),
 		SaslScramUsername:     saslScramUsername,
 		SaslScramPassword:     saslScramPassword,
+		SaslPlainUsername:     saslPlainUsername,
+		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
 		TlsClientCert:         tlsClientCert,
 		TlsClientKey:          tlsClientKey,

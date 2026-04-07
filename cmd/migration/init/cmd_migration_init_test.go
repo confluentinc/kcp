@@ -10,6 +10,7 @@ import (
 func resetAuthFlags() {
 	useSaslIam = false
 	useSaslScram = false
+	useSaslPlain = false
 	useTls = false
 	useUnauthenticatedTLS = false
 	useUnauthenticatedPlaintext = false

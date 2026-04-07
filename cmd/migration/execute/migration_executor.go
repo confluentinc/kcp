@@ -29,6 +29,8 @@ type MigrationExecutorOpts struct {
 	AuthType              types.AuthType
 	SaslScramUsername     string
 	SaslScramPassword     string
+	SaslPlainUsername     string
+	SaslPlainPassword     string
 	TlsCaCert             string
 	TlsClientCert         string
 	TlsClientKey          string
@@ -112,6 +114,12 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 			CACert:     m.opts.TlsCaCert,
 			ClientCert: m.opts.TlsClientCert,
 			ClientKey:  m.opts.TlsClientKey,
+		}
+	case types.AuthTypeSASLPlain:
+		clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{
+			Use:      true,
+			Username: m.opts.SaslPlainUsername,
+			Password: m.opts.SaslPlainPassword,
 		}
 	case types.AuthTypeIAM:
 		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}
