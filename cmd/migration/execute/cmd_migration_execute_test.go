@@ -7,7 +7,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func resetAuthFlags() {
+	useSaslIam = false
+	useSaslScram = false
+	useTls = false
+	useUnauthenticatedTLS = false
+	useUnauthenticatedPlaintext = false
+}
+
 func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
+	resetAuthFlags()
+
 	cmd := NewMigrationExecuteCmd()
 	cmd.SetArgs([]string{
 		"--migration-id", "test-migration",
@@ -22,12 +32,7 @@ func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
 }
 
 func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
-	// Reset package-level vars to avoid cross-test pollution.
-	useSaslIam = false
-	useSaslScram = false
-	useTls = false
-	useUnauthenticatedTLS = false
-	useUnauthenticatedPlaintext = false
+	resetAuthFlags()
 
 	cmd := NewMigrationExecuteCmd()
 	cmd.SetArgs([]string{
@@ -43,4 +48,22 @@ func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "at least one of the flags")
 	assert.Contains(t, err.Error(), "migration state file")
+}
+
+func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-tls",
+		"--use-unauthenticated-plaintext",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "if any flags in the group")
 }

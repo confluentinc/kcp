@@ -181,7 +181,7 @@ func resolveAuthType() types.AuthType {
 	case useUnauthenticatedPlaintext:
 		return types.AuthTypeUnauthenticatedPlaintext
 	default:
-		return types.AuthTypeIAM
+		panic("unreachable: MarkFlagsOneRequired guarantees an auth flag is set")
 	}
 }
 
