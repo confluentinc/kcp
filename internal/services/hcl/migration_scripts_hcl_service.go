@@ -3,6 +3,7 @@ package hcl
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
@@ -97,22 +98,6 @@ func (s *MigrationScriptsHCLService) generateProvidersTf() string {
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
-}
-
-// appendVariableBlocks writes Terraform variable blocks for each TerraformVariable to the given HCL body
-func appendVariableBlocks(rootBody *hclwrite.Body, vars []types.TerraformVariable) {
-	for _, v := range vars {
-		variableBlock := rootBody.AppendNewBlock("variable", []string{v.Name})
-		variableBody := variableBlock.Body()
-		variableBody.SetAttributeRaw("type", utils.TokensForResourceReference(v.Type))
-		if v.Description != "" {
-			variableBody.SetAttributeValue("description", cty.StringVal(v.Description))
-		}
-		if v.Sensitive {
-			variableBody.SetAttributeValue("sensitive", cty.BoolVal(true))
-		}
-		rootBody.AppendNewline()
-	}
 }
 
 // ============================================================================
@@ -313,13 +298,8 @@ func (s *MigrationScriptsHCLService) GenerateMigrateGlueSchemasFiles(request typ
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateGlueSchemasVariablesTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	appendVariableBlocks(rootBody, confluent.ConfluentProviderVariables)
-	appendVariableBlocks(rootBody, confluent.GlueSchemaVariables)
-
-	return string(f.Bytes())
+	allVars := slices.Concat(confluent.ConfluentProviderVariables, confluent.GlueSchemaVariables)
+	return GenerateVariablesTf(allVars)
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateGlueSchemasInputsAutoTfvars(confluentCloudSchemaRegistryURL string) string {
@@ -365,13 +345,8 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasProvidersTf() string 
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateSchemasVariablesTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	appendVariableBlocks(rootBody, confluent.ConfluentProviderVariables)
-	appendVariableBlocks(rootBody, confluent.SchemaExporterVariables)
-
-	return string(f.Bytes())
+	allVars := slices.Concat(confluent.ConfluentProviderVariables, confluent.SchemaExporterVariables)
+	return GenerateVariablesTf(allVars)
 }
 
 func (s *MigrationScriptsHCLService) generateMigrateSchemasInputsAutoTfvars(confluentCloudSchemaRegistryURL string, schemaRegistry types.SchemaRegistryExporterConfig) string {

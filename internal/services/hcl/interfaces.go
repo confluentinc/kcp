@@ -17,6 +17,7 @@ type MigrationScriptsGenerator interface {
 	GenerateMirrorTopicsFiles(request types.MirrorTopicsRequest) (types.TerraformFiles, error)
 	GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (types.TerraformFiles, error)
 	GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.MigrationScriptsTerraformProject, error)
+	GenerateMigrateGlueSchemasFiles(request types.MigrateGlueSchemasRequest) (types.MigrationScriptsTerraformProject, error)
 }
 
 // Compile-time interface satisfaction checks.
