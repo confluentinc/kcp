@@ -274,6 +274,25 @@ func TestAdminOptionFunctions(t *testing.T) {
 				clientKeyFile:  "client.key",
 			},
 		},
+		{
+			name:   "WithSASLPlainAuth sets SASL/PLAIN auth with TLS",
+			option: WithSASLPlainAuth("test-user", "test-pass"),
+			expectedConfig: AdminConfig{
+				authType: types.AuthTypeSASLPlain,
+				username: "test-user",
+				password: "test-pass",
+			},
+		},
+		{
+			name:   "WithSASLPlainAuthNoTLS sets SASL/PLAIN auth without TLS",
+			option: WithSASLPlainAuthNoTLS("test-user", "test-pass"),
+			expectedConfig: AdminConfig{
+				authType:   types.AuthTypeSASLPlain,
+				username:   "test-user",
+				password:   "test-pass",
+				disableTLS: true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -289,6 +308,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 			assert.Equal(t, tt.expectedConfig.caCertFile, config.caCertFile)
 			assert.Equal(t, tt.expectedConfig.clientCertFile, config.clientCertFile)
 			assert.Equal(t, tt.expectedConfig.clientKeyFile, config.clientKeyFile)
+			assert.Equal(t, tt.expectedConfig.disableTLS, config.disableTLS)
 		})
 	}
 }
@@ -349,6 +369,58 @@ func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
 	// Verify SCRAM client generator function
 	scramClient := config.Net.SASL.SCRAMClientGeneratorFunc()
 	assert.NotNil(t, scramClient)
+}
+
+func TestConfigureSASLTypePlainAuthentication(t *testing.T) {
+	tests := []struct {
+		name               string
+		withTLSEncryption  bool
+		expectedTLSEnabled bool
+	}{
+		{
+			name:               "with TLS encryption (SASL_SSL)",
+			withTLSEncryption:  true,
+			expectedTLSEnabled: true,
+		},
+		{
+			name:               "without TLS encryption (SASL_PLAINTEXT)",
+			withTLSEncryption:  false,
+			expectedTLSEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := sarama.NewConfig()
+			configureSASLTypePlainAuthentication(config, "user", "pass", tt.withTLSEncryption, false)
+
+			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
+			assert.True(t, config.Net.SASL.Enable)
+			assert.Equal(t, "user", config.Net.SASL.User)
+			assert.Equal(t, "pass", config.Net.SASL.Password)
+			assert.Equal(t, string(sarama.SASLTypePlaintext), string(config.Net.SASL.Mechanism))
+		})
+	}
+}
+
+func TestAdminOptionForAuth_SASLPlain(t *testing.T) {
+	clusterAuth := types.ClusterAuth{
+		AuthMethod: types.AuthMethodConfig{
+			SASLPlain: &types.SASLPlainConfig{
+				Use:      true,
+				Username: "test-user",
+				Password: "test-pass",
+			},
+		},
+	}
+	opt := AdminOptionForAuth(types.AuthTypeSASLPlain, clusterAuth)
+	config := AdminConfig{}
+	opt(&config)
+
+	assert.Equal(t, types.AuthTypeSASLPlain, config.authType)
+	assert.Equal(t, "test-user", config.username)
+	assert.Equal(t, "test-pass", config.password)
+	assert.True(t, config.disableTLS)
 }
 
 func TestConfigureUnauthenticatedAuthentication(t *testing.T) {

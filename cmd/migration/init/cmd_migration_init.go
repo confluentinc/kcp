@@ -36,12 +36,16 @@ var (
 
 	useSaslIam                  bool
 	useSaslScram                bool
+	useSaslPlain                bool
 	useTls                      bool
 	useUnauthenticatedTLS       bool
 	useUnauthenticatedPlaintext bool
 
 	saslScramUsername string
 	saslScramPassword string
+
+	saslPlainUsername string
+	saslPlainPassword string
 
 	tlsCaCert     string
 	tlsClientCert string
@@ -94,11 +98,14 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
-	// Authentication flags.
+	// Authentication flags. These are validated at init time so the user declares their source auth
+	// strategy up front (fail-fast), but credentials are not passed to the initializer — source cluster
+	// connections only happen during 'migration execute'.
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication for the source MSK cluster.")
+	authFlags.BoolVar(&useSaslPlain, "use-sasl-plain", false, "Use SASL/PLAIN authentication for the source cluster.")
 	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
@@ -113,6 +120,14 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
+	// SASL/PLAIN credential flags.
+	saslPlainFlags := pflag.NewFlagSet("sasl-plain", pflag.ExitOnError)
+	saslPlainFlags.SortFlags = false
+	saslPlainFlags.StringVar(&saslPlainUsername, "sasl-plain-username", "", "SASL/PLAIN username for the source cluster.")
+	saslPlainFlags.StringVar(&saslPlainPassword, "sasl-plain-password", "", "SASL/PLAIN password for the source cluster.")
+	migrationInitCmd.Flags().AddFlagSet(saslPlainFlags)
+	groups[saslPlainFlags] = "SASL/PLAIN Flags"
+
 	// TLS credential flags.
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
@@ -125,8 +140,8 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, saslScramFlags, saslPlainFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "SASL/PLAIN Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -152,8 +167,8 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	_ = migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
 	_ = migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
-	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
-	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationInitCmd
 }
@@ -166,6 +181,11 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+	}
+
+	if useSaslPlain {
+		_ = cmd.MarkFlagRequired("sasl-plain-username")
+		_ = cmd.MarkFlagRequired("sasl-plain-password")
 	}
 
 	if useTls {
