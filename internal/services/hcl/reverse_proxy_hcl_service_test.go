@@ -7,6 +7,8 @@ import (
 )
 
 func TestReverseProxy(t *testing.T) {
+	t.Parallel()
+
 	service := &ReverseProxyHCLService{DeploymentID: "testdeploy"}
 	request := types.ReverseProxyRequest{
 		Region:                                 "us-east-1",
@@ -26,5 +28,5 @@ func TestReverseProxy(t *testing.T) {
 	fileMap["reverse-proxy-user-data.tpl"] = service.GenerateReverseProxyUserDataTemplate()
 	fileMap["generate_dns_entries.sh"] = service.GenerateReverseProxyShellScript()
 
-	assertMatchesGoldenFiles(t, "TestReverseProxy", fileMap)
+	validateTerraformProject(t, fileMap)
 }

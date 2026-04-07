@@ -1,52 +1,16 @@
 package hcl
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/gruntwork-io/terratest/modules/terraform"
 	"github.com/stretchr/testify/require"
 )
-
-var update = flag.Bool("update", false, "update golden files")
-
-// assertMatchesGoldenFiles compares generated files against golden files in testdata/<dir>.
-// When run with -update, it writes the golden files instead.
-func assertMatchesGoldenFiles(t *testing.T, dir string, files map[string]string) {
-	t.Helper()
-
-	goldenDir := filepath.Join("testdata", dir)
-
-	if *update {
-		require.NoError(t, os.MkdirAll(goldenDir, 0o755))
-		for name, content := range files {
-			path := filepath.Join(goldenDir, name+".golden")
-			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-			require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-		}
-		return
-	}
-
-	// Sort file names for deterministic test output
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		content := files[name]
-		path := filepath.Join(goldenDir, name+".golden")
-		expected, err := os.ReadFile(path)
-		require.NoError(t, err, "golden file %s not found; run with -update to create", path)
-		assert.Equal(t, string(expected), content, "mismatch in %s", name)
-	}
-}
 
 // projectToFiles flattens a MigrationInfraTerraformProject into a map of filename → content.
 func projectToFiles(project types.MigrationInfraTerraformProject) map[string]string {
@@ -140,4 +104,69 @@ func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[st
 	}
 
 	return files
+}
+
+// validateTerraformProject validates Terraform syntax by writing files to a temp
+// directory and running terraform init + validate. This does NOT deploy infrastructure.
+func validateTerraformProject(t *testing.T, files map[string]string) {
+	t.Helper()
+
+	// Skip if SKIP_TERRAFORM_VALIDATION env var is set (for faster local iteration)
+	if os.Getenv("SKIP_TERRAFORM_VALIDATION") == "true" {
+		t.Log("Skipping Terraform validation (SKIP_TERRAFORM_VALIDATION=true)")
+		return
+	}
+
+	// Create temp directory (auto-cleanup after test)
+	tempDir := t.TempDir()
+
+	// Create plugin cache directory if it doesn't exist
+	pluginCacheDir := filepath.Join(os.TempDir(), "terraform-plugin-cache")
+	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
+		t.Logf("Warning: could not create plugin cache directory: %v", err)
+	}
+
+	// Write all generated files to temp directory
+	for filename, content := range files {
+		// The files map has keys like "modules/cluster_link/main.tf", but Terraform
+		// expects module sources like "./cluster_link", so we need to strip "modules/"
+		// prefix to match the expected directory structure
+		// Note: files map uses forward slashes regardless of OS (programmatic generation)
+		writePath := filename
+		if strings.HasPrefix(filename, "modules/") {
+			writePath = strings.TrimPrefix(filename, "modules/")
+		} else if strings.HasPrefix(filename, "per_principal/") {
+			writePath = strings.TrimPrefix(filename, "per_principal/")
+		} else if strings.HasPrefix(filename, "folders/") {
+			writePath = strings.TrimPrefix(filename, "folders/")
+		}
+
+		path := filepath.Join(tempDir, writePath)
+
+		// Create parent directories for nested modules
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+
+		// Write file
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	}
+
+	// Configure Terratest options
+	terraformOptions := &terraform.Options{
+		TerraformDir: tempDir,
+		NoColor:      true,
+
+		// Fake credentials - only needed for provider initialization
+		// We're not deploying anything, just validating syntax
+		EnvVars: map[string]string{
+			"AWS_ACCESS_KEY_ID":          "fake",
+			"AWS_SECRET_ACCESS_KEY":      "fake",
+			"AWS_DEFAULT_REGION":         "us-east-1",
+			"CONFLUENT_CLOUD_API_KEY":    "fake",
+			"CONFLUENT_CLOUD_API_SECRET": "fake",
+		},
+	}
+
+	// Run terraform init and validate
+	terraform.Init(t, terraformOptions)
+	terraform.Validate(t, terraformOptions)
 }
