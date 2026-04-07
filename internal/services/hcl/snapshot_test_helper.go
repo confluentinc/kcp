@@ -133,11 +133,12 @@ func validateTerraformProject(t *testing.T, files map[string]string) {
 		// prefix to match the expected directory structure
 		// Note: files map uses forward slashes regardless of OS (programmatic generation)
 		writePath := filename
-		if strings.HasPrefix(filename, "modules/") {
+		switch {
+		case strings.HasPrefix(filename, "modules/"):
 			writePath = strings.TrimPrefix(filename, "modules/")
-		} else if strings.HasPrefix(filename, "per_principal/") {
+		case strings.HasPrefix(filename, "per_principal/"):
 			writePath = strings.TrimPrefix(filename, "per_principal/")
-		} else if strings.HasPrefix(filename, "folders/") {
+		case strings.HasPrefix(filename, "folders/"):
 			writePath = strings.TrimPrefix(filename, "folders/")
 		}
 

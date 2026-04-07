@@ -283,12 +283,12 @@ func TestMigrationInfra_JumpCluster_FiveSubnets(t *testing.T) {
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
 	request := types.MigrationWizardRequest{
-		HasPublicMskEndpoints:       false,
-		UseJumpClusters:             true,
-		VpcId:                       "vpc-0123456789abcdef0",
-		HasExistingInternetGateway:  true,
-		JumpClusterInstanceType:     "kafka.m5.large",
-		JumpClusterBrokerStorage:    100,
+		HasPublicMskEndpoints:      false,
+		UseJumpClusters:            true,
+		VpcId:                      "vpc-0123456789abcdef0",
+		HasExistingInternetGateway: true,
+		JumpClusterInstanceType:    "kafka.m5.large",
+		JumpClusterBrokerStorage:   100,
 		JumpClusterBrokerSubnetCidr: []string{ // Five subnets
 			"10.0.1.0/24",
 			"10.0.2.0/24",

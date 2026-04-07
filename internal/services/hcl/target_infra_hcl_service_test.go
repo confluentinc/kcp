@@ -283,4 +283,3 @@ func TestTargetInfra_MultiZone_MinimumCKUs(t *testing.T) {
 	files := projectToFiles(project)
 	validateTerraformProject(t, files)
 }
-
