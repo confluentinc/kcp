@@ -63,11 +63,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				return request.ClusterName
 			},
 			Condition: func(request types.TargetClusterWizardRequest) bool {
-				if request.NeedsEnvironment || request.NeedsCluster {
-					return true
-				} else {
-					return false
-				}
+				return request.NeedsEnvironment || request.NeedsCluster
 			},
 		},
 		{
@@ -119,17 +115,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 }
 
 func GetConfluentCloudVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	confluentCloudVars := GetConfluentCloudVariables()
-
-	for _, varDef := range confluentCloudVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetConfluentCloudVariables(), request)
 }
 
 type ConfluentCloudOutputParams struct {
