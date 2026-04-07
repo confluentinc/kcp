@@ -26,16 +26,16 @@ type UICmdOpts struct {
 
 type UI struct {
 	reportService              ReportService
-	targetInfraHCLService      hcl.TargetInfraHCLService
-	migrationInfraHCLService   hcl.MigrationInfraHCLService
-	migrationScriptsHCLService hcl.MigrationScriptsHCLService
+	targetInfraHCLService      hcl.TargetInfraGenerator
+	migrationInfraHCLService   hcl.MigrationInfraGenerator
+	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
 	port        string
 	states      map[string]*types.State // Session-based state storage (key: sessionId)
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
 	return &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
@@ -241,6 +241,14 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
 			"message": err.Error(),
+		})
+	}
+
+	// Block external outbound cluster linking for dedicated clusters
+	if !req.HasPublicMskEndpoints && !req.UseJumpClusters && req.TargetClusterType == "dedicated" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Unsupported configuration",
+			"message": "External outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4, 5, or 6) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible.",
 		})
 	}
 
