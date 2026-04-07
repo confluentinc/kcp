@@ -18,7 +18,7 @@ func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
 
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one source cluster authentication flag is required")
+	assert.Contains(t, err.Error(), "at least one of the flags")
 }
 
 func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
@@ -41,6 +41,6 @@ func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
 	err := cmd.Execute()
 	// Should fail later (missing state file), NOT on auth validation.
 	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "at least one source cluster authentication flag is required")
+	assert.NotContains(t, err.Error(), "at least one of the flags")
 	assert.Contains(t, err.Error(), "migration state file")
 }

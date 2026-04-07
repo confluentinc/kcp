@@ -117,6 +117,7 @@ interrupted, re-running this command will resume from the last completed step.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationExecuteCmd
 }
@@ -124,10 +125,6 @@ interrupted, re-running this command will resume from the last completed step.`,
 func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
-	}
-
-	if !useSaslIam && !useSaslScram && !useTls && !useUnauthenticatedTLS && !useUnauthenticatedPlaintext {
-		return fmt.Errorf("at least one source cluster authentication flag is required (--use-sasl-iam, --use-sasl-scram, --use-tls, --use-unauthenticated-tls, --use-unauthenticated-plaintext)")
 	}
 
 	if useSaslIam {
