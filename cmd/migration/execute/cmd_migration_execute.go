@@ -104,8 +104,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, iamFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, iamFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
