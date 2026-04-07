@@ -25,9 +25,10 @@ var (
 	saslScramUsername string
 	saslScramPassword string
 
-	tlsCaCert     string
-	tlsClientCert string
-	tlsClientKey  string
+	tlsCaCert             string
+	tlsClientCert         string
+	tlsClientKey          string
+	insecureSkipTLSVerify bool
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -58,6 +59,12 @@ interrupted, re-running this command will resume from the last completed step.`,
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
 
 	// Authentication flags.
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
@@ -97,8 +104,8 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authFlags, iamFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "TLS Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, iamFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "IAM Flags", "SASL/SCRAM Flags", "TLS Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -187,20 +194,21 @@ func resolveAuthType() types.AuthType {
 
 func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
-		MigrationStateFile: migrationStateFile,
-		MigrationState:     migrationState,
-		MigrationConfig:    config,
-		LagThreshold:       lagThreshold,
-		ClusterApiKey:      clusterApiKey,
-		ClusterApiSecret:   clusterApiSecret,
-		ClusterBootstrap:   config.ClusterBootstrap,
-		SourceBootstrap:    config.SourceBootstrap,
-		AWSRegion:          awsRegion,
-		AuthType:           resolveAuthType(),
-		SaslScramUsername:  saslScramUsername,
-		SaslScramPassword:  saslScramPassword,
-		TlsCaCert:          tlsCaCert,
-		TlsClientCert:      tlsClientCert,
-		TlsClientKey:       tlsClientKey,
+		MigrationStateFile:    migrationStateFile,
+		MigrationState:        migrationState,
+		MigrationConfig:       config,
+		LagThreshold:          lagThreshold,
+		ClusterApiKey:         clusterApiKey,
+		ClusterApiSecret:      clusterApiSecret,
+		ClusterBootstrap:      config.ClusterBootstrap,
+		SourceBootstrap:       config.SourceBootstrap,
+		AWSRegion:             awsRegion,
+		AuthType:              resolveAuthType(),
+		SaslScramUsername:     saslScramUsername,
+		SaslScramPassword:     saslScramPassword,
+		TlsCaCert:             tlsCaCert,
+		TlsClientCert:         tlsClientCert,
+		TlsClientKey:          tlsClientKey,
+		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 	}
 }
