@@ -140,8 +140,13 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 
 func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, withTLSEncryption bool, insecureSkipVerify bool) {
 	slog.Info("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
+	if !withTLSEncryption {
+		slog.Warn("SASL/PLAIN without TLS: credentials will be transmitted in cleartext over the network")
+	}
 	config.Net.TLS.Enable = withTLSEncryption
-	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+	if withTLSEncryption {
+		config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+	}
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password

@@ -98,7 +98,9 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
-	// Authentication flags.
+	// Authentication flags. These are validated at init time so the user declares their source auth
+	// strategy up front (fail-fast), but credentials are not passed to the initializer — source cluster
+	// connections only happen during 'migration execute'.
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
