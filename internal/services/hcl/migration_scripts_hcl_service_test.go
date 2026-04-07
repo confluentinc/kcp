@@ -10,6 +10,8 @@ import (
 )
 
 func TestGenerateMigrateAclsFiles_OperationMapping(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
@@ -66,6 +68,8 @@ func TestGenerateMigrateAclsFiles_OperationMapping(t *testing.T) {
 }
 
 func TestGenerateMigrateAclsFiles_NoDuplicateResourceNames(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user_a", "user_b"},
 		TargetClusterId:           "lkc-abc123",
@@ -113,6 +117,8 @@ func TestGenerateMigrateAclsFiles_NoDuplicateResourceNames(t *testing.T) {
 }
 
 func TestGenerateMigrateAclsFiles_PerPrincipalFiles(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"alice", "bob", "charlie"},
 		TargetClusterId:           "lkc-abc123",
@@ -181,6 +187,8 @@ func TestGenerateMigrateAclsFiles_PerPrincipalFiles(t *testing.T) {
 }
 
 func TestGenerateMigrateAclsFiles_FiltersUnsupportedResourceTypes(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
@@ -239,6 +247,8 @@ func TestGenerateMigrateAclsFiles_FiltersUnsupportedResourceTypes(t *testing.T) 
 }
 
 func TestGenerateMigrateAclsFiles_PreventDestroyTrue(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
@@ -268,6 +278,8 @@ func TestGenerateMigrateAclsFiles_PreventDestroyTrue(t *testing.T) {
 }
 
 func TestGenerateMigrateAclsFiles_PreventDestroyFalse(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
@@ -298,6 +310,8 @@ func TestGenerateMigrateAclsFiles_PreventDestroyFalse(t *testing.T) {
 }
 
 func TestGenerateMigrateAclsFiles_ResourceNameIncludesPrincipal(t *testing.T) {
+	t.Parallel()
+
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"my_service"},
 		TargetClusterId:           "lkc-abc123",
@@ -352,6 +366,8 @@ func TestGenerateMigrateAclsFiles_ResourceNameIncludesPrincipal(t *testing.T) {
 }
 
 func TestGenerateMigrateAclsFiles_IAMSourcedOperations(t *testing.T) {
+	t.Parallel()
+
 	// Use operation values exactly as they appear in types.AclMap
 	request := types.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"iam_user"},
@@ -418,4 +434,50 @@ func TestGenerateMigrateAclsFiles_IAMSourcedOperations(t *testing.T) {
 
 	// Verify TransactionalId resource type is supported and included
 	assert.Contains(t, content, `"TRANSACTIONAL_ID"`)
+}
+
+// Edge case test: Principal names with special characters
+func TestGenerateMigrateAclsFiles_PrincipalWithSpecialCharacters(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MigrateAclsRequest{
+		SelectedPrincipals:        []string{"user@example.com", "service.account-123"},
+		TargetClusterId:           "lkc-abc123",
+		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
+		AclsByPrincipal: map[string][]types.Acls{
+			"user@example.com": {
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "User:user@example.com",
+					Host:                "*",
+					Operation:           "Read",
+					PermissionType:      "ALLOW",
+				},
+			},
+			"service.account-123": {
+				{
+					ResourceType:        "Topic",
+					ResourceName:        "*",
+					ResourcePatternType: "LITERAL",
+					Principal:           "User:service.account-123",
+					Host:                "*",
+					Operation:           "Write",
+					PermissionType:      "ALLOW",
+				},
+			},
+		},
+	}
+
+	files, err := service.GenerateMigrateAclsFiles(request)
+	require.NoError(t, err)
+
+	// Files should be created (@ and . might be sanitized in filenames)
+	assert.NotEmpty(t, files.PerPrincipalTf)
+
+	// Validate generated Terraform
+	fileMap := terraformFilesToMap(files)
+	validateTerraformProject(t, fileMap)
 }
