@@ -151,6 +151,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	_ = migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationInitCmd
 }
