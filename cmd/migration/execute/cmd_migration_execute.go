@@ -117,6 +117,7 @@ interrupted, re-running this command will resume from the last completed step.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	return migrationExecuteCmd
 }
