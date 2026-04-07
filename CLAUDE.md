@@ -18,6 +18,9 @@
 
 - Build: `go build ./...`
 - Test: `go test ./...`
+- Fast parallel tests: `go test -p 1 -parallel 4 -count=1 ./...`
+- Terraform validation tests use `t.Parallel()` for faster execution
+- Skip Terraform validation locally: `SKIP_TERRAFORM_VALIDATION=true go test ./...`
 
 ## Git
 

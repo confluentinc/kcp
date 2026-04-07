@@ -23,6 +23,9 @@ var supportedACLResourceTypes = map[string]bool{
 }
 
 type MigrationScriptsHCLService struct {
+	// SchemaRegistryClusterID overrides the random placeholder ID in schema exporter resources.
+	// When empty, a random 8-character string is generated.
+	SchemaRegistryClusterID string
 }
 
 func NewMigrationScriptsHCLService() *MigrationScriptsHCLService {
@@ -336,7 +339,7 @@ func (s *MigrationScriptsHCLService) generateMigrateSchemasMainTf(schemaRegistry
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	rootBody.AppendBlock(confluent.GenerateSchemaExporter(schemaRegistry))
+	rootBody.AppendBlock(confluent.GenerateSchemaExporter(schemaRegistry, s.SchemaRegistryClusterID))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())

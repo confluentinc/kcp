@@ -22,6 +22,7 @@ type MigrateIamAclsOpts struct {
 	TargetClusterId           string
 	TargetClusterRestEndpoint string
 	OutputDir                 string
+	Force                     bool
 	SkipAuditReport           bool
 	PreventDestroy            bool
 }
@@ -85,6 +86,9 @@ func (ig *IamAclsGenerator) Run() error {
 		}
 	}
 
+	if err := utils.ValidateOutputDir(outputDir, ig.opts.Force); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}

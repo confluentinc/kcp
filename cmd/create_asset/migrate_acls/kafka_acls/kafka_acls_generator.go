@@ -19,6 +19,7 @@ type MigrateKafkaAclsOpts struct {
 	TargetClusterId           string
 	TargetClusterRestEndpoint string
 	OutputDir                 string
+	Force                     bool
 	SkipAuditReport           bool
 	PreventDestroy            bool
 }
@@ -41,6 +42,9 @@ func (kg *KafkaAclsGenerator) Run() error {
 		outputDir = fmt.Sprintf("%s_kafka_acls", kg.opts.ClusterName)
 	}
 
+	if err := utils.ValidateOutputDir(outputDir, kg.opts.Force); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
