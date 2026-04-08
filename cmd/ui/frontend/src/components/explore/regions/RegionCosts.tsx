@@ -273,6 +273,13 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
           </p>
         </div>
       )}
+
+      {/* Disclaimer */}
+      <p className="mt-6 text-xs text-gray-400 dark:text-gray-500 italic">
+        Costs shown are aggregated at the region level per AWS service. Services such as EC2 - Other,
+        VPC, and ELB may include costs not directly associated with MSK clusters, as AWS Cost Explorer
+        does not support filtering these services by individual cluster.
+      </p>
     </div>
   )
 }

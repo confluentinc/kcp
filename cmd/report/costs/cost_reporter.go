@@ -338,6 +338,9 @@ func (r *CostReporter) addQueryDetails(md *markdown.Markdown, regionCostData []t
 		regionNames = append(regionNames, regionData.Region)
 	}
 
+	// Add disclaimer
+	md.AddParagraph("*Costs shown are aggregated at the region level per AWS service. Services such as EC2 - Other, VPC, and ELB may include costs not directly associated with MSK clusters, as AWS Cost Explorer does not support filtering these services by individual cluster.*")
+
 	// Add heading
 	md.AddHeading("Query Details", 2)
 
