@@ -61,7 +61,7 @@ func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVar
 		allVars = append(allVars, GetJumpClusterVariables()...)
 	default:
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
-		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
+		allVars = append(allVars, GetPrivateClusterLinkVariables()...)
 		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
 	return allVars
@@ -153,4 +153,3 @@ func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) [
 
 	return definitions
 }
-

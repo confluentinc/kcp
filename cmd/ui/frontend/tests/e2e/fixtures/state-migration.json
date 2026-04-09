@@ -1,0 +1,315 @@
+{
+  "msk_sources": {
+    "regions": [
+      {
+        "name": "us-east-1",
+        "configurations": [],
+        "costs": {
+          "metadata": {},
+          "results": [],
+          "query_info": {}
+        },
+        "clusters": [
+          {
+            "name": "kcp-playground",
+            "arn": "arn:aws:kafka:us-east-1:123456789012:cluster/kcp-playground/00000000-0000-0000-0000-000000000001",
+            "region": "us-east-1",
+            "aws_client_information": {
+              "bootstrap_brokers": {
+                "BootstrapBrokerStringSaslScram": "b-1.kcp-playground.example.com:9096,b-2.kcp-playground.example.com:9096,b-3.kcp-playground.example.com:9096",
+                "BootstrapBrokerStringPublicSaslScram": "b-1.kcp-playground.example.com:9196,b-2.kcp-playground.example.com:9196,b-3.kcp-playground.example.com:9196",
+                "BootstrapBrokerStringSaslIam": "b-1.kcp-playground.example.com:9098,b-2.kcp-playground.example.com:9098,b-3.kcp-playground.example.com:9098"
+              },
+              "msk_cluster_config": {
+                "ClusterName": "kcp-playground",
+                "ClusterArn": "arn:aws:kafka:us-east-1:123456789012:cluster/kcp-playground/00000000-0000-0000-0000-000000000001",
+                "ClusterType": "PROVISIONED",
+                "CreationTime": "2026-01-01T00:00:00Z",
+                "State": "ACTIVE",
+                "CurrentVersion": "K1V1",
+                "Tags": {
+                  "Environment": "test"
+                },
+                "Provisioned": {
+                  "NumberOfBrokerNodes": 3,
+                  "BrokerNodeGroupInfo": {
+                    "InstanceType": "kafka.m5.large",
+                    "ClientSubnets": [
+                      "subnet-00000000000000001",
+                      "subnet-00000000000000002",
+                      "subnet-00000000000000003"
+                    ],
+                    "SecurityGroups": [
+                      "sg-00000000000000001"
+                    ],
+                    "BrokerAZDistribution": "DEFAULT",
+                    "ConnectivityInfo": {},
+                    "StorageInfo": {
+                      "EbsStorageInfo": {
+                        "VolumeSize": 100
+                      }
+                    },
+                    "ZoneIds": ["use1-az1", "use1-az2", "use1-az3"]
+                  },
+                  "ClientAuthentication": {
+                    "Sasl": {
+                      "Scram": { "Enabled": true },
+                      "Iam": { "Enabled": true }
+                    },
+                    "Tls": { "Enabled": false },
+                    "Unauthenticated": { "Enabled": false }
+                  },
+                  "EnhancedMonitoring": "PER_TOPIC_PER_BROKER",
+                  "ZookeeperConnectString": "z-1.kcp-playground.example.com:2181",
+                  "ZookeeperConnectStringTls": "z-1.kcp-playground.example.com:2182"
+                }
+              },
+              "nodes": [
+                {
+                  "NodeType": "BROKER",
+                  "BrokerNodeInfo": {
+                    "BrokerId": 1,
+                    "ClientSubnet": "subnet-00000000000000001",
+                    "Endpoints": ["b-1.kcp-playground.example.com"]
+                  }
+                },
+                {
+                  "NodeType": "BROKER",
+                  "BrokerNodeInfo": {
+                    "BrokerId": 2,
+                    "ClientSubnet": "subnet-00000000000000002",
+                    "Endpoints": ["b-2.kcp-playground.example.com"]
+                  }
+                },
+                {
+                  "NodeType": "BROKER",
+                  "BrokerNodeInfo": {
+                    "BrokerId": 3,
+                    "ClientSubnet": "subnet-00000000000000003",
+                    "Endpoints": ["b-3.kcp-playground.example.com"]
+                  }
+                }
+              ],
+              "cluster_networking": {
+                "vpc_id": "vpc-00000000000000001",
+                "subnet_ids": ["subnet-00000000000000001", "subnet-00000000000000002", "subnet-00000000000000003"],
+                "security_groups": ["sg-00000000000000001"],
+                "subnets": [
+                  {
+                    "subnet_id": "subnet-00000000000000001",
+                    "subnet_msk_broker_id": 1,
+                    "private_ip_address": "10.0.1.10"
+                  },
+                  {
+                    "subnet_id": "subnet-00000000000000002",
+                    "subnet_msk_broker_id": 2,
+                    "private_ip_address": "10.0.2.10"
+                  },
+                  {
+                    "subnet_id": "subnet-00000000000000003",
+                    "subnet_msk_broker_id": 3,
+                    "private_ip_address": "10.0.3.10"
+                  }
+                ]
+              },
+              "cluster_operations": [],
+              "client_vpc_connections": [],
+              "connectors": [],
+              "ScramSecrets": []
+            },
+            "kafka_admin_client_information": {
+              "cluster_id": "test-cluster-id-001",
+              "sasl_mechanism": "SCRAM-SHA-512",
+              "topics": {
+                "summary": {
+                  "topics": 3,
+                  "total_partitions": 9,
+                  "internal_topics": 1,
+                  "compact_topics": 0
+                },
+                "details": [
+                  {
+                    "name": "orders",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "delete",
+                      "retention.ms": "604800000"
+                    }
+                  },
+                  {
+                    "name": "events",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "delete"
+                    }
+                  },
+                  {
+                    "name": "test-topic-1",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "compact"
+                    }
+                  }
+                ]
+              },
+              "acls": [
+                {
+                  "ResourceType": "TOPIC",
+                  "ResourceName": "orders",
+                  "ResourcePatternType": "LITERAL",
+                  "Principal": "User:admin",
+                  "Host": "*",
+                  "Operation": "ALL",
+                  "PermissionType": "ALLOW"
+                },
+                {
+                  "ResourceType": "GROUP",
+                  "ResourceName": "consumer-group-1",
+                  "ResourcePatternType": "LITERAL",
+                  "Principal": "User:reader",
+                  "Host": "*",
+                  "Operation": "READ",
+                  "PermissionType": "ALLOW"
+                }
+              ],
+              "self_managed_connectors": null
+            },
+            "metrics": {
+              "metadata": {
+                "instance_type": "kafka.m5.large",
+                "broker_type": "kafka.m5.large",
+                "period": 86400
+              },
+              "results": [
+                {
+                  "Id": "bytes_in",
+                  "Label": "BytesInPerSec",
+                  "Timestamps": ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+                  "Values": [1024000, 1100000]
+                },
+                {
+                  "Id": "bytes_out",
+                  "Label": "BytesOutPerSec",
+                  "Timestamps": ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+                  "Values": [2048000, 2200000]
+                }
+              ],
+              "query_info": []
+            },
+            "discovered_clients": null
+          }
+        ]
+      }
+    ]
+  },
+  "osk_sources": {
+    "clusters": [
+      {
+        "id": "production-kafka-us-east",
+        "bootstrap_servers": [
+          "broker1.prod-kafka.example.com:9092",
+          "broker2.prod-kafka.example.com:9092",
+          "broker3.prod-kafka.example.com:9092"
+        ],
+        "kafka_admin_client_information": {
+          "cluster_id": "osk-cluster-id-001",
+          "sasl_mechanism": "SCRAM-SHA-256",
+          "topics": {
+            "summary": {
+              "topics": 4,
+              "total_partitions": 12,
+              "internal_topics": 1,
+              "compact_topics": 1
+            },
+            "details": [
+              {
+                "name": "orders",
+                "partitions": 3,
+                "replication_factor": 3,
+                "configurations": {
+                  "cleanup.policy": "delete",
+                  "retention.ms": "604800000"
+                }
+              },
+              {
+                "name": "events",
+                "partitions": 3,
+                "replication_factor": 3,
+                "configurations": {
+                  "cleanup.policy": "delete"
+                }
+              },
+              {
+                "name": "test-topic-1",
+                "partitions": 3,
+                "replication_factor": 3,
+                "configurations": {
+                  "cleanup.policy": "compact"
+                }
+              },
+              {
+                "name": "test-topic-2",
+                "partitions": 3,
+                "replication_factor": 2,
+                "configurations": {
+                  "cleanup.policy": "delete"
+                }
+              }
+            ]
+          },
+          "acls": [
+            {
+              "ResourceType": "TOPIC",
+              "ResourceName": "orders",
+              "ResourcePatternType": "LITERAL",
+              "Principal": "User:app-producer",
+              "Host": "*",
+              "Operation": "WRITE",
+              "PermissionType": "ALLOW"
+            },
+            {
+              "ResourceType": "TOPIC",
+              "ResourceName": "orders",
+              "ResourcePatternType": "LITERAL",
+              "Principal": "User:app-consumer",
+              "Host": "*",
+              "Operation": "READ",
+              "PermissionType": "ALLOW"
+            },
+            {
+              "ResourceType": "GROUP",
+              "ResourceName": "order-processors",
+              "ResourcePatternType": "LITERAL",
+              "Principal": "User:app-consumer",
+              "Host": "*",
+              "Operation": "READ",
+              "PermissionType": "ALLOW"
+            }
+          ],
+          "self_managed_connectors": null
+        },
+        "discovered_clients": [],
+        "metadata": {
+          "environment": "production",
+          "location": "us-east-1",
+          "kafka_version": "3.6.0",
+          "labels": {
+            "team": "platform",
+            "cost-center": "engineering"
+          },
+          "last_scanned": "2026-03-13T10:00:00Z"
+        }
+      }
+    ]
+  },
+  "schema_registries": [],
+  "kcp_build_info": {
+    "version": "0.0.0-test",
+    "commit": "0000000000000000000000000000000000000000",
+    "date": "2026-03-13T00:00:00Z"
+  },
+  "timestamp": "2026-03-13T10:00:00Z"
+}

@@ -262,11 +262,14 @@ func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
 }
 
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
-	for i, region := range s.State.Regions {
+	if s.State.MSKSources == nil {
+		return fmt.Errorf("no MSK sources found in state file")
+	}
+	for i, region := range s.State.MSKSources.Regions {
 		for j, cluster := range region.Clusters {
 			if cluster.Arn == s.ClusterArn {
-				s.State.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
-				fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+				s.State.MSKSources.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
+				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", utils.ExtractClusterNameFromArn(s.ClusterArn)))
 
 				return nil
 			}

@@ -15,7 +15,7 @@ var (
 	roleArn                   string
 	userArn                   string
 	stateFile                 string
-	clusterArn                string
+	clusterId                 string
 	outputDir                 string
 	force                     bool
 	skipAuditReport           bool
@@ -41,7 +41,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	requiredFlags.StringVar(&roleArn, "role-arn", "", "IAM Role ARN to convert ACLs from")
 	requiredFlags.StringVar(&userArn, "user-arn", "", "IAM User ARN to convert ACLs from")
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file.")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the cluster to migrate ACLs from.")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster.")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
 	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	aclsCmd.Flags().AddFlagSet(requiredFlags)
@@ -68,7 +68,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 				if groupNames[i] == "Required Flags" {
 					fmt.Printf("  (Provide either --role-arn OR --user-arn OR --state-file)\n")
-					fmt.Printf("  (If --state-file is provided, --cluster-arn is also required)\n\n")
+					fmt.Printf("  (If --state-file is provided, --cluster-id is also required)\n\n")
 				}
 			}
 		}
@@ -80,9 +80,9 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 
 	aclsCmd.MarkFlagsOneRequired("role-arn", "user-arn", "state-file")
 	aclsCmd.MarkFlagsMutuallyExclusive("role-arn", "user-arn", "state-file")
-	aclsCmd.MarkFlagsRequiredTogether("state-file", "cluster-arn")
-	_ = aclsCmd.MarkFlagRequired("target-cluster-id")
-	_ = aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
+	aclsCmd.MarkFlagsRequiredTogether("state-file", "cluster-id")
+	aclsCmd.MarkFlagRequired("target-cluster-id")
+	aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
 	return aclsCmd
 }
@@ -122,7 +122,7 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
-		principals, err := parseClientDiscoveryFile(clusterArn, state)
+		principals, err := parseClientDiscoveryFile(clusterId, state)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse client discovery file: %v", err)
 		}
@@ -147,8 +147,8 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 	return &opts, nil
 }
 
-func parseClientDiscoveryFile(clusterArn string, state *types.State) ([]string, error) {
-	cluster, err := state.GetClusterByArn(clusterArn)
+func parseClientDiscoveryFile(clusterId string, state *types.State) ([]string, error) {
+	cluster, err := state.GetClusterByArn(clusterId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}

@@ -18,61 +18,42 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
-// State represents the raw input data structure (kcp-state.json file)
-// This is what gets fed INTO the frontend/API for processing
-type State struct {
-	Regions          []DiscoveredRegion     `json:"regions"`
-	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
-	Timestamp        time.Time              `json:"timestamp"`
+// MSKSourcesState contains all MSK-specific data
+type MSKSourcesState struct {
+	Regions []DiscoveredRegion `json:"regions"`
 }
 
-// UnmarshalJSON implements custom JSON unmarshaling for State to handle
-// backward compatibility with the old schema_registries array format.
-func (s *State) UnmarshalJSON(data []byte) error {
-	// Use an alias to avoid infinite recursion
-	type StateAlias State
-	var raw struct {
-		StateAlias
-		SchemaRegistriesRaw json.RawMessage `json:"schema_registries"`
-	}
+// OSKSourcesState contains all OSK-specific data
+type OSKSourcesState struct {
+	Clusters []OSKDiscoveredCluster `json:"clusters"`
+}
 
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
+// OSKDiscoveredCluster represents a discovered OSK cluster
+type OSKDiscoveredCluster struct {
+	ID                          string                      `json:"id"`
+	BootstrapServers            []string                    `json:"bootstrap_servers"`
+	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	ClusterMetrics              *ProcessedClusterMetrics    `json:"metrics,omitempty"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
+	Metadata                    OSKClusterMetadata          `json:"metadata"`
+}
 
-	*s = State(raw.StateAlias)
-	s.SchemaRegistries = nil
+// OSKClusterMetadata contains optional metadata about OSK clusters
+type OSKClusterMetadata struct {
+	Environment  string            `json:"environment,omitempty"`
+	Location     string            `json:"location,omitempty"`
+	KafkaVersion string            `json:"kafka_version,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	LastScanned  time.Time         `json:"last_scanned"`
+}
 
-	if len(raw.SchemaRegistriesRaw) == 0 || string(raw.SchemaRegistriesRaw) == "null" {
-		return nil
-	}
-
-	// Detect format: array (old) vs object (new)
-	trimmed := raw.SchemaRegistriesRaw
-	for len(trimmed) > 0 && (trimmed[0] == ' ' || trimmed[0] == '\t' || trimmed[0] == '\n' || trimmed[0] == '\r') {
-		trimmed = trimmed[1:]
-	}
-
-	if len(trimmed) > 0 && trimmed[0] == '[' {
-		// Old format: array of SchemaRegistryInformation
-		var oldFormat []SchemaRegistryInformation
-		if err := json.Unmarshal(raw.SchemaRegistriesRaw, &oldFormat); err != nil {
-			return fmt.Errorf("failed to unmarshal old schema_registries format: %w", err)
-		}
-		s.SchemaRegistries = &SchemaRegistriesState{
-			ConfluentSchemaRegistry: oldFormat,
-		}
-	} else if len(trimmed) > 0 && trimmed[0] == '{' {
-		// New format: object with typed keys
-		var newFormat SchemaRegistriesState
-		if err := json.Unmarshal(raw.SchemaRegistriesRaw, &newFormat); err != nil {
-			return fmt.Errorf("failed to unmarshal schema_registries: %w", err)
-		}
-		s.SchemaRegistries = &newFormat
-	}
-
-	return nil
+// State represents the unified state file (kcp-state.json)
+type State struct {
+	MSKSources       *MSKSourcesState            `json:"msk_sources,omitempty"`
+	OSKSources       *OSKSourcesState            `json:"osk_sources,omitempty"`
+	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
+	Timestamp        time.Time                   `json:"timestamp"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -87,13 +68,39 @@ func NewStateFrom(fromState *State) *State {
 	}
 
 	if fromState == nil {
-		workingState.Regions = []DiscoveredRegion{}
+		// Initialize both sources with empty arrays
+		workingState.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+		workingState.OSKSources = &OSKSourcesState{
+			Clusters: []OSKDiscoveredCluster{},
+		}
 	} else {
-		// Copy existing regions to preserve untouched regions
-		workingState.Regions = make([]DiscoveredRegion, len(fromState.Regions))
-		copy(workingState.Regions, fromState.Regions)
-		// Copy schema registries to preserve schema data across discovery runs
-		workingState.SchemaRegistries = fromState.SchemaRegistries
+		// Copy existing MSK data or initialize empty
+		if fromState.MSKSources != nil {
+			mskSources := &MSKSourcesState{
+				Regions: make([]DiscoveredRegion, len(fromState.MSKSources.Regions)),
+			}
+			copy(mskSources.Regions, fromState.MSKSources.Regions)
+			workingState.MSKSources = mskSources
+		} else {
+			workingState.MSKSources = &MSKSourcesState{
+				Regions: []DiscoveredRegion{},
+			}
+		}
+
+		// Copy existing OSK data or initialize empty
+		if fromState.OSKSources != nil {
+			oskSources := &OSKSourcesState{
+				Clusters: make([]OSKDiscoveredCluster, len(fromState.OSKSources.Clusters)),
+			}
+			copy(oskSources.Clusters, fromState.OSKSources.Clusters)
+			workingState.OSKSources = oskSources
+		} else {
+			workingState.OSKSources = &OSKSourcesState{
+				Clusters: []OSKDiscoveredCluster{},
+			}
+		}
 	}
 
 	return workingState
@@ -139,17 +146,19 @@ func (s *State) WriteReportCommands(filePath string, stateFilePath string) error
 	clusterCommands := []string{"# Report cluster metrics commands"}
 
 	// Loop through regions
-	for _, region := range s.Regions {
-		// Output command for report costs for this region
-		regionCommand := []string{fmt.Sprintf("# region: %s", region.Name)}
-		regionCommand = append(regionCommand, fmt.Sprintf("kcp report costs --state-file %s --region %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, region.Name))
-		regionCommands = append(regionCommands, strings.Join(regionCommand, "\n"))
+	if s.MSKSources != nil {
+		for _, region := range s.MSKSources.Regions {
+			// Output command for report costs for this region
+			regionCommand := []string{fmt.Sprintf("# region: %s", region.Name)}
+			regionCommand = append(regionCommand, fmt.Sprintf("kcp report costs --state-file %s --region %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, region.Name))
+			regionCommands = append(regionCommands, strings.Join(regionCommand, "\n"))
 
-		// Loop through clusters in this region
-		for _, cluster := range region.Clusters {
-			clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
-			clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-arn %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
-			clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
+			// Loop through clusters in this region
+			for _, cluster := range region.Clusters {
+				clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
+				clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-arn %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
+				clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
+			}
 		}
 	}
 
@@ -174,23 +183,31 @@ func (s *State) PersistStateFile(stateFile string) error {
 }
 
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
-	for i, existingRegion := range s.Regions {
+	if s.MSKSources == nil {
+		s.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+	}
+	for i, existingRegion := range s.MSKSources.Regions {
 		if existingRegion.Name == newRegion.Name {
 			discoveredClusters := newRegion.Clusters
 			newRegion.Clusters = existingRegion.Clusters
 			// set discovered clusters and refresh into state (preserves KafkaAdminClientInformation)
 			newRegion.RefreshClusters(discoveredClusters)
-			s.Regions[i] = newRegion
+			s.MSKSources.Regions[i] = newRegion
 			return
 		}
 	}
-	s.Regions = append(s.Regions, newRegion)
+	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
 }
 
 func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
 	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
-	for i := range s.Regions {
-		region := &s.Regions[i]
+	if s.MSKSources == nil {
+		return fmt.Errorf("no MSK sources found in state file")
+	}
+	for i := range s.MSKSources.Regions {
+		region := &s.MSKSources.Regions[i]
 		if region.Name == regionName {
 			for j := range region.Clusters {
 				cluster := &region.Clusters[j]
@@ -226,15 +243,32 @@ func dedupDiscoveredClients(discoveredClients []DiscoveredClient) []DiscoveredCl
 }
 
 func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
-	for _, region := range s.Regions {
-		for _, cluster := range region.Clusters {
-			if cluster.Arn == clusterArn {
-				return &cluster, nil
+	if s.MSKSources != nil {
+		for i := range s.MSKSources.Regions {
+			for j := range s.MSKSources.Regions[i].Clusters {
+				if s.MSKSources.Regions[i].Clusters[j].Arn == clusterArn {
+					return &s.MSKSources.Regions[i].Clusters[j], nil
+				}
 			}
 		}
 	}
 
 	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
+}
+
+// GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
+func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
+	if s.OSKSources == nil {
+		return nil, fmt.Errorf("no OSK sources in state file")
+	}
+
+	for i := range s.OSKSources.Clusters {
+		if s.OSKSources.Clusters[i].ID == id {
+			return &s.OSKSources.Clusters[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("OSK cluster with ID '%s' not found in state file", id)
 }
 
 type DiscoveredRegion struct {
@@ -273,6 +307,11 @@ func (c *KafkaAdminClientInformation) MergeFrom(other KafkaAdminClientInformatio
 	// Only use old ClusterID if new one is empty
 	if c.ClusterID == "" {
 		c.ClusterID = other.ClusterID
+	}
+
+	// Only use old SaslMechanism if new one is empty
+	if c.SaslMechanism == "" {
+		c.SaslMechanism = other.SaslMechanism
 	}
 
 	// Merge Topics: new topics take precedence, old topics preserved if not re-discovered
@@ -540,12 +579,17 @@ type SelfManagedConnectors struct {
 
 type KafkaAdminClientInformation struct {
 	ClusterID             string                 `json:"cluster_id"`
+	DiscoveredBrokers     []string               `json:"discovered_brokers,omitempty"`
+	SaslMechanism         string                 `json:"sasl_mechanism,omitempty"`
 	Topics                *Topics                `json:"topics"`
 	Acls                  []Acls                 `json:"acls"`
 	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`
 }
 
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
+	if c.Topics == nil {
+		return TopicSummary{}
+	}
 	return CalculateTopicSummaryFromDetails(c.Topics.Details)
 }
 
@@ -731,10 +775,10 @@ type GlueSchemaVersion struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Regions          []ProcessedRegion      `json:"regions"`
-	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
-	Timestamp        time.Time              `json:"timestamp"`
+	Sources          []ProcessedSource           `json:"sources"`
+	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	KcpBuildInfo     interface{}                 `json:"kcp_build_info,omitempty"`
+	Timestamp        time.Time                   `json:"timestamp"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters
@@ -877,4 +921,39 @@ type ServiceCostAggregates struct {
 	AmortizedCost    map[string]any `json:"amortized_cost"`
 	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
 	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
+}
+
+// SourceType represents the type of Kafka source
+type SourceType string
+
+const (
+	SourceTypeMSK SourceType = "msk"
+	SourceTypeOSK SourceType = "osk"
+)
+
+// ProcessedSource represents a unified source (MSK or OSK) with discriminated union
+type ProcessedSource struct {
+	Type    SourceType          `json:"type"`
+	MSKData *ProcessedMSKSource `json:"msk_data,omitempty"`
+	OSKData *ProcessedOSKSource `json:"osk_data,omitempty"`
+}
+
+// ProcessedMSKSource contains processed MSK data (regions)
+type ProcessedMSKSource struct {
+	Regions []ProcessedRegion `json:"regions"`
+}
+
+// ProcessedOSKSource contains processed OSK data (flat cluster array)
+type ProcessedOSKSource struct {
+	Clusters []ProcessedOSKCluster `json:"clusters"`
+}
+
+// ProcessedOSKCluster represents an OSK cluster in the API response
+type ProcessedOSKCluster struct {
+	ID                          string                      `json:"id"`
+	BootstrapServers            []string                    `json:"bootstrap_servers"`
+	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
+	ClusterMetrics              *ProcessedClusterMetrics    `json:"metrics,omitempty"`
+	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
+	Metadata                    OSKClusterMetadata          `json:"metadata"`
 }

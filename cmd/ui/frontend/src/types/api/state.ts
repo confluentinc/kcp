@@ -1,4 +1,26 @@
 import type { Region } from '@/types'
+import type { ProcessedOSKSource } from '@/types/osk'
+
+/**
+ * Source type discriminator
+ */
+export type SourceType = 'msk' | 'osk'
+
+/**
+ * Processed MSK Source (contains regions)
+ */
+export interface ProcessedMSKSource {
+  regions: Region[]
+}
+
+/**
+ * Processed Source (discriminated union)
+ */
+export interface ProcessedSource {
+  type: SourceType
+  msk_data?: ProcessedMSKSource
+  osk_data?: ProcessedOSKSource
+}
 
 /**
  * Confluent Schema Registry structure
@@ -66,7 +88,7 @@ export interface SchemaRegistriesState {
  * Processed state structure from backend
  */
 export interface ProcessedState {
-  regions: Region[]
+  sources: ProcessedSource[]
   schema_registries?: SchemaRegistriesState
   kcp_build_info?: unknown
   timestamp?: string
@@ -76,17 +98,24 @@ export interface ProcessedState {
  * State upload request payload
  */
 export interface StateUploadRequest {
-  regions: Region[]
-  schema_registries?: SchemaRegistriesState
-  [key: string]: unknown
+  msk_sources?: {
+    regions: Region[]
+  }
+  osk_sources?: {
+    clusters: any[] // Will be processed by backend
+  }
+  schema_registries?: SchemaRegistry[]
+  kcp_build_info?: unknown
+  timestamp?: string
 }
 
 /**
- * State upload API response
+ * State upload API response (same as ProcessedState)
  */
 export interface StateUploadResponse {
-  regions: Region[]
-  schema_registries?: SchemaRegistriesState
+  sources: ProcessedSource[]
+  schema_registries?: SchemaRegistry[]
+  kcp_build_info?: unknown
+  timestamp?: string
   message?: string
 }
-
