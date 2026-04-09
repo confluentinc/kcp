@@ -336,7 +336,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.HasPublicMskEndpoints {
+	if req.HasPublicEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",

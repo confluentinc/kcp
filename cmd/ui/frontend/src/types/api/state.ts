@@ -104,7 +104,7 @@ export interface StateUploadRequest {
   osk_sources?: {
     clusters: any[] // Will be processed by backend
   }
-  schema_registries?: SchemaRegistry[]
+  schema_registries?: SchemaRegistriesState
   kcp_build_info?: unknown
   timestamp?: string
 }
@@ -114,7 +114,7 @@ export interface StateUploadRequest {
  */
 export interface StateUploadResponse {
   sources: ProcessedSource[]
-  schema_registries?: SchemaRegistry[]
+  schema_registries?: SchemaRegistriesState
   kcp_build_info?: unknown
   timestamp?: string
   message?: string

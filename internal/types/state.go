@@ -51,7 +51,7 @@ type OSKClusterMetadata struct {
 type State struct {
 	MSKSources       *MSKSourcesState            `json:"msk_sources,omitempty"`
 	OSKSources       *OSKSourcesState            `json:"osk_sources,omitempty"`
-	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
 	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
 	Timestamp        time.Time                   `json:"timestamp"`
 }
@@ -776,7 +776,7 @@ type GlueSchemaVersion struct {
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
 	Sources          []ProcessedSource           `json:"sources"`
-	SchemaRegistries []SchemaRegistryInformation `json:"schema_registries"`
+	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
 	KcpBuildInfo     interface{}                 `json:"kcp_build_info,omitempty"`
 	Timestamp        time.Time                   `json:"timestamp"`
 }

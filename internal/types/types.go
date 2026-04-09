@@ -102,6 +102,15 @@ const (
 	JumpClusterIam                       MigrationType = 6
 )
 
+func (m MigrationType) IsValid() bool {
+	switch m {
+	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkUnauthTls, JumpClusterSaslScram, JumpClusterIam:
+		return true
+	default:
+		return false
+	}
+}
+
 func ToMigrationType(input string) (MigrationType, error) {
 	value, err := strconv.Atoi(input)
 	if err != nil {
@@ -182,6 +191,7 @@ type MigrationWizardRequest struct {
 	JumpClusterIamAuthRoleName      string `json:"jump_cluster_iam_auth_role_name"`
 	SourceSaslScramBootstrapServers string `json:"source_sasl_scram_bootstrap_servers"`
 	SourceSaslScramMechanism        string `json:"source_sasl_scram_mechanism"`
+	SourceUnauthTlsBootstrapServers string `json:"source_unauth_tls_bootstrap_servers"`
 	SourceSaslIamBootstrapServers   string `json:"source_sasl_iam_bootstrap_servers"`
 	SourceRegion                    string `json:"source_region"`
 	TargetEnvironmentId             string `json:"target_environment_id"`

@@ -70,7 +70,7 @@
       }
     ]
   },
-  "schema_registries": [],
+  "schema_registries": {},
   "kcp_build_info": {
     "version": "dev",
     "commit": "abc123",

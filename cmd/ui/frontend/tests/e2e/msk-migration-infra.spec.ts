@@ -56,8 +56,13 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Select External Outbound (index 1 = "No, use external outbound cluster linking")
-    await page.locator('#root_use_jump_clusters-1').click()
+    // Select Enterprise target cluster type
+    await page.locator('#root_target_cluster_type-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Select External Outbound SASL/SCRAM (index 0)
+    await page.locator('#root_private_migration_method-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -88,8 +93,13 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Jump Cluster (index 0 = Yes)
-    await page.locator('#root_use_jump_clusters-0').click()
+    // Select Enterprise target cluster type
+    await page.locator('#root_target_cluster_type-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Jump Cluster (index 2)
+    await page.locator('#root_private_migration_method-2').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -148,8 +158,13 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
-    // Jump Cluster (index 0 = Yes)
-    await page.locator('#root_use_jump_clusters-0').click()
+    // Select Enterprise target cluster type
+    await page.locator('#root_target_cluster_type-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Jump Cluster (index 2)
+    await page.locator('#root_private_migration_method-2').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 

@@ -305,7 +305,7 @@
       }
     ]
   },
-  "schema_registries": [],
+  "schema_registries": {},
   "kcp_build_info": {
     "version": "0.0.0-test",
     "commit": "0000000000000000000000000000000000000000",

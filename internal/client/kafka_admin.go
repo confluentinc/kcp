@@ -96,7 +96,7 @@ func WithSASLPlainAuthNoTLS(username, password string) AdminOption {
 // WithInsecureSkipVerify disables TLS certificate verification.
 func WithInsecureSkipVerify() AdminOption {
 	return func(config *AdminConfig) {
-		config.insecureSkipVerify = true
+		config.insecureSkipTLSVerify = true
 	}
 }
 
@@ -106,7 +106,7 @@ func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) 
 	case types.AuthTypeIAM:
 		return WithIAMAuth()
 	case types.AuthTypeSASLSCRAM:
-		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password)
+		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password, clusterAuth.AuthMethod.SASLScram.Mechanism, false)
 	case types.AuthTypeUnauthenticatedTLS:
 		return WithUnauthenticatedTlsAuth()
 	case types.AuthTypeUnauthenticatedPlaintext:

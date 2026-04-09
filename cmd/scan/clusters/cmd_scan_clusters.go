@@ -217,7 +217,7 @@ func loadOrCreateState(stateFilePath string) (*types.State, error) {
 		return &types.State{
 			MSKSources:       &types.MSKSourcesState{Regions: []types.DiscoveredRegion{}},
 			OSKSources:       &types.OSKSourcesState{Clusters: []types.OSKDiscoveredCluster{}},
-			SchemaRegistries: []types.SchemaRegistryInformation{},
+			SchemaRegistries: &types.SchemaRegistriesState{},
 			KcpBuildInfo:     types.KcpBuildInfo{},
 			Timestamp:        time.Now(),
 		}, nil

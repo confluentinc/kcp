@@ -198,7 +198,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	}
 
 	switch targetType {
-	case types.PublicSourceEndpoints:
+	case types.PublicMskEndpoints:
 		// No additional flag requirements.
 
 	case types.ExternalOutboundClusterLink, types.ExternalOutboundClusterLinkUnauthTls:
@@ -325,7 +325,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	switch targetType {
-	case types.PublicSourceEndpoints:
+	case types.PublicMskEndpoints:
 		opts.MigrationWizardRequest.HasPublicEndpoints = true
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
@@ -363,7 +363,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.ExtOutboundBrokers = extOutboundBrokers
 
 	case types.ExternalOutboundClusterLinkUnauthTls:
-		opts.MigrationWizardRequest.HasPublicMskEndpoints = false
+		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
 		opts.MigrationWizardRequest.ExtOutboundSubnetId = extOutboundSubnetId
@@ -385,8 +385,8 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			}
 		}
 
-		opts.MigrationWizardRequest.MskJumpClusterAuthType = "unauth_tls"
-		opts.MigrationWizardRequest.MskUnauthTlsBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.JumpClusterAuthType = "unauth_tls"
+		opts.MigrationWizardRequest.SourceUnauthTlsBootstrapServers = bootstrapBrokers
 
 		extOutboundBrokers, err := buildExtOutboundBrokersForUnauthTls(cluster)
 		if err != nil {
@@ -499,7 +499,7 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	switch targetType {
-	case types.PublicSourceEndpoints:
+	case types.PublicMskEndpoints:
 		opts.MigrationWizardRequest.HasPublicEndpoints = true
 		opts.MigrationWizardRequest.UseJumpClusters = false
 		opts.MigrationWizardRequest.SourceSaslScramBootstrapServers = bootstrapServers
@@ -576,7 +576,7 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 	var authMethod string
 
 	switch migrationType {
-	case types.PublicSourceEndpoints:
+	case types.PublicMskEndpoints:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
 		authMethod = "public SASL/SCRAM"
 	case types.ExternalOutboundClusterLink:

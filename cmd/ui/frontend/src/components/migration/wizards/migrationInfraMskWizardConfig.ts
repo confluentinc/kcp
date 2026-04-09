@@ -464,26 +464,26 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                   cluster?.aws_client_information?.cluster_networking?.security_groups?.[0] ||
                   'failed to retrieve security group ID from statefile.',
               },
-              msk_region: {
+              source_region: {
                 type: 'string',
                 title: 'MSK Region',
                 default: cluster?.region || 'failed to retrieve AWS region from statefile.',
               },
-              msk_cluster_id: {
+              source_cluster_id: {
                 type: 'string',
                 title: 'MSK Cluster ID',
                 default:
                   cluster?.kafka_admin_client_information?.cluster_id ||
                   'failed to retrieve MSK cluster ID from statefile.',
               },
-              msk_unauth_tls_bootstrap_servers: {
+              source_unauth_tls_bootstrap_servers: {
                 type: 'string',
                 title: 'MSK Bootstrap Servers (TLS)',
                 default:
                   cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringTls ||
                   'failed to retrieve MSK TLS bootstrap servers from statefile.',
               },
-              msk_jump_cluster_auth_type: {
+              jump_cluster_auth_type: {
                 type: 'string',
                 title: 'Auth Type',
                 default: 'unauth_tls',
@@ -548,10 +548,10 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'target_rest_endpoint',
               'ext_outbound_subnet_id',
               'ext_outbound_security_group_id',
-              'msk_region',
+              'source_region',
               'vpc_id',
-              'msk_cluster_id',
-              'msk_unauth_tls_bootstrap_servers',
+              'source_cluster_id',
+              'source_unauth_tls_bootstrap_servers',
               'aws_kafka_brokers',
             ],
           },
@@ -578,19 +578,19 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             ext_outbound_security_group_id: {
               'ui:placeholder': 'e.g., sg-xxxxxx',
             },
-            msk_region: {
+            source_region: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            msk_cluster_id: {
+            source_cluster_id: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            msk_unauth_tls_bootstrap_servers: {
+            source_unauth_tls_bootstrap_servers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            msk_jump_cluster_auth_type: {
+            jump_cluster_auth_type: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
@@ -671,6 +671,11 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
           schema: {
             type: 'object',
             properties: {
+              use_jump_clusters: {
+                type: 'boolean',
+                title: 'Use jump clusters',
+                default: true,
+              },
               vpc_id: {
                 type: 'string',
                 title: 'VPC ID',
@@ -722,6 +727,10 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             ],
           },
           uiSchema: {
+            use_jump_clusters: {
+              'ui:widget': 'hidden',
+              'ui:disabled': true,
+            },
             vpc_id: {
               'ui:disabled': true,
             },

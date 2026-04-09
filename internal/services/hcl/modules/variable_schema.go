@@ -54,11 +54,11 @@ var (
 // MSK authentication variables
 var (
 	SchemaSaslScramUsername = VariableSchema{
-		Name: "msk_sasl_scram_username", Type: "string",
+		Name: "source_sasl_scram_username", Type: "string",
 		Description: "SASL SCRAM Username", Sensitive: false,
 	}
 	SchemaSaslScramPassword = VariableSchema{
-		Name: "msk_sasl_scram_password", Type: "string",
+		Name: "source_sasl_scram_password", Type: "string",
 		Description: "SASL SCRAM Password", Sensitive: true,
 	}
 )
@@ -66,7 +66,7 @@ var (
 // MSK bootstrap variables
 var (
 	SchemaSaslScramBootstrapServers = VariableSchema{
-		Name: "msk_sasl_scram_bootstrap_servers", Type: "string",
+		Name: "source_sasl_scram_bootstrap_servers", Type: "string",
 		Description: "The SASL/SCRAM bootstrap servers of the source cluster that data will be migrated from.", Sensitive: false,
 	}
 )
@@ -86,8 +86,8 @@ var (
 		Description: "The name of the cluster link that will be created between the source and target Confluent Cloud clusters.", Sensitive: false,
 	}
 	SchemaClusterID = VariableSchema{
-		Name: "msk_cluster_id", Type: "string",
-		Description: "The ID of the source MSK cluster that data will be migrated from.", Sensitive: false,
+		Name: "source_cluster_id", Type: "string",
+		Description: "The ID of the source Kafka cluster that data will be migrated from.", Sensitive: false,
 	}
 )
 

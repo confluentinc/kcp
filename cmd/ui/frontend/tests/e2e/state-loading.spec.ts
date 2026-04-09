@@ -30,6 +30,6 @@ test.describe('State Loading Methods', () => {
     await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
 
     // OSK cluster from uploaded state should appear
-    await expect(page.locator('text=prod-kafka-cluster')).toBeVisible()
+    await expect(page.locator('button:has-text("prod-kafka-cluster")')).toBeVisible()
   })
 })

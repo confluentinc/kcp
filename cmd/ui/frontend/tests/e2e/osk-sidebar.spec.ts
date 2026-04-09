@@ -25,7 +25,7 @@ test.describe('OSK Sidebar', () => {
     await expect(page.locator('text=OPEN SOURCE KAFKA')).toBeVisible()
 
     // Verify OSK cluster is listed
-    await expect(page.locator('text=prod-kafka-cluster')).toBeVisible()
+    await expect(page.locator('button:has-text("prod-kafka-cluster")')).toBeVisible()
   })
 
   test('does not display MSK section when no MSK clusters', async ({ page }) => {
