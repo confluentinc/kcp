@@ -48,6 +48,7 @@ type MigrateSelfManagedConnectorOpts struct {
 
 	Connectors []types.SelfManagedConnector
 	OutputDir  string
+	Force      bool
 }
 
 type SelfManagedConnectorMigrator struct {
@@ -59,6 +60,7 @@ type SelfManagedConnectorMigrator struct {
 
 	Connectors []types.SelfManagedConnector
 	OutputDir  string
+	Force      bool
 }
 
 func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *SelfManagedConnectorMigrator {
@@ -69,22 +71,26 @@ func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *Self
 		CcApiSecret:   opts.CcApiSecret,
 		Connectors:    opts.Connectors,
 		OutputDir:     opts.OutputDir,
+		Force:         opts.Force,
 	}
 }
 
 func (mc *SelfManagedConnectorMigrator) Run() error {
 	if len(mc.Connectors) == 0 {
-		slog.Warn("⚠️ No self-managed connectors found to migrate for the MSK cluster.")
+		slog.Warn("no self-managed connectors found to migrate for the MSK cluster")
 		return nil
 	}
 
 	if mc.OutputDir != "" {
+		if err := connector_utils.ValidateOutputDir(mc.OutputDir, mc.Force); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(mc.OutputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %s: %w", mc.OutputDir, err)
 		}
 	}
 
-	slog.Info(fmt.Sprintf("Found %d connector(s) to migrate", len(mc.Connectors)))
+	fmt.Printf("🔍 Found %d connector(s) to migrate\n", len(mc.Connectors))
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {
@@ -101,13 +107,13 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	for _, connector := range mc.Connectors {
 		translatedConfig, warnings, err := mc.translateConnectorConfig(connector)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("⚠️ Failed to translate connector %s: %v", connector.Name, err))
+			slog.Warn(fmt.Sprintf("failed to translate connector %s: %v", connector.Name, err))
 			continue
 		}
 
 		if warnings != nil {
 			if len(warnings) > 0 {
-				slog.Info(fmt.Sprintf("⚠️ %d validation warnings for connector %s", len(warnings), connector.Name))
+				slog.Warn(fmt.Sprintf("%d validation warnings for connector %s", len(warnings), connector.Name))
 			}
 		}
 
@@ -118,7 +124,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %w", filepath, err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		templateData := TemplateData{
 			ConnectorName:   connector.Name,
@@ -132,10 +138,10 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 			return fmt.Errorf("failed to execute template for connector %s: %w", connector.Name, err)
 		}
 
-		slog.Info(fmt.Sprintf("✅ Generated: %s", filename))
+		slog.Debug(fmt.Sprintf("generated: %s", filename))
 	}
 
-	slog.Info(fmt.Sprintf("✅ Successfully generated connector files for %d connectors in %s", len(mc.Connectors), mc.OutputDir))
+	fmt.Printf("✅ Successfully generated connector files for %d connectors in %s\n", len(mc.Connectors), mc.OutputDir)
 
 	return nil
 }
@@ -178,7 +184,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to execute HTTP request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -186,7 +192,7 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("api request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var response TranslateResponse

@@ -30,16 +30,16 @@ type UICmdOpts struct {
 
 type UI struct {
 	reportService              ReportService
-	targetInfraHCLService      hcl.TargetInfraHCLService
-	migrationInfraHCLService   hcl.MigrationInfraHCLService
-	migrationScriptsHCLService hcl.MigrationScriptsHCLService
+	targetInfraHCLService      hcl.TargetInfraGenerator
+	migrationInfraHCLService   hcl.MigrationInfraGenerator
+	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
 	port        string
 	states      map[string]*types.State // Session-based state storage (key: sessionId)
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
 	ui := &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
@@ -139,6 +139,7 @@ func (ui *UI) Run() error {
 	e.POST("/assets/migration-scripts/connectors", ui.handleMigrateConnectorsAssets)
 	e.POST("/assets/migration-scripts/topics", ui.handleMigrateTopicsAssets)
 	e.POST("/assets/migration-scripts/schemas", ui.handleMigrateSchemasAssets)
+	e.POST("/assets/migration-scripts/glue-schemas", ui.handleMigrateGlueSchemasAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -327,7 +328,15 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.HasPublicEndpoints {
+	// Block external outbound cluster linking for dedicated clusters
+	if !req.HasPublicEndpoints && !req.UseJumpClusters && req.TargetClusterType == "dedicated" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Unsupported configuration",
+			"message": "External outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4, 5, or 6) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible.",
+		})
+	}
+
+	if req.HasPublicMskEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",
@@ -633,6 +642,26 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Migration Scripts project",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, migrationScriptsProject)
+}
+
+func (ui *UI) handleMigrateGlueSchemasAssets(c echo.Context) error {
+	var req types.MigrateGlueSchemasRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	migrationScriptsProject, err := ui.migrationScriptsHCLService.GenerateMigrateGlueSchemasFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Glue schema migration project",
 			"message": err.Error(),
 		})
 	}

@@ -15,6 +15,7 @@ var (
 	stateFile string
 	clusterId string
 	outputDir string
+	force     bool
 )
 
 func NewConnectorUtilityCmd() *cobra.Command {
@@ -39,6 +40,7 @@ func NewConnectorUtilityCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster to generate the connector configs JSON from.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the connector configs JSON will be written to")
+	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	connectorUtilityCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -60,7 +62,7 @@ func NewConnectorUtilityCmd() *cobra.Command {
 		return nil
 	})
 
-	connectorUtilityCmd.MarkFlagRequired("state-file")
+	_ = connectorUtilityCmd.MarkFlagRequired("state-file")
 
 	return connectorUtilityCmd
 }
@@ -138,5 +140,6 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 	return &ConnectorUtilityOpts{
 		ClustersByArn: clustersByArn,
 		OutputDir:     outputDir,
+		Force:         force,
 	}, nil
 }

@@ -78,6 +78,18 @@ func (c *Credentials) ToYaml() ([]byte, error) {
 	return yamlData, nil
 }
 
+// FindClusterByArn searches all regions for a cluster matching the given ARN.
+func (c *Credentials) FindClusterByArn(arn string) (*ClusterAuth, error) {
+	for _, region := range c.Regions {
+		for i, cluster := range region.Clusters {
+			if cluster.Arn == arn {
+				return &region.Clusters[i], nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("cluster with ARN %q not found in credentials file", arn)
+}
+
 func (c Credentials) Validate() (bool, []error) {
 	errs := []error{}
 
@@ -146,6 +158,9 @@ func (ce ClusterAuth) GetAuthMethods() []AuthType {
 	if ce.AuthMethod.SASLScram != nil && ce.AuthMethod.SASLScram.Use {
 		enabledMethods = append(enabledMethods, AuthTypeSASLSCRAM)
 	}
+	if ce.AuthMethod.SASLPlain != nil && ce.AuthMethod.SASLPlain.Use {
+		enabledMethods = append(enabledMethods, AuthTypeSASLPlain)
+	}
 	if ce.AuthMethod.TLS != nil && ce.AuthMethod.TLS.Use {
 		enabledMethods = append(enabledMethods, AuthTypeTLS)
 	}
@@ -156,6 +171,7 @@ func (ce ClusterAuth) GetAuthMethods() []AuthType {
 type AuthMethodConfig struct {
 	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
 	SASLScram                *SASLScramConfig                `yaml:"sasl_scram,omitempty"`
+	SASLPlain                *SASLPlainConfig                `yaml:"sasl_plain,omitempty"`
 	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
 	UnauthenticatedTLS       *UnauthenticatedTLSConfig       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *UnauthenticatedPlaintextConfig `yaml:"unauthenticated_plaintext,omitempty"`
@@ -188,6 +204,12 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 		amc.SASLScram.Username = existing.SASLScram.Username
 		amc.SASLScram.Password = existing.SASLScram.Password
 		amc.SASLScram.Mechanism = existing.SASLScram.Mechanism
+	}
+
+	if amc.SASLPlain != nil && existing.SASLPlain != nil {
+		amc.SASLPlain.Use = existing.SASLPlain.Use
+		amc.SASLPlain.Username = existing.SASLPlain.Username
+		amc.SASLPlain.Password = existing.SASLPlain.Password
 	}
 }
 
@@ -229,4 +251,10 @@ func NormalizeSaslMechanism(mechanism string) string {
 	default:
 		return mechanism
 	}
+}
+
+type SASLPlainConfig struct {
+	Use      bool   `yaml:"use"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }

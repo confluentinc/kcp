@@ -27,6 +27,7 @@ type AdminConfig struct {
 	caCertFile            string
 	clientCertFile        string
 	clientKeyFile         string
+	disableTLS            bool
 }
 
 // AdminOption is a function type for configuring the Kafka admin client
@@ -72,10 +73,58 @@ func WithTLSAuth(caCertFile string, clientCertFile string, clientKeyFile string)
 	}
 }
 
-func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string) {
+// WithSASLPlainAuth configures SASL/PLAIN authentication (used for Confluent Cloud).
+func WithSASLPlainAuth(username, password string) AdminOption {
+	return func(config *AdminConfig) {
+		config.authType = types.AuthTypeSASLPlain
+		config.username = username
+		config.password = password
+	}
+}
+
+// WithSASLPlainAuthNoTLS configures SASL/PLAIN authentication without TLS encryption.
+// Used for source clusters using SASL_PLAINTEXT listeners.
+func WithSASLPlainAuthNoTLS(username, password string) AdminOption {
+	return func(config *AdminConfig) {
+		config.authType = types.AuthTypeSASLPlain
+		config.username = username
+		config.password = password
+		config.disableTLS = true
+	}
+}
+
+// WithInsecureSkipVerify disables TLS certificate verification.
+func WithInsecureSkipVerify() AdminOption {
+	return func(config *AdminConfig) {
+		config.insecureSkipVerify = true
+	}
+}
+
+// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
+func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+	switch authType {
+	case types.AuthTypeIAM:
+		return WithIAMAuth()
+	case types.AuthTypeSASLSCRAM:
+		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password)
+	case types.AuthTypeUnauthenticatedTLS:
+		return WithUnauthenticatedTlsAuth()
+	case types.AuthTypeUnauthenticatedPlaintext:
+		return WithUnauthenticatedPlaintextAuth()
+	case types.AuthTypeTLS:
+		return WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
+	case types.AuthTypeSASLPlain:
+		return WithSASLPlainAuthNoTLS(clusterAuth.AuthMethod.SASLPlain.Username, clusterAuth.AuthMethod.SASLPlain.Password)
+	default:
+		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
+		return WithIAMAuth()
+	}
+}
+
+func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
 	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{}
+	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 	config.Net.SASL.Enable = true
 	config.Net.SASL.Mechanism = sarama.SASLTypeOAuth
 	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
@@ -114,14 +163,29 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	return nil
 }
 
-func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool) {
-	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
+func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, withTLSEncryption bool, insecureSkipVerify bool) {
+	slog.Info("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
+	if !withTLSEncryption {
+		slog.Warn("SASL/PLAIN without TLS: credentials will be transmitted in cleartext over the network")
+	}
 	config.Net.TLS.Enable = withTLSEncryption
-	config.Net.TLS.Config = &tls.Config{}
+	if withTLSEncryption {
+		config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+	}
+	config.Net.SASL.Enable = true
+	config.Net.SASL.User = username
+	config.Net.SASL.Password = password
+	config.Net.SASL.Mechanism = sarama.SASLTypePlaintext
 }
 
-func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string) error {
-	tlsConfig := tls.Config{}
+func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, insecureSkipVerify bool) {
+	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
+	config.Net.TLS.Enable = withTLSEncryption
+	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+}
+
+func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string, insecureSkipVerify bool) error {
+	tlsConfig := tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 
 	cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
 	if err != nil {
@@ -318,7 +382,7 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 	if err != nil {
 		return "", fmt.Errorf("failed to open broker connection: %v", err)
 	}
-	defer brokerConn.Close()
+	defer func() { _ = brokerConn.Close() }()
 
 	// Request metadata from the broker
 	metadataReq := &sarama.MetadataRequest{Version: 7}
@@ -367,7 +431,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	partitions, err := consumer.Partitions(topicName)
 	if err != nil {
@@ -422,7 +486,7 @@ func (k *KafkaAdminClient) GetAllMessagesWithKeyFilter(topicName string, keyPref
 			}
 		}
 
-		partitionConsumer.Close()
+		_ = partitionConsumer.Close()
 	}
 
 	return connectorConfigs, nil
@@ -436,7 +500,7 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	partitions, err := consumer.Partitions(topicName)
 	if err != nil {
@@ -507,10 +571,50 @@ func (k *KafkaAdminClient) GetConnectorStatusMessages(topicName string) (map[str
 			}
 		}
 
-		partitionConsumer.Close()
+		_ = partitionConsumer.Close()
 	}
 
 	return connectorStatuses, nil
+}
+
+// NewKafkaClient creates a sarama.Client (not a ClusterAdmin) for offset fetching.
+// Uses the same auth configuration options as NewKafkaAdmin.
+func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption) (sarama.Client, error) {
+	config := AdminConfig{
+		authType: types.AuthTypeIAM,
+	}
+	for _, opt := range opts {
+		opt(&config)
+	}
+
+	saramaConfig := sarama.NewConfig()
+	configureCommonSettings(saramaConfig, "kcp-cli", sarama.V2_6_0_0)
+
+	switch config.authType {
+	case types.AuthTypeIAM:
+		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipTLSVerify)
+	case types.AuthTypeSASLSCRAM:
+		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify)
+	case types.AuthTypeSASLPlain:
+		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.insecureSkipTLSVerify)
+	case types.AuthTypeUnauthenticatedTLS:
+		configureUnauthenticatedAuthentication(saramaConfig, true, config.insecureSkipTLSVerify)
+	case types.AuthTypeUnauthenticatedPlaintext:
+		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipTLSVerify)
+	case types.AuthTypeTLS:
+		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("auth type %v not supported", config.authType)
+	}
+
+	client, err := sarama.NewClient(brokerAddresses, saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka client: authType=%v brokerAddresses=%v error=%w", config.authType, brokerAddresses, err)
+	}
+
+	return client, nil
 }
 
 // NewKafkaAdmin creates a new Kafka admin client for the given broker addresses and region
@@ -527,7 +631,7 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 
 	saramaKafkaVersion, err := sarama.ParseKafkaVersion(kafkaVersion)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to parse Kafka version: %v", err)
+		return nil, fmt.Errorf("failed to parse Kafka version: %v", err)
 	}
 
 	saramaConfig := sarama.NewConfig()
@@ -535,27 +639,29 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 
 	switch config.authType {
 	case types.AuthTypeIAM:
-		configureSASLTypeOAuthAuthentication(saramaConfig, region)
+		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipTLSVerify)
 	case types.AuthTypeSASLSCRAM:
 		if err := configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify); err != nil {
 			return nil, fmt.Errorf("failed to configure SASL/SCRAM authentication: %w", err)
 		}
+	case types.AuthTypeSASLPlain:
+		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.insecureSkipTLSVerify)
 	case types.AuthTypeUnauthenticatedTLS:
-		configureUnauthenticatedAuthentication(saramaConfig, true)
+		configureUnauthenticatedAuthentication(saramaConfig, true, config.insecureSkipTLSVerify)
 	case types.AuthTypeUnauthenticatedPlaintext:
-		configureUnauthenticatedAuthentication(saramaConfig, false)
+		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipTLSVerify)
 	case types.AuthTypeTLS:
-		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile)
+		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipTLSVerify)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to configure TLS authentication: %v", err)
+			return nil, fmt.Errorf("failed to configure TLS authentication: %v", err)
 		}
 	default:
-		return nil, fmt.Errorf("Auth type: %v not yet supported", config.authType)
+		return nil, fmt.Errorf("auth type: %v not yet supported", config.authType)
 	}
 
 	admin, err := sarama.NewClusterAdmin(brokerAddresses, saramaConfig)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
+		return nil, fmt.Errorf("failed to create admin client: authType=%v brokerAddresses=%v error=%v", config.authType, brokerAddresses, err)
 	}
 
 	return &KafkaAdminClient{

@@ -50,6 +50,7 @@ export const WIZARD_TYPES = {
   MIGRATION_INFRA: 'migration-infra',
   MIGRATION_SCRIPTS: 'migration-scripts',
   MIGRATE_SCHEMAS: 'migrate-schemas',
+  MIGRATE_GLUE_SCHEMAS: 'migrate-glue-schemas',
   MIGRATE_TOPICS: 'migrate-topics',
   MIGRATE_ACLS: 'migrate-acls',
 } as const
@@ -95,9 +96,12 @@ export const DEFAULTS = {
 
 /**
  * AWS Service Names
+ * Source of truth: Go constants in internal/types/state.go (Service* constants)
  */
 export const AWS_SERVICES = {
   MSK: 'Amazon Managed Streaming for Apache Kafka',
+  ELB: 'Amazon Elastic Load Balancing',
+  VPC: 'Amazon Virtual Private Cloud',
 } as const
 
 /**

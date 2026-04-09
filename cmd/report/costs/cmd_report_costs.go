@@ -64,7 +64,7 @@ func NewReportCostsCmd() *cobra.Command {
 		return nil
 	})
 
-	reportCostsCmd.MarkFlagRequired("state-file")
+	_ = reportCostsCmd.MarkFlagRequired("state-file")
 	// optional but if one is provided, the others must be provided
 	reportCostsCmd.MarkFlagsRequiredTogether("start", "end", "region")
 

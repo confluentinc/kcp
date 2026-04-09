@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -409,8 +410,8 @@ func TestWriteReportCommands(t *testing.T) {
 				t.Fatalf("failed to create temp file: %v", err)
 			}
 			tmpFilePath := tmpFile.Name()
-			tmpFile.Close()
-			defer os.Remove(tmpFilePath)
+			_ = tmpFile.Close()
+			defer func() { _ = os.Remove(tmpFilePath) }()
 
 			// Call the method
 			err = tt.state.WriteReportCommands(tmpFilePath, tt.stateFilePath)
@@ -890,5 +891,184 @@ func TestGetOSKClusterByID_NilOSKSources(t *testing.T) {
 	_, err := state.GetOSKClusterByID("my-kafka")
 	if err == nil {
 		t.Error("GetOSKClusterByID() error = nil, want error")
+func TestStateUnmarshalJSON_BackwardCompatibility(t *testing.T) {
+	tests := []struct {
+		name                    string
+		jsonInput               string
+		wantConfluentCount      int
+		wantGlueCount           int
+		wantNilSchemaRegistries bool
+	}{
+		{
+			name:                    "old array format migrates to confluent_schema_registry",
+			jsonInput:               `{"schema_registries":[{"type":"confluent","url":"http://sr:8081","default_compatibility":"BACKWARD","contexts":["."],"subjects":[]}]}`,
+			wantConfluentCount:      1,
+			wantGlueCount:           0,
+			wantNilSchemaRegistries: false,
+		},
+		{
+			name:                    "new object format deserializes directly",
+			jsonInput:               `{"schema_registries":{"confluent_schema_registry":[{"url":"http://sr:8081","default_compatibility":"BACKWARD"}],"aws_glue":[{"registry_name":"my-reg","region":"us-east-1","registry_arn":"arn:aws:glue:us-east-1:123:registry/my-reg"}]}}`,
+			wantConfluentCount:      1,
+			wantGlueCount:           1,
+			wantNilSchemaRegistries: false,
+		},
+		{
+			name:                    "null schema_registries",
+			jsonInput:               `{"schema_registries":null}`,
+			wantNilSchemaRegistries: true,
+		},
+		{
+			name:                    "missing schema_registries",
+			jsonInput:               `{"regions":[]}`,
+			wantNilSchemaRegistries: true,
+		},
+		{
+			name:                    "empty array",
+			jsonInput:               `{"schema_registries":[]}`,
+			wantConfluentCount:      0,
+			wantGlueCount:           0,
+			wantNilSchemaRegistries: false,
+		},
+		{
+			name:                    "empty object",
+			jsonInput:               `{"schema_registries":{}}`,
+			wantConfluentCount:      0,
+			wantGlueCount:           0,
+			wantNilSchemaRegistries: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var state State
+			err := json.Unmarshal([]byte(tt.jsonInput), &state)
+			if err != nil {
+				t.Fatalf("UnmarshalJSON() error = %v", err)
+			}
+
+			if tt.wantNilSchemaRegistries {
+				if state.SchemaRegistries != nil {
+					t.Errorf("expected nil SchemaRegistries, got %+v", state.SchemaRegistries)
+				}
+				return
+			}
+
+			if state.SchemaRegistries == nil {
+				t.Fatal("expected non-nil SchemaRegistries, got nil")
+			}
+
+			if len(state.SchemaRegistries.ConfluentSchemaRegistry) != tt.wantConfluentCount {
+				t.Errorf("ConfluentSchemaRegistry count = %d, want %d", len(state.SchemaRegistries.ConfluentSchemaRegistry), tt.wantConfluentCount)
+			}
+			if len(state.SchemaRegistries.AWSGlue) != tt.wantGlueCount {
+				t.Errorf("AWSGlue count = %d, want %d", len(state.SchemaRegistries.AWSGlue), tt.wantGlueCount)
+			}
+		})
+	}
+}
+
+func TestStateUnmarshalJSON_OldFormatPreservesData(t *testing.T) {
+	input := `{"schema_registries":[{"type":"confluent","url":"http://sr:8081","default_compatibility":"BACKWARD","contexts":[".","ctx1"],"subjects":[{"name":"test-value","schema_type":"AVRO"}]}]}`
+
+	var state State
+	if err := json.Unmarshal([]byte(input), &state); err != nil {
+		t.Fatalf("UnmarshalJSON() error = %v", err)
+	}
+
+	if state.SchemaRegistries == nil {
+		t.Fatal("expected non-nil SchemaRegistries")
+	}
+
+	if len(state.SchemaRegistries.ConfluentSchemaRegistry) != 1 {
+		t.Fatalf("expected 1 confluent SR, got %d", len(state.SchemaRegistries.ConfluentSchemaRegistry))
+	}
+
+	sr := state.SchemaRegistries.ConfluentSchemaRegistry[0]
+	if sr.URL != "http://sr:8081" {
+		t.Errorf("URL = %q, want %q", sr.URL, "http://sr:8081")
+	}
+	if len(sr.Contexts) != 2 {
+		t.Errorf("Contexts count = %d, want 2", len(sr.Contexts))
+	}
+	if len(sr.Subjects) != 1 {
+		t.Errorf("Subjects count = %d, want 1", len(sr.Subjects))
+	}
+	if sr.Subjects[0].Name != "test-value" {
+		t.Errorf("Subject name = %q, want %q", sr.Subjects[0].Name, "test-value")
+	}
+}
+
+func TestSchemaRegistriesState_UpsertConfluentSchemaRegistry(t *testing.T) {
+	s := &SchemaRegistriesState{}
+
+	s.UpsertConfluentSchemaRegistry(SchemaRegistryInformation{URL: "http://sr1:8081", Type: "confluent"})
+	if len(s.ConfluentSchemaRegistry) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(s.ConfluentSchemaRegistry))
+	}
+
+	s.UpsertConfluentSchemaRegistry(SchemaRegistryInformation{URL: "http://sr2:8081", Type: "confluent"})
+	if len(s.ConfluentSchemaRegistry) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(s.ConfluentSchemaRegistry))
+	}
+
+	s.UpsertConfluentSchemaRegistry(SchemaRegistryInformation{URL: "http://sr1:8081", Type: "confluent", Contexts: []string{"updated"}})
+	if len(s.ConfluentSchemaRegistry) != 2 {
+		t.Fatalf("expected 2 entries after upsert, got %d", len(s.ConfluentSchemaRegistry))
+	}
+	if len(s.ConfluentSchemaRegistry[0].Contexts) != 1 || s.ConfluentSchemaRegistry[0].Contexts[0] != "updated" {
+		t.Errorf("expected updated contexts, got %v", s.ConfluentSchemaRegistry[0].Contexts)
+	}
+}
+
+func TestSchemaRegistriesState_UpsertGlueSchemaRegistry(t *testing.T) {
+	s := &SchemaRegistriesState{}
+
+	s.UpsertGlueSchemaRegistry(GlueSchemaRegistryInformation{RegistryName: "reg1", Region: "us-east-1", RegistryArn: "arn1"})
+	if len(s.AWSGlue) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(s.AWSGlue))
+	}
+
+	s.UpsertGlueSchemaRegistry(GlueSchemaRegistryInformation{RegistryName: "reg1", Region: "eu-west-1", RegistryArn: "arn2"})
+	if len(s.AWSGlue) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(s.AWSGlue))
+	}
+
+	s.UpsertGlueSchemaRegistry(GlueSchemaRegistryInformation{RegistryName: "reg1", Region: "us-east-1", RegistryArn: "arn1-updated"})
+	if len(s.AWSGlue) != 2 {
+		t.Fatalf("expected 2 entries after upsert, got %d", len(s.AWSGlue))
+	}
+	if s.AWSGlue[0].RegistryArn != "arn1-updated" {
+		t.Errorf("expected updated ARN, got %q", s.AWSGlue[0].RegistryArn)
+	}
+}
+
+func TestStateUnmarshalJSON_RoundTrip(t *testing.T) {
+	oldInput := `{"schema_registries":[{"type":"confluent","url":"http://sr:8081","default_compatibility":"BACKWARD"}]}`
+
+	var state State
+	if err := json.Unmarshal([]byte(oldInput), &state); err != nil {
+		t.Fatalf("first unmarshal error: %v", err)
+	}
+
+	marshaled, err := json.Marshal(&state)
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+
+	if !strings.Contains(string(marshaled), "confluent_schema_registry") {
+		t.Errorf("marshaled output should contain 'confluent_schema_registry', got: %s", string(marshaled))
+	}
+
+	var state2 State
+	if err := json.Unmarshal(marshaled, &state2); err != nil {
+		t.Fatalf("second unmarshal error: %v", err)
+	}
+
+	if state2.SchemaRegistries == nil {
+		t.Fatal("expected non-nil SchemaRegistries after round-trip")
+	}
+	if len(state2.SchemaRegistries.ConfluentSchemaRegistry) != 1 {
+		t.Errorf("expected 1 confluent SR after round-trip, got %d", len(state2.SchemaRegistries.ConfluentSchemaRegistry))
 	}
 }

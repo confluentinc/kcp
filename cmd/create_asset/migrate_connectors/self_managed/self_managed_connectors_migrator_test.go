@@ -49,7 +49,7 @@ func TestSelfManagedConnectorMigrator_Run_WithConnectors(t *testing.T) {
 		// Read and verify request body
 		body, _ := io.ReadAll(r.Body)
 		var requestConfig map[string]any
-		json.Unmarshal(body, &requestConfig)
+		require.NoError(t, json.Unmarshal(body, &requestConfig))
 		assert.Equal(t, "io.confluent.kafka.connect.datagen.DatagenConnector", requestConfig["connector.class"])
 
 		// Return mock response
@@ -71,7 +71,7 @@ func TestSelfManagedConnectorMigrator_Run_WithConnectors(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer mockServer.Close()
 
@@ -106,7 +106,7 @@ func TestSelfManagedConnectorMigrator_Run_WithConnectors(t *testing.T) {
 		migrator.OutputDir = outputDir
 
 		// This will fail at API call, but directory should be created
-		migrator.Run()
+		_ = migrator.Run()
 
 		// Check directory was created
 		_, err := os.Stat(outputDir)
@@ -135,7 +135,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_Success(t *testin
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer mockServer.Close()
 
@@ -275,7 +275,7 @@ func TestSelfManagedConnectorMigrator_Run_InvalidOutputDirectory(t *testing.T) {
 	err = migrator.Run()
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create output directory")
+	assert.Contains(t, err.Error(), "failed to check output directory")
 }
 
 func TestTranslateResponse_JSON(t *testing.T) {
@@ -379,6 +379,7 @@ func TestSelfManagedConnectorMigrator_MultipleConnectors(t *testing.T) {
 		CcApiSecret:   "test-secret",
 		Connectors:    connectors,
 		OutputDir:     tmpDir,
+		Force:         true,
 	}
 
 	migrator := NewSelfManagedConnectorMigrator(opts)

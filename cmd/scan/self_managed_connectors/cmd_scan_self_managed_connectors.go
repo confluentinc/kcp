@@ -2,7 +2,6 @@ package self_managed_connectors
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 
@@ -92,9 +91,9 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		return nil
 	})
 
-	selfManagedConnectorsCmd.MarkFlagRequired("state-file")
-	selfManagedConnectorsCmd.MarkFlagRequired("connect-rest-url")
-	selfManagedConnectorsCmd.MarkFlagRequired("cluster-arn")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("state-file")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("connect-rest-url")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cluster-arn")
 
 	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-sasl-scram", "use-tls", "use-unauthenticated")
 	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-sasl-scram", "use-tls", "use-unauthenticated")
@@ -108,14 +107,14 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 	}
 
 	if useSaslScram {
-		cmd.MarkFlagRequired("sasl-scram-username")
-		cmd.MarkFlagRequired("sasl-scram-password")
+		_ = cmd.MarkFlagRequired("sasl-scram-username")
+		_ = cmd.MarkFlagRequired("sasl-scram-password")
 	}
 
 	if useTls {
-		cmd.MarkFlagRequired("tls-ca-cert")
-		cmd.MarkFlagRequired("tls-client-cert")
-		cmd.MarkFlagRequired("tls-client-key")
+		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		_ = cmd.MarkFlagRequired("tls-client-cert")
+		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
 
 	return nil
@@ -148,11 +147,12 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 	normalizedURL := normaliseConnectURL(connectRestURL)
 
 	var authMethod types.ConnectAuthMethod
-	if useSaslScram {
+	switch {
+	case useSaslScram:
 		authMethod = types.ConnectAuthMethodSaslScram
-	} else if useTls {
+	case useTls:
 		authMethod = types.ConnectAuthMethodTls
-	} else {
+	default:
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 
@@ -188,7 +188,7 @@ func normaliseConnectURL(url string) string {
 	}
 
 	normalisedUrl := "http://" + url
-	slog.Info(fmt.Sprintf("Adding protocol scheme 'http://' to provided Connect URL: %s", normalisedUrl))
+	fmt.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
 
 	return normalisedUrl
 }

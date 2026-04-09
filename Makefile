@@ -9,7 +9,7 @@ LD_FLAGS :=	-X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 			-X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
 			-X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
 
-.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-up-jmx test-env-up-jmx-auth test-env-up-jmx-tls test-env-up-prometheus test-env-up-prometheus-auth test-env-up-prometheus-tls test-env-down test-integration-osk test-all-envs test-certs-generate
+.PHONY: build clean help install fmt test test-go test-e2e test-cov test-cov-ui build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-frontend test-env-up-plaintext test-env-up-kraft test-env-up-sasl test-env-up-tls test-env-up-schema-registry test-env-up-jmx test-env-up-jmx-auth test-env-up-jmx-tls test-env-up-prometheus test-env-up-prometheus-auth test-env-up-prometheus-tls test-env-down test-integration-osk test-all-envs test-certs-generate lint pre-commit-install e2e-setup e2e-teardown ci-e2e-tests e2e
 
 # Build the frontend
 build-frontend:
@@ -72,6 +72,14 @@ help:
 	@echo "🧪 test               - Run tests"
 	@echo "📊 test-cov           - Run tests with coverage"
 	@echo "🌐 test-cov-ui        - Coverage with HTML report"
+	@echo "🔍 lint               - Run Go linters (golangci-lint)"
+	@echo "🔗 pre-commit-install - Install git pre-commit hooks"
+	@echo ""
+	@echo "🔬 E2E Tests:"
+	@echo "🔄 e2e               - Run full E2E lifecycle (setup → test → teardown)"
+	@echo "🏗️  e2e-setup          - Set up Minikube + CFK infrastructure"
+	@echo "🧪 ci-e2e-tests       - Run E2E migration tests"
+	@echo "🧹 e2e-teardown       - Tear down E2E infrastructure"
 	@echo ""
 	@echo "💡 Usage: make <target>"
 
@@ -92,6 +100,14 @@ fmt:
 # Run all tests (Go unit tests + Playwright E2E tests)
 test: test-go test-e2e
 
+# Run Go linters
+lint:
+	golangci-lint run --config .golangci.yml ./...
+
+# Install git pre-commit hooks
+pre-commit-install:
+	git config --local core.hooksPath .githooks
+
 # Run Go unit tests only
 test-go: build-frontend
 	@echo "🧪 Running Go tests..."
@@ -108,7 +124,7 @@ test-e2e: build
 test-cov:
 	@echo "🧪 Running tests with coverage analysis..."
 	@echo "=========================================="
-	@go test -coverprofile=coverage.out ./...
+	@go test -timeout 15m -coverprofile=coverage.out ./...
 	@echo ""
 	@echo "📊 Detailed Coverage Report:"
 	@echo "=============================="
@@ -265,4 +281,26 @@ test-all-envs:
 	./kcp scan clusters --source-type osk --credentials-file test/credentials/osk-credentials-tls.yaml --state-file test-state-tls.json
 	$(MAKE) test-env-down
 	@echo "\n✅ All environment tests passed!"
+# Run full E2E lifecycle: setup, test, teardown (teardown always runs)
+e2e: e2e-setup
+	@trap 'echo ""; echo "🧹 Tearing down E2E test infrastructure..."; bash test/e2e/migration/testdata/teardown.sh' EXIT; \
+	echo "🧪 Running E2E tests..."; \
+	echo "======================"; \
+	bash -c 'go test -v -tags=e2e -timeout 15m ./test/e2e/...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ E2E tests failed"; else echo "✅ E2E tests passed!"; fi; exit $$exit_code'
+
+# E2E test infrastructure setup (Minikube + CFK + CP clusters)
+e2e-setup:
+	@echo "🏗️  Setting up E2E test infrastructure..."
+	@bash test/e2e/migration/testdata/setup.sh
+
+# E2E test infrastructure teardown
+e2e-teardown:
+	@echo "🧹 Tearing down E2E test infrastructure..."
+	@bash test/e2e/migration/testdata/teardown.sh
+
+# Run E2E tests (requires infrastructure from e2e-setup)
+ci-e2e-tests:
+	@echo "🧪 Running E2E tests..."
+	@echo "======================"
+	@bash -c 'go test -v -tags=e2e -timeout 15m ./test/e2e/...; exit_code=$$?; echo ""; if [ $$exit_code -ne 0 ]; then echo "❌ E2E tests failed"; else echo "✅ E2E tests passed!"; fi; exit $$exit_code'
 

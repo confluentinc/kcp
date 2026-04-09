@@ -19,6 +19,7 @@ type MigrateKafkaAclsOpts struct {
 	TargetClusterId           string
 	TargetClusterRestEndpoint string
 	OutputDir                 string
+	Force                     bool
 	SkipAuditReport           bool
 	PreventDestroy            bool
 }
@@ -34,13 +35,16 @@ func NewKafkaAclsGenerator(opts MigrateKafkaAclsOpts) *KafkaAclsGenerator {
 }
 
 func (kg *KafkaAclsGenerator) Run() error {
-	slog.Info("🚀 generating Terraform files for Kafka ACLs!")
+	fmt.Printf("🚀 Generating Terraform files for Kafka ACLs\n")
 
 	outputDir := kg.opts.OutputDir
 	if outputDir == "" {
 		outputDir = fmt.Sprintf("%s_kafka_acls", kg.opts.ClusterName)
 	}
 
+	if err := utils.ValidateOutputDir(outputDir, kg.opts.Force); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
@@ -79,7 +83,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		if err := kg.generateKafkaAuditReport(aclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
-		slog.Info("✅ generated audit report", "path", reportPath)
+		slog.Debug("generated audit report", "path", reportPath)
 	}
 
 	totalAcls := 0
@@ -87,7 +91,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	slog.Info("✅ Kafka ACLs Terraform files generated", "directory", outputDir, "principals", len(aclsByPrincipal), "acls", totalAcls)
+	fmt.Printf("✅ Kafka ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(aclsByPrincipal), totalAcls)
 
 	return nil
 }

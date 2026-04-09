@@ -22,6 +22,7 @@ type MigrateIamAclsOpts struct {
 	TargetClusterId           string
 	TargetClusterRestEndpoint string
 	OutputDir                 string
+	Force                     bool
 	SkipAuditReport           bool
 	PreventDestroy            bool
 }
@@ -37,7 +38,7 @@ func NewIamAclsGenerator(opts MigrateIamAclsOpts) *IamAclsGenerator {
 }
 
 func (ig *IamAclsGenerator) Run() error {
-	slog.Info("🚀 generating Terraform files for IAM ACLs!", "principals", ig.opts.PrincipalArns)
+	fmt.Printf("🚀 Generating Terraform files for IAM ACLs\n")
 	ctx := context.Background()
 
 	iamClient, err := client.NewIAMClient()
@@ -48,7 +49,7 @@ func (ig *IamAclsGenerator) Run() error {
 	allAclsByPrincipal := make(map[string][]types.Acls)
 
 	for _, principalArn := range ig.opts.PrincipalArns {
-		slog.Info("🔍 Retrieving IAM policies for principal", "principal", principalArn)
+		slog.Debug("retrieving IAM policies for principal", "principal", principalArn)
 		policies, err := iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
 		if err != nil {
 			return fmt.Errorf("failed to get principal policies: %v", err)
@@ -60,7 +61,7 @@ func (ig *IamAclsGenerator) Run() error {
 		}
 
 		if len(extractedACLs) == 0 {
-			slog.Info("⚠️ No kafka-cluster permissions found in policies", "principal", principalArn)
+			slog.Warn("no kafka-cluster permissions found in policies", "principal", principalArn)
 			continue
 		}
 
@@ -71,7 +72,7 @@ func (ig *IamAclsGenerator) Run() error {
 	}
 
 	if len(allAclsByPrincipal) == 0 {
-		slog.Info("No `kafka-cluster` permissions found in the specified principal's policies so therefore nothing to convert.")
+		fmt.Printf("⚠️ No kafka-cluster permissions found in the specified principal's policies, nothing to convert.\n")
 		return nil
 	}
 
@@ -85,6 +86,9 @@ func (ig *IamAclsGenerator) Run() error {
 		}
 	}
 
+	if err := utils.ValidateOutputDir(outputDir, ig.opts.Force); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
@@ -117,7 +121,7 @@ func (ig *IamAclsGenerator) Run() error {
 		if err := ig.generateIamAuditReport(allAclsByPrincipal, reportPath); err != nil {
 			return fmt.Errorf("failed to generate audit report: %w", err)
 		}
-		slog.Info("✅ generated audit report", "path", reportPath)
+		slog.Debug("generated audit report", "path", reportPath)
 	}
 
 	totalAcls := 0
@@ -125,23 +129,22 @@ func (ig *IamAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	slog.Info("✅ IAM ACLs Terraform files generated", "directory", outputDir, "principals", len(allAclsByPrincipal), "acls", totalAcls)
+	fmt.Printf("✅ IAM ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(allAclsByPrincipal), totalAcls)
 
 	return nil
 }
-
 
 func (ig *IamAclsGenerator) extractKafkaPermissionsFromPrincipalPolicies(principalArn string, policies *iamservice.PrincipalPolicies) ([]types.Acls, error) {
 	var extractedACLs []types.Acls
 
 	for _, policy := range policies.AttachedPolicies {
-		slog.Info("🔍 Processing attached policy", "policy", policy.PolicyName)
+		slog.Debug("processing attached policy", "policy", policy.PolicyName)
 		acls := ig.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}
 
 	for _, policy := range policies.InlinePolicies {
-		slog.Info("🔍 Processing inline policy", "policy", policy.PolicyName)
+		slog.Debug("processing inline policy", "policy", policy.PolicyName)
 		acls := ig.processPolicy(principalArn, policy.PolicyDocument)
 		extractedACLs = append(extractedACLs, acls...)
 	}

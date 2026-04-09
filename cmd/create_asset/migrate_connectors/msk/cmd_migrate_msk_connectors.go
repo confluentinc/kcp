@@ -19,6 +19,7 @@ var (
 	ccApiKey        string
 	ccApiSecret     string
 	outputDir       string
+	force           bool
 )
 
 func NewMigrateMskConnectorsCmd() *cobra.Command {
@@ -47,6 +48,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform connector assets will be written to")
+	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	mskConnectorsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -132,6 +134,7 @@ func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
 		CcApiSecret:   ccApiSecret,
 		Connectors:    connectors,
 		OutputDir:     outputDir,
+		Force:         force,
 	}
 
 	return &opts, nil

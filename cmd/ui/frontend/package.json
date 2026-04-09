@@ -48,6 +48,10 @@
     "xstate": "^5.21.0",
     "zustand": "^5.0.8"
   },
+  "resolutions": {
+    "lodash": "^4.18.0",
+    "lodash-es": "^4.18.0"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@playwright/test": "^1.58.2",

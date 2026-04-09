@@ -119,6 +119,20 @@ func ExtractRegionFromS3Uri(s3Uri string) (string, error) {
 	return parts[3], nil
 }
 
+// ExtractRegionFromArn extracts the AWS region from a resource ARN.
+// ARN format: arn:aws:kafka:<region>:<account>:cluster/...
+func ExtractRegionFromArn(arn string) (string, error) {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 4 || parts[0] != "arn" {
+		return "", fmt.Errorf("invalid ARN format: %q", arn)
+	}
+	region := parts[3]
+	if region == "" {
+		return "", fmt.Errorf("empty region in ARN: %q", arn)
+	}
+	return region, nil
+}
+
 func ExtractClusterNameFromS3Uri(s3Uri string) (string, error) {
 	u, err := url.Parse(s3Uri)
 	if err != nil {

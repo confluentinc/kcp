@@ -2,7 +2,6 @@ package schema_registry
 
 import (
 	"fmt"
-	"log/slog"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/types"
@@ -39,7 +38,7 @@ func NewSchemaRegistryScanner(schemaRegistryService SchemaRegistryScannerService
 }
 
 func (srs *SchemaRegistryScanner) Run() error {
-	slog.Info("🚀 starting schema registry scanner")
+	fmt.Printf("🚀 Starting schema registry scanner\n")
 
 	defaultCompatibility, err := srs.SchemaRegistryService.GetDefaultCompatibility()
 	if err != nil {
@@ -65,17 +64,10 @@ func (srs *SchemaRegistryScanner) Run() error {
 		Subjects:             subjects,
 	}
 
-	previouslyScanned := false
-	for i, existing := range srs.State.SchemaRegistries {
-		if existing.URL == schemaRegistryInformation.URL {
-			srs.State.SchemaRegistries[i] = schemaRegistryInformation
-			previouslyScanned = true
-		}
+	if srs.State.SchemaRegistries == nil {
+		srs.State.SchemaRegistries = &types.SchemaRegistriesState{}
 	}
-
-	if !previouslyScanned {
-		srs.State.SchemaRegistries = append(srs.State.SchemaRegistries, schemaRegistryInformation)
-	}
+	srs.State.SchemaRegistries.UpsertConfluentSchemaRegistry(schemaRegistryInformation)
 
 	if err := srs.State.PersistStateFile(srs.StateFile); err != nil {
 		return fmt.Errorf("failed to save schema registry state: %v", err)

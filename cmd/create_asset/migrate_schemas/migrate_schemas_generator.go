@@ -25,28 +25,31 @@ type SchemaExporter struct {
 }
 
 type MigrateSchemasOpts struct {
-	SchemaRegistry types.SchemaRegistryInformation
-	Exporters      []SchemaExporter
+	SchemaRegistry   types.SchemaRegistryInformation
+	CCSRRestEndpoint string
+	Exporters        []SchemaExporter
 }
 
 type MigrateSchemasAssetGenerator struct {
-	schemaRegistry types.SchemaRegistryInformation
-	exporters      []SchemaExporter
+	schemaRegistry   types.SchemaRegistryInformation
+	ccSRRestEndpoint string
+	exporters        []SchemaExporter
 }
 
 func NewMigrateSchemasAssetGenerator(opts MigrateSchemasOpts) *MigrateSchemasAssetGenerator {
 	return &MigrateSchemasAssetGenerator{
-		schemaRegistry: opts.SchemaRegistry,
-		exporters:      opts.Exporters,
+		schemaRegistry:   opts.SchemaRegistry,
+		ccSRRestEndpoint: opts.CCSRRestEndpoint,
+		exporters:        opts.Exporters,
 	}
 }
 
 func (ms *MigrateSchemasAssetGenerator) Run() error {
-	slog.Info("🚀 generating migrate schemas assets!")
+	fmt.Printf("🚀 Generating migrate schemas assets\n")
 
-	outputDir := filepath.Join("migrate_schemas")
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create migrate-schemas directory: %w", err)
+	outputDir := "migrate_schemas"
+	if err := utils.ValidateOutputDir(outputDir, false); err != nil {
+		return err
 	}
 
 	assetsDir := "assets"
@@ -58,7 +61,7 @@ func (ms *MigrateSchemasAssetGenerator) Run() error {
 		return fmt.Errorf("failed to generate tfvars files: %w", err)
 	}
 
-	slog.Info("✅ migrate schemas assets generated", "directory", outputDir)
+	fmt.Printf("✅ Migrate schemas assets generated: %s\n", outputDir)
 
 	return nil
 }
@@ -132,11 +135,13 @@ func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string
 		Exporters               []SchemaExporter
 		SourceSchemaRegistryID  string
 		SourceSchemaRegistryURL string
+		CCSRRestEndpoint        string
 	}{
 		Exporters: ms.exporters,
 		// confluent exporter expects an id for the source schema registry
 		SourceSchemaRegistryID:  utils.RandomString(5),
 		SourceSchemaRegistryURL: ms.schemaRegistry.URL,
+		CCSRRestEndpoint:        ms.ccSRRestEndpoint,
 	}
 	// Execute template
 	var buf strings.Builder
@@ -150,6 +155,6 @@ func (ms *MigrateSchemasAssetGenerator) generateInputsTfvars(terraformDir string
 		return fmt.Errorf("failed to write tfvars file: %w", err)
 	}
 
-	slog.Info("✅ generated inputs tfvars file from template", "file", tfvarsPath)
+	slog.Debug("generated inputs tfvars file from template", "file", tfvarsPath)
 	return nil
 }

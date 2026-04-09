@@ -24,6 +24,7 @@ KCP (Kafka Copy) is a CLI tool for planning and executing Kafka migrations from 
 KCP supports two Kafka source types via a `Source` abstraction pattern:
 
 ### MSK (AWS Managed Streaming for Kafka)
+
 - **Discovery**: Automated via AWS APIs (`kcp discover`)
 - **Credentials**: Auto-generated in `msk-credentials.yaml`
 - **Authentication**: IAM, SASL/SCRAM-SHA-512
@@ -31,6 +32,7 @@ KCP supports two Kafka source types via a `Source` abstraction pattern:
 - **Workflow**: AWS API discovery → Kafka Admin API scanning
 
 ### OSK (Open Source Kafka)
+
 - **Discovery**: Manual configuration
 - **Credentials**: User-created `osk-credentials.yaml` file
 - **Authentication**: SASL/SCRAM (SHA-256/SHA-512), TLS/mTLS, Plaintext
@@ -90,11 +92,13 @@ make clean
 ## Testing
 
 ### Unit Tests
+
 - All Go tests require the frontend to be built first (`make build-frontend`)
 - Tests will fail with "pattern all:dist: no matching files found" if frontend is not built
 - Run with `make test-go` or `go test ./...`
 
 ### Playwright E2E Tests
+
 - Tests are in `cmd/ui/frontend/tests/e2e/`
 - Playwright config starts `kcp ui` with `--state-file` to pre-load test data
 - Test fixtures in `cmd/ui/frontend/tests/e2e/fixtures/`
@@ -107,20 +111,20 @@ make clean
 
 Docker-based test environments for all OSK authentication methods:
 
-| Environment | Port | Auth Method | Command |
-|-------------|------|-------------|---------|
-| PLAINTEXT (ZooKeeper) | 9092 | None | `make test-env-up-plaintext` |
-| PLAINTEXT (KRaft) | 9095 | None | `make test-env-up-kraft` |
-| SASL/SCRAM | 9093 | Username/password (SHA-256) | `make test-env-up-sasl` |
-| TLS/mTLS | 9094 | Client certificates | `make test-env-up-tls` |
-| Schema Registry (unauth) | 8081 | None | `make test-env-up-schema-registry` |
-| Schema Registry (basic auth) | 8082 | Username/password | `make test-env-up-schema-registry` |
-| JMX/Jolokia (unauth) | 9096 (Kafka) / 8778 (Jolokia) | None | `make test-env-up-jmx` |
-| JMX/Jolokia (password) | 9097 (Kafka) / 8779 (Jolokia) | Username/password | `make test-env-up-jmx-auth` |
-| JMX/Jolokia (TLS) | 9098 (Kafka) / 8780 (Jolokia) | Username/password + TLS | `make test-env-up-jmx-tls` |
-| Prometheus (unauth) | 9190 | None | `make test-env-up-prometheus` |
-| Prometheus (basic auth) | 9191 | Username/password | `make test-env-up-prometheus-auth` |
-| Prometheus (TLS) | 9192 | Username/password + TLS | `make test-env-up-prometheus-tls` |
+| Environment                  | Port                          | Auth Method                 | Command                            |
+| ---------------------------- | ----------------------------- | --------------------------- | ---------------------------------- |
+| PLAINTEXT (ZooKeeper)        | 9092                          | None                        | `make test-env-up-plaintext`       |
+| PLAINTEXT (KRaft)            | 9095                          | None                        | `make test-env-up-kraft`           |
+| SASL/SCRAM                   | 9093                          | Username/password (SHA-256) | `make test-env-up-sasl`            |
+| TLS/mTLS                     | 9094                          | Client certificates         | `make test-env-up-tls`             |
+| Schema Registry (unauth)     | 8081                          | None                        | `make test-env-up-schema-registry` |
+| Schema Registry (basic auth) | 8082                          | Username/password           | `make test-env-up-schema-registry` |
+| JMX/Jolokia (unauth)         | 9096 (Kafka) / 8778 (Jolokia) | None                        | `make test-env-up-jmx`             |
+| JMX/Jolokia (password)       | 9097 (Kafka) / 8779 (Jolokia) | Username/password           | `make test-env-up-jmx-auth`        |
+| JMX/Jolokia (TLS)            | 9098 (Kafka) / 8780 (Jolokia) | Username/password + TLS     | `make test-env-up-jmx-tls`         |
+| Prometheus (unauth)          | 9190                          | None                        | `make test-env-up-prometheus`      |
+| Prometheus (basic auth)      | 9191                          | Username/password           | `make test-env-up-prometheus-auth` |
+| Prometheus (TLS)             | 9192                          | Username/password + TLS     | `make test-env-up-prometheus-tls`  |
 
 All Kafka environments have an authorizer enabled and are populated with 4 topics (`test-topic-1`, `test-topic-2`, `orders`, `events`) and 12 ACLs across 5 team principals.
 
@@ -131,6 +135,7 @@ Prometheus environments are pre-seeded with 30 days of synthetic Kafka metrics (
 Schema Registry environments are populated with 4 schemas: `orders-value` (Avro), `orders-key` (Avro), `events-value` (JSON Schema), `test-topic-1-value` (Avro). The Schema Registry requires the plaintext Kafka environment to be running first.
 
 **Test workflow:**
+
 ```bash
 # Start a specific Kafka environment
 make test-env-up-sasl
@@ -161,6 +166,7 @@ kcp scan clusters --source-type osk --state-file kcp-state.json --credentials-fi
 ```
 
 **Test credentials:**
+
 - SASL Kafka: `kafkauser` / `kafkapass` (created in Docker startup)
 - Schema Registry basic auth: `schemauser` / `schemapass`
 - JMX Jolokia auth: `monitorUser` / `monitorPass`
@@ -234,6 +240,7 @@ The workflow is state-driven:
 Commands read from and write to these files, making the workflow idempotent and resumable.
 
 **OSK Credentials Format** (`osk-credentials.yaml`):
+
 ```yaml
 clusters:
   - id: my-kafka-cluster
@@ -245,7 +252,7 @@ clusters:
         use: true
         username: admin
         password: secret
-        mechanism: SHA256  # or SHA512
+        mechanism: SHA256 # or SHA512
       # OR
       tls:
         use: true
@@ -255,21 +262,21 @@ clusters:
       # OR
       unauthenticated_plaintext:
         use: true
-    jolokia:                          # optional — enables Jolokia metrics collection
+    jolokia: # optional — enables Jolokia metrics collection
       endpoints:
         - http://broker1:8778/jolokia
-      auth:                           # optional — omit for unauthenticated
+      auth: # optional — omit for unauthenticated
         username: monitorRole
         password: secret
-      tls:                            # optional — omit for plain HTTP
+      tls: # optional — omit for plain HTTP
         ca_cert: /path/to/ca.pem
         insecure_skip_verify: false
-    prometheus:                       # optional — alternative to jolokia
+    prometheus: # optional — alternative to jolokia
       url: http://prometheus:9090
-      auth:                           # optional — omit for unauthenticated
+      auth: # optional — omit for unauthenticated
         username: promuser
         password: secret
-      tls:                            # optional — omit for plain HTTP
+      tls: # optional — omit for plain HTTP
         ca_cert: /path/to/ca.pem
         insecure_skip_verify: false
     metadata:
@@ -349,10 +356,12 @@ The `internal/services/hcl` package generates Terraform configurations:
 The tool supports multiple Kafka authentication methods:
 
 **MSK:**
+
 - **IAM**: AWS MSK IAM authentication
 - **SASL/SCRAM-SHA-512**: AWS MSK's SCRAM implementation (SHA-512 only)
 
 **OSK:**
+
 - **SASL/SCRAM-SHA-256**: Most common for open source Kafka
 - **SASL/SCRAM-SHA-512**: Also supported
 - **TLS/mTLS**: Client certificate authentication
@@ -365,21 +374,25 @@ The tool supports multiple Kafka authentication methods:
 OSK clusters support two metrics collection backends via `--metrics <source>`:
 
 **Jolokia** — real-time polling via Jolokia HTTP bridge:
+
 ```bash
 kcp scan clusters --source-type osk --state-file kcp-state.json \
   --credentials-file osk-credentials.yaml \
   --metrics jolokia --metrics-duration 5m --metrics-interval 10s
 ```
+
 - `--metrics jolokia` — requires `jolokia` section in credentials file
 - `--metrics-duration` — how long to poll (required)
 - `--metrics-interval` — polling frequency (default: 10s)
 
 **Prometheus** — historical query via Prometheus HTTP API:
+
 ```bash
 kcp scan clusters --source-type osk --state-file kcp-state.json \
   --credentials-file osk-credentials.yaml \
   --metrics prometheus --metrics-range 30d
 ```
+
 - `--metrics prometheus` — requires `prometheus` section in credentials file
 - `--metrics-range` — time range to query (e.g. 7d, 30d) (required)
 
@@ -388,6 +401,7 @@ Both backends are OSK-only (MSK uses CloudWatch via `kcp discover`). Both output
 **Metrics collected** (aligned with CloudWatch names): `BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`, `GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`
 
 **Implementation**:
+
 - Jolokia: `internal/client/jolokia_client.go`, `internal/services/jmx/jmx_service.go`
 - Prometheus: `internal/client/prometheus_client.go`, `internal/services/prometheus/prometheus_service.go`
 - Results stored as `ClusterMetrics` on `OSKDiscoveredCluster` in state file.
@@ -485,3 +499,7 @@ Version information is injected at build time via ldflags:
 - `internal/build_info.Date` - Build timestamp
 
 Development builds show a warning banner and set version to "dev".
+
+## Git
+
+- Push: `git push-external` (not `git push`)

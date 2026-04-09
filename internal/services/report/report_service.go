@@ -396,13 +396,8 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 
 		// Assign this aggregate to the correct service and metric field
 		// Example: aggregates.AWSCertificateManager.UnblendedCost["USE1-FreePrivateCA"] = costAggregate
-		switch data.Service {
-		case "AWS Certificate Manager":
-			rs.assignToServiceMetric(&aggregates.AWSCertificateManager, data.MetricName, data.UsageType, costAggregate)
-		case "Amazon Managed Streaming for Apache Kafka":
-			rs.assignToServiceMetric(&aggregates.AmazonManagedStreamingForApacheKafka, data.MetricName, data.UsageType, costAggregate)
-		case "EC2 - Other":
-			rs.assignToServiceMetric(&aggregates.EC2Other, data.MetricName, data.UsageType, costAggregate)
+		if svc := aggregates.ForService(data.Service); svc != nil {
+			rs.assignToServiceMetric(svc, data.MetricName, data.UsageType, costAggregate)
 		}
 
 		// Track running total for this service+metric combination
@@ -419,13 +414,8 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 
 		// Assign the total to the correct service and metric field
 		// Example: aggregates.AWSCertificateManager.UnblendedCost["total"] = 2632.58
-		switch service {
-		case "AWS Certificate Manager":
-			rs.assignServiceTotal(&aggregates.AWSCertificateManager, metricName, total)
-		case "Amazon Managed Streaming for Apache Kafka":
-			rs.assignServiceTotal(&aggregates.AmazonManagedStreamingForApacheKafka, metricName, total)
-		case "EC2 - Other":
-			rs.assignServiceTotal(&aggregates.EC2Other, metricName, total)
+		if svc := aggregates.ForService(service); svc != nil {
+			rs.assignServiceTotal(svc, metricName, total)
 		}
 	}
 

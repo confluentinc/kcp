@@ -24,6 +24,12 @@
       - [`kcp create-asset migrate-schemas`](#kcp-create-asset-migrate-schemas)
       - [`kcp create-asset migrate-topics`](#kcp-create-asset-migrate-topics)
       - [`kcp create-asset reverse-proxy`](#kcp-create-asset-reverse-proxy)
+      - [`kcp create-asset target-infra`](#kcp-create-asset-target-infra)
+    - [`kcp migration`](#kcp-migration)
+      - [`kcp migration init`](#kcp-migration-init)
+      - [`kcp migration execute`](#kcp-migration-execute)
+      - [`kcp migration lag-check`](#kcp-migration-lag-check)
+      - [`kcp migration list`](#kcp-migration-list)
     - [`kcp ui`](#kcp-ui)
     - [`kcp update`](#kcp-update)
 
@@ -293,7 +299,7 @@ The `kcp scan` command includes the following sub-commands:
 
 - `clusters`
 - `client-inventory`
-- `schema-registry`
+- `schema-registry` (supports both Confluent and AWS Glue via `--sr-type`)
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -624,6 +630,57 @@ export S3_URI=<folder-in-s3>
 
 ---
 
+#### `kcp scan schema-registry --sr-type=glue`
+
+This command scans an AWS Glue Schema Registry to discover all schemas and their versions. Results are added to the state file under the `schema_registries.aws_glue` section for use with the `kcp create-asset migrate-schemas --glue-registry` command.
+
+**Required Arguments**:
+
+- `--state-file`: The path to the kcp state file where the Glue Schema Registry information will be written to
+- `--sr-type`: Must be `glue`
+- `--region`: The AWS region where the Glue Schema Registry is located
+- `--registry-name`: The name of the AWS Glue Schema Registry to scan
+
+**Example Usage**
+
+```shell
+kcp scan schema-registry \
+  --sr-type glue \
+  --state-file kcp-state.json \
+  --region us-east-1 \
+  --registry-name my-glue-registry
+```
+
+**Output:**
+The command appends the following Glue Schema Registry information to the kcp-state.json file:
+
+- Registry name, ARN, and region
+- All schemas within the registry
+- All versions for each schema, including schema definitions and data formats
+
+This command requires the following permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GlueSchemaRegistryScanPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetRegistry",
+        "glue:ListSchemas",
+        "glue:ListSchemaVersions",
+        "glue:GetSchemaVersion"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+---
+
 #### `kcp scan schema-registry`
 
 This command scans a schema registry to capture all subjects, their versions, schema metadata, and compatibility settings. The information is appended to the kcp-state.json file for migration planning.
@@ -792,6 +849,7 @@ The `kcp create-asset` command includes the following sub-commands:
 - `migrate-schemas`
 - `migrate-topics`
 - `reverse-proxy`
+- `target-infra`
 
 The sub-commands require the following minimum AWS IAM permissions:
 
@@ -1549,6 +1607,7 @@ One of the following combinations is required - `--state-file` + `--cluster-arn`
 
 - `--needs-private-link`: Whether the infrastructure needs private link setup
 - `--subnet-cidrs`: Subnet CIDRs for private link (required when `--needs-private-link=true`)
+- `--use-existing-route53-zone`: Use an existing Route53 Private Hosted Zone instead of creating a new one (default: false, only applies to dedicated clusters).
 
 **Optional Arguments**:
 
@@ -1573,17 +1632,21 @@ kcp create-asset target-infra \
 **Output:**
 The command creates a directory (default: `target-infra`) containing Terraform configurations that will provision a Confluent Cloud setup based on the provided flags.
 
+##### Route53 DNS for Enterprise Private Link
+
+Enterprise clusters use the **ingress Private Link Gateway** pattern, which provides a unique DNS domain per access point. Each cluster gets its own Route53 Private Hosted Zone automatically — no shared zones, no conflicts when deploying multiple enterprise clusters in the same VPC.
+
 ---
 
 #### `kcp create-asset migration-infra`
 
-This command generates the required Terraform to provision your migration environment. The `--type` flag will determine how the Confluent Platform jump cluster will authenticate with MSK - using either IAM or SASL/SCRAM - as well some aspects of the networking to connect to an existing Private Link setup between the AWS VPC and Confluent Cloud.
+This command generates the required Terraform to provision your migration environment. The `--type` flag determines the migration method and authentication mechanism used to connect to MSK.
 
 **Required Arguments**:
 
 - `--state-file`: Path to kcp-state.json file
 - `--cluster-arn`: The cluster-arn to target
-- `--type`: The type of authentication to use to establish the cluster link between AWS MSK and Confluent Platform jump cluster
+- `--type`: The migration infrastructure type (1-6). See Type Options below.
 
 **Base Migration Flags**:
 
@@ -1596,13 +1659,13 @@ This command generates the required Terraform to provision your migration enviro
 - `--existing-internet-gateway`: Whether to use an existing internet gateway. (default: false)
 - `--output-dir`: The directory to output the migration infrastructure assets to. (default: 'migration-infra')
 
-**Type Two Flags**:
+**Type 2/3 Flags** (External Outbound Cluster Link):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--subnet-id`: [Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default: MSK broker #1 subnet).
 - `--security-group-id`: [Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).
 
-**Type Three Flags**:
+**Type 4/5 Flags** (Jump Cluster — SASL/SCRAM and Unauthenticated TLS):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
@@ -1612,7 +1675,7 @@ This command generates the required Terraform to provision your migration enviro
 - `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
 - `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
 
-**Type Four Flags**:
+**Type 6 Flags** (Jump Cluster — IAM):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
@@ -1631,26 +1694,36 @@ _Public MSK Endpoints:_
 
 _Private MSK Endpoints:_
 
-- Type 2: External Outbound Cluster Link [SASL/SCRAM]
-- Type 3: Jump Cluster [SASL/SCRAM]
-- Type 4: Jump Cluster [IAM]
+- Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise only)
+- Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise only)
+- Type 4: Jump Cluster [SASL/SCRAM]
+- Type 5: Jump Cluster [Unauthenticated TLS]
+- Type 6: Jump Cluster [IAM]
+
+> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for
+> Enterprise clusters. Dedicated clusters with private MSK endpoints must use
+> Jump Clusters (Type 4, 5, or 6). Dedicated clusters with public MSK endpoints
+> can use Type 1 (Cluster Link).
+>
+> **Breaking change:** Types have been renumbered from the previous 1-4 scheme.
+> Former Type 3 (Jump Cluster SASL/SCRAM) is now Type 4, and former Type 4 (Jump Cluster IAM) is now Type 6.
 
 **Example Usage**
 
 > [!NOTE]
-> The example below uses `--type 3` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Type 3 requires an existing VPC endpoint (`--existing-private-link-vpce-id`) for the Private Link connection between the jump cluster and Confluent Cloud.
+> The example below uses `--type 4` which indicates that SASL/SCRAM will be used in conjunction with a jump cluster to migrate data. Type 4 requires an existing VPC endpoint (`--existing-private-link-vpce-id`) for the Private Link connection between the jump cluster and Confluent Cloud.
 
 ```bash
 kcp create-asset migration-infra /
 --state-file kcp-state.json /
 --cluster-arn arn:aws:kafka:us-east-1:XXX:cluster/XXX/1a2345b6-bf9f-4670-b13b-710985f5645d-5 /
 --existing-internet-gateway /
---output-dir type-3 /
---type 3 /
+--output-dir type-4 /
+--type 4 /
 --existing-private-link-vpce-id vpce-0abc123def456789 /
 --jump-cluster-broker-subnet-cidr 10.0.101.0/24,10.0.102.0/24,10.0.103.0/24 /
 --jump-cluster-setup-host-subnet-cidr 10.0.104.0/24 /
---cluster-link-name type-3-link /
+--cluster-link-name type-4-link /
 --target-environment-id env-a1bcde /
 --target-cluster-id lkc-w89xyz /
 --target-rest-endpoint https://lkc-w89xyz.XXX.aws.private.confluent.cloud:443 /
@@ -1669,30 +1742,56 @@ The command creates a directory (default: `migration-infra`) containing Terrafor
 
 #### `kcp create-asset migrate-schemas`
 
-This command generates Terraform assets for migrating Schema Registry schemas to Confluent Cloud using Schema Exporters.
+This command generates Terraform assets for migrating schemas to Confluent Cloud. It supports two sources: Confluent Schema Registry (using Schema Exporters) and AWS Glue Schema Registry (using `confluent_schema` resources).
 
 **Required Arguments**:
 
 - `--state-file`: The path to the kcp state file where the schema registry information has been written to
-- `--url`: The URL of the schema registry to migrate schemas from
+- `--cc-sr-rest-endpoint`: The REST endpoint of the Confluent Cloud target schema registry
+
+**Source Flags** (one required):
+
+- `--url`: The URL of a Confluent Schema Registry to migrate schemas from (uses schema exporter)
+- `--glue-registry`: The name of an AWS Glue Schema Registry to migrate schemas from (uses `confluent_schema` resources)
+
+**Optional Arguments**:
+
+- `--output-dir`: The output directory for the generated assets (default: `migrate_schemas`)
 
 **Example Usage**:
 
 ```shell
+# From Confluent Schema Registry
 kcp create-asset migrate-schemas \
   --state-file kcp-state.json \
-  --url https://my-schema-registry.example.com
+  --url https://my-schema-registry.example.com \
+  --cc-sr-rest-endpoint https://psrc-xxxxx.us-east-2.aws.confluent.cloud
+
+# From AWS Glue Schema Registry
+kcp create-asset migrate-schemas \
+  --state-file kcp-state.json \
+  --glue-registry my-glue-registry \
+  --cc-sr-rest-endpoint https://psrc-xxxxx.us-east-2.aws.confluent.cloud
 ```
 
-**Output:**
+**Output (Confluent Schema Registry):**
 The command creates a `migrate_schemas` directory containing Terraform files:
 
 - `main.tf` - Terraform configuration defining `confluent_schema_exporter` resources for schema migration
 - `variables.tf` - Input variable definitions for source and destination Schema Registry details
 - `inputs.auto.tfvars` - Auto-populated variable values from the kcp state file
 
-**What it does:**
 The generated Terraform configuration creates Schema Exporter resources that continuously sync schemas from your source Schema Registry to Confluent Cloud's Schema Registry. By default, it exports all subjects (`:*:`) with context type `NONE`.
+
+**Output (AWS Glue Schema Registry):**
+The command creates a `migrate_schemas` directory containing Terraform files:
+
+- Per-schema `.tf` files - Each file defines `confluent_subject_config` (compatibility set to `NONE`) and `confluent_schema` resources with `depends_on` chains for ordered version registration
+- `variables.tf` - Input variable definitions for Confluent Cloud Schema Registry credentials
+- `inputs.auto.tfvars` - Auto-populated variable values
+- `schemas/` directory - Schema definition files referenced by `file()` in the Terraform resources
+
+The generated Terraform creates individual `confluent_schema` resources for each schema version, preserving version history through ordered `depends_on` chains. Schema definitions are written to local files and referenced via `file()`.
 
 **Next Steps:**
 
@@ -1700,7 +1799,7 @@ The generated Terraform configuration creates Schema Exporter resources that con
 2. Review and customize the Terraform configuration if needed
 3. Run `terraform init` to initialize the Terraform workspace
 4. Run `terraform plan` to preview the changes
-5. Run `terraform apply` to create the Schema Exporters
+5. Run `terraform apply` to create the Schema Exporters or schema resources
 
 ---
 
@@ -1778,6 +1877,209 @@ The command creates a `reverse-proxy` directory containing Terraform configurati
 
 > [!NOTE]
 > A `README.md` is generated in the `reverse-proxy` directory to further assist in setting up the reverse proxy on your local machine to view the private networked Confluent Cloud cluster.
+
+---
+
+### `kcp migration`
+
+The `kcp migration` command provides tools for executing end-to-end Kafka migrations from MSK to Confluent Cloud using CPC Gateway. It includes the following sub-commands:
+
+- `init`
+- `execute`
+- `lag-check`
+- `list`
+
+The migration workflow follows a defined lifecycle managed by a finite state machine:
+
+1. **Initialize** — validate cluster link and gateway CRs, persist migration config
+2. **Check Lags** — compare source and destination offsets until lag is below threshold
+3. **Fence Gateway** — apply fenced gateway CR to block traffic during cutover
+4. **Promote Topics** — promote mirror topics at zero lag
+5. **Switch Gateway** — apply switchover gateway CR to route traffic to Confluent Cloud
+
+If execution is interrupted at any step, re-running `kcp migration execute` resumes from the last completed step.
+
+#### Supporting Documentation
+
+- **[Gateway Switchover Examples](gateway-switchover-examples.md)**
+  Provides example Gateway CR YAML files for each supported authentication combination, covering the initial, fenced, and switchover states required by `kcp migration init`. Use this as a starting point when authoring your own Gateway CRs.
+
+- **[Migration Reference Guide](getting-started-with-zero-cut-migrations.md)**
+  An end-to-end reference for the KCP + Gateway migration approach. Covers how the components fit together (KCP CLI, CC Gateway, Cluster Linking), infrastructure and networking prerequisites, the full authentication support matrix including IAM pre-migration paths, and operational guidance for planning and executing client cutovers.
+
+---
+
+#### `kcp migration init`
+
+Initialize a new migration by validating infrastructure and persisting migration state. This command validates the cluster link and mirror topics on the destination cluster, fetches the current gateway CR from Kubernetes, validates consistency across the gateway CRs, and writes the migration configuration to the state file.
+
+**Required Arguments**:
+
+- `--k8s-namespace`: Kubernetes namespace where the gateway is deployed.
+- `--initial-cr-name`: Name of the initial gateway custom resource in Kubernetes.
+- `--source-bootstrap`: Bootstrap server(s) of the source Kafka cluster (e.g. `broker1:9092,broker2:9092`).
+- `--cluster-bootstrap`: Confluent Cloud Kafka bootstrap endpoint (e.g. `pkc-abc123.us-east-1.aws.confluent.cloud:9092`).
+- `--cluster-id`: Confluent Cloud destination cluster ID (e.g. `lkc-abc123`).
+- `--cluster-rest-endpoint`: REST endpoint of the destination Confluent Cloud cluster.
+- `--cluster-link-name`: Name of the cluster link on the destination cluster.
+- `--cluster-api-key`: API key for authenticating with the destination cluster.
+- `--cluster-api-secret`: API secret for authenticating with the destination cluster.
+- `--fenced-cr-yaml`: Path to the gateway CR YAML that blocks traffic during migration.
+- `--switchover-cr-yaml`: Path to the gateway CR YAML that routes traffic to Confluent Cloud.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
+
+**Optional Arguments**:
+
+- `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
+- `--skip-validate`: Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources.
+- `--kube-path`: Path to the Kubernetes config file (default: `~/.kube/config`).
+- `--topics`: Topics to migrate (comma separated list or repeated flag).
+
+**Example Usage**
+
+```shell
+kcp migration init \
+  --k8s-namespace my-namespace \
+  --initial-cr-name my-gateway \
+  --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9096,b2.my-cluster.kafka.us-east-1.amazonaws.com:9096 \
+  --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+  --cluster-id lkc-abc123 \
+  --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+  --cluster-link-name my-cluster-link \
+  --cluster-api-key ABCDEFGHIJKLMNOP \
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+  --fenced-cr-yaml gateway-fenced.yaml \
+  --switchover-cr-yaml gateway-switchover.yaml \
+  --use-sasl-iam
+```
+
+> [!NOTE]
+> All flags can be provided via environment variables using uppercase names with underscores (e.g. `CLUSTER_API_KEY`).
+
+---
+
+#### `kcp migration execute`
+
+Execute an initialized migration through its remaining workflow steps. This command resumes a migration from its current state, progressing through lag checking, gateway fencing, topic promotion, and gateway switchover.
+
+**Required Arguments**:
+
+- `--migration-id`: ID of the migration to execute (from `kcp migration list`).
+- `--lag-threshold`: Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.
+- `--cluster-api-key`: API key for authenticating with the destination cluster.
+- `--cluster-api-secret`: API secret for authenticating with the destination cluster.
+
+**Source Cluster Authentication Flags** (mutually exclusive):
+
+- `--use-sasl-iam`: Use IAM authentication for the source MSK cluster.
+- `--use-sasl-scram`: Use SASL/SCRAM authentication for the source MSK cluster.
+- `--use-tls`: Use TLS authentication for the source MSK cluster.
+- `--use-unauthenticated-tls`: Use unauthenticated (TLS encryption) for the source MSK cluster.
+- `--use-unauthenticated-plaintext`: Use unauthenticated (plaintext) for the source MSK cluster.
+
+**IAM Flags** (required when `--use-sasl-iam`):
+
+- `--aws-region`: AWS region of the source MSK cluster (e.g. `us-east-1`).
+
+**SASL/SCRAM Flags** (required when `--use-sasl-scram`):
+
+- `--sasl-scram-username`: SASL/SCRAM username for the source MSK cluster.
+- `--sasl-scram-password`: SASL/SCRAM password for the source MSK cluster.
+
+**TLS Flags** (required when `--use-tls`):
+
+- `--tls-ca-cert`: Path to the TLS CA certificate for the source MSK cluster.
+- `--tls-client-cert`: Path to the TLS client certificate for the source MSK cluster.
+- `--tls-client-key`: Path to the TLS client key for the source MSK cluster.
+
+**Optional Arguments**:
+
+- `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
+
+**Example Usage**
+
+```shell
+kcp migration execute \
+  --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  --lag-threshold 0 \
+  --cluster-api-key ABCDEFGHIJKLMNOP \
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+  --use-sasl-iam \
+  --aws-region us-east-1
+```
+
+> [!NOTE]
+> Credentials (`--cluster-api-key`, `--cluster-api-secret`) are intentionally not stored in the state file and must be provided each time for security.
+
+---
+
+#### `kcp migration lag-check`
+
+Interactive TUI that displays mirror topic lag for the cluster link. This is a standalone monitoring tool that does not require a prior `kcp migration init`. It uses the Cluster Link REST API to query mirror topic lag.
+
+> [!NOTE]
+> This command uses the **Cluster Link REST API** to retrieve mirror topic lag reported by the cluster link itself. In contrast, `kcp migration execute` uses a **direct offset comparison** between the source (MSK) and destination (Confluent Cloud) Kafka clusters to determine lag during the migration workflow.
+
+**Required Arguments**:
+
+- `--rest-endpoint`: Cluster link REST endpoint.
+- `--cluster-id`: Cluster link cluster ID.
+- `--cluster-link-name`: Cluster link name.
+- `--cluster-api-key`: Cluster link API key.
+- `--cluster-api-secret`: Cluster link API secret.
+
+**Optional Arguments**:
+
+- `--poll-interval`: Poll interval in seconds, between 1 and 60 (default: `1`).
+
+**Example Usage**
+
+```shell
+kcp migration lag-check \
+  --rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+  --cluster-id lkc-abc123 \
+  --cluster-link-name my-cluster-link \
+  --cluster-api-key ABCDEFGHIJKLMNOP \
+  --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+---
+
+#### `kcp migration list`
+
+Display all migrations from the migration state file, showing migration IDs, current state, gateway configuration, and topics.
+
+**Optional Arguments**:
+
+- `--migration-state-file`: Path to the migration state file (default: `migration-state.json`).
+
+**Example Usage**
+
+```shell
+# List all migrations from the default state file
+kcp migration list
+
+# List from a specific state file
+kcp migration list --migration-state-file /path/to/state.json
+```
 
 ---
 

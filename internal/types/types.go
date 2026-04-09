@@ -35,6 +35,7 @@ const (
 	AuthTypeTLS                      AuthType = "TLS"
 	AuthTypeUnauthenticatedPlaintext AuthType = "Unauthenticated (Plaintext)"
 	AuthTypeUnauthenticatedTLS       AuthType = "Unauthenticated (TLS Encryption)"
+	AuthTypeSASLPlain                AuthType = "SASL/PLAIN"
 )
 
 // SchemaRegistryAuthType represents the different authentication types supported by Schema Registry
@@ -47,7 +48,7 @@ const (
 
 func (a AuthType) IsValid() bool {
 	switch a {
-	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS:
+	case AuthTypeSASLSCRAM, AuthTypeIAM, AuthTypeTLS, AuthTypeUnauthenticatedPlaintext, AuthTypeUnauthenticatedTLS, AuthTypeSASLPlain:
 		return true
 	default:
 		return false
@@ -68,6 +69,7 @@ func AllAuthTypes() []string {
 		string(AuthTypeTLS),
 		string(AuthTypeUnauthenticatedPlaintext),
 		string(AuthTypeUnauthenticatedTLS),
+		string(AuthTypeSASLPlain),
 	}
 }
 
@@ -93,20 +95,12 @@ type ConnectTlsAuth struct {
 type MigrationType int
 
 const (
-	PublicSourceEndpoints          MigrationType = 1
-	ExternalOutboundClusterLink MigrationType = 2
-	JumpClusterSaslScram        MigrationType = 3
-	JumpClusterIam              MigrationType = 4
+	PublicMskEndpoints                   MigrationType = 1
+	ExternalOutboundClusterLink          MigrationType = 2
+	ExternalOutboundClusterLinkUnauthTls MigrationType = 3
+	JumpClusterSaslScram                 MigrationType = 4
+	JumpClusterIam                       MigrationType = 6
 )
-
-func (m MigrationType) IsValid() bool {
-	switch m {
-	case PublicSourceEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
-		return true
-	default:
-		return false
-	}
-}
 
 func ToMigrationType(input string) (MigrationType, error) {
 	value, err := strconv.Atoi(input)
@@ -125,19 +119,20 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	AwsRegion           string   `json:"aws_region"`
-	NeedsEnvironment    bool     `json:"needs_environment"`
-	EnvironmentName     string   `json:"environment_name"`
-	EnvironmentId       string   `json:"environment_id"`
-	NeedsCluster        bool     `json:"needs_cluster"`
-	ClusterName         string   `json:"cluster_name"`
-	ClusterType         string   `json:"cluster_type"`
-	ClusterAvailability string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
-	ClusterCku          int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
-	NeedsPrivateLink    bool     `json:"needs_private_link"`
-	PreventDestroy      bool     `json:"prevent_destroy"`
-	VpcId               string   `json:"vpc_id"`
-	SubnetCidrRanges    []string `json:"subnet_cidr_ranges"`
+	AwsRegion              string   `json:"aws_region"`
+	NeedsEnvironment       bool     `json:"needs_environment"`
+	EnvironmentName        string   `json:"environment_name"`
+	EnvironmentId          string   `json:"environment_id"`
+	NeedsCluster           bool     `json:"needs_cluster"`
+	ClusterName            string   `json:"cluster_name"`
+	ClusterType            string   `json:"cluster_type"`
+	ClusterAvailability    string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
+	ClusterCku             int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
+	NeedsPrivateLink       bool     `json:"needs_private_link"`
+	UseExistingRoute53Zone bool     `json:"use_existing_route53_zone"`
+	PreventDestroy         bool     `json:"prevent_destroy"`
+	VpcId                  string   `json:"vpc_id"`
+	SubnetCidrRanges       []string `json:"subnet_cidr_ranges"`
 }
 
 type TerraformFiles struct {
@@ -182,18 +177,19 @@ type MigrationWizardRequest struct {
 	JumpClusterBrokerSubnetCidr    []string `json:"jump_cluster_broker_subnet_cidr"`
 	JumpClusterSetupHostSubnetCidr string   `json:"jump_cluster_setup_host_subnet_cidr"`
 
-	JumpClusterAuthType              string `json:"jump_cluster_auth_type"`
-	SourceClusterId                  string `json:"source_cluster_id"`
-	JumpClusterIamAuthRoleName       string `json:"jump_cluster_iam_auth_role_name"`
-	SourceSaslScramBootstrapServers  string `json:"source_sasl_scram_bootstrap_servers"`
+	JumpClusterAuthType             string `json:"jump_cluster_auth_type"`
+	SourceClusterId                 string `json:"source_cluster_id"`
+	JumpClusterIamAuthRoleName      string `json:"jump_cluster_iam_auth_role_name"`
+	SourceSaslScramBootstrapServers string `json:"source_sasl_scram_bootstrap_servers"`
 	SourceSaslScramMechanism        string `json:"source_sasl_scram_mechanism"`
-	SourceSaslIamBootstrapServers    string `json:"source_sasl_iam_bootstrap_servers"`
-	SourceRegion                     string `json:"source_region"`
-	TargetEnvironmentId              string `json:"target_environment_id"`
-	TargetClusterId                  string `json:"target_cluster_id"`
-	TargetRestEndpoint               string `json:"target_rest_endpoint"`
-	TargetBootstrapEndpoint          string `json:"target_bootstrap_endpoint"`
-	ClusterLinkName                  string `json:"cluster_link_name"`
+	SourceSaslIamBootstrapServers   string `json:"source_sasl_iam_bootstrap_servers"`
+	SourceRegion                    string `json:"source_region"`
+	TargetEnvironmentId             string `json:"target_environment_id"`
+	TargetClusterId                 string `json:"target_cluster_id"`
+	TargetRestEndpoint              string `json:"target_rest_endpoint"`
+	TargetBootstrapEndpoint         string `json:"target_bootstrap_endpoint"`
+	ClusterLinkName                 string `json:"cluster_link_name"`
+	TargetClusterType               string `json:"target_cluster_type"`
 }
 
 type ExtOutboundClusterKafkaBroker struct {
@@ -246,6 +242,18 @@ type SchemaRegistryExporterConfig struct {
 	SourceURL string   `json:"source_url"`
 }
 
+type MigrateGlueSchemasRequest struct {
+	ConfluentCloudSchemaRegistryURL string                              `json:"confluent_cloud_schema_registry_url"`
+	GlueRegistries                  []GlueSchemaRegistryMigrationConfig `json:"glue_registries"`
+}
+
+type GlueSchemaRegistryMigrationConfig struct {
+	Migrate      bool         `json:"migrate"`
+	RegistryName string       `json:"registry_name"`
+	Region       string       `json:"region"`
+	Schemas      []GlueSchema `json:"schemas"`
+}
+
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure
 // configuration. Each module contains its own Terraform files and additional assets.
 type MigrationInfraTerraformModule struct {
@@ -277,9 +285,10 @@ type MigrationScriptsTerraformProject struct {
 
 // MigrationScriptsTerraformFolder represents a Terraform folder within the migration scripts
 type MigrationScriptsTerraformFolder struct {
-	Name             string `json:"name"`
-	MainTf           string `json:"main.tf"`
-	ProvidersTf      string `json:"providers.tf"`
-	VariablesTf      string `json:"variables.tf"`
-	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
+	Name             string            `json:"name"`
+	MainTf           string            `json:"main.tf"`
+	ProvidersTf      string            `json:"providers.tf"`
+	VariablesTf      string            `json:"variables.tf"`
+	InputsAutoTfvars string            `json:"inputs.auto.tfvars"`
+	AdditionalFiles  map[string]string `json:"additional_files,omitempty"`
 }

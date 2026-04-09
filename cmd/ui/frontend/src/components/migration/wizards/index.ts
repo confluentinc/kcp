@@ -17,6 +17,7 @@ export { createMigrationInfraOskWizardConfig } from './migrationInfraOskWizardCo
 export { createAclMigrationScriptsWizardConfig } from './aclMigrationScriptsWizardConfig.ts'
 export { createMirrorTopicsMigrationScriptsWizardConfig } from './mirrorTopicsMigrationScriptsWizardConfig.ts'
 export { createSchemaRegistryMigrationScriptsWizardConfig } from './schemaRegistryMigrationScriptsWizardConfig.ts'
+export { createGlueSchemaRegistryMigrationScriptsWizardConfig } from './glueSchemaRegistryMigrationScriptsWizardConfig.ts'
 
 export type {
   WizardStep,

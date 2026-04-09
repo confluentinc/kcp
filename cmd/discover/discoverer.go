@@ -49,7 +49,7 @@ func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 }
 
 func (d *Discoverer) Run() error {
-	slog.Info("🚀 starting discover")
+	fmt.Printf("🚀 Starting discover\n")
 
 	if err := d.discoverRegions(); err != nil {
 		slog.Error("failed to discover regions", "error", err)
@@ -158,7 +158,7 @@ func (d *Discoverer) discoverRegions() error {
 	// report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {
-			slog.Info("no clusters found in region", "region", region)
+			fmt.Printf("  ⏭️  No clusters found in region %s\n", region)
 		}
 	}
 
@@ -273,7 +273,6 @@ func (d *Discoverer) getAvailableClusterAuthOptions(cluster kafkatypes.Cluster) 
 			ClientCert: "",
 			ClientKey:  "",
 		}
-		defaultAuthSelected = true
 	}
 
 	return clusterAuth, nil

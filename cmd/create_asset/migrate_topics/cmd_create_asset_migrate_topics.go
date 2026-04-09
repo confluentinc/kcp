@@ -21,6 +21,7 @@ var (
 	targetClusterRestEndpoint string
 	clusterLinkName           string
 	outputDir                 string
+	force                     bool
 )
 
 func NewMigrateTopicsCmd() *cobra.Command {
@@ -51,6 +52,7 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "migrate_topics", "The directory to output the Terraform files to. (default: 'migrate_topics')")
+	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	migrationCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -150,6 +152,7 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 		TargetClusterRestEndpoint: targetClusterRestEndpoint,
 		ClusterLinkName:           clusterLinkName,
 		OutputDir:                 outputDir,
+		Force:                     force,
 	}
 
 	return &opts, nil

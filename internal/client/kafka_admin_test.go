@@ -275,6 +275,25 @@ func TestAdminOptionFunctions(t *testing.T) {
 				clientKeyFile:  "client.key",
 			},
 		},
+		{
+			name:   "WithSASLPlainAuth sets SASL/PLAIN auth with TLS",
+			option: WithSASLPlainAuth("test-user", "test-pass"),
+			expectedConfig: AdminConfig{
+				authType: types.AuthTypeSASLPlain,
+				username: "test-user",
+				password: "test-pass",
+			},
+		},
+		{
+			name:   "WithSASLPlainAuthNoTLS sets SASL/PLAIN auth without TLS",
+			option: WithSASLPlainAuthNoTLS("test-user", "test-pass"),
+			expectedConfig: AdminConfig{
+				authType:   types.AuthTypeSASLPlain,
+				username:   "test-user",
+				password:   "test-pass",
+				disableTLS: true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -291,6 +310,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 			assert.Equal(t, tt.expectedConfig.caCertFile, config.caCertFile)
 			assert.Equal(t, tt.expectedConfig.clientCertFile, config.clientCertFile)
 			assert.Equal(t, tt.expectedConfig.clientKeyFile, config.clientKeyFile)
+			assert.Equal(t, tt.expectedConfig.disableTLS, config.disableTLS)
 		})
 	}
 }
@@ -316,7 +336,7 @@ func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
 	config := sarama.NewConfig()
 	region := "us-west-2"
 
-	configureSASLTypeOAuthAuthentication(config, region)
+	configureSASLTypeOAuthAuthentication(config, region, false)
 
 	// Verify SASL/OAuth configuration
 	assert.True(t, config.Net.TLS.Enable)
@@ -379,6 +399,58 @@ func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
 	}
 }
 
+func TestConfigureSASLTypePlainAuthentication(t *testing.T) {
+	tests := []struct {
+		name               string
+		withTLSEncryption  bool
+		expectedTLSEnabled bool
+	}{
+		{
+			name:               "with TLS encryption (SASL_SSL)",
+			withTLSEncryption:  true,
+			expectedTLSEnabled: true,
+		},
+		{
+			name:               "without TLS encryption (SASL_PLAINTEXT)",
+			withTLSEncryption:  false,
+			expectedTLSEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := sarama.NewConfig()
+			configureSASLTypePlainAuthentication(config, "user", "pass", tt.withTLSEncryption, false)
+
+			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
+			assert.True(t, config.Net.SASL.Enable)
+			assert.Equal(t, "user", config.Net.SASL.User)
+			assert.Equal(t, "pass", config.Net.SASL.Password)
+			assert.Equal(t, string(sarama.SASLTypePlaintext), string(config.Net.SASL.Mechanism))
+		})
+	}
+}
+
+func TestAdminOptionForAuth_SASLPlain(t *testing.T) {
+	clusterAuth := types.ClusterAuth{
+		AuthMethod: types.AuthMethodConfig{
+			SASLPlain: &types.SASLPlainConfig{
+				Use:      true,
+				Username: "test-user",
+				Password: "test-pass",
+			},
+		},
+	}
+	opt := AdminOptionForAuth(types.AuthTypeSASLPlain, clusterAuth)
+	config := AdminConfig{}
+	opt(&config)
+
+	assert.Equal(t, types.AuthTypeSASLPlain, config.authType)
+	assert.Equal(t, "test-user", config.username)
+	assert.Equal(t, "test-pass", config.password)
+	assert.True(t, config.disableTLS)
+}
+
 func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 	tests := []struct {
 		name                            string
@@ -408,7 +480,7 @@ func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 
 			// Determine if TLS should be enabled based on the encryption type
 			withTLSEncryption := tt.clientBrokerEncryptionInTransit != kafkatypes.ClientBrokerPlaintext
-			configureUnauthenticatedAuthentication(config, withTLSEncryption)
+			configureUnauthenticatedAuthentication(config, withTLSEncryption, false)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			if tt.expectedTLSEnabled {
@@ -466,7 +538,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
 
-			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile)
+			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile, false)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -589,7 +661,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			region:                          "us-west-2",
 			opts:                            []AdminOption{WithIAMAuth()},
 			expectError:                     true,
-			errorContains:                   "Failed to create admin client",
+			errorContains:                   "failed to create admin client",
 		},
 	}
 
@@ -604,7 +676,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, admin)
-				admin.Close()
+				_ = admin.Close()
 			}
 		})
 	}
@@ -619,10 +691,10 @@ func TestNewKafkaAdmin_DefaultConfiguration(t *testing.T) {
 	if err != nil {
 		// The error should be related to creating the admin client, not auth type
 		assert.NotContains(t, err.Error(), "Auth type")
-		assert.Contains(t, err.Error(), "Failed to create admin client")
+		assert.Contains(t, err.Error(), "failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
-		admin.Close()
+		_ = admin.Close()
 	}
 }
 
@@ -640,10 +712,10 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	if err != nil {
 		// The error should be related to creating the admin client, not auth type
 		assert.NotContains(t, err.Error(), "Auth type")
-		assert.Contains(t, err.Error(), "Failed to create admin client")
+		assert.Contains(t, err.Error(), "failed to create admin client")
 	} else {
 		require.NotNil(t, admin)
-		admin.Close()
+		_ = admin.Close()
 	}
 }
 

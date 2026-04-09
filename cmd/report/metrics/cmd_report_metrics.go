@@ -64,7 +64,7 @@ func NewReportMetricsCmd() *cobra.Command {
 		return nil
 	})
 
-	reportMetricsCmd.MarkFlagRequired("state-file")
+	_ = reportMetricsCmd.MarkFlagRequired("state-file")
 	// optional but if one is provided, the other must be provided
 	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end", "cluster-arn")
 
