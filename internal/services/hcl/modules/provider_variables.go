@@ -43,10 +43,10 @@ func GetPrivateMigrationProviderVariables() []ModuleVariable[types.MigrationWiza
 			Name:       SchemaAWSRegion.Name,
 			Definition: SchemaAWSRegion.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskRegion
+				return request.SourceRegion
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return !request.HasPublicMskEndpoints
+				return !request.HasPublicEndpoints
 			},
 		},
 	}

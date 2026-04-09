@@ -19,7 +19,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 }
 
 func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
-	if request.HasPublicMskEndpoints {
+	if request.HasPublicEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
 
@@ -74,7 +74,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 				OutputsTf:   mi.generateJumpClustersOutputsTf(),
 				VersionsTf:  mi.generateJumpClustersVersionsTf(),
 				AdditionalFiles: map[string]string{
-					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.MskJumpClusterAuthType),
+					"jump-cluster-with-cluster-links-user-data.tpl": mi.generateJumpClusterClusterLinksUserDataTpl(request.JumpClusterAuthType),
 				},
 			},
 			{

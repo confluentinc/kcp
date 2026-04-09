@@ -37,13 +37,13 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 
 ### Key Features
 
-| Feature                     | Description                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                             |
-| **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                          |
-| **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud. |
+| Feature                     | Description                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                              |
+| **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                           |
+| **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud.  |
 | **Migration Execution**     | FSM-driven migration workflow with lag monitoring, gateway fencing, and topic promotion. |
-| **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.             |
+| **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.              |
 
 ### Documentation
 
@@ -93,8 +93,14 @@ make clean
 # Format go code
 make fmt
 
-# Run tests
+# Run all tests (Go unit tests + Playwright E2E tests)
 make test
+
+# Run Go unit tests only
+make test-go
+
+# Run Playwright E2E tests only (builds frontend + Go binary first)
+make test-e2e
 
 # Run tests with coverage
 make test-cov
@@ -102,6 +108,31 @@ make test-cov
 # Run tests with coverage and open UI coverage browser
 make test-cov-ui
 ```
+
+### Playwright E2E Tests
+
+The frontend includes Playwright end-to-end tests for the web UI. These test the migration infrastructure wizards, cluster views, and state loading.
+
+```bash
+cd cmd/ui/frontend
+
+# Run all E2E tests
+npx playwright test
+
+# Run with visible browser
+npx playwright test --headed
+
+# Run with Playwright UI (interactive test runner)
+npx playwright test --ui
+
+# Run a specific test file
+npx playwright test tests/e2e/osk-migration-infra.spec.ts
+
+# Debug a specific test
+npx playwright test -g "Public path" --debug
+```
+
+Test fixtures are in `cmd/ui/frontend/tests/e2e/fixtures/`. The Playwright config starts `kcp ui` with `--state-file` to pre-load test data automatically.
 
 ### E2E Integration Tests (Migration)
 

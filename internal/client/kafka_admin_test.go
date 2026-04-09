@@ -250,11 +250,12 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLSCRAMAuth sets SASL/SCRAM auth",
-			option: WithSASLSCRAMAuth("test-user", "test-pass"),
+			option: WithSASLSCRAMAuth("test-user", "test-pass", "SHA256", false),
 			expectedConfig: AdminConfig{
-				authType: types.AuthTypeSASLSCRAM,
-				username: "test-user",
-				password: "test-pass",
+				authType:      types.AuthTypeSASLSCRAM,
+				username:      "test-user",
+				password:      "test-pass",
+				saslMechanism: "SHA256",
 			},
 		},
 		{
@@ -303,6 +304,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 			assert.Equal(t, tt.expectedConfig.authType, config.authType)
 			assert.Equal(t, tt.expectedConfig.username, config.username)
 			assert.Equal(t, tt.expectedConfig.password, config.password)
+			assert.Equal(t, tt.expectedConfig.saslMechanism, config.saslMechanism)
 			assert.Equal(t, tt.expectedConfig.awsAccessKey, config.awsAccessKey)
 			assert.Equal(t, tt.expectedConfig.awsAccessSecret, config.awsAccessSecret)
 			assert.Equal(t, tt.expectedConfig.caCertFile, config.caCertFile)
@@ -350,25 +352,51 @@ func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
 }
 
 func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
-	config := sarama.NewConfig()
-	username := "test-user"
-	password := "test-pass"
+	tests := []struct {
+		name              string
+		mechanism         string
+		expectedMechanism sarama.SASLMechanism
+	}{
+		{
+			name:              "SHA256 mechanism",
+			mechanism:         "SHA256",
+			expectedMechanism: sarama.SASLTypeSCRAMSHA256,
+		},
+		{
+			name:              "SHA512 mechanism",
+			mechanism:         "SHA512",
+			expectedMechanism: sarama.SASLTypeSCRAMSHA512,
+		},
+		{
+			name:              "empty mechanism defaults to SHA256",
+			mechanism:         "",
+			expectedMechanism: sarama.SASLTypeSCRAMSHA256,
+		},
+	}
 
-	configureSASLTypeSCRAMAuthentication(config, username, password, false)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := sarama.NewConfig()
+			username := "test-user"
+			password := "test-pass"
 
-	// Verify SASL/SCRAM configuration
-	assert.True(t, config.Net.TLS.Enable)
-	assert.NotNil(t, config.Net.TLS.Config)
-	assert.True(t, config.Net.SASL.Enable)
-	assert.Equal(t, username, config.Net.SASL.User)
-	assert.Equal(t, password, config.Net.SASL.Password)
-	assert.True(t, config.Net.SASL.Handshake)
-	assert.Equal(t, string(sarama.SASLTypeSCRAMSHA512), string(config.Net.SASL.Mechanism))
-	assert.NotNil(t, config.Net.SASL.SCRAMClientGeneratorFunc)
+			configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, false)
 
-	// Verify SCRAM client generator function
-	scramClient := config.Net.SASL.SCRAMClientGeneratorFunc()
-	assert.NotNil(t, scramClient)
+			// Verify SASL/SCRAM configuration
+			assert.True(t, config.Net.TLS.Enable)
+			assert.NotNil(t, config.Net.TLS.Config)
+			assert.True(t, config.Net.SASL.Enable)
+			assert.Equal(t, username, config.Net.SASL.User)
+			assert.Equal(t, password, config.Net.SASL.Password)
+			assert.True(t, config.Net.SASL.Handshake)
+			assert.Equal(t, string(tt.expectedMechanism), string(config.Net.SASL.Mechanism))
+			assert.NotNil(t, config.Net.SASL.SCRAMClientGeneratorFunc)
+
+			// Verify SCRAM client generator function
+			scramClient := config.Net.SASL.SCRAMClientGeneratorFunc()
+			assert.NotNil(t, scramClient)
+		})
+	}
 }
 
 func TestConfigureSASLTypePlainAuthentication(t *testing.T) {
@@ -582,7 +610,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9096"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass")},
+			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass", "SHA256", false)},
 			expectError:                     false,
 		},
 		{
@@ -675,7 +703,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	// Test that multiple options can be applied
 	opts := []AdminOption{
 		WithIAMAuth(),
-		WithSASLSCRAMAuth("user", "pass"), // This should override the IAM auth
+		WithSASLSCRAMAuth("user", "pass", "SHA256", false), // This should override the IAM auth
 	}
 
 	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0", opts...)
