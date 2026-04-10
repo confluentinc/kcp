@@ -67,6 +67,7 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 		modules.VarTargetClusterRestEndpoint,
 		modules.VarClusterLinkName,
 		modules.VarMSKSaslScramBootstrapServers,
+		modules.VarMSKSaslScramMechanism,
 		modules.VarMSKSaslScramUsername,
 		modules.VarMSKSaslScramPassword,
 	))
