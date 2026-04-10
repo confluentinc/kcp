@@ -38,7 +38,7 @@ KCP supports two Kafka source types via a `Source` abstraction pattern:
 - **Authentication**: SASL/SCRAM (SHA-256/SHA-512), TLS/mTLS, Plaintext
 - **Code location**: `internal/sources/osk/`
 - **Workflow**: Direct Kafka Admin API scanning
-- **Test environments**: Docker Compose in `test/docker/`
+- **Test environments**: Docker Compose in `integration-tests/osk-scan/`
 
 ## Build Commands
 
@@ -66,20 +66,17 @@ make install
 # Format code
 make fmt
 
-# Run all tests (Go unit tests + Playwright E2E tests)
-make test
-
-# Run Go unit tests only
+# Run Go unit tests
 make test-go
 
-# Run Playwright E2E tests only (builds frontend + Go binary first)
-make test-e2e
+# Run Playwright browser tests (builds frontend + Go binary first)
+make test-playwright
 
-# Run tests with coverage (Go only)
-make test-cov
+# Run Go tests with coverage
+make test-go-coverage
 
-# Run tests with coverage HTML viewer (Go only)
-make test-cov-ui
+# Run Go tests with coverage HTML viewer
+make test-go-coverage-ui
 
 # Run tests for a specific Go package
 go test ./cmd/scan/clusters -v
@@ -102,79 +99,44 @@ make clean
 - Tests are in `cmd/ui/frontend/tests/e2e/`
 - Playwright config starts `kcp ui` with `--state-file` to pre-load test data
 - Test fixtures in `cmd/ui/frontend/tests/e2e/fixtures/`
-- Run with `make test-e2e` or from `cmd/ui/frontend`: `npx playwright test`
+- Run with `make test-playwright` or from `cmd/ui/frontend`: `npx playwright test`
 - Interactive UI mode: `cd cmd/ui/frontend && npx playwright test --ui`
 - Headed mode (visible browser): `cd cmd/ui/frontend && npx playwright test --headed`
 - Debug a test: `cd cmd/ui/frontend && npx playwright test -g "test name" --debug`
 
 ### OSK Integration Tests
 
-Docker-based test environments for all OSK authentication methods:
+A single Docker Compose environment (`integration-tests/osk-scan/`) runs all OSK test variants via `make test-osk-scan`. It starts a multi-listener KRaft Kafka broker, two JMX-specific brokers, three Prometheus instances, and producer/consumer containers for traffic generation.
 
-| Environment                  | Port                          | Auth Method                 | Command                            |
-| ---------------------------- | ----------------------------- | --------------------------- | ---------------------------------- |
-| PLAINTEXT (ZooKeeper)        | 9092                          | None                        | `make test-env-up-plaintext`       |
-| PLAINTEXT (KRaft)            | 9095                          | None                        | `make test-env-up-kraft`           |
-| SASL/SCRAM                   | 9093                          | Username/password (SHA-256) | `make test-env-up-sasl`            |
-| TLS/mTLS                     | 9094                          | Client certificates         | `make test-env-up-tls`             |
-| Schema Registry (unauth)     | 8081                          | None                        | `make test-env-up-schema-registry` |
-| Schema Registry (basic auth) | 8082                          | Username/password           | `make test-env-up-schema-registry` |
-| JMX/Jolokia (unauth)         | 9096 (Kafka) / 8778 (Jolokia) | None                        | `make test-env-up-jmx`             |
-| JMX/Jolokia (password)       | 9097 (Kafka) / 8779 (Jolokia) | Username/password           | `make test-env-up-jmx-auth`        |
-| JMX/Jolokia (TLS)            | 9098 (Kafka) / 8780 (Jolokia) | Username/password + TLS     | `make test-env-up-jmx-tls`         |
-| Prometheus (unauth)          | 9190                          | None                        | `make test-env-up-prometheus`      |
-| Prometheus (basic auth)      | 9191                          | Username/password           | `make test-env-up-prometheus-auth` |
-| Prometheus (TLS)             | 9192                          | Username/password + TLS     | `make test-env-up-prometheus-tls`  |
+| Test Variant | Kafka Port | Metrics Port | Auth Method |
+|---|---|---|---|
+| kafka-plaintext | 9092 | — | None |
+| kafka-sasl | 9093 | — | SASL/SCRAM-SHA-256 |
+| kafka-tls | 9094 | — | mTLS |
+| kafka-sasl-ssl | 9095 | — | SASL/SCRAM + TLS |
+| jmx-noauth | 9092 | 8778 (Jolokia) | None |
+| jmx-auth | 9096 | 8779 (Jolokia) | Username/password |
+| jmx-tls | 9097 | 8780 (Jolokia) | Username/password + TLS |
+| prometheus-noauth | 9092 | 9290 (Prometheus) | None |
+| prometheus-auth | 9092 | 9291 (Prometheus) | Basic auth |
+| prometheus-tls | 9092 | 9292 (Prometheus) | Basic auth + TLS |
 
-All Kafka environments have an authorizer enabled and are populated with 4 topics (`test-topic-1`, `test-topic-2`, `orders`, `events`) and 12 ACLs across 5 team principals.
-
-JMX environments additionally include a continuous producer and consumer container to generate traffic for non-zero throughput metrics.
-
-Prometheus environments are pre-seeded with 30 days of synthetic Kafka metrics (no real Kafka connection needed).
-
-Schema Registry environments are populated with 4 schemas: `orders-value` (Avro), `orders-key` (Avro), `events-value` (JSON Schema), `test-topic-1-value` (Avro). The Schema Registry requires the plaintext Kafka environment to be running first.
+All Kafka environments have an authorizer enabled and are populated with 4 topics (`test-topic-1`, `test-topic-2`, `orders`, `events`) and 12 ACLs across 5 team principals. Prometheus environments are pre-seeded with 30 days of synthetic metrics.
 
 **Test workflow:**
 
 ```bash
-# Start a specific Kafka environment
-make test-env-up-sasl
-
-# Start Schema Registry (starts plaintext Kafka if needed)
-make test-env-up-schema-registry
-
-# Run tests against all environments
-make test-all-envs
-
-# Stop all test environments
-make test-env-down
-
-# Generate fresh TLS certificates
-make test-certs-generate
-
-# Scan Schema Registry
-kcp scan schema-registry --url http://localhost:8081 --use-unauthenticated --state-file kcp-state.json
-kcp scan schema-registry --url http://localhost:8082 --use-basic-auth --username schemauser --password schemapass --state-file kcp-state.json
-
-# Start JMX environment and scan with Jolokia metrics collection
-make test-env-up-jmx
-kcp scan clusters --source-type osk --state-file kcp-state.json --credentials-file test/credentials/osk-credentials-jmx.yaml --metrics jolokia --metrics-duration 30s --metrics-interval 1s
-
-# Start Prometheus environment and scan with Prometheus metrics
-make test-env-up-prometheus
-kcp scan clusters --source-type osk --state-file kcp-state.json --credentials-file test/credentials/osk-credentials-prometheus.yaml --metrics prometheus --metrics-range 30d
+# Run all OSK scan tests
+make test-osk-scan
 ```
 
 **Test credentials:**
 
-- SASL Kafka: `kafkauser` / `kafkapass` (created in Docker startup)
-- Schema Registry basic auth: `schemauser` / `schemapass`
+- SASL Kafka: `kafkauser` / `kafkapass`
 - JMX Jolokia auth: `monitorUser` / `monitorPass`
 - Prometheus basic auth: `promuser` / `prompass`
-- TLS: Certificates in `test/docker/certs/` (generated by `scripts/generate-certs.sh`)
-- Credential files: `test/credentials/osk-credentials-*.yaml`
-
-**Important**: All test environments use `localhost` and are safe to commit. The `.gitignore` excludes generated certificates (`test/docker/certs/*`).
+- TLS: Certificates generated by `integration-tests/osk-scan/generate-certs.sh`
+- Credential files: `integration-tests/osk-scan/credentials/*.yaml`
 
 ## High-Level Architecture
 

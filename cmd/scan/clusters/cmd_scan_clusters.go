@@ -66,8 +66,8 @@ func NewScanClustersCmd() *cobra.Command {
 	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Time range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
 	scanClustersCmd.Flags().AddFlagSet(metricsFlags)
 
-	scanClustersCmd.MarkFlagRequired("source-type")
-	scanClustersCmd.MarkFlagRequired("credentials-file")
+	_ = scanClustersCmd.MarkFlagRequired("source-type")
+	_ = scanClustersCmd.MarkFlagRequired("credentials-file")
 
 	return scanClustersCmd
 }

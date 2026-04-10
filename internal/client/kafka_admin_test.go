@@ -380,7 +380,7 @@ func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
 			username := "test-user"
 			password := "test-pass"
 
-			configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, false)
+			_ = configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, false)
 
 			// Verify SASL/SCRAM configuration
 			assert.True(t, config.Net.TLS.Enable)

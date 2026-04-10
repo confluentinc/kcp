@@ -95,8 +95,8 @@ type prometheusAPIResponse struct {
 
 // prometheusResponseData holds the data portion of a Prometheus API response
 type prometheusResponseData struct {
-	ResultType string                    `json:"resultType"`
-	Result     []prometheusMatrixResult  `json:"result"`
+	ResultType string                   `json:"resultType"`
+	Result     []prometheusMatrixResult `json:"result"`
 }
 
 // prometheusMatrixResult is a single time series in a matrix response
@@ -127,7 +127,7 @@ func (c *PrometheusClient) QueryRange(ctx context.Context, query string, start, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to query Prometheus: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -135,7 +135,7 @@ func (c *PrometheusClient) QueryRange(ctx context.Context, query string, start, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Prometheus returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("prometheus returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var apiResp prometheusAPIResponse
@@ -144,7 +144,7 @@ func (c *PrometheusClient) QueryRange(ctx context.Context, query string, start, 
 	}
 
 	if apiResp.Status != "success" {
-		return nil, fmt.Errorf("Prometheus query failed: %s", apiResp.Error)
+		return nil, fmt.Errorf("prometheus query failed: %s", apiResp.Error)
 	}
 
 	return parseMatrixResults(apiResp.Data.Result)

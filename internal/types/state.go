@@ -49,11 +49,11 @@ type OSKClusterMetadata struct {
 
 // State represents the unified state file (kcp-state.json)
 type State struct {
-	MSKSources       *MSKSourcesState            `json:"msk_sources,omitempty"`
-	OSKSources       *OSKSourcesState            `json:"osk_sources,omitempty"`
+	MSKSources       *MSKSourcesState       `json:"msk_sources,omitempty"`
+	OSKSources       *OSKSourcesState       `json:"osk_sources,omitempty"`
 	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo                `json:"kcp_build_info"`
-	Timestamp        time.Time                   `json:"timestamp"`
+	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
+	Timestamp        time.Time              `json:"timestamp"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -775,10 +775,10 @@ type GlueSchemaVersion struct {
 // This is what comes OUT of the frontend/API after processing the raw State data
 // Same structure as State but with costs and metrics flattened for easier frontend consumption
 type ProcessedState struct {
-	Sources          []ProcessedSource           `json:"sources"`
+	Sources          []ProcessedSource      `json:"sources"`
 	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     interface{}                 `json:"kcp_build_info,omitempty"`
-	Timestamp        time.Time                   `json:"timestamp"`
+	KcpBuildInfo     interface{}            `json:"kcp_build_info,omitempty"`
+	Timestamp        time.Time              `json:"timestamp"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters

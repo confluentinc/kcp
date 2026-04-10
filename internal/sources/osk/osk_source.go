@@ -132,7 +132,7 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
-	defer kafkaAdmin.Close()
+	defer func() { _ = kafkaAdmin.Close() }()
 
 	kafkaService := kafkaservice.NewKafkaService(kafkaAdmin, kafkaservice.KafkaServiceOpts{
 		AuthType:   authType,
@@ -243,4 +243,3 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 
 	return kafkaAdmin, nil
 }
-

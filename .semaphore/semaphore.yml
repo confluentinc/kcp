@@ -65,16 +65,29 @@ blocks:
                 echo "All tests must run with full Terraform validation in CI."
                 exit 1
               fi
-            - make test GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
+            - make test-go GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
+            - make test-playwright
 
         - name: 'trivy scan'
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
 
+  - name: 'osk scan tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/osk-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      jobs:
+        - name: 'osk scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-osk-scan
+
   - name: 'e2e migration tests'
     dependencies: ['resolve frontend dependencies']
     run:
-      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/test/e2e/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/integration-tests/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       agent:
         machine:
@@ -94,12 +107,12 @@ blocks:
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
-            - make e2e-setup
-            - make ci-e2e-tests
+            - make test-migration-setup
+            - make test-migration
       epilogue:
         always:
           commands:
-            - make e2e-teardown
+            - make test-migration-teardown
         on_pass:
           commands:
             - cache store minikube-cache ~/.minikube/cache/

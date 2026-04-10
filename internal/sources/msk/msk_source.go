@@ -115,7 +115,7 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}
-	defer (*kafkaAdmin).Close()
+	defer func() { _ = (*kafkaAdmin).Close() }()
 
 	ks := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
 		AuthType:   authType,
@@ -183,7 +183,7 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	case types.AuthTypeTLS:
 		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey))
 	default:
-		return nil, fmt.Errorf("Auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)

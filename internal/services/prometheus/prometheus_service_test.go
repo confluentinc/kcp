@@ -55,7 +55,7 @@ func newMockPrometheusServer(t *testing.T, metrics map[string][]float64) *httpte
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 }
 

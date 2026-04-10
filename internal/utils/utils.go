@@ -69,7 +69,6 @@ func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.C
 	return DefaultClientBrokerEncryptionInTransit
 }
 
-
 func ExtractClusterNameFromArn(arn string) string {
 	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
 	// Split on '/' and take index 1 for cluster name

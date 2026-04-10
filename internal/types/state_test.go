@@ -936,4 +936,3 @@ func TestSchemaRegistriesState_UpsertGlueSchemaRegistry(t *testing.T) {
 		t.Errorf("expected updated ARN, got %q", s.AWSGlue[0].RegistryArn)
 	}
 }
-

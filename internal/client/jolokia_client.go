@@ -107,7 +107,7 @@ func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[st
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
@@ -128,7 +128,7 @@ func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[st
 
 	// Check Jolokia status (200 = success, other = error)
 	if jolokiaResp.Status != 200 {
-		return nil, fmt.Errorf("Jolokia error: status %d: %s", jolokiaResp.Status, jolokiaResp.Error)
+		return nil, fmt.Errorf("jolokia error: status %d: %s", jolokiaResp.Status, jolokiaResp.Error)
 	}
 
 	return jolokiaResp.Value, nil
@@ -153,7 +153,7 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	if err != nil {
 		return 0, fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -175,7 +175,7 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	}
 
 	if raw.Status != 200 {
-		return 0, fmt.Errorf("Jolokia error: status %d: %s", raw.Status, raw.Error)
+		return 0, fmt.Errorf("jolokia error: status %d: %s", raw.Status, raw.Error)
 	}
 
 	var total float64

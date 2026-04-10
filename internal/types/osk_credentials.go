@@ -21,8 +21,8 @@ type OSKClusterAuth struct {
 	AuthMethod            AuthMethodConfig      `yaml:"auth_method"`
 	InsecureSkipTLSVerify bool                  `yaml:"insecure_skip_tls_verify,omitempty"` // Only set true for test environments with self-signed certs
 	Metadata              OSKCredentialMetadata `yaml:"metadata,omitempty"`
-	Jolokia    *JolokiaConfig    `yaml:"jolokia,omitempty"`
-	Prometheus *PrometheusConfig `yaml:"prometheus,omitempty"`
+	Jolokia               *JolokiaConfig        `yaml:"jolokia,omitempty"`
+	Prometheus            *PrometheusConfig     `yaml:"prometheus,omitempty"`
 }
 
 // OSKCredentialMetadata allows users to add optional organizational metadata
@@ -34,7 +34,7 @@ type OSKCredentialMetadata struct {
 
 // JolokiaConfig contains Jolokia monitoring configuration for a cluster
 type JolokiaConfig struct {
-	Endpoints []string       `yaml:"endpoints"`
+	Endpoints []string           `yaml:"endpoints"`
 	Auth      *JolokiaAuthConfig `yaml:"auth,omitempty"`
 	TLS       *JolokiaTLSConfig  `yaml:"tls,omitempty"`
 }
@@ -53,9 +53,9 @@ type JolokiaTLSConfig struct {
 
 // PrometheusConfig holds Prometheus connection details for metrics queries
 type PrometheusConfig struct {
-	URL  string               `yaml:"url"`
+	URL  string                `yaml:"url"`
 	Auth *PrometheusAuthConfig `yaml:"auth,omitempty"`
-	TLS  *PrometheusTLSConfig `yaml:"tls,omitempty"`
+	TLS  *PrometheusTLSConfig  `yaml:"tls,omitempty"`
 }
 
 // PrometheusAuthConfig holds HTTP basic auth credentials for Prometheus

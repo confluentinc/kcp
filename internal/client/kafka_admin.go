@@ -594,7 +594,7 @@ func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption
 	case types.AuthTypeIAM:
 		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipTLSVerify)
 	case types.AuthTypeSASLSCRAM:
-		configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify)
+		_ = configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify)
 	case types.AuthTypeSASLPlain:
 		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.insecureSkipTLSVerify)
 	case types.AuthTypeUnauthenticatedTLS:

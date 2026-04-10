@@ -168,13 +168,13 @@ Refer to the kcp docs for more information on each migration type.
 		return nil
 	})
 
-	migrationInfraCmd.MarkFlagRequired("state-file")
-	migrationInfraCmd.MarkFlagRequired("source-type")
-	migrationInfraCmd.MarkFlagRequired("cluster-id")
-	migrationInfraCmd.MarkFlagRequired("type")
-	migrationInfraCmd.MarkFlagRequired("cluster-link-name")
-	migrationInfraCmd.MarkFlagRequired("target-cluster-id")
-	migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
+	_ = migrationInfraCmd.MarkFlagRequired("state-file")
+	_ = migrationInfraCmd.MarkFlagRequired("source-type")
+	_ = migrationInfraCmd.MarkFlagRequired("cluster-id")
+	_ = migrationInfraCmd.MarkFlagRequired("type")
+	_ = migrationInfraCmd.MarkFlagRequired("cluster-link-name")
+	_ = migrationInfraCmd.MarkFlagRequired("target-cluster-id")
+	_ = migrationInfraCmd.MarkFlagRequired("target-rest-endpoint")
 
 	return migrationInfraCmd
 }

@@ -128,44 +128,44 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 			state: &types.State{
 				MSKSources: &types.MSKSourcesState{
 					Regions: []types.DiscoveredRegion{
-					{
-						Name: "us-east-1",
-						Clusters: []types.DiscoveredCluster{
-							{
-								Arn:    testClusterArn,
-								Name:   "test-cluster",
-								Region: "us-east-1",
-								DiscoveredClients: []types.DiscoveredClient{
-									{
-										ClientId:  "TESTING_PRODUCER-1",
-										Role:      "Producer",
-										Topic:     "customers1",
-										Auth:      "IAM",
-										Principal: "arn:aws:sts::000123456789:assumed-role/kcp-testing-role/testing-sts",
-										Timestamp: time.Now(),
-									},
-									{
-										ClientId:  "producer_with_sasl_scram-9",
-										Role:      "Producer",
-										Topic:     "test-topic-1",
-										Auth:      "SASL_SCRAM",
-										Principal: "User:kafka-user-2",
-										Timestamp: time.Now(),
-									},
-									{
-										ClientId:  "kafka-client-1",
-										Role:      "Consumer",
-										Topic:     "orders",
-										Auth:      "IAM",
-										Principal: "arn:aws:sts::000123456789:assumed-role/kcp-iam-role/i-0ab123456cdef7890",
-										Timestamp: time.Now(),
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Arn:    testClusterArn,
+									Name:   "test-cluster",
+									Region: "us-east-1",
+									DiscoveredClients: []types.DiscoveredClient{
+										{
+											ClientId:  "TESTING_PRODUCER-1",
+											Role:      "Producer",
+											Topic:     "customers1",
+											Auth:      "IAM",
+											Principal: "arn:aws:sts::000123456789:assumed-role/kcp-testing-role/testing-sts",
+											Timestamp: time.Now(),
+										},
+										{
+											ClientId:  "producer_with_sasl_scram-9",
+											Role:      "Producer",
+											Topic:     "test-topic-1",
+											Auth:      "SASL_SCRAM",
+											Principal: "User:kafka-user-2",
+											Timestamp: time.Now(),
+										},
+										{
+											ClientId:  "kafka-client-1",
+											Role:      "Consumer",
+											Topic:     "orders",
+											Auth:      "IAM",
+											Principal: "arn:aws:sts::000123456789:assumed-role/kcp-iam-role/i-0ab123456cdef7890",
+											Timestamp: time.Now(),
+										},
 									},
 								},
 							},
 						},
 					},
 				},
-			},
 			},
 			expectedPrincipals: []string{
 				"arn:aws:iam::000123456789:role/kcp-testing-role",
@@ -178,36 +178,36 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 			state: &types.State{
 				MSKSources: &types.MSKSourcesState{
 					Regions: []types.DiscoveredRegion{
-					{
-						Name: "us-east-1",
-						Clusters: []types.DiscoveredCluster{
-							{
-								Arn:    testClusterArn,
-								Name:   "test-cluster",
-								Region: "us-east-1",
-								DiscoveredClients: []types.DiscoveredClient{
-									{
-										ClientId:  "producer_with_sasl_scram-1",
-										Role:      "Producer",
-										Topic:     "test-topic-1",
-										Auth:      "SASL_SCRAM",
-										Principal: "User:kafka-user-1",
-										Timestamp: time.Now(),
-									},
-									{
-										ClientId:  "producer_with_sasl_scram-2",
-										Role:      "Producer",
-										Topic:     "test-topic-2",
-										Auth:      "SASL_SCRAM",
-										Principal: "User:kafka-user-2",
-										Timestamp: time.Now(),
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Arn:    testClusterArn,
+									Name:   "test-cluster",
+									Region: "us-east-1",
+									DiscoveredClients: []types.DiscoveredClient{
+										{
+											ClientId:  "producer_with_sasl_scram-1",
+											Role:      "Producer",
+											Topic:     "test-topic-1",
+											Auth:      "SASL_SCRAM",
+											Principal: "User:kafka-user-1",
+											Timestamp: time.Now(),
+										},
+										{
+											ClientId:  "producer_with_sasl_scram-2",
+											Role:      "Producer",
+											Topic:     "test-topic-2",
+											Auth:      "SASL_SCRAM",
+											Principal: "User:kafka-user-2",
+											Timestamp: time.Now(),
+										},
 									},
 								},
 							},
 						},
 					},
 				},
-			},
 			},
 			expectedPrincipals: nil,
 			expectedError:      false,
@@ -217,52 +217,52 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 			state: &types.State{
 				MSKSources: &types.MSKSourcesState{
 					Regions: []types.DiscoveredRegion{
-					{
-						Name: "us-east-1",
-						Clusters: []types.DiscoveredCluster{
-							{
-								Arn:    testClusterArn,
-								Name:   "test-cluster",
-								Region: "us-east-1",
-								DiscoveredClients: []types.DiscoveredClient{
-									{
-										ClientId:  "client-1",
-										Role:      "Producer",
-										Topic:     "topic-1",
-										Auth:      "IAM",
-										Principal: "arn:aws:sts::111222333444:assumed-role/role-1/session-1",
-										Timestamp: time.Now(),
-									},
-									{
-										ClientId:  "client-2",
-										Role:      "Consumer",
-										Topic:     "topic-2",
-										Auth:      "SASL_SCRAM",
-										Principal: "User:scram-user",
-										Timestamp: time.Now(),
-									},
-									{
-										ClientId:  "client-3",
-										Role:      "Producer",
-										Topic:     "topic-3",
-										Auth:      "TLS",
-										Principal: "CN=client3",
-										Timestamp: time.Now(),
-									},
-									{
-										ClientId:  "client-4",
-										Role:      "Consumer",
-										Topic:     "topic-4",
-										Auth:      "IAM",
-										Principal: "arn:aws:iam::555666777888:user/direct-user",
-										Timestamp: time.Now(),
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Arn:    testClusterArn,
+									Name:   "test-cluster",
+									Region: "us-east-1",
+									DiscoveredClients: []types.DiscoveredClient{
+										{
+											ClientId:  "client-1",
+											Role:      "Producer",
+											Topic:     "topic-1",
+											Auth:      "IAM",
+											Principal: "arn:aws:sts::111222333444:assumed-role/role-1/session-1",
+											Timestamp: time.Now(),
+										},
+										{
+											ClientId:  "client-2",
+											Role:      "Consumer",
+											Topic:     "topic-2",
+											Auth:      "SASL_SCRAM",
+											Principal: "User:scram-user",
+											Timestamp: time.Now(),
+										},
+										{
+											ClientId:  "client-3",
+											Role:      "Producer",
+											Topic:     "topic-3",
+											Auth:      "TLS",
+											Principal: "CN=client3",
+											Timestamp: time.Now(),
+										},
+										{
+											ClientId:  "client-4",
+											Role:      "Consumer",
+											Topic:     "topic-4",
+											Auth:      "IAM",
+											Principal: "arn:aws:iam::555666777888:user/direct-user",
+											Timestamp: time.Now(),
+										},
 									},
 								},
 							},
 						},
 					},
 				},
-			},
 			},
 			expectedPrincipals: []string{
 				"arn:aws:iam::111222333444:role/role-1",
@@ -275,19 +275,19 @@ func TestParseClientDiscoveryFile(t *testing.T) {
 			state: &types.State{
 				MSKSources: &types.MSKSourcesState{
 					Regions: []types.DiscoveredRegion{
-					{
-						Name: "us-east-1",
-						Clusters: []types.DiscoveredCluster{
-							{
-								Arn:               testClusterArn,
-								Name:              "test-cluster",
-								Region:            "us-east-1",
-								DiscoveredClients: []types.DiscoveredClient{},
+						{
+							Name: "us-east-1",
+							Clusters: []types.DiscoveredCluster{
+								{
+									Arn:               testClusterArn,
+									Name:              "test-cluster",
+									Region:            "us-east-1",
+									DiscoveredClients: []types.DiscoveredClient{},
+								},
 							},
 						},
 					},
 				},
-			},
 			},
 			expectedPrincipals: nil,
 			expectedError:      false,

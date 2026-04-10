@@ -152,7 +152,7 @@ func TestMergeOSKResults_MixedUpdateAndAppend(t *testing.T) {
 	state := &types.State{
 		OSKSources: &types.OSKSourcesState{
 			// Start with capacity=1 so append is likely to reallocate
-			Clusters: make([]types.OSKDiscoveredCluster, 1, 1),
+			Clusters: make([]types.OSKDiscoveredCluster, 1),
 		},
 	}
 	state.OSKSources.Clusters[0] = types.OSKDiscoveredCluster{
