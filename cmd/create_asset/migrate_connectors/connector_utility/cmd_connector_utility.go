@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	stateFile  string
-	clusterArn string
-	outputDir  string
-	force      bool
+	stateFile string
+	clusterId string
+	outputDir string
+	force     bool
 )
 
 func NewConnectorUtilityCmd() *cobra.Command {
@@ -38,7 +38,7 @@ func NewConnectorUtilityCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the MSK cluster to generate the connector configs JSON from.")
+	optionalFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster to generate the connector configs JSON from.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the connector configs JSON will be written to")
 	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	connectorUtilityCmd.Flags().AddFlagSet(optionalFlags)
@@ -102,8 +102,8 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 
 	clustersByArn := make(map[string]*types.DiscoveredCluster)
 
-	if clusterArn != "" {
-		cluster, err := utils.GetClusterByArn(&state, clusterArn)
+	if clusterId != "" {
+		cluster, err := state.GetClusterByArn(clusterId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
@@ -115,17 +115,19 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 		if !hasConnectors {
 			return nil, fmt.Errorf("no connectors found for cluster %s in %s. The cluster exists but has no MSK Connect or self-managed connectors", cluster.Name, stateFile)
 		}
-		clustersByArn[clusterArn] = cluster
+		clustersByArn[clusterId] = cluster
 	} else {
-		for _, region := range state.Regions {
-			for i := range region.Clusters {
-				cluster := &region.Clusters[i]
-				// Include cluster if it has any connectors (MSK Connect or self-managed)
-				hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
-					(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
-						len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
-				if hasConnectors {
-					clustersByArn[cluster.Arn] = cluster
+		if state.MSKSources != nil {
+			for _, region := range state.MSKSources.Regions {
+				for i := range region.Clusters {
+					cluster := &region.Clusters[i]
+					// Include cluster if it has any connectors (MSK Connect or self-managed)
+					hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
+						(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
+							len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
+					if hasConnectors {
+						clustersByArn[cluster.Arn] = cluster
+					}
 				}
 			}
 		}

@@ -28,11 +28,11 @@ global_job_config:
       - checkout
 
 blocks:
-  - name: "resolve frontend dependencies"
+  - name: 'resolve frontend dependencies'
     dependencies: []
     task:
       jobs:
-        - name: "frontend dependencies"
+        - name: 'frontend dependencies'
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install
@@ -45,16 +45,17 @@ blocks:
                 cache store frontend-dependencies node_modules/;
               fi
 
-  - name: "test and security scan"
-    dependencies: ["resolve frontend dependencies"]
+  - name: 'test and security scan'
+    dependencies: ['resolve frontend dependencies']
     task:
       env_vars:
         - name: TRIVY_DB_REPOSITORIES
-          value: "ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db"
+          value: 'ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db'
 
       jobs:
-        - name: "run tests"
+        - name: 'run tests'
           commands:
+            - (cd cmd/ui/frontend && npx playwright install chromium --with-deps)
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - |
@@ -64,16 +65,41 @@ blocks:
                 echo "All tests must run with full Terraform validation in CI."
                 exit 1
               fi
-            - make test GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
+            - make test-go GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
+            - make test-playwright
 
-        - name: "trivy scan"
+        - name: 'trivy scan'
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
 
-  - name: "e2e migration tests"
-    dependencies: ["resolve frontend dependencies"]
+  - name: 'osk scan tests'
+    dependencies: ['resolve frontend dependencies']
     run:
-      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/test/e2e/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+      when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/osk-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      jobs:
+        - name: 'osk scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-osk-scan
+
+  - name: 'schema registry scan tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/scan/schema_registry/', '/internal/client/schema_registry.go', '/internal/services/schema_registry/', '/integration-tests/schema-registry/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      jobs:
+        - name: 'schema registry scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-schema-registry
+
+  - name: 'e2e migration tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/integration-tests/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       agent:
         machine:
@@ -89,22 +115,22 @@ blocks:
           # Restore cached minikube preloads (K8s tarballs) to skip re-download
           - cache restore minikube-cache
       jobs:
-        - name: "migration e2e"
+        - name: 'migration e2e'
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
-            - make e2e-setup
-            - make ci-e2e-tests
+            - make test-migration-setup
+            - make test-migration
       epilogue:
         always:
           commands:
-            - make e2e-teardown
+            - make test-migration-teardown
         on_pass:
           commands:
             - cache store minikube-cache ~/.minikube/cache/
 
-  - name: "lint"
-    dependencies: ["resolve frontend dependencies"]
+  - name: 'lint'
+    dependencies: ['resolve frontend dependencies']
     task:
       prologue:
         commands:
@@ -116,7 +142,7 @@ blocks:
           - cache restore frontend-dependencies
           - cd cmd/ui/frontend && yarn install && yarn build && cd -
       jobs:
-        - name: "golangci-lint"
+        - name: 'golangci-lint'
           commands:
             - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
             - git fetch origin main

@@ -9,6 +9,8 @@ interface ClusterMetricsFetchConfig {
   clusterRegion: string
   startDate: Date | undefined
   endDate: Date | undefined
+  sourceType?: 'msk' | 'osk'
+  clusterId?: string
 }
 
 interface ClusterMetricsFetchReturn {
@@ -27,6 +29,8 @@ export const useClusterMetricsFetch = ({
   clusterRegion,
   startDate,
   endDate,
+  sourceType = 'msk',
+  clusterId,
 }: ClusterMetricsFetchConfig): ClusterMetricsFetchReturn => {
   const sessionId = useSessionId()
   const [isLoading, setIsLoading] = useState(false)
@@ -45,12 +49,16 @@ export const useClusterMetricsFetch = ({
       setError(null)
 
       try {
-        const region = clusterRegion || 'unknown'
-
-        const data = await apiClient.metrics.getMetrics(region, clusterName, sessionId, {
-          startDate,
-          endDate,
-        })
+        let data: MetricsApiResponse
+        if (sourceType === 'osk' && clusterId) {
+          data = await apiClient.metrics.getOSKMetrics(clusterId, sessionId)
+        } else {
+          const region = clusterRegion || 'unknown'
+          data = await apiClient.metrics.getMetrics(region, clusterName, sessionId, {
+            startDate,
+            endDate,
+          })
+        }
 
         setMetricsResponse(data)
       } catch (err) {
@@ -61,7 +69,7 @@ export const useClusterMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [isActive, clusterName, clusterRegion, startDate, endDate, sessionId])
+  }, [isActive, clusterName, clusterRegion, startDate, endDate, sessionId, sourceType, clusterId])
 
   return {
     metricsResponse,

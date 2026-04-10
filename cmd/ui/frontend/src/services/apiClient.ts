@@ -185,6 +185,22 @@ const metrics = {
       config
     )
   },
+
+  /**
+   * Get JMX metrics for an OSK cluster
+   */
+  async getOSKMetrics(
+    clusterId: string,
+    sessionId: string,
+    config?: RequestConfig
+  ): Promise<MetricsApiResponse> {
+    const queryParams: Record<string, string> = { sessionId }
+    return get<MetricsApiResponse>(
+      `${API_ENDPOINTS.METRICS}/osk/${encodeURIComponent(clusterId)}`,
+      queryParams,
+      config
+    )
+  },
 }
 
 /**
@@ -236,6 +252,20 @@ const state = {
     const queryString = buildQueryString({ sessionId })
     const endpoint = queryString ? `${API_ENDPOINTS.UPLOAD_STATE}?${queryString}` : API_ENDPOINTS.UPLOAD_STATE
     return post<StateUploadResponse>(endpoint, data, config)
+  },
+
+  /**
+   * Get pre-loaded state (when kcp ui is started with --state-file)
+   */
+  async getState(
+    sessionId: string,
+    config?: RequestConfig
+  ): Promise<StateUploadResponse> {
+    return get<StateUploadResponse>(
+      API_ENDPOINTS.STATE,
+      { sessionId },
+      config
+    )
   },
 }
 

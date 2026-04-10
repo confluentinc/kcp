@@ -1,8 +1,11 @@
 import type { WizardConfig } from './types'
-import { getClusterDataByArn } from '@/stores/store'
+import { getClusterDataByArn, getClusterDataBySourceType } from '@/stores/store'
 
-export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig => {
-  const cluster = getClusterDataByArn(clusterArn)
+export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+  // Target infra needs full MSK cluster data for AWS-specific fields
+  // For OSK, those fields will use defaults
+  const cluster = sourceType === 'msk' ? getClusterDataByArn(clusterKey) : null
+  const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
 
   return {
     id: 'target-infra-wizard',
@@ -67,7 +70,7 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
               cluster_name: {
                 type: 'string',
                 title: 'Cluster Name',
-                default: cluster?.name,
+                default: clusterData?.name || cluster?.name,
                 description: 'Name for your new Confluent Cloud cluster',
               },
               cluster_type: {
