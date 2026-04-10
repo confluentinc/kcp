@@ -48,7 +48,7 @@ func loadEnvConfig(t *testing.T) envConfig {
 
 	envFile := filepath.Join(testdataDir(), ".env")
 	f, err := os.Open(envFile)
-	require.NoError(t, err, "failed to open .env file — did you run 'make e2e-setup'?")
+	require.NoError(t, err, "failed to open .env file — did you run 'make test-migration-e2e-setup'?")
 	defer f.Close()
 
 	vars := map[string]string{}
@@ -85,7 +85,7 @@ func loadEnvConfig(t *testing.T) envConfig {
 }
 
 func testdataDir() string {
-	// test/e2e/migration/ -> test/e2e/migration/testdata/
+	// integration-tests/migration/ -> integration-tests/migration/testdata/
 	return filepath.Join("testdata")
 }
 

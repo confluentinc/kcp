@@ -146,8 +146,8 @@
     width: 100% !important;
   }
 
-  /* Ensure the summary content takes full width when printing */
-  .print\\:block {
+  /* Ensure the main content area takes full width when printing */
+  main > div {
     width: 100% !important;
     margin: 0 !important;
     padding: 1rem !important;

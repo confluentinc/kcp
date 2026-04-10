@@ -1,14 +1,12 @@
 import type { WizardConfig } from './types'
-import { getClusterDataByArn } from '@/stores/store'
+import { getClusterDataBySourceType } from '@/stores/store'
 
-export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterArn: string): WizardConfig => {
-  const cluster = getClusterDataByArn(clusterArn)
+export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+  const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
 
-  const topics = cluster?.kafka_admin_client_information?.topics?.details || []
+  const topics = clusterData?.kafka_admin_client_information?.topics?.details || []
   const topicNames = topics.filter((topic: any) => !topic.name.startsWith('__')).map((topic: any) => topic.name)
   const topicEnumValues = topicNames.length > 0 ? topicNames : ['No topics available']
-
-  console.log(topicEnumValues)
 
   return {
     id: 'mirror-topics-migration-scripts-wizard',
@@ -63,7 +61,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterArn: strin
       topic_selection: {
         meta: {
           title: 'Select Topics to Mirror',
-          description: `Select the topics you wish to generate mirror topic scripts for from ${cluster?.name}.`,
+          description: `Select the topics you wish to generate mirror topic scripts for from ${clusterData?.name}.`,
           schema: {
             type: 'object',
             properties: {

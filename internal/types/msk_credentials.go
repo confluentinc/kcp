@@ -64,7 +64,7 @@ func (c *Credentials) WriteToFile(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal YAML: %w", err)
 	}
-	if err := os.WriteFile(filePath, yamlData, 0644); err != nil {
+	if err := os.WriteFile(filePath, yamlData, 0600); err != nil {
 		return fmt.Errorf("failed to write YAML file: %w", err)
 	}
 	return nil
@@ -203,6 +203,7 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 		amc.SASLScram.Use = existing.SASLScram.Use
 		amc.SASLScram.Username = existing.SASLScram.Username
 		amc.SASLScram.Password = existing.SASLScram.Password
+		amc.SASLScram.Mechanism = existing.SASLScram.Mechanism
 	}
 
 	if amc.SASLPlain != nil && existing.SASLPlain != nil {
@@ -232,9 +233,24 @@ type TLSConfig struct {
 }
 
 type SASLScramConfig struct {
-	Use      bool   `yaml:"use"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Use       bool   `yaml:"use"`
+	Username  string `yaml:"username"`
+	Password  string `yaml:"password"`
+	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512". MSK requires "SHA512", OSK commonly uses "SHA256"
+}
+
+// NormalizeSaslMechanism converts shorthand mechanism values (e.g. "SHA256")
+// to the Kafka-standard format (e.g. "SCRAM-SHA-256").
+// Returns empty string for empty input.
+func NormalizeSaslMechanism(mechanism string) string {
+	switch mechanism {
+	case "SHA256", "SCRAM-SHA-256":
+		return "SCRAM-SHA-256"
+	case "SHA512", "SCRAM-SHA-512":
+		return "SCRAM-SHA-512"
+	default:
+		return mechanism
+	}
 }
 
 type SASLPlainConfig struct {

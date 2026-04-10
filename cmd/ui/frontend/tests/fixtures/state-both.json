@@ -1,0 +1,80 @@
+{
+  "msk_sources": {
+    "regions": [
+      {
+        "name": "us-east-1",
+        "clusters": [
+          {
+            "name": "msk-cluster-1",
+            "arn": "arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster-1/uuid",
+            "region": "us-east-1",
+            "aws_client_information": {
+              "msk_cluster_config": {
+                "ClusterArn": "arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster-1/uuid",
+                "ClusterType": "PROVISIONED",
+                "CreationTime": "2026-01-01T00:00:00Z",
+                "Provisioned": {
+                  "NumberOfBrokerNodes": 3,
+                  "BrokerNodeGroupInfo": {
+                    "InstanceType": "kafka.m5.large",
+                    "BrokerAZDistribution": "DEFAULT"
+                  }
+                }
+              }
+            },
+            "metrics": {
+              "metadata": {
+                "broker_type": "kafka.m5.large"
+              }
+            },
+            "kafka_admin_client_information": {
+              "topics": {
+                "summary": {
+                  "topics": 3,
+                  "total_partitions": 9,
+                  "internal_topics": 1,
+                  "compact_topics": 1
+                },
+                "details": []
+              }
+            },
+            "discovered_clients": []
+          }
+        ]
+      }
+    ]
+  },
+  "osk_sources": {
+    "clusters": [
+      {
+        "id": "staging-kafka-cluster",
+        "bootstrap_servers": ["broker1.staging.com:9092"],
+        "kafka_admin_client_information": {
+          "topics": {
+            "summary": {
+              "topics": 2,
+              "total_partitions": 6,
+              "internal_topics": 0,
+              "compact_topics": 1
+            },
+            "details": []
+          },
+          "acls": []
+        },
+        "discovered_clients": [],
+        "metadata": {
+          "environment": "staging",
+          "location": "us-west-2",
+          "last_scanned": "2026-03-06T10:00:00Z"
+        }
+      }
+    ]
+  },
+  "schema_registries": {},
+  "kcp_build_info": {
+    "version": "dev",
+    "commit": "abc123",
+    "date": "2026-03-06"
+  },
+  "timestamp": "2026-03-06T10:00:00Z"
+}

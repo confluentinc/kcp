@@ -20,7 +20,7 @@ interface ClusterMetricsProps {
   cluster: {
     name: string
     region?: string
-    arn: string // ARN is required - all clusters have ARNs
+    arn?: string
     metrics?: {
       metadata?: {
         start_date?: string
@@ -28,6 +28,8 @@ interface ClusterMetricsProps {
       }
     }
   }
+  sourceType?: 'msk' | 'osk'
+  clusterId?: string
   isActive?: boolean
   inModal?: boolean
   modalPreselectedMetric?: string
@@ -36,6 +38,8 @@ interface ClusterMetricsProps {
 
 export const ClusterMetrics = ({
   cluster,
+  sourceType = 'msk',
+  clusterId,
   isActive,
   inModal = false,
   modalPreselectedMetric,
@@ -47,8 +51,8 @@ export const ClusterMetrics = ({
   const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
 
   // Cluster-specific date state from Zustand (only used in non-modal mode)
-  // Use ARN for cluster key (required for proper state management)
-  const storeDateFilters = useClusterDateFilters(cluster.arn)
+  const clusterKey = cluster.arn || clusterId || cluster.name
+  const storeDateFilters = useClusterDateFilters(clusterKey)
 
   // Modal date management - simple local state (not stored in Zustand)
   // useDateFilters hook handles all initialization and reset logic
@@ -68,6 +72,8 @@ export const ClusterMetrics = ({
     clusterRegion: cluster.region || 'unknown',
     startDate: startDate,
     endDate: endDate,
+    sourceType,
+    clusterId,
   })
 
   // Process metrics data
@@ -132,7 +138,7 @@ export const ClusterMetrics = ({
     const convertedValue =
       tcoField === 'partitions' ? Math.round(value).toString() : convertBytesToMB(value)
 
-    setTCOWorkloadValue(cluster.arn, tcoField, convertedValue)
+    setTCOWorkloadValue(clusterKey, tcoField, convertedValue)
 
     // Show success feedback with stat type
     setTransferSuccess(`${tcoField}-${statType}`)

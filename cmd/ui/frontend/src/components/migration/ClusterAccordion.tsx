@@ -1,16 +1,15 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import type { Cluster } from '@/types'
 import type { ReactNode } from 'react'
 
 interface ClusterAccordionProps {
-  cluster: Cluster
+  clusterName: string
   isExpanded: boolean
   onToggle: () => void
   children: ReactNode
 }
 
 export const ClusterAccordion = ({
-  cluster,
+  clusterName,
   isExpanded,
   onToggle,
   children,
@@ -39,7 +38,7 @@ export const ClusterAccordion = ({
                 <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
               )}
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                {cluster.name}
+                {clusterName}
               </h3>
             </div>
           </div>

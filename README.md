@@ -37,13 +37,13 @@ kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to
 
 ### Key Features
 
-| Feature                     | Description                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                             |
-| **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                          |
-| **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud. |
+| Feature                     | Description                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                              |
+| **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                           |
+| **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud.  |
 | **Migration Execution**     | FSM-driven migration workflow with lag monitoring, gateway fencing, and topic promotion. |
-| **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.             |
+| **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.              |
 
 ### Documentation
 
@@ -93,19 +93,63 @@ make clean
 # Format go code
 make fmt
 
-# Run tests
-make test
+# Run Go unit tests
+make test-go
 
-# Run tests with coverage
-make test-cov
+# Run Playwright browser tests
+make test-playwright
 
-# Run tests with coverage and open UI coverage browser
-make test-cov-ui
+# Run Go tests with coverage
+make test-go-coverage
+
+# Run Go tests with coverage and open HTML report
+make test-go-coverage-ui
 ```
 
-### E2E Integration Tests (Migration)
+### Playwright E2E Tests
 
-The migration commands have end-to-end tests that run against a real CFK (Confluent for Kubernetes) cluster in Minikube.
+The frontend includes Playwright end-to-end tests for the web UI. These test the migration infrastructure wizards, cluster views, and state loading.
+
+```bash
+cd cmd/ui/frontend
+
+# Run all E2E tests
+npx playwright test
+
+# Run with visible browser
+npx playwright test --headed
+
+# Run with Playwright UI (interactive test runner)
+npx playwright test --ui
+
+# Run a specific test file
+npx playwright test tests/e2e/osk-migration-infra.spec.ts
+
+# Debug a specific test
+npx playwright test -g "Public path" --debug
+```
+
+Test fixtures are in `cmd/ui/frontend/tests/e2e/fixtures/`. The Playwright config starts `kcp ui` with `--state-file` to pre-load test data automatically.
+
+### Integration Tests
+
+Integration tests live in `integration-tests/` and run against real infrastructure via Docker.
+
+#### OSK Scan Tests
+
+Tests the `kcp scan clusters` command against a Docker Compose environment with a multi-listener KRaft Kafka broker. Covers all supported authentication methods, Jolokia metrics collection (unauthenticated, auth, TLS), and Prometheus metrics collection (unauthenticated, auth, TLS).
+
+**Prerequisites:** Docker
+
+```bash
+make test-osk-scan
+```
+
+This starts the environment, runs all 10 scan variants, and tears down automatically. Credential files and Docker Compose configuration are in `integration-tests/osk-scan/`.
+
+#### Migration Tests
+
+Tests the full migration lifecycle (`kcp migration init` → `execute`) against a real CFK (Confluent for Kubernetes) cluster in Minikube.
 
 **Prerequisites:**
 
@@ -115,25 +159,21 @@ The migration commands have end-to-end tests that run against a real CFK (Conflu
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ```bash
-# Run the full E2E lifecycle: setup → test → teardown
-make e2e
+# Run the full lifecycle: setup → test → teardown
+make test-migration
 ```
 
-This is the recommended way to run E2E tests. Teardown runs automatically when tests finish (pass or fail), so infrastructure won't be left behind.
-
-If you need to run steps individually:
+Teardown runs automatically when tests finish (pass or fail). If you need to run steps individually:
 
 ```bash
-make e2e-setup       # Set up Minikube cluster with CFK, Kafka clusters, Gateway, and cluster link
-make ci-e2e-tests    # Run the E2E tests
-make e2e-teardown    # Tear down the infrastructure
+make test-migration-setup       # Set up Minikube cluster with CFK, Kafka, Gateway, and cluster link
+make test-migration             # Run the migration tests
+make test-migration-teardown    # Tear down the infrastructure
 ```
 
-If infrastructure persisted from a previous run (e.g. laptop sleep, interrupted test), run `make e2e-teardown` before starting again.
+If infrastructure persisted from a previous run (e.g. laptop sleep, interrupted test), run `make test-migration-teardown` before starting again.
 
-The setup creates a Minikube cluster (`kcp-e2e` profile) with 4 CPUs and 8 GB RAM, deploys source and destination Kafka clusters, a Gateway, and a cluster link. The kcp binary is built for Linux and runs inside the cluster to avoid TLS/DNS issues.
-
-Setup typically takes 10-15 minutes depending on image pull times. The test timeout is 15 minutes.
+Setup creates a Minikube cluster (`kcp-e2e` profile) with 4 CPUs and 8 GB RAM. Setup typically takes 10-15 minutes depending on image pull times. The test timeout is 15 minutes.
 
 ### Linting & Pre-commit Hooks
 
