@@ -55,9 +55,9 @@ blocks:
       jobs:
         - name: 'run tests'
           commands:
-            - (cd cmd/ui/frontend && npx playwright install chromium chromium-headless-shell --with-deps)
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - (cd cmd/ui/frontend && npx playwright install chromium chromium-headless-shell --with-deps)
             - |
               if [ "$SKIP_TERRAFORM_VALIDATION" = "true" ]; then
                 echo "ERROR: SKIP_TERRAFORM_VALIDATION cannot be set in CI"
