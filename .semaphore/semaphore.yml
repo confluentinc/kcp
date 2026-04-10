@@ -55,7 +55,7 @@ blocks:
       jobs:
         - name: 'run tests'
           commands:
-            - (cd cmd/ui/frontend && npx playwright install chromium --with-deps)
+            - (cd cmd/ui/frontend && npx playwright install chromium chromium-headless-shell --with-deps)
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - |
