@@ -1,9 +1,14 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import type { Cluster, Region } from '@/types'
+import type { Cluster, ProcessedOSKCluster, Region, SourceType, KafkaAdminInfo } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
-import type { ProcessedState, SchemaRegistry, SchemaRegistriesState, GlueSchemaRegistry } from '@/types/api/state'
+import type {
+  ProcessedState,
+  SchemaRegistry,
+  SchemaRegistriesState,
+  GlueSchemaRegistry,
+} from '@/types/api/state'
 import { DEFAULT_TABS, DEFAULTS, WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
 import { getClusterArn } from '@/lib/clusterUtils'
@@ -85,8 +90,10 @@ interface AppState {
 
   // Selection state
   selectedView: ViewType | null
+  selectedSourceType: SourceType | null
   selectedRegionName: string | null
   selectedClusterArn: string | null
+  selectedOSKClusterId: string | null
 
   // TCO workload data (keyed by ARN)
   tcoWorkloadData: WorkloadData
@@ -117,6 +124,7 @@ interface AppState {
   selectSummary: () => void
   selectRegion: (regionName: string) => void
   selectCluster: (regionName: string, clusterArn: string, preselectedMetric?: string) => void
+  selectOSKCluster: (clusterId: string) => void
   selectTCOInputs: () => void
   selectSchemaRegistries: () => void
   clearSelection: () => void
@@ -168,8 +176,10 @@ export const useAppStore = create<AppState>()(
       sessionId: crypto.randomUUID(),
       kcpState: null,
       selectedView: null,
+      selectedSourceType: null,
       selectedRegionName: null,
       selectedClusterArn: null,
+      selectedOSKClusterId: null,
       tcoWorkloadData: {},
       clusterDateFilters: {},
       regionState: {},
@@ -191,8 +201,10 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: 'summary',
+            selectedSourceType: 'msk',
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectSummary'
@@ -202,8 +214,10 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: 'region',
+            selectedSourceType: 'msk',
             selectedRegionName: regionName,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectRegion'
@@ -213,12 +227,27 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: 'cluster',
+            selectedSourceType: 'msk',
             selectedRegionName: regionName,
             selectedClusterArn: clusterArn,
+            selectedOSKClusterId: null,
             preselectedMetric: preselectedMetric || null,
           },
           false,
           'selectCluster'
+        ),
+
+      selectOSKCluster: (clusterId) =>
+        set(
+          {
+            selectedView: 'cluster',
+            selectedSourceType: 'osk',
+            selectedOSKClusterId: clusterId,
+            selectedRegionName: null,
+            selectedClusterArn: null,
+          },
+          false,
+          'selectOSKCluster'
         ),
 
       selectTCOInputs: () =>
@@ -227,6 +256,7 @@ export const useAppStore = create<AppState>()(
             selectedView: 'tco-inputs',
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectTCOInputs'
@@ -238,6 +268,7 @@ export const useAppStore = create<AppState>()(
             selectedView: 'schema-registries',
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'selectSchemaRegistries'
@@ -247,8 +278,10 @@ export const useAppStore = create<AppState>()(
         set(
           {
             selectedView: null,
+            selectedSourceType: null,
             selectedRegionName: null,
             selectedClusterArn: null,
+            selectedOSKClusterId: null,
           },
           false,
           'clearSelection'
@@ -537,13 +570,19 @@ export const useKcpState = () => useAppStore((state) => state.kcpState)
 /**
  * Get all regions from KCP state
  */
-export const useRegions = () => useAppStore((state) => state.kcpState?.regions ?? EMPTY_REGIONS)
+export const useRegions = () => {
+  const kcpState = useAppStore((state) => state.kcpState)
+  const mskSource = kcpState?.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+  return mskSource?.msk_data?.regions ?? EMPTY_REGIONS
+}
 
 /**
  * Get schema registries from KCP state
  */
 export const useSchemaRegistries = () =>
-  useAppStore((state) => state.kcpState?.schema_registries ?? EMPTY_SCHEMA_REGISTRIES) as SchemaRegistriesState
+  useAppStore(
+    (state) => state.kcpState?.schema_registries ?? EMPTY_SCHEMA_REGISTRIES
+  ) as SchemaRegistriesState
 
 /**
  * Get the currently selected cluster with its region name
@@ -552,10 +591,17 @@ export const useSchemaRegistries = () =>
 export const useSelectedCluster = () => {
   return useAppStore(
     useShallow((state) => {
-      if (!state.selectedClusterArn || !state.kcpState || !state.kcpState.regions) return null
+      if (!state.selectedClusterArn || !state.kcpState) return null
+
+      // Find the MSK source
+      const mskSource = state.kcpState.sources.find(
+        (s) => s.type === 'msk' && s.msk_data !== undefined
+      )
+
+      if (!mskSource?.msk_data?.regions) return null
 
       // Search through all regions to find the cluster with matching ARN
-      for (const region of state.kcpState.regions) {
+      for (const region of mskSource.msk_data.regions) {
         if (!region.clusters) continue
         const cluster = region.clusters.find((c) => {
           const arn = getClusterArn(c)
@@ -578,8 +624,16 @@ export const useSelectedCluster = () => {
 export const useSelectedRegion = () => {
   return useAppStore(
     useShallow((state) => {
-      if (!state.selectedRegionName || !state.kcpState || !state.kcpState.regions) return null
-      return state.kcpState.regions.find((r) => r.name === state.selectedRegionName) || null
+      if (!state.selectedRegionName || !state.kcpState) return null
+
+      // Find the MSK source
+      const mskSource = state.kcpState.sources.find(
+        (s) => s.type === 'msk' && s.msk_data !== undefined
+      )
+
+      if (!mskSource?.msk_data?.regions) return null
+
+      return mskSource.msk_data.regions.find((r) => r.name === state.selectedRegionName) || null
     })
   )
 }
@@ -669,11 +723,18 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
   const state = useAppStore.getState()
   const kcpState = state.kcpState
 
-  if (!kcpState?.regions || !arn) {
+  if (!kcpState || !arn) {
     return null
   }
 
-  for (const region of kcpState.regions) {
+  // Find the MSK source
+  const mskSource = kcpState.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+
+  if (!mskSource?.msk_data?.regions) {
+    return null
+  }
+
+  for (const region of mskSource.msk_data.regions) {
     const cluster = region.clusters?.find(
       (c) => c.arn === arn || c.aws_client_information?.msk_cluster_config?.ClusterArn === arn
     )
@@ -682,6 +743,51 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
     }
   }
 
+  return null
+}
+
+// Utility function to get OSK cluster data by cluster ID
+export const getOSKClusterDataById = (clusterId: string): ProcessedOSKCluster | null => {
+  const state = useAppStore.getState()
+  const kcpState = state.kcpState
+
+  if (!kcpState || !clusterId) {
+    return null
+  }
+
+  // Find the OSK source
+  const oskSource = kcpState.sources.find((s) => s.type === 'osk' && s.osk_data !== undefined)
+
+  if (!oskSource?.osk_data?.clusters) {
+    return null
+  }
+
+  return oskSource.osk_data.clusters.find((c) => c.id === clusterId) || null
+}
+
+// Unified cluster data lookup by source type and cluster key
+// Returns the kafka_admin_client_information which is shared between MSK and OSK
+export const getClusterDataBySourceType = (
+  sourceType: 'msk' | 'osk',
+  clusterKey: string
+): { kafka_admin_client_information: KafkaAdminInfo; name: string } | null => {
+  if (sourceType === 'msk') {
+    const cluster = getClusterDataByArn(clusterKey)
+    if (cluster) {
+      return {
+        kafka_admin_client_information: cluster.kafka_admin_client_information,
+        name: cluster.name,
+      }
+    }
+  } else if (sourceType === 'osk') {
+    const cluster = getOSKClusterDataById(clusterKey)
+    if (cluster) {
+      return {
+        kafka_admin_client_information: cluster.kafka_admin_client_information,
+        name: cluster.id,
+      }
+    }
+  }
   return null
 }
 

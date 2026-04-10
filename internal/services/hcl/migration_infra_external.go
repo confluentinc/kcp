@@ -32,7 +32,7 @@ func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundCluster
 	mskClusterLinkPrivateLinkModuleBody.SetAttributeValue("use_aws", cty.BoolVal(true))
 	mskClusterLinkPrivateLinkModuleBody.AppendNewline()
 
-	WriteModuleInputs(mskClusterLinkPrivateLinkModuleBody, modules.GetMskPrivateClusterLinkVariables(), request)
+	WriteModuleInputs(mskClusterLinkPrivateLinkModuleBody, modules.GetPrivateClusterLinkVariables(), request)
 	rootBody.AppendNewline()
 
 	//
@@ -99,15 +99,16 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf(re
 		"target_cluster_rest_endpoint":       utils.TokensForVarReference(modules.VarTargetClusterRestEndpoint),
 		"target_cluster_id":                  utils.TokensForVarReference(modules.VarTargetClusterID),
 		"cluster_link_name":                  utils.TokensForVarReference(modules.VarClusterLinkName),
-		"msk_cluster_id":                     utils.TokensForVarReference(modules.VarMSKClusterID),
-		"msk_cluster_bootstrap_brokers":      utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
+		"source_cluster_id":                  utils.TokensForVarReference(modules.VarMSKClusterID),
+		"source_cluster_bootstrap_brokers":   utils.TokensForVarReference(modules.VarMSKClusterBootstrapServers),
 	}
 
-	if request.MskJumpClusterAuthType == "unauth_tls" {
+	if request.JumpClusterAuthType == "unauth_tls" {
 		templateName = "create-external-outbound-cluster-link-unauth-tls.tpl"
 	} else {
-		userDataArgs["msk_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
-		userDataArgs["msk_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
+		userDataArgs["source_sasl_scram_mechanism"] = utils.TokensForVarReference(modules.VarMSKSaslScramMechanism)
+		userDataArgs["source_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
+		userDataArgs["source_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
 	}
 
 	rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResource(
@@ -132,14 +133,14 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkVariables
 }
 
 func (mi *MigrationInfraHCLService) externalOutboundClusterLinkTemplateFileName(request types.MigrationWizardRequest) string {
-	if request.MskJumpClusterAuthType == "unauth_tls" {
+	if request.JumpClusterAuthType == "unauth_tls" {
 		return "create-external-outbound-cluster-link-unauth-tls.tpl"
 	}
 	return "create-external-outbound-cluster-link.tpl"
 }
 
 func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl(request types.MigrationWizardRequest) string {
-	if request.MskJumpClusterAuthType == "unauth_tls" {
+	if request.JumpClusterAuthType == "unauth_tls" {
 		return aws.GenerateCreateExternalOutboundClusterLinkUnauthTlsTpl()
 	}
 	return aws.GenerateCreateExternalOutboundClusterLinkTpl()

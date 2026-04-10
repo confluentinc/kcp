@@ -1,0 +1,364 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: osk-kafka
+    container_name: kcp-test-osk-kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+      - "9094:9094"
+      - "9095:9095"
+      - "8778:8778"
+    volumes:
+      - ./kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - ./certs:/etc/kafka/secrets
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@osk-kafka:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://osk-kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092,SASL_HOST://0.0.0.0:9093,SSL_HOST://0.0.0.0:9094,SASL_SSL_HOST://0.0.0.0:9095'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://osk-kafka:29092,PLAINTEXT_HOST://localhost:9092,SASL_HOST://localhost:9093,SSL_HOST://localhost:9094,SASL_SSL_HOST://localhost:9095'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SASL_HOST:SASL_SSL,SSL_HOST:SSL,SASL_SSL_HOST:SASL_SSL'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      # SASL configuration
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+      # SSL/TLS configuration
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.server.keystore.jks
+      KAFKA_SSL_KEYSTORE_PASSWORD: keystorepass
+      KAFKA_SSL_KEY_PASSWORD: keystorepass
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.server.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: truststorepass
+      KAFKA_SSL_CLIENT_AUTH: none
+      KAFKA_LISTENER_NAME_SSL_HOST_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ''
+      # General
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'UnIfIeDtEsTcLuStErId01'
+      # Authorization
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS;User:admin;User:kafkauser;User:CN=kafka-client,OU=Test,O=Test,L=San Francisco,ST=CA,C=US'
+    command: >
+      bash -c "
+        echo 'Downloading Jolokia agent...'
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+
+        kafka-storage format -t UnIfIeDtEsTcLuStErId01 -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+
+        KAFKA_OPTS=\"-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf -javaagent:/tmp/jolokia-agent.jar=port=8778,host=0.0.0.0\" /etc/confluent/docker/run &
+        KAFKA_PID=$$!
+
+        echo 'Waiting for Kafka to start...'
+        MAX_WAIT=60
+        WAIT_TIME=0
+        while [ $$WAIT_TIME -lt $$MAX_WAIT ]; do
+          if kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+          WAIT_TIME=$$((WAIT_TIME + 2))
+        done
+
+        echo 'Creating SCRAM credentials...'
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
+        echo 'SCRAM credentials created.'
+
+        wait
+      "
+
+  kafka-producer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-producer
+    depends_on:
+      - kafka
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka:29092 1 60
+        kafka-producer-perf-test --topic test-topic-1 --throughput 100 --num-records 999999999 --record-size 1000 --producer-props bootstrap.servers=osk-kafka:29092
+
+  kafka-consumer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-consumer
+    depends_on:
+      - kafka
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka:29092 1 60
+        kafka-console-consumer --bootstrap-server osk-kafka:29092 --topic test-topic-1 --group osk-test-consumer > /dev/null
+
+  kafka-jmx-auth:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: osk-kafka-jmx-auth
+    container_name: kcp-test-osk-kafka-jmx-auth
+    ports:
+      - "9096:9096"
+      - "8779:8779"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@osk-kafka-jmx-auth:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://osk-kafka-jmx-auth:29092,CONTROLLER://osk-kafka-jmx-auth:29093,PLAINTEXT_HOST://0.0.0.0:9096'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://osk-kafka-jmx-auth:29092,PLAINTEXT_HOST://localhost:9096'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'JmxAuThTeStClUsTerId01'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS'
+    command: >
+      bash -c "
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+
+        kafka-storage format -t JmxAuThTeStClUsTerId01 -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+
+        KAFKA_OPTS=\"-javaagent:/tmp/jolokia-agent.jar=port=8779,host=0.0.0.0,user=monitorUser,password=monitorPass\" /etc/confluent/docker/run &
+        KAFKA_PID=$$!
+
+        echo 'Waiting for Kafka JMX-auth to start...'
+        MAX_WAIT=60
+        WAIT_TIME=0
+        while [ $$WAIT_TIME -lt $$MAX_WAIT ]; do
+          if kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+          WAIT_TIME=$$((WAIT_TIME + 2))
+        done
+
+        wait
+      "
+
+  kafka-jmx-auth-producer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-jmx-auth-producer
+    depends_on:
+      - kafka-jmx-auth
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka-jmx-auth:29092 1 60
+        kafka-producer-perf-test --topic test-topic-1 --throughput 100 --num-records 999999999 --record-size 1000 --producer-props bootstrap.servers=osk-kafka-jmx-auth:29092
+
+  kafka-jmx-auth-consumer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-jmx-auth-consumer
+    depends_on:
+      - kafka-jmx-auth
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka-jmx-auth:29092 1 60
+        kafka-console-consumer --bootstrap-server osk-kafka-jmx-auth:29092 --topic test-topic-1 --group osk-jmx-auth-consumer > /dev/null
+
+  kafka-jmx-tls:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: osk-kafka-jmx-tls
+    container_name: kcp-test-osk-kafka-jmx-tls
+    ports:
+      - "9097:9097"
+      - "8780:8780"
+    volumes:
+      - ./certs:/etc/kafka/secrets
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@osk-kafka-jmx-tls:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://osk-kafka-jmx-tls:29092,CONTROLLER://osk-kafka-jmx-tls:29093,PLAINTEXT_HOST://0.0.0.0:9097'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://osk-kafka-jmx-tls:29092,PLAINTEXT_HOST://localhost:9097'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'JmxTlSTeStClUsTerId001'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS'
+    command: >
+      bash -c "
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+
+        kafka-storage format -t JmxTlSTeStClUsTerId001 -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+
+        KAFKA_OPTS=\"-javaagent:/tmp/jolokia-agent.jar=port=8780,host=0.0.0.0,user=monitorUser,password=monitorPass,protocol=https,keystore=/etc/kafka/secrets/kafka.server.keystore.jks,keystorePassword=keystorepass\" /etc/confluent/docker/run &
+        KAFKA_PID=$$!
+
+        echo 'Waiting for Kafka JMX-TLS to start...'
+        MAX_WAIT=60
+        WAIT_TIME=0
+        while [ $$WAIT_TIME -lt $$MAX_WAIT ]; do
+          if kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+          WAIT_TIME=$$((WAIT_TIME + 2))
+        done
+
+        wait
+      "
+
+  kafka-jmx-tls-producer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-jmx-tls-producer
+    depends_on:
+      - kafka-jmx-tls
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka-jmx-tls:29092 1 60
+        kafka-producer-perf-test --topic test-topic-1 --throughput 100 --num-records 999999999 --record-size 1000 --producer-props bootstrap.servers=osk-kafka-jmx-tls:29092
+
+  kafka-jmx-tls-consumer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-jmx-tls-consumer
+    depends_on:
+      - kafka-jmx-tls
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka-jmx-tls:29092 1 60
+        kafka-console-consumer --bootstrap-server osk-kafka-jmx-tls:29092 --topic test-topic-1 --group osk-jmx-tls-consumer > /dev/null
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    hostname: osk-prometheus
+    container_name: kcp-test-osk-prometheus
+    ports:
+      - "9290:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=60d'
+    volumes:
+      - osk-prometheus-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  prometheus-seeder:
+    image: prom/prometheus:v2.51.0
+    container_name: kcp-test-osk-prometheus-seeder
+    depends_on:
+      - prometheus
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Prometheus to be ready..."
+        for i in $$(seq 1 30); do
+          if wget -q -O /dev/null http://osk-prometheus:9090/-/ready 2>/dev/null; then
+            echo "Prometheus is ready"
+            break
+          fi
+          sleep 1
+        done
+        PROM_URL="http://osk-prometheus:9090" /bin/sh /scripts/seed-prometheus-data.sh
+        echo "Seeding complete"
+    volumes:
+      - osk-prometheus-data:/prometheus
+      - ./seed-prometheus-data.sh:/scripts/seed-prometheus-data.sh:ro
+
+  prometheus-auth:
+    image: prom/prometheus:v2.51.0
+    hostname: osk-prometheus-auth
+    container_name: kcp-test-osk-prometheus-auth
+    ports:
+      - "9291:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=60d'
+      - '--web.config.file=/etc/prometheus/web.yml'
+    volumes:
+      - osk-prometheus-auth-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/prometheus-web-auth.yml:/etc/prometheus/web.yml:ro
+
+  prometheus-auth-seeder:
+    image: prom/prometheus:v2.51.0
+    container_name: kcp-test-osk-prometheus-auth-seeder
+    depends_on:
+      - prometheus-auth
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Prometheus auth to be ready..."
+        for i in $$(seq 1 30); do
+          if wget -q -O /dev/null --user promuser --password prompass http://osk-prometheus-auth:9090/-/ready 2>/dev/null; then
+            echo "Prometheus auth is ready"
+            break
+          fi
+          sleep 1
+        done
+        PROM_URL="http://osk-prometheus-auth:9090" /bin/sh /scripts/seed-prometheus-data.sh
+        echo "Seeding complete"
+    volumes:
+      - osk-prometheus-auth-data:/prometheus
+      - ./seed-prometheus-data.sh:/scripts/seed-prometheus-data.sh:ro
+
+  prometheus-tls:
+    image: prom/prometheus:v2.51.0
+    hostname: osk-prometheus-tls
+    container_name: kcp-test-osk-prometheus-tls
+    ports:
+      - "9292:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=60d'
+      - '--web.config.file=/etc/prometheus/web.yml'
+    volumes:
+      - osk-prometheus-tls-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/prometheus-web-tls.yml:/etc/prometheus/web.yml:ro
+      - ./certs/prometheus-server.crt:/etc/prometheus/certs/server.crt:ro
+      - ./certs/prometheus-server.key:/etc/prometheus/certs/server.key:ro
+
+  prometheus-tls-seeder:
+    image: prom/prometheus:v2.51.0
+    container_name: kcp-test-osk-prometheus-tls-seeder
+    depends_on:
+      - prometheus-tls
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Prometheus TLS to be ready..."
+        for i in $$(seq 1 30); do
+          if wget -q -O /dev/null --no-check-certificate --user promuser --password prompass https://osk-prometheus-tls:9090/-/ready 2>/dev/null; then
+            echo "Prometheus TLS is ready"
+            break
+          fi
+          sleep 1
+        done
+        PROM_URL="https://osk-prometheus-tls:9090" /bin/sh /scripts/seed-prometheus-data.sh
+        echo "Seeding complete"
+    volumes:
+      - osk-prometheus-tls-data:/prometheus
+      - ./seed-prometheus-data.sh:/scripts/seed-prometheus-data.sh:ro
+
+volumes:
+  osk-prometheus-data:
+  osk-prometheus-auth-data:
+  osk-prometheus-tls-data:

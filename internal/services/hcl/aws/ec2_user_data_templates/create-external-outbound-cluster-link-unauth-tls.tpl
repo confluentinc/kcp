@@ -12,11 +12,11 @@ curl --request POST \
   --header "Authorization: Basic $BASIC_AUTH_CREDENTIALS" \
   --header "Content-Type: application/json" \
   --data '{
-    "source_cluster_id": "${msk_cluster_id}",
+    "source_cluster_id": "${source_cluster_id}",
     "configs": [
       {
         "name": "bootstrap.servers",
-        "value": "${msk_cluster_bootstrap_brokers}"
+        "value": "${source_cluster_bootstrap_brokers}"
       },
       {
         "name": "link.mode",
