@@ -76,3 +76,5 @@ scratch/
 
 # Claude-generated implementation plans (local only, not part of the codebase)
 docs/plans/
+docs/brainstorms/
+docs/ideation/
