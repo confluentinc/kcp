@@ -156,7 +156,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 
-	_, err = utils.GetClusterByArn(state, clusterArn)
+	_, err = state.GetClusterByArn(clusterArn)
 	if err != nil {
 		return nil, fmt.Errorf("cluster not found in state file: %v", err)
 	}
