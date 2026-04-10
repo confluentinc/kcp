@@ -205,5 +205,5 @@ func TestPrometheusClient_QueryRange_ErrorStatus(t *testing.T) {
 	client := NewPrometheusClient(server.URL)
 	_, err := client.QueryRange(context.Background(), "invalid{", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Prometheus query failed")
+	assert.Contains(t, err.Error(), "prometheus query failed")
 }

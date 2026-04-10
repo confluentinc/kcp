@@ -97,7 +97,7 @@ func TestJolokiaClient_ReadMBean_ServerError(t *testing.T) {
 	_, err := client.ReadMBean(context.Background(), "kafka.server:type=Invalid")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Jolokia error")
+	assert.Contains(t, err.Error(), "jolokia error")
 	assert.Contains(t, err.Error(), "404")
 	assert.Contains(t, err.Error(), "javax.management.InstanceNotFoundException")
 }
