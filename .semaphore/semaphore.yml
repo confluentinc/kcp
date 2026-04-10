@@ -84,6 +84,18 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-osk-scan
 
+  - name: 'schema registry scan tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/scan/schema_registry/', '/internal/client/schema_registry.go', '/internal/services/schema_registry/', '/integration-tests/schema-registry/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      jobs:
+        - name: 'schema registry scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-schema-registry
+
   - name: 'e2e migration tests'
     dependencies: ['resolve frontend dependencies']
     run:

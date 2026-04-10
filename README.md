@@ -147,6 +147,18 @@ make test-osk-scan
 
 This starts the environment, runs all 10 scan variants, and tears down automatically. Credential files and Docker Compose configuration are in `integration-tests/osk-scan/`.
 
+#### Schema Registry Scan Tests
+
+Tests the `kcp scan schema-registry` command against a Docker Compose environment with two Confluent Schema Registry instances (unauthenticated and basic auth). Both instances are pre-loaded with 4 test schemas (Avro and JSON Schema).
+
+**Prerequisites:** Docker
+
+```bash
+make test-schema-registry
+```
+
+This starts a KRaft Kafka broker and two Schema Registry instances, registers test schemas, runs scan tests against both, and tears down automatically. Configuration is in `integration-tests/schema-registry/`.
+
 #### Migration Tests
 
 Tests the full migration lifecycle (`kcp migration init` → `execute`) against a real CFK (Confluent for Kubernetes) cluster in Minikube.
