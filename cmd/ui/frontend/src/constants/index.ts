@@ -82,6 +82,7 @@ export const API_ENDPOINTS = {
   METRICS: '/metrics',
   COSTS: '/costs',
   UPLOAD_STATE: '/upload-state',
+  STATE: '/state',
 } as const
 
 /**

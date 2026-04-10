@@ -52,6 +52,10 @@ func (ms *MigrateSchemasAssetGenerator) Run() error {
 		return err
 	}
 
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
 	assetsDir := "assets"
 	if err := ms.copyFiles(assetsDir, outputDir); err != nil {
 		return fmt.Errorf("failed to copy migrate schemas files: %w", err)

@@ -99,7 +99,7 @@ You will be prompted for the following credentials during ` + "`terraform apply`
 | ` + "`confluent_cloud_cluster_api_key`" + ` | API key for the Confluent Cloud cluster |
 | ` + "`confluent_cloud_cluster_api_secret`" + ` | API secret for the Confluent Cloud cluster |`
 
-	if request.MskJumpClusterAuthType == "sasl_scram" {
+	if request.JumpClusterAuthType == "sasl_scram" {
 		credentialsSection += `
 | ` + "`msk_sasl_scram_username`" + ` | SASL/SCRAM username for MSK authentication |
 | ` + "`msk_sasl_scram_password`" + ` | SASL/SCRAM password for MSK authentication |`
@@ -191,7 +191,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 }
 
 func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
-	switch request.MskJumpClusterAuthType {
+	switch request.JumpClusterAuthType {
 	case "sasl_scram":
 		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
 	default:
@@ -229,8 +229,8 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 		"confluent_cloud_cluster_rest_endpoint":      utils.TokensForVarReference(modules.VarConfluentCloudClusterRestEndpoint),
 		"confluent_cloud_cluster_key":                utils.TokensForVarReference(modules.VarConfluentCloudClusterAPIKey),
 		"confluent_cloud_cluster_secret":             utils.TokensForVarReference(modules.VarConfluentCloudClusterAPISecret),
-		"msk_cluster_id":                             utils.TokensForVarReference(modules.VarMSKClusterID),
-		"msk_cluster_bootstrap_brokers":              utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
+		"source_cluster_id":                          utils.TokensForVarReference(modules.VarMSKClusterID),
+		"source_cluster_bootstrap_brokers":           utils.TokensForVarReference(modules.VarMSKClusterBootstrapBrokers),
 		"cluster_link_name":                          utils.TokensForVarReference(modules.VarClusterLinkName),
 	}
 
@@ -245,10 +245,10 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 		},
 	}
 
-	switch request.MskJumpClusterAuthType {
+	switch request.JumpClusterAuthType {
 	case "sasl_scram":
-		commonUserDataArgs["msk_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
-		commonUserDataArgs["msk_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
+		commonUserDataArgs["source_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
+		commonUserDataArgs["source_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
 			"data.aws_ami.red_hat_linux_ami.id",

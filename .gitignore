@@ -2,6 +2,9 @@
 .idea/
 .vscode
 
+# Superpowers brainstorm artifacts
+.superpowers/
+
 # Local .terraform directories
 **/.terraform/*
 
@@ -32,6 +35,9 @@ crash.*.log
 
 # keep generated json files out of commits
 *.json
+# But allow test fixtures
+!cmd/ui/frontend/tests/fixtures/*.json
+!cmd/ui/frontend/tests/e2e/fixtures/*.json
 
 # Ignore coverage files
 coverage.out
@@ -51,6 +57,7 @@ kcp
 set_migration_env_vars.sh
 kcp-scan*
 cluster-credentials.yaml
+msk-credentials.yaml
 
 # Added by goreleaser init:
 dist/
@@ -63,13 +70,9 @@ tmp
 
 # local work not to be committed :)
 scratch/
-scp-to-ec2.sh
 
-# claude
-.claude/
-plans/
-brainstorms/
-ideation/
-
-# git worktrees
+# Test environment certificates (generated, excluded by integration-tests/osk-scan/.gitignore)
 .worktrees/
+
+# Claude-generated implementation plans (local only, not part of the codebase)
+docs/plans/
