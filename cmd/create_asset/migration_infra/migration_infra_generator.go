@@ -61,4 +61,3 @@ func (mi *MigrationInfraAssetGenerator) Run() error {
 	fmt.Printf("✅ Migration infrastructure generated: %s\n", outputDir)
 	return nil
 }
-
