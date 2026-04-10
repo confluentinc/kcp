@@ -21,6 +21,14 @@ CA_PASSWORD="capassword"
 KEYSTORE_PASSWORD="keystorepass"
 TRUSTSTORE_PASSWORD="truststorepass"
 
+# Check required tools
+for cmd in openssl keytool; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "Error: $cmd is not installed"
+        exit 1
+    fi
+done
+
 echo "Generating TLS certificates..."
 
 # 1. Generate CA
