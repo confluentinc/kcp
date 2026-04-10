@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useChartZoom } from '@/hooks/useChartZoom'
 import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
@@ -26,17 +26,23 @@ export const useClusterMetricsZoom = ({
     onDateRangeChange,
   })
 
-  // Destructure the functions we need for dependency arrays
   const { updateData, resetZoom } = zoom
+
+  // Track previous cluster identity to detect actual cluster switches
+  const prevClusterRef = useRef({ clusterName, clusterRegion })
 
   // Update zoom data when chart data changes
   useEffect(() => {
     updateData(chartData)
   }, [chartData, updateData])
 
-  // Reset zoom state when cluster changes to prevent stale domain values
+  // Reset zoom state only when the cluster actually changes
   useEffect(() => {
-    resetZoom()
+    const prev = prevClusterRef.current
+    if (prev.clusterName !== clusterName || prev.clusterRegion !== clusterRegion) {
+      resetZoom()
+      prevClusterRef.current = { clusterName, clusterRegion }
+    }
   }, [clusterName, clusterRegion, resetZoom])
 
   return zoom

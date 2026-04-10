@@ -1,13 +1,15 @@
 import { useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
+import { useSchemaRegistries } from '@/stores/store'
+
 import { Tabs } from '@/components/common/Tabs'
-import type { SchemaRegistriesState, GlueSchemaRegistry, GlueSchema, GlueSchemaVersion } from '@/types/api/state'
+import type { GlueSchemaRegistry, GlueSchema, GlueSchemaVersion } from '@/types/api/state'
 
 function useToggleSet() {
   const [set, setSet] = useState<Set<string>>(new Set())
   const toggle = (key: string) => {
-    setSet(prev => {
+    setSet((prev) => {
       const next = new Set(prev)
       if (next.has(key)) {
         next.delete(key)
@@ -41,19 +43,19 @@ interface ConfluentSchemaRegistry {
   subjects: SchemaSubject[]
 }
 
-interface SchemaRegistriesProps {
-  schemaRegistriesState: SchemaRegistriesState
-}
-
-export const SchemaRegistries = ({ schemaRegistriesState }: SchemaRegistriesProps) => {
-  const confluentRegistries = schemaRegistriesState?.confluent_schema_registry ?? []
-  const glueRegistries = schemaRegistriesState?.aws_glue ?? []
+export const SchemaRegistries = () => {
+  const schemaRegistries = useSchemaRegistries()
+  const confluentRegistries = schemaRegistries?.confluent_schema_registry ?? []
+  const glueRegistries = schemaRegistries?.aws_glue ?? []
   const totalCount = confluentRegistries.length + glueRegistries.length
 
   const tabs = useMemo(() => {
     const result = []
     if (confluentRegistries.length > 0) {
-      result.push({ id: 'confluent', label: `Confluent Schema Registry (${confluentRegistries.length})` })
+      result.push({
+        id: 'confluent',
+        label: `Confluent Schema Registry (${confluentRegistries.length})`,
+      })
     }
     if (glueRegistries.length > 0) {
       result.push({ id: 'glue', label: `AWS Glue (${glueRegistries.length})` })
@@ -89,21 +91,23 @@ export const SchemaRegistries = ({ schemaRegistriesState }: SchemaRegistriesProp
       />
 
       <div className="p-6 space-y-6">
-        {activeTab === 'confluent' && confluentRegistries.map((registry, registryIndex) => (
-          <ConfluentRegistryCard
-            key={`confluent-${registry.url}-${registryIndex}`}
-            registry={registry}
-            registryIndex={registryIndex}
-          />
-        ))}
+        {activeTab === 'confluent' &&
+          confluentRegistries.map((registry, registryIndex) => (
+            <ConfluentRegistryCard
+              key={`confluent-${registry.url}-${registryIndex}`}
+              registry={registry}
+              registryIndex={registryIndex}
+            />
+          ))}
 
-        {activeTab === 'glue' && glueRegistries.map((registry, registryIndex) => (
-          <GlueRegistryCard
-            key={`glue-${registry.registry_name}-${registry.region}-${registryIndex}`}
-            registry={registry}
-            registryIndex={registryIndex}
-          />
-        ))}
+        {activeTab === 'glue' &&
+          glueRegistries.map((registry, registryIndex) => (
+            <GlueRegistryCard
+              key={`glue-${registry.registry_name}-${registry.region}-${registryIndex}`}
+              registry={registry}
+              registryIndex={registryIndex}
+            />
+          ))}
       </div>
     </div>
   )
@@ -155,16 +159,19 @@ const ConfluentRegistryCard = ({
                 className="border border-gray-200 dark:border-border rounded-lg"
               >
                 {/* Subject Header */}
-                <div className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}>
+                <div
+                  className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}
+                >
                   <button
                     onClick={() => toggleSubject(subjectKey)}
                     className="w-full text-left flex items-center justify-between"
                   >
                     <div className="flex items-center gap-3">
-                      {isExpanded
-                        ? <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                        : <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                      }
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                      )}
                       <h6 className="font-medium text-gray-900 dark:text-gray-100">
                         {subject.name}
                       </h6>
@@ -229,10 +236,11 @@ const ConfluentRegistryCard = ({
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
-                                    {isVersionExpanded
-                                      ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                                      : <ChevronRight className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                                    }
+                                    {isVersionExpanded ? (
+                                      <ChevronDown className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                    )}
                                     <span className="font-medium text-gray-900 dark:text-gray-100">
                                       Version {version.version}
                                     </span>
@@ -255,9 +263,7 @@ const ConfluentRegistryCard = ({
                                       Schema Definition
                                     </span>
                                     <Button
-                                      onClick={() =>
-                                        copyToClipboard(formatSchema(version.schema))
-                                      }
+                                      onClick={() => copyToClipboard(formatSchema(version.schema))}
                                       variant="outline"
                                       size="sm"
                                     >
@@ -317,9 +323,7 @@ const GlueRegistryCard = ({
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Registry: {registry.registry_name}
               </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Region: {registry.region}
-              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Region: {registry.region}</p>
               <p className="text-xs text-gray-400 dark:text-gray-500 font-mono">
                 {registry.registry_arn}
               </p>
@@ -332,8 +336,10 @@ const GlueRegistryCard = ({
       <div className="p-6">
         <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-4">Schemas</h5>
 
-        {(!registry.schemas || registry.schemas.length === 0) ? (
-          <p className="text-sm text-gray-400 dark:text-gray-500">No schemas found in this registry.</p>
+        {!registry.schemas || registry.schemas.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500">
+            No schemas found in this registry.
+          </p>
         ) : (
           <div className="space-y-4">
             {registry.schemas.map((schema: GlueSchema, schemaIndex: number) => {
@@ -346,16 +352,19 @@ const GlueRegistryCard = ({
                   className="border border-gray-200 dark:border-border rounded-lg"
                 >
                   {/* Schema Header */}
-                  <div className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}>
+                  <div
+                    className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}
+                  >
                     <button
                       onClick={() => toggleSchema(schemaKey)}
                       className="w-full text-left flex items-center justify-between"
                     >
                       <div className="flex items-center gap-3">
-                        {isExpanded
-                          ? <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                          : <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                        }
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                        )}
                         <h6 className="font-medium text-gray-900 dark:text-gray-100">
                           {schema.schema_name}
                         </h6>
@@ -387,7 +396,9 @@ const GlueRegistryCard = ({
                             </h6>
                             <Button
                               onClick={() =>
-                                copyToClipboard(formatSchema(schema.latest_version!.schema_definition))
+                                copyToClipboard(
+                                  formatSchema(schema.latest_version!.schema_definition)
+                                )
                               }
                               variant="outline"
                               size="sm"
@@ -415,64 +426,69 @@ const GlueRegistryCard = ({
                             Version History
                           </h6>
                           <div className="space-y-2">
-                            {schema.versions.map((version: GlueSchemaVersion, versionIndex: number) => {
-                              const versionKey = `${schemaKey}-${versionIndex}`
-                              const isVersionExpanded = expandedVersions.has(versionKey)
+                            {schema.versions.map(
+                              (version: GlueSchemaVersion, versionIndex: number) => {
+                                const versionKey = `${schemaKey}-${versionIndex}`
+                                const isVersionExpanded = expandedVersions.has(versionKey)
 
-                              return (
-                                <div
-                                  key={versionKey}
-                                  className="border border-gray-200 dark:border-border rounded-md"
-                                >
-                                  <button
-                                    onClick={() => toggleVersion(versionKey)}
-                                    className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                                return (
+                                  <div
+                                    key={versionKey}
+                                    className="border border-gray-200 dark:border-border rounded-md"
                                   >
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        {isVersionExpanded
-                                          ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                                          : <ChevronRight className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
-                                        }
-                                        <span className="font-medium text-gray-900 dark:text-gray-100">
-                                          Version {version.version_number}
-                                        </span>
-                                        <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
-                                          {version.data_format}
+                                    <button
+                                      onClick={() => toggleVersion(versionKey)}
+                                      className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {isVersionExpanded ? (
+                                            <ChevronDown className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                          ) : (
+                                            <ChevronRight className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                          )}
+                                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                                            Version {version.version_number}
+                                          </span>
+                                          <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
+                                            {version.data_format}
+                                          </span>
+                                        </div>
+                                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                                          {version.status}
                                         </span>
                                       </div>
-                                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                                        {version.status}
-                                      </span>
-                                    </div>
-                                  </button>
+                                    </button>
 
-                                  {isVersionExpanded && (
-                                    <div className="p-3 border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
-                                      <div className="flex items-center justify-between mb-2">
-                                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                          Schema Definition
-                                        </span>
-                                        <Button
-                                          onClick={() =>
-                                            copyToClipboard(formatSchema(version.schema_definition))
-                                          }
-                                          variant="outline"
-                                          size="sm"
-                                        >
-                                          Copy Schema
-                                        </Button>
+                                    {isVersionExpanded && (
+                                      <div className="p-3 border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                                        <div className="flex items-center justify-between mb-2">
+                                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                            Schema Definition
+                                          </span>
+                                          <Button
+                                            onClick={() =>
+                                              copyToClipboard(
+                                                formatSchema(version.schema_definition)
+                                              )
+                                            }
+                                            variant="outline"
+                                            size="sm"
+                                          >
+                                            Copy Schema
+                                          </Button>
+                                        </div>
+                                        <textarea
+                                          readOnly
+                                          value={formatSchema(version.schema_definition)}
+                                          className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                                        />
                                       </div>
-                                      <textarea
-                                        readOnly
-                                        value={formatSchema(version.schema_definition)}
-                                        className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
+                                    )}
+                                  </div>
+                                )
+                              }
+                            )}
                           </div>
                         </div>
                       )}

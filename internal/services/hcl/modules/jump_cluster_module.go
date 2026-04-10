@@ -61,7 +61,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				return request.JumpClusterIamAuthRoleName
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.MskJumpClusterAuthType == "iam"
+				return request.JumpClusterAuthType == "iam"
 			},
 		},
 		{
@@ -146,43 +146,43 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_cluster_id",
+			Name: "source_cluster_id",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_id",
-				Description: "ID of the MSK cluster that data will be migrated to.",
+				Name:        "source_cluster_id",
+				Description: "ID of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskClusterId
+				return request.SourceClusterId
 			},
 			Condition: nil,
 		},
 		{
-			Name: "msk_cluster_bootstrap_brokers",
+			Name: "source_cluster_bootstrap_brokers",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_bootstrap_brokers",
-				Description: "Bootstrap brokers of the MSK cluster that data will be migrated to.",
+				Name:        "source_cluster_bootstrap_brokers",
+				Description: "Bootstrap brokers of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				switch request.MskJumpClusterAuthType {
+				switch request.JumpClusterAuthType {
 				case "sasl_scram":
-					return request.MskSaslScramBootstrapServers
+					return request.SourceSaslScramBootstrapServers
 				case "unauth_tls":
-					return request.MskUnauthTlsBootstrapServers
+					return request.SourceUnauthTlsBootstrapServers
 				default:
-					return request.MskSaslIamBootstrapServers
+					return request.SourceSaslIamBootstrapServers
 				}
 			},
 			Condition: nil,
 		},
 		{
-			Name: "msk_sasl_scram_username",
+			Name: "source_sasl_scram_username",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_username",
-				Description: "SASL SCRAM username of the MSK cluster that data will be migrated to.",
+				Name:        "source_sasl_scram_username",
+				Description: "SASL SCRAM username of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
@@ -190,14 +190,14 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				return "" // User prompted for value at Terraform apply.
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.MskJumpClusterAuthType == "sasl_scram"
+				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
 		{
-			Name: "msk_sasl_scram_password",
+			Name: "source_sasl_scram_password",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_password",
-				Description: "SASL SCRAM password of the MSK cluster that data will be migrated to.",
+				Name:        "source_sasl_scram_password",
+				Description: "SASL SCRAM password of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
@@ -205,14 +205,29 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				return "" // User prompted for value at Terraform apply.
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.MskJumpClusterAuthType == "sasl_scram"
+				return request.JumpClusterAuthType == "sasl_scram"
+			},
+		},
+		{
+			Name: "source_sasl_scram_mechanism",
+			Definition: types.TerraformVariable{
+				Name:        "source_sasl_scram_mechanism",
+				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceSaslScramMechanism
+			},
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
 		{
 			Name: "cluster_link_name",
 			Definition: types.TerraformVariable{
 				Name:        "cluster_link_name",
-				Description: "Name of the cluster links that will be created between MSK and Confluent Cloud through the jump cluster.",
+				Description: "Name of the cluster links between the source Kafka cluster and Confluent Cloud through the jump cluster.",
 				Sensitive:   false,
 				Type:        "string",
 			},

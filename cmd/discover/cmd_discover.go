@@ -13,7 +13,7 @@ import (
 
 const (
 	stateFileName          = "kcp-state.json"
-	credentialsFileName    = "cluster-credentials.yaml"
+	credentialsFileName    = "msk-credentials.yaml"
 	reportCommandsFileName = "report-commands.txt"
 )
 
