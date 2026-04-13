@@ -22,10 +22,11 @@ var (
 	migrationInfraType string
 	clusterLinkName    string
 
-	sourceType string
-	clusterId  string
-	oskVpcId   string
-	oskRegion  string
+	sourceType               string
+	clusterId                string
+	oskVpcId                 string
+	oskRegion                string
+	sourceSaslScramMechanism string
 
 	existingInternetGateway   bool
 	existingPrivateLinkVpceId string
@@ -74,6 +75,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	oskFlags.SortFlags = false
 	oskFlags.StringVar(&oskVpcId, "vpc-id", "", "The VPC ID where the OSK cluster resides. (required for OSK)")
 	oskFlags.StringVar(&oskRegion, "region", "", "The AWS region where the OSK cluster's VPC resides. (required for OSK)")
+	oskFlags.StringVar(&sourceSaslScramMechanism, "source-sasl-scram-mechanism", "", "[Optional] The SASL/SCRAM mechanism for the source cluster (SCRAM-SHA-256 or SCRAM-SHA-512). Overrides the value from the state file.")
 	migrationInfraCmd.Flags().AddFlagSet(oskFlags)
 	groups[oskFlags] = "OSK Flags"
 
@@ -126,7 +128,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	groups[typeFourFlags] = "Type Five Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
+		flagOrder := []*pflag.FlagSet{requiredFlags, oskFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
 		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four Flags", "Type Five Flags"}
 
 		/*
@@ -312,6 +314,10 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		MigrationType: targetType,
 	}
 
+	if opts.MigrationWizardRequest.SourceSaslScramMechanism != "" {
+		slog.Info("using SASL/SCRAM mechanism from state file", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
+	}
+
 	bootstrapBrokers, err := getBootstrapBrokers(cluster, targetType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bootstrap brokers: %v", err)
@@ -491,6 +497,17 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		MigrationType: targetType,
 	}
 
+	if sourceSaslScramMechanism != "" {
+		normalized := types.NormalizeSaslMechanism(sourceSaslScramMechanism)
+		if normalized != "SCRAM-SHA-256" && normalized != "SCRAM-SHA-512" {
+			return nil, fmt.Errorf("invalid --source-sasl-scram-mechanism value %q: must be SCRAM-SHA-256, SCRAM-SHA-512, SHA256, or SHA512", sourceSaslScramMechanism)
+		}
+		opts.MigrationWizardRequest.SourceSaslScramMechanism = normalized
+		slog.Info("using SASL/SCRAM mechanism from --source-sasl-scram-mechanism flag", "mechanism", normalized)
+	} else if opts.MigrationWizardRequest.SourceSaslScramMechanism != "" {
+		slog.Info("using SASL/SCRAM mechanism from state file", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
+	}
+
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
 		slog.Warn("no cluster link name provided, using default", "default", "kcp-osk-to-cc-link")
 		opts.MigrationWizardRequest.ClusterLinkName = "kcp-osk-to-cc-link"
@@ -581,8 +598,8 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 		authMethod = "SASL/SCRAM"
 	case types.ExternalOutboundClusterLinkUnauthTls:
-		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringTls)
-		authMethod = "Unauthenticated TLS"
+		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
+		authMethod = "Plaintext"
 	case types.JumpClusterSaslScram:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 		authMethod = "SASL/SCRAM"
@@ -610,12 +627,12 @@ func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutbo
 }
 
 func buildExtOutboundBrokersForUnauthTls(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
-	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringTls)
+	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
 	if bootstrapStr == "" {
-		return nil, fmt.Errorf("TLS bootstrap brokers string is empty for cluster %s", cluster.Name)
+		return nil, fmt.Errorf("plaintext bootstrap brokers string is empty for cluster %s", cluster.Name)
 	}
 
-	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9094)
+	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9092)
 }
 
 func buildExtOutboundBrokersFromBootstrap(cluster *types.DiscoveredCluster, bootstrapStr string, port int) ([]types.ExtOutboundClusterKafkaBroker, error) {

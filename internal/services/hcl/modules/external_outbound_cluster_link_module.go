@@ -135,7 +135,9 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.SourceSaslScramMechanism
 			},
-			Condition:        nil,
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.JumpClusterAuthType != "unauth_tls"
+			},
 			FromModuleOutput: "",
 		},
 		{
