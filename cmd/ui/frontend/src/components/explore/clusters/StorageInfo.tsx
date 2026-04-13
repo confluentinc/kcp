@@ -21,7 +21,7 @@ export const StorageInfo = ({
 
   if (displayMode === 'detailed') {
     return (
-      <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
+      <div className="bg-secondary rounded-lg p-4 transition-colors">
         <div className="space-y-2 text-sm">
           <KeyValuePair
             label="Volume Size:"

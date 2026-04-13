@@ -32,7 +32,7 @@ export const ClusterConfigurationSection = ({
     <div className="space-y-8">
       {/* Basic Cluster Configuration */}
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
           Cluster Configuration
         </h3>
         <KeyValueGrid
@@ -85,7 +85,7 @@ export const ClusterConfigurationSection = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Authentication Status */}
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+          <h3 className="text-lg font-semibold text-foreground mb-4">
             Authentication Status
           </h3>
           <AuthenticationStatus
@@ -117,21 +117,21 @@ export const ClusterConfigurationSection = ({
 
         {/* Network Configuration */}
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+          <h3 className="text-lg font-semibold text-foreground mb-4">
             Network Configuration
           </h3>
           <div>
-            <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Client Subnets</h4>
+            <h4 className="font-medium text-foreground mb-3">Client Subnets</h4>
             <div className="space-y-2">
               {(brokerInfo.ClientSubnets || []).map((subnet: string, index: number) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between p-2 bg-gray-50 dark:bg-card rounded transition-colors"
+                  className="flex items-center justify-between p-2 bg-secondary rounded transition-colors"
                 >
-                  <span className="font-mono text-sm text-gray-900 dark:text-gray-100">
+                  <span className="font-mono text-sm text-foreground">
                     {subnet}
                   </span>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                  <span className="text-xs text-muted-foreground">
                     AZ: {brokerInfo.ZoneIds?.[index] || 'Unknown'}
                   </span>
                 </div>
@@ -160,28 +160,28 @@ export const ClusterConfigurationSection = ({
 
           return (
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+              <h3 className="text-lg font-semibold text-foreground mb-4">
                 Bootstrap Endpoints
               </h3>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-border">
-                  <thead className="bg-gray-50 dark:bg-card">
+                  <thead className="bg-secondary">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Type
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Endpoints
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white dark:bg-card divide-y divide-gray-200 dark:divide-border">
+                  <tbody className="bg-card divide-y divide-gray-200 dark:divide-border">
                     {entries.map(({ key, label, servers }) => (
                       <tr
                         key={key}
-                        className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                        className="hover:bg-secondary transition-colors"
                       >
-                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-foreground">
                           {label}
                         </td>
                         <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">
@@ -207,13 +207,13 @@ export const ClusterConfigurationSection = ({
 
       {/* Security Configuration */}
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
           Security Configuration
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Authentication Methods */}
           <div>
-            <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+            <h4 className="font-medium text-foreground mb-3">
               Authentication Methods
             </h4>
             <AuthenticationStatus
@@ -245,17 +245,17 @@ export const ClusterConfigurationSection = ({
 
           {/* Encryption Settings */}
           <div>
-            <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+            <h4 className="font-medium text-foreground mb-3">
               Encryption Settings
             </h4>
             <div className="space-y-4">
               <div>
-                <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                <div className="text-sm font-medium text-foreground mb-2">
                   Encryption at Rest
                 </div>
-                <div className="bg-gray-50 dark:bg-card rounded-lg transition-colors p-3">
-                  <div className="text-sm text-gray-600 dark:text-gray-400">KMS Key ID:</div>
-                  <div className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-gray-100 px-2 py-1 rounded transition-colors mt-1">
+                <div className="bg-secondary rounded-lg transition-colors p-3">
+                  <div className="text-sm text-muted-foreground">KMS Key ID:</div>
+                  <div className="font-mono text-xs bg-gray-200 dark:bg-gray-600 text-muted-foreground px-2 py-1 rounded transition-colors mt-1">
                     {provisioned.EncryptionInfo?.EncryptionAtRest?.DataVolumeKMSKeyId?.split(
                       '/'
                     ).pop() || 'Not configured'}
@@ -263,7 +263,7 @@ export const ClusterConfigurationSection = ({
                 </div>
               </div>
               <div>
-                <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                <div className="text-sm font-medium text-foreground mb-2">
                   Encryption in Transit
                 </div>
                 <div className="space-y-2">
@@ -273,7 +273,7 @@ export const ClusterConfigurationSection = ({
                       provisioned.EncryptionInfo?.EncryptionInTransit?.ClientBroker ||
                       'Not configured'
                     }
-                    labelClassName="text-sm text-gray-600 dark:text-gray-400"
+                    labelClassName="text-sm text-muted-foreground"
                   />
                   <KeyValuePair
                     label="In-Cluster:"
@@ -284,7 +284,7 @@ export const ClusterConfigurationSection = ({
                         )}
                       />
                     }
-                    labelClassName="text-sm text-gray-600 dark:text-gray-400"
+                    labelClassName="text-sm text-muted-foreground"
                   />
                 </div>
               </div>
@@ -295,18 +295,18 @@ export const ClusterConfigurationSection = ({
 
       {/* Monitoring & Logging */}
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
           Monitoring & Logging Configuration
         </h3>
         <div>
-          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+          <h4 className="font-medium text-foreground mb-3">
             Monitoring Configuration
           </h4>
           <div className="space-y-3">
             <KeyValuePair
               label="Enhanced Monitoring:"
               value={
-                <span className="font-medium text-gray-900 dark:text-gray-100 bg-blue-100 dark:bg-accent/20 text-blue-800 dark:text-accent px-2 py-1 rounded">
+                <span className="font-medium text-foreground bg-blue-100 dark:bg-accent/20 text-blue-800 dark:text-accent px-2 py-1 rounded">
                   {provisioned.EnhancedMonitoring}
                 </span>
               }
@@ -351,7 +351,7 @@ export const ClusterConfigurationSection = ({
 
       {/* Broker Settings */}
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
           Broker Settings
         </h3>
         {(() => {
@@ -366,18 +366,18 @@ export const ClusterConfigurationSection = ({
           if (clusterConfig) {
             return (
               <div className="space-y-6">
-                <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
+                <div className="bg-secondary rounded-lg p-4 transition-colors">
                   <div className="flex items-center justify-between mb-4">
                     <div>
-                      <div className="font-medium text-gray-900 dark:text-gray-100">
+                      <div className="font-medium text-foreground">
                         {clusterConfig.Arn.split('/').slice(-2, -1)[0]}
                       </div>
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                      <div className="text-sm text-muted-foreground">
                         Revision {clusterConfig.Revision} • Created{' '}
                         {formatDate(clusterConfig.CreationTime)}
                       </div>
                     </div>
-                    <div className="text-sm text-gray-600 dark:text-gray-400">
+                    <div className="text-sm text-muted-foreground">
                       {clusterConfig.Description || 'No description'}
                     </div>
                   </div>
@@ -385,7 +385,7 @@ export const ClusterConfigurationSection = ({
                   {/* Server Properties */}
                   {clusterConfig.ServerProperties && (
                     <div className="mt-4">
-                      <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">
+                      <h4 className="font-medium text-foreground mb-2">
                         Server Properties
                       </h4>
                       <div className="bg-white dark:bg-gray-600 rounded-lg p-3 transition-colors">
@@ -400,13 +400,13 @@ export const ClusterConfigurationSection = ({
             )
           } else if (clusterConfigArn) {
             return (
-              <p className="text-gray-500 dark:text-gray-400">
+              <p className="text-muted-foreground">
                 Configuration not found for ARN: {clusterConfigArn}
               </p>
             )
           } else {
             return (
-              <p className="text-gray-500 dark:text-gray-400">
+              <p className="text-muted-foreground">
                 No configuration ARN found for this cluster.
               </p>
             )
