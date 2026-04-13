@@ -111,7 +111,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeThreeFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeThreeFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeThreeFlags)
-	groups[typeThreeFlags] = "Type Four/Five Flags"
+	groups[typeThreeFlags] = "Type Four Flags"
 
 	typeFourFlags := pflag.NewFlagSet("type-four", pflag.ExitOnError)
 	typeFourFlags.SortFlags = false
@@ -123,19 +123,18 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeFourFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFourFlags)
-	groups[typeFourFlags] = "Type Six Flags"
+	groups[typeFourFlags] = "Type Five Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
-		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four/Five Flags", "Type Six Flags"}
+		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four Flags", "Type Five Flags"}
 
 		/*
 			Type 1 = `HasPublicMskEndpoints` = true
 			Type 2 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | SASL/SCRAM
 			Type 3 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | Unauthenticated TLS
 			Type 4 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = SASL/SCRAM
-			Type 5 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = Unauthenticated TLS
-			Type 6 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = IAM
+			Type 5 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = IAM
 
 			`HasExistingInternetGateway` does not require new branching as it does not require new inputs from the user. Instead
 			it just uses a data source for the existing internet gateway instead of creating a new one.
@@ -147,11 +146,10 @@ Available Migration Types:
   Private MSK Endpoints:
     Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only) (MSK & OSK)
     Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise clusters only) (MSK & OSK)
-    Type 4: Jump Cluster [SASL/SCRAM] (MSK & OSK) 
-    Type 5: Jump Cluster [Unauthenticated TLS] (MSK & OSK)
-    Type 6: Jump Cluster [IAM] (MSK)
+    Type 4: Jump Cluster [SASL/SCRAM] (MSK & OSK)
+    Type 5: Jump Cluster [IAM] (MSK)
 
-Note: Types 2 and 3 are only supported for Enterprise clusters. Dedicated clusters with private endpoints must use Type 4, 5, or 6.
+Note: Types 2 and 3 are only supported for Enterprise clusters. Dedicated clusters with private endpoints must use Type 4 or 5.
 
 Refer to the kcp docs for more information on each migration type.
 		`)
@@ -190,7 +188,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	}
 
 	if (targetType == types.ExternalOutboundClusterLink || targetType == types.ExternalOutboundClusterLinkUnauthTls) && targetClusterType == "dedicated" {
-		return fmt.Errorf("external outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4, 5, or 6) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible")
+		return fmt.Errorf("external outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4 or 5) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible")
 	}
 
 	if targetType != types.PublicMskEndpoints {
@@ -234,7 +232,7 @@ func runMigrationInfra(cmd *cobra.Command, args []string) error {
 		}
 		targetType, _ := types.ToMigrationType(migrationInfraType)
 		if targetType == types.JumpClusterIam {
-			return fmt.Errorf("migration type 4 (Jump Cluster [IAM]) is not supported for OSK sources")
+			return fmt.Errorf("migration type 5 (Jump Cluster [IAM]) is not supported for OSK sources")
 		}
 	default:
 		return fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)

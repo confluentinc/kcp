@@ -99,7 +99,7 @@ const (
 	ExternalOutboundClusterLink          MigrationType = 2
 	ExternalOutboundClusterLinkUnauthTls MigrationType = 3
 	JumpClusterSaslScram                 MigrationType = 4
-	JumpClusterIam                       MigrationType = 6
+	JumpClusterIam                       MigrationType = 5
 )
 
 func (m MigrationType) IsValid() bool {
