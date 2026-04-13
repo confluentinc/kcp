@@ -18,7 +18,7 @@ const Header = React.forwardRef<HTMLElement, HeaderProps>(
           {
             // Variants
             'bg-background dark:bg-card': variant === 'default',
-            'bg-background dark:bg-card border-b border-border': variant === 'bordered',
+            'bg-primary dark:bg-card border-b border-primary/90 dark:border-border shadow-sm': variant === 'bordered',
             'bg-background dark:bg-card shadow-sm': variant === 'elevated',
 
             // Sizes

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Header, HeaderSection, HeaderTitle, HeaderSubtitle } from '@/components/common/ui/header'
 import { Button } from '@/components/common/ui/button'
+import { Sun, Moon } from 'lucide-react'
 
 interface AppHeaderProps {
   onFileUpload?: () => void
@@ -46,13 +47,15 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: 
           alt="KCP Logo"
           className="h-6 w-6"
         />
-        <HeaderTitle>KCP</HeaderTitle>
-        <HeaderSubtitle>Migrate your Kafka clusters to Confluent Cloud</HeaderSubtitle>
+        <HeaderTitle className={darkMode ? '' : 'text-white'}>KCP</HeaderTitle>
+        <HeaderSubtitle className={darkMode ? '' : 'text-white/70'}>
+          Migrate your Kafka clusters to Confluent Cloud
+        </HeaderSubtitle>
       </HeaderSection>
       <HeaderSection position="right">
         {error && (
-          <div className="mr-4 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-md">
-            <div className="text-sm text-red-800 dark:text-red-200">
+          <div className="mr-4 p-2 bg-destructive/10 border border-destructive/20 rounded-md">
+            <div className="text-sm text-destructive">
               <strong>Error:</strong> {error}
             </div>
           </div>
@@ -63,17 +66,18 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: 
             variant="outline"
             size="sm"
             disabled={isProcessing}
-            className="mr-2"
+            className={`mr-2 ${darkMode ? '' : 'border-white/30 text-white hover:bg-white/10 bg-transparent'}`}
           >
             {isProcessing ? 'Processing...' : 'Upload KCP State File'}
           </Button>
         )}
         <Button
           onClick={toggleDarkMode}
-          variant="outline"
-          size="sm"
+          variant="ghost"
+          size="icon"
+          className={darkMode ? '' : 'text-white hover:bg-white/10'}
         >
-          {darkMode ? '☀️' : '🌙'}
+          {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
       </HeaderSection>
     </Header>
