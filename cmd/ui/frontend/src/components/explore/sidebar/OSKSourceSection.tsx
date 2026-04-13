@@ -1,5 +1,6 @@
 import type { OSKCluster } from '@/types'
 import { useAppStore } from '@/stores/store'
+import { Server } from 'lucide-react'
 
 interface OSKSourceSectionProps {
   clusters: OSKCluster[]
@@ -11,14 +12,16 @@ export const OSKSourceSection = ({ clusters }: OSKSourceSectionProps) => {
   const selectOSKCluster = useAppStore((state) => state.selectOSKCluster)
 
   return (
-    <div className="space-y-3">
-      {/* Section Header */}
-      <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-2">
-        Open Source Kafka
-      </h3>
+    <div className="space-y-1">
+      {/* Section Label */}
+      <div className="px-2 py-1">
+        <span className="text-sm font-bold text-foreground uppercase tracking-wider" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
+          Open Source Kafka
+        </span>
+      </div>
 
-      {/* OSK Clusters - Flat List */}
-      <div className="ml-4 space-y-1">
+      {/* Clusters */}
+      <div className="space-y-0.5">
         {clusters.map((cluster) => {
           const isSelected = selectedView === 'cluster' && selectedOSKClusterId === cluster.id
 
@@ -26,20 +29,14 @@ export const OSKSourceSection = ({ clusters }: OSKSourceSectionProps) => {
             <button
               key={cluster.id}
               onClick={() => selectOSKCluster(cluster.id)}
-              className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors ${
+              className={`w-full text-left flex items-center px-2.5 py-2 text-sm rounded-md transition-all duration-150 group ${
                 isSelected
-                  ? 'bg-blue-100 dark:bg-accent/20 text-blue-900 dark:text-accent border border-blue-200 dark:border-accent'
-                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-muted-foreground hover:text-accent hover:bg-secondary'
               }`}
             >
-              <div className="flex items-center space-x-1">
-                <div
-                  className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                    isSelected ? 'bg-blue-500' : 'bg-gray-400'
-                  }`}
-                />
-                <span className="truncate">{cluster.id}</span>
-              </div>
+              <Server className={`w-3.5 h-3.5 mr-2 flex-shrink-0 ${isSelected ? 'text-accent' : 'text-muted-foreground/40 group-hover:text-accent'}`} />
+              <span className="truncate">{cluster.id}</span>
             </button>
           )
         })}

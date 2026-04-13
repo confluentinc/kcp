@@ -3,6 +3,16 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Bundled heading font — works offline */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -39,89 +49,95 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --color-dark-section-bg: var(--dark-section-bg);
-  --color-dark-report-bg: var(--dark-report-bg);
-  --color-dark-border: var(--dark-border);
-  --color-dark-accent: var(--dark-accent);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: #9e8fff; /* Accent color for selected states - matches dark mode */
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-  /* Custom dark mode colors - not used in light mode */
-  --dark-section-bg: #222127;
-  --dark-report-bg: #141416;
-  --dark-border: #4a4956;
-  --dark-accent: #9e8fff;
+  --background: #f8f9fb;
+  --foreground: #1a1f36;
+  --card: #ffffff;
+  --card-foreground: #1a1f36;
+  --popover: #ffffff;
+  --popover-foreground: #1a1f36;
+  --primary: #1a2b6b;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f6;
+  --secondary-foreground: #1a1f36;
+  --muted: #eef1f6;
+  --muted-foreground: #6b7394;
+  --accent: #0077c8;
+  --accent-foreground: #ffffff;
+  --destructive: #e53935;
+  --border: #dfe3ec;
+  --input: #dfe3ec;
+  --ring: #0077c8;
+  --chart-1: #0077c8;
+  --chart-2: #00a67e;
+  --chart-3: #e8912d;
+  --chart-4: #8b5cf6;
+  --chart-5: #e53935;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a1f36;
+  --sidebar-primary: #1a2b6b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef1f6;
+  --sidebar-accent-foreground: #1a1f36;
+  --sidebar-border: #dfe3ec;
+  --sidebar-ring: #0077c8;
+  /* Semantic status colors */
+  --success: #00a67e;
+  --success-foreground: #ffffff;
+  --warning: #e8912d;
+  --warning-foreground: #ffffff;
+  --info: #0077c8;
+  --info-foreground: #ffffff;
 }
 
 .dark {
-  --background: #141416; /* Main report background */
-  --foreground: oklch(0.985 0 0);
-  --card: #222127; /* Section backgrounds (cards, headers, sidebar) */
-  --card-foreground: oklch(0.985 0 0);
-  --popover: #222127;
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: #9e8fff; /* Accent color for selected states */
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: #4a4956; /* All borders in dark mode */
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: #222127; /* Sidebar background */
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: #4a4956;
-  --sidebar-ring: oklch(0.556 0 0);
-  /* Legacy custom variables for backwards compatibility */
-  --dark-section-bg: #222127;
-  --dark-report-bg: #141416;
-  --dark-border: #4a4956;
-  --dark-accent: #9e8fff;
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --primary: #58a6ff;
+  --primary-foreground: #09090b;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #58a6ff;
+  --accent-foreground: #ffffff;
+  --destructive: #f85149;
+  --border: #3f3f46;
+  --input: #3f3f46;
+  --ring: #58a6ff;
+  --chart-1: #58a6ff;
+  --chart-2: #3fb950;
+  --chart-3: #d29922;
+  --chart-4: #bc8cff;
+  --chart-5: #f85149;
+  --sidebar: #09090b;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #58a6ff;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #27272a;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #3f3f46;
+  --sidebar-ring: #58a6ff;
+  /* Semantic status colors */
+  --success: #3fb950;
+  --success-foreground: #ffffff;
+  --warning: #d29922;
+  --warning-foreground: #ffffff;
+  --info: #58a6ff;
+  --info-foreground: #ffffff;
 }
 
 @layer base {
@@ -132,6 +148,9 @@
     @apply bg-background text-foreground;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, 'Fira Sans',
       'Droid Sans', 'Helvetica Neue', sans-serif;
+  }
+  h1, h2, h3, h4, nav button {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 }
 

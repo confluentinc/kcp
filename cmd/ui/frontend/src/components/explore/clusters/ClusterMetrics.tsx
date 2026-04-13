@@ -169,7 +169,7 @@ export const ClusterMetrics = ({
 
   // Main component render
   return (
-    <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
+    <div className="bg-card rounded-lg border border-border p-6 transition-colors">
       {/* Date Picker Controls */}
       <DateRangePicker
         startDate={startDate}
@@ -236,7 +236,7 @@ export const ClusterMetrics = ({
 
       {!metricsResponse && !error && !isLoading && (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400">
+          <p className="text-muted-foreground">
             Select dates and fetch metrics to view data for this cluster.
           </p>
         </div>
