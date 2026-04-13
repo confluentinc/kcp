@@ -10,9 +10,9 @@ interface RegionCostsQueryTabProps {
 export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => {
   if (!queryInfo || !queryInfo.aws_cli_command) {
     return (
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-8 text-center">
-        <p className="text-gray-500 dark:text-gray-400">
-          No query information available. Re-run <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-sm">kcp discover</code> to generate cost query details.
+      <div className="bg-card rounded-lg border border-border p-8 text-center">
+        <p className="text-muted-foreground">
+          No query information available. Re-run <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">kcp discover</code> to generate cost query details.
         </p>
       </div>
     )
@@ -23,29 +23,29 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
   return (
     <div className="space-y-6">
       {/* Query Parameters Section */}
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
           Query Parameters
         </h3>
         <div className="grid grid-cols-2 gap-x-8 gap-y-3">
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-foreground">
               Time Range
             </span>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-muted-foreground">
               {queryInfo.time_period.start} to {queryInfo.time_period.end}
             </p>
           </div>
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-foreground">
               Granularity
             </span>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-muted-foreground">
               {queryInfo.granularity}
             </p>
           </div>
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-foreground">
               Regions
             </span>
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -60,7 +60,7 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
             </div>
           </div>
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-foreground">
               Group By
             </span>
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -75,7 +75,7 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
             </div>
           </div>
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-foreground">
               Services
             </span>
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -90,7 +90,7 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
             </div>
           </div>
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-foreground">
               Metrics
             </span>
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -106,7 +106,7 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
           </div>
           {queryInfo.tags && Object.keys(queryInfo.tags).length > 0 && (
             <div className="col-span-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-sm font-medium text-foreground">
                 Tags
               </span>
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -125,9 +125,9 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
       </div>
 
       {/* AWS CLI Command Section */}
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6">
+      <div className="bg-card rounded-lg border border-border p-6">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          <h3 className="text-lg font-semibold text-foreground">
             AWS CLI Command
           </h3>
           <Button
@@ -143,14 +143,14 @@ export const RegionCostsQueryTab = ({ queryInfo }: RegionCostsQueryTabProps) => 
             {copied ? 'Copied!' : 'Copy CLI Command'}
           </Button>
         </div>
-        <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-96 bg-gray-50 dark:bg-gray-900 p-4 rounded border">
+        <pre className="text-xs font-mono text-foreground overflow-auto max-h-96 bg-secondary p-4 rounded border">
           {queryInfo.aws_cli_command}
         </pre>
       </div>
 
       {/* AWS Console Link Section */}
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
           AWS Console
         </h3>
         <Button
