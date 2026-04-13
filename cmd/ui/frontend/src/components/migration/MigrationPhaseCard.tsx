@@ -35,49 +35,45 @@ export const MigrationPhaseCard = ({
       <div className="flex items-stretch flex-1">
         {/* Phase Card */}
         <div
-          className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border-2 transition-all bg-white dark:bg-card hover:border-gray-300 dark:hover:border-gray-600 h-full ${
-            isCompleted ? 'border-accent' : 'border-gray-200 dark:border-border'
+          className={`flex-1 relative flex flex-col items-center p-6 rounded-lg border shadow-sm transition-all bg-card hover:shadow-md h-full ${
+            isCompleted ? 'border-success/50' : 'border-border'
           }`}
         >
           {/* Step Number Badge */}
           <div
-            className={`absolute -top-3 -left-3 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 ${
+            className={`absolute -top-3 -left-3 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
               isCompleted
-                ? 'bg-white dark:bg-card text-gray-700 dark:text-gray-300 border-accent'
-                : 'bg-white dark:bg-card text-gray-700 dark:text-gray-300 border-accent'
+                ? 'bg-success text-white'
+                : 'bg-accent text-white'
             }`}
           >
-            {phase.step}
+            {isCompleted ? (
+              <CheckCircle2 className="w-5 h-5" />
+            ) : (
+              phase.step
+            )}
           </div>
 
           {/* Icon */}
-          <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+          <div className="mb-4 p-3 rounded-full bg-accent/10 text-accent">
             <Icon className="w-6 h-6" />
           </div>
 
           {/* Title */}
-          <h4
-            className={`text-lg font-semibold mb-2 text-center flex items-center gap-1.5 justify-center ${
-              isCompleted ? 'text-accent' : 'text-gray-900 dark:text-gray-100'
-            }`}
-          >
+          <h4 className="text-lg font-semibold mb-2 text-center text-foreground">
             {phase.title}
-            {isCompleted && (
-              <CheckCircle2 className="w-4 h-4 text-green-500 dark:text-green-400 flex-shrink-0" />
-            )}
           </h4>
 
           {/* Description */}
-          <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-4">
+          <p className="text-xs text-muted-foreground text-center mb-4">
             {phase.description}
           </p>
 
           {/* Action Buttons */}
           {isCompleted ? (
             phase.id === WIZARD_TYPES.MIGRATION_SCRIPTS ? (
-              // For Migration Scripts, only show Generate button (access files from inside modal)
               <Button
-                variant="outline"
+                variant="default"
                 size="sm"
                 onClick={onGenerate}
                 className="w-auto"
@@ -85,10 +81,9 @@ export const MigrationPhaseCard = ({
                 Generate Migration Assets
               </Button>
             ) : (
-              // For other phases, show both Generate and View buttons
               <div className="flex gap-2 w-full">
                 <Button
-                  variant="outline"
+                  variant="default"
                   size="sm"
                   onClick={onGenerate}
                   className="flex-1"
@@ -107,7 +102,7 @@ export const MigrationPhaseCard = ({
             )
           ) : (
             <Button
-              variant="outline"
+              variant="default"
               size="sm"
               onClick={onGenerate}
               className="w-auto"
@@ -123,13 +118,7 @@ export const MigrationPhaseCard = ({
       {/* Connector Arrow */}
       {showConnector && (
         <div className="px-2 flex-shrink-0 flex items-center">
-          <ArrowRight
-            className={`w-5 h-5 ${
-              isCompleted
-                ? 'text-green-500 dark:text-green-600'
-                : 'text-gray-300 dark:text-gray-600'
-            }`}
-          />
+          <ArrowRight className="w-5 h-5 text-border" />
         </div>
       )}
     </>
