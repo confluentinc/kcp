@@ -4,7 +4,6 @@ import { Sidebar } from '@/components/explore/Sidebar'
 import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
 import { Explore } from '@/components/explore/Explore'
 import { AppHeader } from '@/components/common/AppHeader'
-import { Tabs } from '@/components/common/Tabs'
 import { useAppStore, useSessionId } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
@@ -128,6 +127,13 @@ export const Home = () => {
           onFileUpload={triggerFileUpload}
           isProcessing={isProcessing}
           error={error}
+          tabs={kcpState !== null ? [
+            { id: 'explore', label: 'Explore' },
+            { id: 'migration-assets', label: 'Migrate' },
+            { id: 'tco-inputs', label: 'TCO Inputs' },
+          ] : undefined}
+          activeTab={activeTopTab}
+          onTabChange={(id) => setActiveTopTab(id as TopLevelTab)}
         />
 
         <div className="flex flex-1 flex-col min-h-0">
@@ -141,16 +147,6 @@ export const Home = () => {
 
           {kcpState !== null ? (
             <div className="flex flex-1 flex-col min-h-0">
-              <Tabs
-                tabs={[
-                  { id: 'explore', label: 'Explore' },
-                  { id: 'migration-assets', label: 'Migrate' },
-                  { id: 'tco-inputs', label: 'TCO Inputs' },
-                ]}
-                activeId={activeTopTab}
-                onChange={(id) => setActiveTopTab(id as TopLevelTab)}
-                size="lg"
-              />
 
               {activeTopTab === TOP_LEVEL_TABS.EXPLORE && (
                 <ExploreErrorBoundary>

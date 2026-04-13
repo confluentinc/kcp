@@ -26,7 +26,7 @@ export const Tabs = ({ tabs, activeId, onChange, className = '', size = 'sm' }: 
     <div
       className={`bg-card border-b border-border ${className}`}
     >
-      <nav className="-mb-px flex space-x-8 px-6 pt-6 pb-0 overflow-x-auto">
+      <nav className="-mb-px flex space-x-8 px-6 pt-2 pb-0 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}

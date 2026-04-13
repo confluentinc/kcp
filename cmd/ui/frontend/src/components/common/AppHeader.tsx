@@ -1,15 +1,23 @@
 import { useState, useEffect } from 'react'
-import { Header, HeaderSection, HeaderTitle, HeaderSubtitle } from '@/components/common/ui/header'
+import { Header, HeaderSection, HeaderTitle } from '@/components/common/ui/header'
 import { Button } from '@/components/common/ui/button'
 import { Sun, Moon } from 'lucide-react'
+
+interface HeaderTab {
+  id: string
+  label: string
+}
 
 interface AppHeaderProps {
   onFileUpload?: () => void
   isProcessing?: boolean
   error?: string | null
+  tabs?: HeaderTab[]
+  activeTab?: string
+  onTabChange?: (id: string) => void
 }
 
-export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: AppHeaderProps) => {
+export const AppHeader = ({ onFileUpload, isProcessing = false, error = null, tabs, activeTab, onTabChange }: AppHeaderProps) => {
   const [darkMode, setDarkMode] = useState(true)
 
   // Initialize dark mode from localStorage or default to dark
@@ -48,9 +56,23 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: 
           className="h-6 w-6"
         />
         <HeaderTitle className={darkMode ? '' : 'text-white'}>KCP</HeaderTitle>
-        <HeaderSubtitle className={darkMode ? '' : 'text-white/70'}>
-          Migrate your Kafka clusters to Confluent Cloud
-        </HeaderSubtitle>
+        {tabs && tabs.length > 0 && (
+          <nav className="flex items-center ml-6 gap-1">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => onTabChange?.(tab.id)}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors duration-150 border-b-2 ${
+                  activeTab === tab.id
+                    ? 'text-white border-accent'
+                    : 'text-white/60 border-transparent hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        )}
       </HeaderSection>
       <HeaderSection position="right">
         {error && (

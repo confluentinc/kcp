@@ -50,6 +50,12 @@ export const ClusterConfigurationSection = ({
               value: provisioned.NumberOfBrokerNodes || 'Unknown',
             },
             {
+              label: 'Created:',
+              value: cluster.aws_client_information?.msk_cluster_config?.CreationTime
+                ? formatDate(cluster.aws_client_information.msk_cluster_config.CreationTime)
+                : 'Unknown',
+            },
+            {
               label: 'Instance Type:',
               value: brokerInfo.InstanceType || 'Unknown',
             },

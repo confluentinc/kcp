@@ -4,7 +4,6 @@ import { ClusterTopics } from '../clusters/ClusterTopics'
 import { ClusterConnectors } from '../clusters/ClusterConnectors'
 import { ClusterACLs } from '../clusters/ClusterACLs'
 import { ClusterClients } from '../clusters/ClusterClients'
-import { formatDate } from '@/lib/formatters'
 import { Tabs } from '@/components/common/Tabs'
 import { ClusterConfigurationSection } from '../clusters/ClusterConfigurationSection'
 import { CLUSTER_REPORT_TABS } from '@/constants'
@@ -58,16 +57,11 @@ export const MSKClusterReport = () => {
             <h1 className="text-2xl font-bold text-foreground">
               Cluster:&nbsp;{cluster.name}
             </h1>
-            <div className="mt-2 space-y-1">
-              {mskConfig.ClusterArn && (
-                <p className="text-sm text-muted-foreground font-mono">
-                  ARN: {mskConfig.ClusterArn}
-                </p>
-              )}
-              <p className="text-sm text-muted-foreground">
-                Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'}
+            {mskConfig.ClusterArn && (
+              <p className="mt-2 text-sm text-muted-foreground font-mono">
+                ARN: {mskConfig.ClusterArn}
               </p>
-            </div>
+            )}
           </div>
         </div>
 
