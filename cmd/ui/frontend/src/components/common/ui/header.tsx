@@ -14,7 +14,7 @@ const Header = React.forwardRef<HTMLElement, HeaderProps>(
       <header
         ref={ref}
         className={cn(
-          'w-full flex items-center justify-between px-0 py-3 transition-all duration-200',
+          'w-full flex items-center justify-between px-0 py-3 transition-all duration-200 relative overflow-hidden',
           {
             // Variants
             'bg-background dark:bg-card': variant === 'default',
@@ -33,6 +33,14 @@ const Header = React.forwardRef<HTMLElement, HeaderProps>(
         )}
         {...props}
       >
+        {variant === 'bordered' && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.035) 40%, rgba(255,255,255,0.01) 60%, transparent 100%)',
+            }}
+          />
+        )}
         {children}
       </header>
     )
