@@ -166,14 +166,14 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
 
   // Main component render
   return (
-    <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
+    <div className="bg-card rounded-lg border border-border p-6 transition-colors">
       {/* Filters: Cost Type, Service, and Date Picker Controls */}
       <div className="flex flex-col gap-4 mb-6">
         {/* Top row: Service and Cost Type Selectors */}
         <div className="flex flex-col sm:flex-row gap-4">
           {/* Service Selector */}
           <div className="flex flex-col space-y-2">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Service</label>
+            <label className="text-sm font-medium text-foreground">Service</label>
             <Select
               value={selectedService}
               onValueChange={setSelectedService}
@@ -196,7 +196,7 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
 
           {/* Cost Type Selector */}
           <div className="flex flex-col space-y-2">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <label className="text-sm font-medium text-foreground">
               Cost Type
             </label>
             <Select
@@ -268,7 +268,7 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
 
       {!costsResponse && !error && !isLoading && (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400">
+          <p className="text-muted-foreground">
             Select dates and fetch costs to view data for this region.
           </p>
         </div>

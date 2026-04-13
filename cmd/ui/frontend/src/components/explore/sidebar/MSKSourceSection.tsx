@@ -1,6 +1,7 @@
 import type { Region } from '@/types'
 import { useAppStore } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
+import { BarChart3, Globe, Server } from 'lucide-react'
 
 interface MSKSourceSectionProps {
   regions: Region[]
@@ -19,105 +20,74 @@ export const MSKSourceSection = ({ regions }: MSKSourceSectionProps) => {
   const isSummarySelected = selectedView === 'summary' && selectedSourceType === 'msk'
 
   return (
-    <div className="space-y-3">
-      {/* Section Header */}
-      <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-2">
-        AWS MSK
-      </h3>
+    <div className="space-y-1">
+      {/* Section Label */}
+      <div className="px-2 py-1">
+        <span className="text-sm font-bold text-foreground uppercase tracking-wider" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
+          AWS MSK
+        </span>
+      </div>
 
-      {/* Summary Button */}
+      {/* All Regions overview */}
       <button
         onClick={selectSummary}
-        className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
+        className={`w-full text-left flex items-center px-2.5 py-2 rounded-md transition-all duration-150 group ${
           isSummarySelected
-            ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
-            : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+            ? 'bg-accent/10 text-accent'
+            : 'text-foreground hover:text-accent hover:bg-secondary'
         }`}
       >
-        <div className="flex items-center space-x-2 min-w-0 flex-1">
-          <div
-            className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              isSummarySelected ? 'bg-blue-600' : 'bg-gray-500'
-            }`}
-          />
-          <h4
-            className={`text-sm whitespace-nowrap ${
-              isSummarySelected
-                ? 'text-blue-900 dark:text-accent'
-                : 'text-gray-800 dark:text-gray-200'
-            }`}
-          >
-            Summary
-          </h4>
-        </div>
+        <BarChart3 className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isSummarySelected ? 'text-accent' : 'text-muted-foreground group-hover:text-accent'}`} />
+        <span className="text-sm font-medium">All Regions</span>
       </button>
 
-      {/* Regions List */}
-      <div className="ml-4 space-y-2">
+      {/* Regions - indented under All Regions */}
+      <div className="ml-4 space-y-0.5">
         {regions.map((region) => {
           const isRegionSelected = selectedView === 'region' && selectedRegionName === region.name
+          const provisionedClusters = (region.clusters || []).filter(
+            (cluster) => cluster.aws_client_information?.msk_cluster_config?.Provisioned
+          )
 
           return (
-            <div key={region.name} className="space-y-1">
+            <div key={region.name}>
+              {/* Region header */}
               <button
                 onClick={() => selectRegion(region.name)}
-                className={`w-full text-left flex items-center justify-between p-2 rounded-md transition-colors ${
+                className={`w-full text-left flex items-center justify-between px-2.5 py-2 rounded-md transition-all duration-150 group ${
                   isRegionSelected
-                    ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
-                    : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-foreground hover:text-accent hover:bg-secondary'
                 }`}
               >
-                <div className="flex items-center space-x-2 min-w-0 flex-1">
-                  <div
-                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      isRegionSelected ? 'bg-blue-500' : 'bg-blue-400'
-                    }`}
-                  />
-                  <h5
-                    className={`text-sm font-medium whitespace-nowrap ${
-                      isRegionSelected
-                        ? 'text-blue-900 dark:text-accent'
-                        : 'text-gray-700 dark:text-gray-300'
-                    }`}
-                  >
-                    {region.name}
-                  </h5>
+                <div className="flex items-center min-w-0">
+                  <Globe className={`w-3.5 h-3.5 mr-2 flex-shrink-0 ${isRegionSelected ? 'text-accent' : 'text-muted-foreground group-hover:text-accent'}`} />
+                  <span className="text-sm font-medium truncate">{region.name}</span>
                 </div>
               </button>
 
-              {/* Clusters under each region */}
-              <div className="ml-4 space-y-1">
-                {(region.clusters || [])
-                  .filter(
-                    (cluster) =>
-                      cluster.aws_client_information?.msk_cluster_config?.Provisioned
-                  )
-                  .map((cluster) => {
-                    const clusterArn = getClusterArn(cluster)
-                    const isSelected =
-                      selectedView === 'cluster' && selectedClusterArn === clusterArn
+              {/* Clusters */}
+              <div className="ml-4 mt-0.5 space-y-0.5">
+                {provisionedClusters.map((cluster) => {
+                  const clusterArn = getClusterArn(cluster)
+                  const isSelected =
+                    selectedView === 'cluster' && selectedClusterArn === clusterArn
 
-                    return (
-                      <button
-                        key={cluster.name}
-                        onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
-                        className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors ${
-                          isSelected
-                            ? 'bg-blue-100 dark:bg-accent/20 text-blue-900 dark:text-accent border border-blue-200 dark:border-accent'
-                            : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <div
-                            className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                              isSelected ? 'bg-blue-500' : 'bg-gray-400'
-                            }`}
-                          />
-                          <span className="truncate">{cluster.name}</span>
-                        </div>
-                      </button>
-                    )
-                  })}
+                  return (
+                    <button
+                      key={cluster.name}
+                      onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
+                      className={`w-full text-left flex items-center px-2.5 py-1.5 text-sm rounded-md transition-all duration-150 group ${
+                        isSelected
+                          ? 'bg-accent/10 text-accent'
+                          : 'text-muted-foreground hover:text-accent hover:bg-secondary'
+                      }`}
+                    >
+                      <Server className={`w-3.5 h-3.5 mr-2 flex-shrink-0 ${isSelected ? 'text-accent' : 'text-muted-foreground/40 group-hover:text-accent'}`} />
+                      <span className="truncate">{cluster.name}</span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )

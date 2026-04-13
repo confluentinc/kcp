@@ -68,8 +68,8 @@ export const SchemaRegistries = () => {
   if (totalCount === 0) {
     return (
       <div className="text-center py-12">
-        <div className="text-gray-500 dark:text-gray-400 text-lg">No schema registries found</div>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+        <div className="text-muted-foreground text-lg">No schema registries found</div>
+        <p className="text-sm text-muted-foreground mt-2">
           No schema registries were discovered in the KCP state file.
         </p>
       </div>
@@ -78,8 +78,8 @@ export const SchemaRegistries = () => {
 
   return (
     <div className="space-y-0">
-      <div className="px-6 pt-6 pb-4 bg-white dark:bg-card">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      <div className="px-6 pt-6 pb-4 bg-card">
+        <h3 className="text-lg font-semibold text-foreground">
           Schema Registries ({totalCount})
         </h3>
       </div>
@@ -126,27 +126,27 @@ const ConfluentRegistryCard = ({
   const [expandedVersions, toggleVersion] = useToggleSet()
 
   return (
-    <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors">
+    <div className="bg-card border border-border rounded-lg shadow-sm transition-colors">
       {/* Registry Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card rounded-t-lg">
+      <div className="p-6 border-b border-border bg-secondary rounded-t-lg">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
-              <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+              <h4 className="text-xl font-semibold text-foreground">
                 Confluent Schema Registry
               </h4>
               <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent rounded-full">
                 {registry.subjects.length} subjects
               </span>
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">URL: {registry.url}</p>
+            <p className="text-sm text-muted-foreground">URL: {registry.url}</p>
           </div>
         </div>
       </div>
 
       {/* Subjects */}
       <div className="p-6">
-        <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-4">Schema Subjects</h5>
+        <h5 className="font-medium text-foreground mb-4">Schema Subjects</h5>
 
         <div className="space-y-4">
           {registry.subjects.map((subject, subjectIndex) => {
@@ -156,11 +156,11 @@ const ConfluentRegistryCard = ({
             return (
               <div
                 key={subjectKey}
-                className="border border-gray-200 dark:border-border rounded-lg"
+                className="border border-border rounded-lg"
               >
                 {/* Subject Header */}
                 <div
-                  className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}
+                  className={`p-4 bg-secondary ${isExpanded ? 'border-b border-border rounded-t-lg' : 'rounded-lg'}`}
                 >
                   <button
                     onClick={() => toggleSubject(subjectKey)}
@@ -168,21 +168,21 @@ const ConfluentRegistryCard = ({
                   >
                     <div className="flex items-center gap-3">
                       {isExpanded ? (
-                        <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                        <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                       ) : (
-                        <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                       )}
-                      <h6 className="font-medium text-gray-900 dark:text-gray-100">
+                      <h6 className="font-medium text-foreground">
                         {subject.name}
                       </h6>
-                      <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
+                      <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
                         {subject.schema_type}
                       </span>
                       <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded-full">
                         v{subject.latest_schema.version}
                       </span>
                     </div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                    <div className="text-sm text-muted-foreground">
                       {subject.versions.length} version
                       {subject.versions.length !== 1 ? 's' : ''}
                     </div>
@@ -195,7 +195,7 @@ const ConfluentRegistryCard = ({
                     {/* Latest Schema */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h6 className="font-medium text-gray-900 dark:text-gray-100">
+                        <h6 className="font-medium text-foreground">
                           Latest Schema (v{subject.latest_schema.version})
                         </h6>
                         <Button
@@ -211,13 +211,13 @@ const ConfluentRegistryCard = ({
                       <textarea
                         readOnly
                         value={formatSchema(subject.latest_schema.schema)}
-                        className="w-full h-32 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                        className="w-full h-32 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                       />
                     </div>
 
                     {/* Version History */}
                     <div>
-                      <h6 className="font-medium text-gray-900 dark:text-gray-100 mb-3 block">
+                      <h6 className="font-medium text-foreground mb-3 block">
                         Version History
                       </h6>
                       <div className="space-y-2">
@@ -228,38 +228,38 @@ const ConfluentRegistryCard = ({
                           return (
                             <div
                               key={versionKey}
-                              className="border border-gray-200 dark:border-border rounded-md"
+                              className="border border-border rounded-md"
                             >
                               <button
                                 onClick={() => toggleVersion(versionKey)}
-                                className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                                className="w-full text-left p-3 hover:bg-secondary transition-colors"
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
                                     {isVersionExpanded ? (
-                                      <ChevronDown className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                     ) : (
-                                      <ChevronRight className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                     )}
-                                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                                    <span className="font-medium text-foreground">
                                       Version {version.version}
                                     </span>
                                     {version.schemaType && (
-                                      <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
+                                      <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
                                         {version.schemaType}
                                       </span>
                                     )}
                                   </div>
-                                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                                  <span className="text-sm text-muted-foreground">
                                     ID: {version.id}
                                   </span>
                                 </div>
                               </button>
 
                               {isVersionExpanded && (
-                                <div className="p-3 border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                                <div className="p-3 border-t border-border bg-secondary">
                                   <div className="flex items-center justify-between mb-2">
-                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                    <span className="text-sm font-medium text-foreground">
                                       Schema Definition
                                     </span>
                                     <Button
@@ -273,7 +273,7 @@ const ConfluentRegistryCard = ({
                                   <textarea
                                     readOnly
                                     value={formatSchema(version.schema)}
-                                    className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                                    className="w-full h-24 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                                   />
                                 </div>
                               )}
@@ -306,13 +306,13 @@ const GlueRegistryCard = ({
   const [expandedVersions, toggleVersion] = useToggleSet()
 
   return (
-    <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors">
+    <div className="bg-card border border-border rounded-lg shadow-sm transition-colors">
       {/* Registry Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card rounded-t-lg">
+      <div className="p-6 border-b border-border bg-secondary rounded-t-lg">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
-              <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+              <h4 className="text-xl font-semibold text-foreground">
                 AWS Glue Schema Registry
               </h4>
               <span className="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 rounded-full">
@@ -320,11 +320,11 @@ const GlueRegistryCard = ({
               </span>
             </div>
             <div className="space-y-1">
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-muted-foreground">
                 Registry: {registry.registry_name}
               </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Region: {registry.region}</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+              <p className="text-sm text-muted-foreground">Region: {registry.region}</p>
+              <p className="text-xs text-muted-foreground font-mono">
                 {registry.registry_arn}
               </p>
             </div>
@@ -334,10 +334,10 @@ const GlueRegistryCard = ({
 
       {/* Schemas */}
       <div className="p-6">
-        <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-4">Schemas</h5>
+        <h5 className="font-medium text-foreground mb-4">Schemas</h5>
 
         {!registry.schemas || registry.schemas.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-gray-500">
+          <p className="text-sm text-muted-foreground">
             No schemas found in this registry.
           </p>
         ) : (
@@ -349,11 +349,11 @@ const GlueRegistryCard = ({
               return (
                 <div
                   key={schemaKey}
-                  className="border border-gray-200 dark:border-border rounded-lg"
+                  className="border border-border rounded-lg"
                 >
                   {/* Schema Header */}
                   <div
-                    className={`p-4 bg-gray-50 dark:bg-card ${isExpanded ? 'border-b border-gray-200 dark:border-border rounded-t-lg' : 'rounded-lg'}`}
+                    className={`p-4 bg-secondary ${isExpanded ? 'border-b border-border rounded-t-lg' : 'rounded-lg'}`}
                   >
                     <button
                       onClick={() => toggleSchema(schemaKey)}
@@ -361,14 +361,14 @@ const GlueRegistryCard = ({
                     >
                       <div className="flex items-center gap-3">
                         {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                          <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                         ) : (
-                          <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                          <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                         )}
-                        <h6 className="font-medium text-gray-900 dark:text-gray-100">
+                        <h6 className="font-medium text-foreground">
                           {schema.schema_name}
                         </h6>
-                        <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
+                        <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
                           {schema.data_format}
                         </span>
                         {schema.latest_version && (
@@ -377,7 +377,7 @@ const GlueRegistryCard = ({
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                      <div className="text-sm text-muted-foreground">
                         {schema.versions?.length ?? 0} version
                         {(schema.versions?.length ?? 0) !== 1 ? 's' : ''}
                       </div>
@@ -391,7 +391,7 @@ const GlueRegistryCard = ({
                       {schema.latest_version && (
                         <div>
                           <div className="flex items-center justify-between mb-2">
-                            <h6 className="font-medium text-gray-900 dark:text-gray-100">
+                            <h6 className="font-medium text-foreground">
                               Latest Version (v{schema.latest_version.version_number})
                             </h6>
                             <Button
@@ -407,14 +407,14 @@ const GlueRegistryCard = ({
                             </Button>
                           </div>
                           <div className="flex items-center gap-2 mb-2">
-                            <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
+                            <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
                               {schema.latest_version.status}
                             </span>
                           </div>
                           <textarea
                             readOnly
                             value={formatSchema(schema.latest_version.schema_definition)}
-                            className="w-full h-32 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                            className="w-full h-32 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                           />
                         </div>
                       )}
@@ -422,7 +422,7 @@ const GlueRegistryCard = ({
                       {/* Version History */}
                       {schema.versions && schema.versions.length > 0 && (
                         <div>
-                          <h6 className="font-medium text-gray-900 dark:text-gray-100 mb-3 block">
+                          <h6 className="font-medium text-foreground mb-3 block">
                             Version History
                           </h6>
                           <div className="space-y-2">
@@ -434,36 +434,36 @@ const GlueRegistryCard = ({
                                 return (
                                   <div
                                     key={versionKey}
-                                    className="border border-gray-200 dark:border-border rounded-md"
+                                    className="border border-border rounded-md"
                                   >
                                     <button
                                       onClick={() => toggleVersion(versionKey)}
-                                      className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                                      className="w-full text-left p-3 hover:bg-secondary transition-colors"
                                     >
                                       <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
                                           {isVersionExpanded ? (
-                                            <ChevronDown className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                           ) : (
-                                            <ChevronRight className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                           )}
-                                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                                          <span className="font-medium text-foreground">
                                             Version {version.version_number}
                                           </span>
-                                          <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
+                                          <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
                                             {version.data_format}
                                           </span>
                                         </div>
-                                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                                        <span className="text-sm text-muted-foreground">
                                           {version.status}
                                         </span>
                                       </div>
                                     </button>
 
                                     {isVersionExpanded && (
-                                      <div className="p-3 border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                                      <div className="p-3 border-t border-border bg-secondary">
                                         <div className="flex items-center justify-between mb-2">
-                                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                          <span className="text-sm font-medium text-foreground">
                                             Schema Definition
                                           </span>
                                           <Button
@@ -481,7 +481,7 @@ const GlueRegistryCard = ({
                                         <textarea
                                           readOnly
                                           value={formatSchema(version.schema_definition)}
-                                          className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                                          className="w-full h-24 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                                         />
                                       </div>
                                     )}
