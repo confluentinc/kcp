@@ -7,8 +7,8 @@ export const RegionReport = () => {
   if (!region) {
     return (
       <div className="p-6">
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-lg p-4">
-          <p className="text-red-800 dark:text-red-200">
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+          <p className="text-destructive">
             Region not found. Please select a region from the sidebar.
           </p>
         </div>
@@ -17,12 +17,12 @@ export const RegionReport = () => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* Region Header */}
-      <div className="bg-white dark:bg-card rounded-lg shadow-sm border border-gray-200 dark:border-border p-6 transition-colors">
+      <div className="bg-card rounded-lg shadow-sm border border-border p-6 transition-colors">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+            <h1 className="text-3xl font-bold text-foreground">
               Region:&nbsp;{region.name}
             </h1>
           </div>

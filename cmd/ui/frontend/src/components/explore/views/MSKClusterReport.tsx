@@ -19,8 +19,8 @@ export const MSKClusterReport = () => {
   if (!selectedClusterData) {
     return (
       <div className="p-6">
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-lg p-4">
-          <p className="text-red-800 dark:text-red-200">
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+          <p className="text-destructive">
             Cluster not found. Please select a cluster from the sidebar.
           </p>
         </div>
@@ -39,33 +39,33 @@ export const MSKClusterReport = () => {
   // Safety checks for required data
   if (!mskConfig || !provisioned || !brokerInfo) {
     return (
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white rounded-lg shadow-sm border p-6">
-          <h1 className="text-2xl font-bold text-gray-900">{cluster.name}</h1>
-          <p className="text-gray-600 mt-2">Cluster data is incomplete or unavailable.</p>
+      <div className="w-full">
+        <div className="bg-card rounded-lg shadow-sm border border-border p-6">
+          <h1 className="text-2xl font-bold text-foreground">{cluster.name}</h1>
+          <p className="text-muted-foreground mt-2">Cluster data is incomplete or unavailable.</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 min-w-0 w-full">
+    <div className="w-full space-y-6 min-w-0">
       {/* Header */}
-      <div className="bg-white dark:bg-card rounded-lg shadow-sm border border-gray-200 dark:border-border transition-colors">
+      <div className="bg-card rounded-lg shadow-sm border border-border transition-colors">
         {/* Cluster Title and Key Metrics */}
-        <div className="p-6 border-b border-gray-200 dark:border-border">
+        <div className="p-6 border-b border-border">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+              <h1 className="text-3xl font-bold text-foreground">
                 Cluster:&nbsp;{cluster.name}
               </h1>
               <div className="mt-2 space-y-1">
                 {mskConfig.ClusterArn && (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                  <p className="text-sm text-muted-foreground font-mono">
                     ARN: {mskConfig.ClusterArn}
                   </p>
                 )}
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className="text-sm text-muted-foreground">
                   Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'}
                 </p>
               </div>
@@ -109,7 +109,7 @@ export const MSKClusterReport = () => {
           onChange={(id) => {
             setActiveTab(id as ClusterReportTab)
           }}
-          className="border-b border-gray-200 dark:border-border"
+          className="border-b border-border"
         />
 
         {/* Tab Content */}
