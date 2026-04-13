@@ -2,6 +2,7 @@ import { useAppStore } from '@/stores/store'
 import { isMSKSource, isOSKSource } from '@/lib/sourceUtils'
 import { MSKSourceSection } from './sidebar/MSKSourceSection'
 import { OSKSourceSection } from './sidebar/OSKSourceSection'
+import { Database } from 'lucide-react'
 
 export const Sidebar = () => {
   const kcpState = useAppStore((state) => state.kcpState)
@@ -18,7 +19,7 @@ export const Sidebar = () => {
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 pb-0">
-        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           Explore your Kafka infrastructure
         </p>
       </div>
@@ -40,8 +41,8 @@ export const Sidebar = () => {
 
         {/* Empty state if no sources */}
         {!hasMSK && !hasOSK && (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-border rounded-lg p-4">
-            <p className="text-sm text-yellow-800 dark:text-yellow-200">
+          <div className="bg-warning/10 border border-warning/20 rounded-lg p-4">
+            <p className="text-sm text-warning">
               No clusters available. Please upload a KCP state file to explore your infrastructure.
             </p>
           </div>
@@ -49,36 +50,22 @@ export const Sidebar = () => {
       </div>
 
       {/* Schema Registries Section */}
-      <div className="border-t border-gray-200 dark:border-border p-4">
+      <div className="border-t border-border p-4">
         <div className="space-y-2">
-          <p className="text-sm text-gray-600 dark:text-gray-400 px-2">
+          <p className="text-sm text-muted-foreground px-2">
             Explore Schema Registries
           </p>
 
           <button
             onClick={selectSchemaRegistries}
-            className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
+            className={`w-full text-left flex items-center p-2.5 rounded-lg transition-all duration-150 ${
               selectedView === 'schema-registries'
-                ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
-                : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                ? 'bg-accent/10 text-accent border-l-[3px] border-accent'
+                : 'hover:bg-secondary text-foreground'
             }`}
           >
-            <div className="flex items-center space-x-2 min-w-0 flex-1">
-              <div
-                className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  selectedView === 'schema-registries' ? 'bg-blue-600' : 'bg-gray-500'
-                }`}
-              />
-              <h4
-                className={`text-sm whitespace-nowrap ${
-                  selectedView === 'schema-registries'
-                    ? 'text-blue-900 dark:text-accent'
-                    : 'text-gray-800 dark:text-gray-200'
-                }`}
-              >
-                Schema Registries
-              </h4>
-            </div>
+            <Database className={`w-4 h-4 mr-2.5 flex-shrink-0 ${selectedView === 'schema-registries' ? 'text-accent' : 'text-muted-foreground'}`} />
+            <span className="text-sm font-medium">Schema Registries</span>
           </button>
         </div>
       </div>

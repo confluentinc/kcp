@@ -1,6 +1,7 @@
 import type { Region } from '@/types'
 import { useAppStore } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
+import { LayoutDashboard, Globe, Server } from 'lucide-react'
 
 interface MSKSourceSectionProps {
   regions: Region[]
@@ -21,72 +22,44 @@ export const MSKSourceSection = ({ regions }: MSKSourceSectionProps) => {
   return (
     <div className="space-y-3">
       {/* Section Header */}
-      <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-2">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 border-l-2 border-accent ml-2">
         AWS MSK
       </h3>
 
       {/* Summary Button */}
       <button
         onClick={selectSummary}
-        className={`w-full text-left flex items-center justify-between p-3 rounded-lg transition-colors ${
+        className={`w-full text-left flex items-center p-2.5 rounded-lg transition-all duration-150 ${
           isSummarySelected
-            ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
-            : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+            ? 'bg-accent/10 text-accent border-l-[3px] border-accent'
+            : 'hover:bg-secondary text-foreground'
         }`}
       >
-        <div className="flex items-center space-x-2 min-w-0 flex-1">
-          <div
-            className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              isSummarySelected ? 'bg-blue-600' : 'bg-gray-500'
-            }`}
-          />
-          <h4
-            className={`text-sm whitespace-nowrap ${
-              isSummarySelected
-                ? 'text-blue-900 dark:text-accent'
-                : 'text-gray-800 dark:text-gray-200'
-            }`}
-          >
-            Summary
-          </h4>
-        </div>
+        <LayoutDashboard className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isSummarySelected ? 'text-accent' : 'text-muted-foreground'}`} />
+        <span className="text-sm font-medium">Summary</span>
       </button>
 
       {/* Regions List */}
-      <div className="ml-4 space-y-2">
+      <div className="space-y-1">
         {regions.map((region) => {
           const isRegionSelected = selectedView === 'region' && selectedRegionName === region.name
 
           return (
-            <div key={region.name} className="space-y-1">
+            <div key={region.name} className="space-y-0.5">
               <button
                 onClick={() => selectRegion(region.name)}
-                className={`w-full text-left flex items-center justify-between p-2 rounded-md transition-colors ${
+                className={`w-full text-left flex items-center p-2.5 rounded-lg transition-all duration-150 ${
                   isRegionSelected
-                    ? 'bg-blue-100 dark:bg-accent/20 border border-blue-200 dark:border-accent'
-                    : 'hover:bg-gray-100 dark:hover:bg-gray-600'
+                    ? 'bg-accent/10 text-accent border-l-[3px] border-accent'
+                    : 'hover:bg-secondary text-foreground'
                 }`}
               >
-                <div className="flex items-center space-x-2 min-w-0 flex-1">
-                  <div
-                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      isRegionSelected ? 'bg-blue-500' : 'bg-blue-400'
-                    }`}
-                  />
-                  <h5
-                    className={`text-sm font-medium whitespace-nowrap ${
-                      isRegionSelected
-                        ? 'text-blue-900 dark:text-accent'
-                        : 'text-gray-700 dark:text-gray-300'
-                    }`}
-                  >
-                    {region.name}
-                  </h5>
-                </div>
+                <Globe className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isRegionSelected ? 'text-accent' : 'text-muted-foreground'}`} />
+                <span className="text-sm font-medium">{region.name}</span>
               </button>
 
               {/* Clusters under each region */}
-              <div className="ml-4 space-y-1">
+              <div className="ml-4 border-l border-border pl-3 space-y-0.5">
                 {(region.clusters || [])
                   .filter(
                     (cluster) =>
@@ -101,20 +74,14 @@ export const MSKSourceSection = ({ regions }: MSKSourceSectionProps) => {
                       <button
                         key={cluster.name}
                         onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
-                        className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors ${
+                        className={`w-full text-left flex items-center px-2.5 py-1.5 text-sm rounded-md transition-all duration-150 ${
                           isSelected
-                            ? 'bg-blue-100 dark:bg-accent/20 text-blue-900 dark:text-accent border border-blue-200 dark:border-accent'
-                            : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600'
+                            ? 'bg-accent/10 text-accent border-l-[3px] border-accent -ml-px'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                         }`}
                       >
-                        <div className="flex items-center space-x-1">
-                          <div
-                            className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                              isSelected ? 'bg-blue-500' : 'bg-gray-400'
-                            }`}
-                          />
-                          <span className="truncate">{cluster.name}</span>
-                        </div>
+                        <Server className={`w-3.5 h-3.5 mr-2 flex-shrink-0 ${isSelected ? 'text-accent' : 'text-muted-foreground'}`} />
+                        <span className="truncate">{cluster.name}</span>
                       </button>
                     )
                   })}
