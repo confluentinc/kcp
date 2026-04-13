@@ -74,23 +74,23 @@ export const MSKClusterReport = () => {
 
           {/* Key Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            <div className="bg-card border border-border border-t-4 border-t-accent shadow-sm rounded-lg p-5">
+              <div className="text-2xl font-semibold text-foreground">
                 {`${mskConfig.ClusterType} (${cluster.metrics?.metadata?.broker_type})`}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Cluster Type</div>
+              <div className="text-sm text-muted-foreground">Cluster Type</div>
             </div>
-            <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            <div className="bg-card border border-border border-t-4 border-t-accent shadow-sm rounded-lg p-5">
+              <div className="text-2xl font-semibold text-foreground">
                 {provisioned.NumberOfBrokerNodes}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Broker Nodes</div>
+              <div className="text-sm text-muted-foreground">Broker Nodes</div>
             </div>
-            <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            <div className="bg-card border border-border border-t-4 border-t-accent shadow-sm rounded-lg p-5">
+              <div className="text-2xl font-semibold text-foreground">
                 {provisioned.CurrentBrokerSoftwareInfo?.KafkaVersion || 'Unknown'}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Kafka Version</div>
+              <div className="text-sm text-muted-foreground">Kafka Version</div>
             </div>
           </div>
         </div>
