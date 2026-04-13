@@ -38,6 +38,18 @@ export const ClusterConfigurationSection = ({
         <KeyValueGrid
           items={[
             {
+              label: 'Cluster Type:',
+              value: `${cluster.aws_client_information?.msk_cluster_config?.ClusterType || 'Unknown'}${brokerType ? ` (${brokerType})` : ''}`,
+            },
+            {
+              label: 'Kafka Version:',
+              value: provisioned.CurrentBrokerSoftwareInfo?.KafkaVersion || 'Unknown',
+            },
+            {
+              label: 'Broker Nodes:',
+              value: provisioned.NumberOfBrokerNodes || 'Unknown',
+            },
+            {
               label: 'Instance Type:',
               value: brokerInfo.InstanceType || 'Unknown',
             },

@@ -43,7 +43,7 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: 
     >
       <HeaderSection position="left">
         <img
-          src={darkMode ? '/images/logo-light.svg' : '/images/logo-dark.svg'}
+          src="/images/logo-light.svg"
           alt="KCP Logo"
           className="h-6 w-6"
         />

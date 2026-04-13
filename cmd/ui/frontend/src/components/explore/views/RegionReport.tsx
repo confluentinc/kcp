@@ -22,8 +22,8 @@ export const RegionReport = () => {
       <div className="bg-card rounded-lg shadow-sm border border-border p-6 transition-colors">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">
-              Region:&nbsp;{region.name}
+            <h1 className="text-2xl font-bold text-foreground">
+              Region Cost Overview:&nbsp;{region.name}
             </h1>
           </div>
         </div>

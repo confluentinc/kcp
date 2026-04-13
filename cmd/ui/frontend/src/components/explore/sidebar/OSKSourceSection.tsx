@@ -1,6 +1,5 @@
 import type { OSKCluster } from '@/types'
 import { useAppStore } from '@/stores/store'
-import { Server } from 'lucide-react'
 
 interface OSKSourceSectionProps {
   clusters: OSKCluster[]
@@ -12,13 +11,18 @@ export const OSKSourceSection = ({ clusters }: OSKSourceSectionProps) => {
   const selectOSKCluster = useAppStore((state) => state.selectOSKCluster)
 
   return (
-    <div className="space-y-3">
-      {/* Section Header */}
-      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 border-l-2 border-accent ml-2">
-        Open Source Kafka
-      </h3>
+    <div className="space-y-1">
+      {/* Section Label */}
+      <div className="flex items-center justify-between px-2 py-1">
+        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          Open Source Kafka
+        </span>
+        <span className="text-[11px] text-muted-foreground bg-secondary rounded-full px-1.5 py-0.5">
+          {clusters.length}
+        </span>
+      </div>
 
-      {/* OSK Clusters - Flat List */}
+      {/* Clusters */}
       <div className="space-y-0.5">
         {clusters.map((cluster) => {
           const isSelected = selectedView === 'cluster' && selectedOSKClusterId === cluster.id
@@ -27,13 +31,13 @@ export const OSKSourceSection = ({ clusters }: OSKSourceSectionProps) => {
             <button
               key={cluster.id}
               onClick={() => selectOSKCluster(cluster.id)}
-              className={`w-full text-left flex items-center px-2.5 py-2 text-sm rounded-lg transition-all duration-150 ${
+              className={`w-full text-left flex items-center px-2.5 py-2 text-sm rounded-md transition-all duration-150 ${
                 isSelected
-                  ? 'bg-accent/10 text-accent border-l-[3px] border-accent'
+                  ? 'bg-accent/10 text-accent'
                   : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
               }`}
             >
-              <Server className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isSelected ? 'text-accent' : 'text-muted-foreground'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full mr-2.5 flex-shrink-0 ${isSelected ? 'bg-accent' : 'bg-muted-foreground/40'}`} />
               <span className="truncate">{cluster.id}</span>
             </button>
           )

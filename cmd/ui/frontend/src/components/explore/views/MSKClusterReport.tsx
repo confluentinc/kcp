@@ -49,53 +49,29 @@ export const MSKClusterReport = () => {
   }
 
   return (
-    <div className="w-full space-y-6 min-w-0">
-      {/* Header */}
-      <div className="bg-card rounded-lg shadow-sm border border-border transition-colors">
-        {/* Cluster Title and Key Metrics */}
+    <div className="w-full h-full flex flex-col min-h-0">
+      {/* Fixed Header: Title, Stat Cards, Tabs */}
+      <div className="bg-card border border-border border-b-0 rounded-t-lg shadow-sm flex-shrink-0 m-4 mb-0 transition-colors">
+        {/* Cluster Title */}
         <div className="p-6 border-b border-border">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">
-                Cluster:&nbsp;{cluster.name}
-              </h1>
-              <div className="mt-2 space-y-1">
-                {mskConfig.ClusterArn && (
-                  <p className="text-sm text-muted-foreground font-mono">
-                    ARN: {mskConfig.ClusterArn}
-                  </p>
-                )}
-                <p className="text-sm text-muted-foreground">
-                  Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'}
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">
+              Cluster:&nbsp;{cluster.name}
+            </h1>
+            <div className="mt-2 space-y-1">
+              {mskConfig.ClusterArn && (
+                <p className="text-sm text-muted-foreground font-mono">
+                  ARN: {mskConfig.ClusterArn}
                 </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Key Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-card border border-border border-t-4 border-t-accent shadow-sm rounded-lg p-5">
-              <div className="text-2xl font-semibold text-foreground">
-                {`${mskConfig.ClusterType} (${cluster.metrics?.metadata?.broker_type})`}
-              </div>
-              <div className="text-sm text-muted-foreground">Cluster Type</div>
-            </div>
-            <div className="bg-card border border-border border-t-4 border-t-accent shadow-sm rounded-lg p-5">
-              <div className="text-2xl font-semibold text-foreground">
-                {provisioned.NumberOfBrokerNodes}
-              </div>
-              <div className="text-sm text-muted-foreground">Broker Nodes</div>
-            </div>
-            <div className="bg-card border border-border border-t-4 border-t-accent shadow-sm rounded-lg p-5">
-              <div className="text-2xl font-semibold text-foreground">
-                {provisioned.CurrentBrokerSoftwareInfo?.KafkaVersion || 'Unknown'}
-              </div>
-              <div className="text-sm text-muted-foreground">Kafka Version</div>
+              )}
+              <p className="text-sm text-muted-foreground">
+                Created: {mskConfig.CreationTime ? formatDate(mskConfig.CreationTime) : 'Unknown'}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* All Tabs */}
+        {/* Tabs */}
         <Tabs
           tabs={[
             { id: CLUSTER_REPORT_TABS.CLUSTER, label: 'Cluster' },
@@ -111,8 +87,10 @@ export const MSKClusterReport = () => {
           }}
           className="border-b border-border"
         />
+      </div>
 
-        {/* Tab Content */}
+      {/* Scrollable Tab Content */}
+      <div className="flex-1 min-h-0 overflow-y-auto mx-4 mb-4 bg-card border border-border border-t-0 rounded-b-lg">
         <div className="p-6">
           {/* Metrics Tab */}
           {activeTab === CLUSTER_REPORT_TABS.METRICS && (

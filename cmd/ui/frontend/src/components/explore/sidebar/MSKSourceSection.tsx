@@ -1,7 +1,7 @@
 import type { Region } from '@/types'
 import { useAppStore } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
-import { LayoutDashboard, Globe, Server } from 'lucide-react'
+import { BarChart3 } from 'lucide-react'
 
 interface MSKSourceSectionProps {
   regions: Region[]
@@ -20,71 +20,74 @@ export const MSKSourceSection = ({ regions }: MSKSourceSectionProps) => {
   const isSummarySelected = selectedView === 'summary' && selectedSourceType === 'msk'
 
   return (
-    <div className="space-y-3">
-      {/* Section Header */}
-      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 border-l-2 border-accent ml-2">
-        AWS MSK
-      </h3>
+    <div className="space-y-1">
+      {/* Section Label */}
+      <div className="px-2 py-1">
+        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          AWS MSK
+        </span>
+      </div>
 
-      {/* Summary Button */}
+      {/* All Regions overview */}
       <button
         onClick={selectSummary}
-        className={`w-full text-left flex items-center p-2.5 rounded-lg transition-all duration-150 ${
+        className={`w-full text-left flex items-center px-2.5 py-2 rounded-md transition-all duration-150 ${
           isSummarySelected
-            ? 'bg-accent/10 text-accent border-l-[3px] border-accent'
+            ? 'bg-accent/10 text-accent'
             : 'hover:bg-secondary text-foreground'
         }`}
       >
-        <LayoutDashboard className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isSummarySelected ? 'text-accent' : 'text-muted-foreground'}`} />
-        <span className="text-sm font-medium">Summary</span>
+        <BarChart3 className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isSummarySelected ? 'text-accent' : 'text-muted-foreground'}`} />
+        <span className="text-sm font-medium">All Regions</span>
       </button>
 
-      {/* Regions List */}
-      <div className="space-y-1">
+      {/* Regions - indented under All Regions */}
+      <div className="ml-4 space-y-0.5">
         {regions.map((region) => {
           const isRegionSelected = selectedView === 'region' && selectedRegionName === region.name
+          const provisionedClusters = (region.clusters || []).filter(
+            (cluster) => cluster.aws_client_information?.msk_cluster_config?.Provisioned
+          )
 
           return (
-            <div key={region.name} className="space-y-0.5">
+            <div key={region.name}>
+              {/* Region header */}
               <button
                 onClick={() => selectRegion(region.name)}
-                className={`w-full text-left flex items-center p-2.5 rounded-lg transition-all duration-150 ${
+                className={`w-full text-left flex items-center justify-between px-2.5 py-2 rounded-md transition-all duration-150 ${
                   isRegionSelected
-                    ? 'bg-accent/10 text-accent border-l-[3px] border-accent'
+                    ? 'bg-accent/10 text-accent'
                     : 'hover:bg-secondary text-foreground'
                 }`}
               >
-                <Globe className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isRegionSelected ? 'text-accent' : 'text-muted-foreground'}`} />
-                <span className="text-sm font-medium">{region.name}</span>
+                <span className="text-sm font-medium truncate">{region.name}</span>
+                <span className="text-[11px] text-muted-foreground bg-secondary rounded-full px-1.5 py-0.5 ml-2 flex-shrink-0">
+                  {provisionedClusters.length}
+                </span>
               </button>
 
-              {/* Clusters under each region */}
-              <div className="ml-4 border-l border-border pl-3 space-y-0.5">
-                {(region.clusters || [])
-                  .filter(
-                    (cluster) =>
-                      cluster.aws_client_information?.msk_cluster_config?.Provisioned
-                  )
-                  .map((cluster) => {
-                    const clusterArn = getClusterArn(cluster)
-                    const isSelected =
-                      selectedView === 'cluster' && selectedClusterArn === clusterArn
+              {/* Clusters */}
+              <div className="ml-4 mt-0.5 space-y-0.5">
+                {provisionedClusters.map((cluster) => {
+                  const clusterArn = getClusterArn(cluster)
+                  const isSelected =
+                    selectedView === 'cluster' && selectedClusterArn === clusterArn
 
-                    return (
-                      <button
-                        key={cluster.name}
-                        onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
-                        className={`w-full text-left flex items-center px-2.5 py-1.5 text-sm rounded-md transition-all duration-150 ${
-                          isSelected
-                            ? 'bg-accent/10 text-accent border-l-[3px] border-accent -ml-px'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                        }`}
-                      >
-                        <Server className={`w-3.5 h-3.5 mr-2 flex-shrink-0 ${isSelected ? 'text-accent' : 'text-muted-foreground'}`} />
-                        <span className="truncate">{cluster.name}</span>
-                      </button>
-                    )
-                  })}
+                  return (
+                    <button
+                      key={cluster.name}
+                      onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
+                      className={`w-full text-left flex items-center px-2.5 py-1.5 text-sm rounded-md transition-all duration-150 ${
+                        isSelected
+                          ? 'bg-accent/10 text-accent'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full mr-2.5 flex-shrink-0 ${isSelected ? 'bg-accent' : 'bg-muted-foreground/40'}`} />
+                      <span className="truncate">{cluster.name}</span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )
