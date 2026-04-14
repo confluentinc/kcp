@@ -10,6 +10,7 @@ export function downsampleChartData(
   maxPoints: number = 150
 ): ChartDataPoint[] {
   if (data.length <= maxPoints) return data
+  if (data.length === 0) return data
 
   const result: ChartDataPoint[] = [data[0]]
   const step = (data.length - 1) / (maxPoints - 1)

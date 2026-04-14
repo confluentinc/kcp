@@ -191,10 +191,10 @@ export const Home = () => {
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                 </div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+                <h2 className="text-xl font-bold text-foreground mb-2">
                   Loading State File
                 </h2>
-                <p className="text-gray-600 dark:text-gray-400">
+                <p className="text-muted-foreground">
                   {isProcessing ? 'Processing uploaded state file...' : 'Loading pre-configured state file...'}
                 </p>
               </div>
