@@ -4,7 +4,6 @@ import { Sidebar } from '@/components/explore/Sidebar'
 import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
 import { Explore } from '@/components/explore/Explore'
 import { AppHeader } from '@/components/common/AppHeader'
-import { Tabs } from '@/components/common/Tabs'
 import { useAppStore, useSessionId } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
@@ -123,14 +122,21 @@ export const Home = () => {
 
   return (
     <PageErrorBoundary>
-      <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-card transition-colors">
+      <div className="h-svh flex flex-col w-full bg-background transition-colors overflow-hidden">
         <AppHeader
           onFileUpload={triggerFileUpload}
           isProcessing={isProcessing}
           error={error}
+          tabs={kcpState !== null ? [
+            { id: 'explore', label: 'Explore' },
+            { id: 'migration-assets', label: 'Migrate' },
+            { id: 'tco-inputs', label: 'TCO Inputs' },
+          ] : undefined}
+          activeTab={activeTopTab}
+          onTabChange={(id) => setActiveTopTab(id as TopLevelTab)}
         />
 
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col min-h-0">
           <input
             ref={fileInputRef}
             type="file"
@@ -140,26 +146,16 @@ export const Home = () => {
           />
 
           {kcpState !== null ? (
-            <div className="flex flex-1 flex-col">
-              <Tabs
-                tabs={[
-                  { id: 'explore', label: 'Explore' },
-                  { id: 'migration-assets', label: 'Migrate' },
-                  { id: 'tco-inputs', label: 'TCO Inputs' },
-                ]}
-                activeId={activeTopTab}
-                onChange={(id) => setActiveTopTab(id as TopLevelTab)}
-                size="lg"
-              />
+            <div className="flex flex-1 flex-col min-h-0">
 
               {activeTopTab === TOP_LEVEL_TABS.EXPLORE && (
                 <ExploreErrorBoundary>
-                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                  <div className="flex-1 min-h-0 bg-background">
                     <div className="flex h-full">
-                      <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
+                      <div className="w-80 bg-secondary border-r border-border flex-shrink-0">
                         <Sidebar />
                       </div>
-                      <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
+                      <main className="flex-1 flex flex-col min-w-0 min-h-0">
                         <Explore />
                       </main>
                     </div>
@@ -169,20 +165,16 @@ export const Home = () => {
 
               {activeTopTab === TOP_LEVEL_TABS.TCO_INPUTS && (
                 <TCOErrorBoundary>
-                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                    <div className="h-full overflow-auto">
-                      <TCOInputsPage />
-                    </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto bg-background">
+                    <TCOInputsPage />
                   </div>
                 </TCOErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.MIGRATION_ASSETS && (
                 <MigrationErrorBoundary>
-                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                    <div className="h-full overflow-auto">
-                      <MigrationAssetsPage />
-                    </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto bg-background">
+                    <MigrationAssetsPage />
                   </div>
                 </MigrationErrorBoundary>
               )}

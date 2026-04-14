@@ -25,13 +25,13 @@ test.describe('Switching Between MSK and OSK', () => {
   })
 
   test('MSK summary only shows MSK data', async ({ page }) => {
-    // Click Summary button
-    await page.click('button:has-text("Summary")')
+    // Click All Regions button
+    await page.click('button:has-text("All Regions")')
 
     // Wait for the Summary view to render
-    await page.waitForSelector('h1:has-text("MSK Cost Summary")', { timeout: 5000 })
+    await page.waitForSelector('h1:has-text("All Regions Cost Overview")', { timeout: 5000 })
 
-    await expect(page.locator('text=MSK Cost Summary')).toBeVisible()
+    await expect(page.locator('text=All Regions Cost Overview')).toBeVisible()
   })
 
   test('OSK cluster has Metrics tab', async ({ page }) => {

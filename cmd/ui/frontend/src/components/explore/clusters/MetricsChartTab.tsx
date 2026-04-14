@@ -63,7 +63,7 @@ export const MetricsChartTab = ({
 }: MetricsChartTabProps) => {
   return (
     <div className="space-y-4 min-w-0">
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
+      <div className="bg-card rounded-lg border border-border min-w-0 max-w-full">
         <div className="p-6 rounded-lg">
           {processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
             <div className="space-y-6">
@@ -72,7 +72,7 @@ export const MetricsChartTab = ({
                 {/* Left side: Metric Selector (hidden in modal mode) */}
                 {!inModal && (
                   <div className="flex items-center gap-4">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label className="text-sm font-medium text-foreground">
                       Select Metric:
                     </label>
                     <Select
@@ -99,7 +99,7 @@ export const MetricsChartTab = ({
                 {/* In modal mode, show the selected metric as a title */}
                 {inModal && selectedMetric && (
                   <div className="flex items-center gap-4">
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                    <h3 className="text-lg font-semibold text-foreground">
                       {selectedMetric} -{' '}
                       {modalWorkloadAssumption || getWorkloadAssumptionName(selectedMetric)}
                     </h3>
@@ -155,7 +155,7 @@ export const MetricsChartTab = ({
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-gray-500 dark:text-gray-400">No chart data available</p>
+              <p className="text-muted-foreground">No chart data available</p>
             </div>
           )}
         </div>

@@ -49,9 +49,9 @@ export const AuthenticationStatus = ({
         {methods.map((method) => (
           <div
             key={method.name}
-            className="flex items-center justify-between p-3 bg-gray-50 dark:bg-card rounded-lg transition-colors"
+            className="flex items-center justify-between p-3 bg-secondary rounded-lg transition-colors"
           >
-            <span className="font-medium text-gray-900 dark:text-gray-100">{method.name}</span>
+            <span className="font-medium text-foreground">{method.name}</span>
             <StatusBadge {...createStatusBadgeProps(method.enabled)} />
           </div>
         ))}
@@ -63,11 +63,11 @@ export const AuthenticationStatus = ({
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-200 dark:border-border">
-            <th className="text-left py-2 font-medium text-gray-900 dark:text-gray-100">
+          <tr className="border-b border-border">
+            <th className="text-left py-2 font-medium text-foreground">
               Authentication Method
             </th>
-            <th className="text-center py-2 font-medium text-gray-900 dark:text-gray-100">
+            <th className="text-center py-2 font-medium text-foreground">
               Status
             </th>
           </tr>
@@ -75,7 +75,7 @@ export const AuthenticationStatus = ({
         <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
           {methods.map((method) => (
             <tr key={method.name}>
-              <td className="py-2 text-gray-900 dark:text-gray-100">{method.name}</td>
+              <td className="py-2 text-foreground">{method.name}</td>
               <td className="py-2 text-center">
                 <StatusBadge {...createStatusBadgeProps(method.enabled)} />
               </td>

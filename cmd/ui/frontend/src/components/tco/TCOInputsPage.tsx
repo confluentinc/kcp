@@ -65,9 +65,9 @@ export const TCOInputs = () => {
   if (allClusters.length === 0) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">TCO Inputs</h1>
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-border rounded-md p-4">
-          <p className="text-yellow-800 dark:text-yellow-200">
+        <h1 className="text-2xl font-bold text-foreground mb-4">TCO Inputs</h1>
+        <div className="bg-warning/10 border border-warning/20 rounded-md p-4">
+          <p className="text-warning">
             No clusters available. Please upload a KCP state file first to see the TCO input form.
           </p>
         </div>
@@ -78,25 +78,25 @@ export const TCOInputs = () => {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">TCO Inputs</h1>
+        <h1 className="text-2xl font-bold text-foreground">TCO Inputs</h1>
       </div>
 
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border overflow-hidden">
+      <div className="bg-card rounded-lg border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 dark:bg-card border-b border-gray-200 dark:border-border">
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 min-w-[200px]">
+              <tr className="bg-secondary border-b border-border">
+                <th className="px-4 py-3 text-left text-sm font-medium text-foreground min-w-[200px]">
                   Workload Assumptions
                 </th>
                 {allClusters.map((cluster) => (
                   <th
                     key={cluster.key}
-                    className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 min-w-[150px]"
+                    className="px-4 py-3 text-left text-sm font-medium text-foreground min-w-[150px]"
                   >
                     <div className="flex flex-col">
                       <span className="font-semibold">{cluster.name}</span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">
+                      <span className="text-xs text-muted-foreground font-normal">
                         {cluster.regionName}
                       </span>
                     </div>
@@ -231,9 +231,9 @@ export const TCOInputs = () => {
         </div>
       </div>
 
-      <div className="mt-6 p-4 bg-gray-50 dark:bg-card rounded-lg border border-gray-200 dark:border-border">
+      <div className="mt-6 p-4 bg-secondary rounded-lg border border-border">
         <div className="flex justify-between items-center mb-2">
-          <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">CSV Preview:</h3>
+          <h3 className="text-sm font-medium text-foreground">CSV Preview:</h3>
           <Button
             onClick={copyToClipboard}
             variant="outline"
@@ -250,7 +250,7 @@ export const TCOInputs = () => {
             )}
           </Button>
         </div>
-        <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono bg-white dark:bg-card p-3 rounded border">
+        <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-card p-3 rounded border">
           {generateTCOCSV(allClusters, tcoWorkloadData, regions)}
         </pre>
       </div>

@@ -10,11 +10,19 @@ export const Explore = () => {
   const selectedSourceType = useAppStore((state) => state.selectedSourceType)
 
   if (selectedView === 'summary') {
-    return <Summary />
+    return (
+      <div className="h-full overflow-y-auto p-4">
+        <Summary />
+      </div>
+    )
   }
 
   if (selectedView === 'region') {
-    return <RegionReport />
+    return (
+      <div className="h-full overflow-y-auto p-4">
+        <RegionReport />
+      </div>
+    )
   }
 
   if (selectedView === 'cluster') {
@@ -26,9 +34,9 @@ export const Explore = () => {
     }
     // Fallback for invalid state
     return (
-      <div className="p-6">
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-border rounded-lg p-4">
-          <p className="text-yellow-800 dark:text-yellow-200">
+      <div className="h-full overflow-y-auto p-4">
+        <div className="bg-warning/10 border border-warning/20 rounded-lg p-4">
+          <p className="text-warning">
             Unknown cluster source type. Please select a cluster from the sidebar.
           </p>
         </div>
@@ -37,17 +45,21 @@ export const Explore = () => {
   }
 
   if (selectedView === 'schema-registries') {
-    return <SchemaRegistries />
+    return (
+      <div className="h-full overflow-y-auto p-4">
+        <SchemaRegistries />
+      </div>
+    )
   }
 
   // Default empty state
   return (
-    <div className="p-6">
+    <div className="h-full overflow-y-auto p-4">
       <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+        <h1 className="text-4xl font-bold text-foreground mb-2">
           Explore Your Kafka Infrastructure
         </h1>
-        <p className="text-lg text-gray-600 dark:text-gray-400">
+        <p className="text-lg text-muted-foreground">
           Upload a KCP state file or select a cluster from the sidebar
         </p>
       </div>

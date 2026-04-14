@@ -42,6 +42,6 @@ test.describe('OSK Sidebar', () => {
 
     // Verify cluster is highlighted in sidebar
     const clusterButton = page.locator('button:has-text("prod-kafka-cluster")')
-    await expect(clusterButton).toHaveClass(/bg-blue-100/)
+    await expect(clusterButton).toHaveClass(/bg-accent\/10/)
   })
 })

@@ -82,7 +82,7 @@ export const TCOInputRow = ({
   if (readOnly && readOnlyValue) {
     return (
       <tr>
-        <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
+        <td className="px-4 py-3 text-sm font-medium text-foreground bg-secondary">
           {label}
         </td>
         {clusters.map((cluster) => {
@@ -106,7 +106,7 @@ export const TCOInputRow = ({
                     {value ? '✓' : '✗'}
                   </span>
                 ) : (
-                  <span className="text-sm text-gray-500 dark:text-gray-400">N/A</span>
+                  <span className="text-sm text-muted-foreground">N/A</span>
                 )}
               </div>
             </td>
@@ -122,7 +122,7 @@ export const TCOInputRow = ({
 
   return (
     <tr>
-      <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
+      <td className="px-4 py-3 text-sm font-medium text-foreground bg-secondary">
         {label}
       </td>
       {clusters.map((cluster) => (

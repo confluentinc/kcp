@@ -45,45 +45,52 @@ export const OSKClusterReport = () => {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <OSKClusterHeader cluster={cluster} />
+    <div className="w-full h-full flex flex-col min-h-0">
+      {/* Fixed Header: Title, Stat Cards, Tabs */}
+      <div className="bg-card border border-border border-b-0 rounded-t-lg shadow-sm flex-shrink-0 m-4 mb-0 transition-colors">
+        <div className="p-6 border-b border-border">
+          <OSKClusterHeader cluster={cluster} />
+        </div>
+        <Tabs tabs={tabs} activeId={activeTab} onChange={setActiveTab} className="border-b border-border" />
+      </div>
 
-      <Tabs tabs={tabs} activeId={activeTab} onChange={setActiveTab} />
+      {/* Scrollable Tab Content */}
+      <div className="flex-1 min-h-0 overflow-y-auto mx-4 mb-4 bg-card border border-border border-t-0 rounded-b-lg">
+        <div className="p-6">
+          {activeTab === 'cluster' && <OSKClusterOverview cluster={cluster} />}
 
-      <div className="mt-6">
-        {activeTab === 'cluster' && <OSKClusterOverview cluster={cluster} />}
-
-        {activeTab === 'metrics' && selectedOSKClusterId && (
-          <ClusterMetrics
-            cluster={{ name: cluster.id, metrics: cluster.metrics }}
-            sourceType="osk"
-            clusterId={selectedOSKClusterId}
-            isActive={activeTab === 'metrics'}
-          />
-        )}
-
-        {activeTab === 'topics' && (
-          <ClusterTopics kafkaAdminInfo={cluster.kafka_admin_client_information} />
-        )}
-
-        {activeTab === 'acls' && (
-          <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
-        )}
-
-        {activeTab === 'connectors' && (
-          <ClusterConnectors
-            connectors={[]}
-            selfManagedConnectors={
-              cluster.kafka_admin_client_information?.self_managed_connectors?.connectors
-            }
-          />
-        )}
-
-        {activeTab === 'clients' &&
-          cluster.discovered_clients &&
-          cluster.discovered_clients.length > 0 && (
-            <ClusterClients clients={cluster.discovered_clients} />
+          {activeTab === 'metrics' && selectedOSKClusterId && (
+            <ClusterMetrics
+              cluster={{ name: cluster.id, metrics: cluster.metrics }}
+              sourceType="osk"
+              clusterId={selectedOSKClusterId}
+              isActive={activeTab === 'metrics'}
+            />
           )}
+
+          {activeTab === 'topics' && (
+            <ClusterTopics kafkaAdminInfo={cluster.kafka_admin_client_information} />
+          )}
+
+          {activeTab === 'acls' && (
+            <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
+          )}
+
+          {activeTab === 'connectors' && (
+            <ClusterConnectors
+              connectors={[]}
+              selfManagedConnectors={
+                cluster.kafka_admin_client_information?.self_managed_connectors?.connectors
+              }
+            />
+          )}
+
+          {activeTab === 'clients' &&
+            cluster.discovered_clients &&
+            cluster.discovered_clients.length > 0 && (
+              <ClusterClients clients={cluster.discovered_clients} />
+            )}
+        </div>
       </div>
     </div>
   )

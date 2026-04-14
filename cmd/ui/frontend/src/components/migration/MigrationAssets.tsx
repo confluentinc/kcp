@@ -203,8 +203,8 @@ export const MigrationAssets = () => {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Migration Assets</h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-2">
+        <h1 className="text-2xl font-bold text-foreground">Migration Assets</h1>
+        <p className="text-muted-foreground mt-2">
           Manage and track your migration assets and resources for all clusters.
         </p>
       </div>
@@ -214,7 +214,7 @@ export const MigrationAssets = () => {
           {/* MSK Clusters Section */}
           {hasMskClusters && (
             <div>
-              <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+              <h2 className="text-lg font-semibold text-foreground mb-3">
                 Managed Streaming for Kafka (MSK)
               </h2>
               <div className="space-y-4">
@@ -251,7 +251,7 @@ export const MigrationAssets = () => {
           {/* OSK Clusters Section */}
           {hasOskClusters && (
             <div>
-              <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+              <h2 className="text-lg font-semibold text-foreground mb-3">
                 Open Source Kafka
               </h2>
               <div className="space-y-4">
@@ -285,15 +285,15 @@ export const MigrationAssets = () => {
           )}
         </div>
       ) : (
-        <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-8">
+        <div className="bg-card rounded-lg border border-border p-8">
           <div className="text-center">
-            <div className="mx-auto w-16 h-16 bg-gray-100 dark:bg-card rounded-full flex items-center justify-center mb-4">
-              <Package className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+            <div className="mx-auto w-16 h-16 bg-secondary rounded-full flex items-center justify-center mb-4">
+              <Package className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+            <h2 className="text-xl font-semibold text-foreground mb-2">
               No Clusters Available
             </h2>
-            <p className="text-gray-600 dark:text-gray-400">
+            <p className="text-muted-foreground">
               Upload a KCP state file to see your clusters and manage migration assets.
             </p>
           </div>
