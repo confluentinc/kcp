@@ -52,7 +52,7 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
   }, [region.name])
 
   // Process costs data for table, CSV, and chart formats using backend aggregates
-  const processedData = useRegionCostsData(costsResponse, selectedTableService, selectedCostType)
+  const processedData = useRegionCostsData(costsResponse, selectedTableService, selectedCostType, selectedService)
 
   // Initialize zoom functionality
   const {
