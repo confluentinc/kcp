@@ -132,7 +132,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 		/*
 			Type 1 = `HasPublicMskEndpoints` = true
 			Type 2 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | SASL/SCRAM
-			Type 3 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | Unauthenticated TLS
+			Type 3 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | Unauthenticated Plaintext
 			Type 4 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = SASL/SCRAM
 			Type 5 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = IAM
 
@@ -145,7 +145,7 @@ Available Migration Types:
     Type 1: Cluster Link [SASL/SCRAM] (MSK & OSK)
   Private MSK Endpoints:
     Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only) (MSK & OSK)
-    Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise clusters only) (MSK & OSK)
+    Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise clusters only) (MSK & OSK)
     Type 4: Jump Cluster [SASL/SCRAM] (MSK & OSK)
     Type 5: Jump Cluster [IAM] (MSK)
 
@@ -187,7 +187,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --type: %v", err)
 	}
 
-	if (targetType == types.ExternalOutboundClusterLink || targetType == types.ExternalOutboundClusterLinkUnauthTls) && targetClusterType == "dedicated" {
+	if (targetType == types.ExternalOutboundClusterLink || targetType == types.ExternalOutboundClusterLinkPlaintext) && targetClusterType == "dedicated" {
 		return fmt.Errorf("external outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4 or 5) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible")
 	}
 
@@ -199,7 +199,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	case types.PublicMskEndpoints:
 		// No additional flag requirements.
 
-	case types.ExternalOutboundClusterLink, types.ExternalOutboundClusterLinkUnauthTls:
+	case types.ExternalOutboundClusterLink, types.ExternalOutboundClusterLinkPlaintext:
 		// No additional flags beyond target-environment-id.
 
 	case types.JumpClusterSaslScram:
@@ -361,7 +361,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		}
 		opts.MigrationWizardRequest.ExtOutboundBrokers = extOutboundBrokers
 
-	case types.ExternalOutboundClusterLinkUnauthTls:
+	case types.ExternalOutboundClusterLinkPlaintext:
 		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
@@ -384,10 +384,10 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			}
 		}
 
-		opts.MigrationWizardRequest.JumpClusterAuthType = "unauth_tls"
-		opts.MigrationWizardRequest.SourceUnauthTlsBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.JumpClusterAuthType = "plaintext"
+		opts.MigrationWizardRequest.SourcePlaintextBootstrapServers = bootstrapBrokers
 
-		extOutboundBrokers, err := buildExtOutboundBrokersForUnauthTls(cluster)
+		extOutboundBrokers, err := buildExtOutboundBrokersForPlaintext(cluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build external outbound brokers: %w", err)
 		}
@@ -596,7 +596,7 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 	case types.ExternalOutboundClusterLink:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 		authMethod = "SASL/SCRAM"
-	case types.ExternalOutboundClusterLinkUnauthTls:
+	case types.ExternalOutboundClusterLinkPlaintext:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
 		authMethod = "Plaintext"
 	case types.JumpClusterSaslScram:
@@ -625,7 +625,7 @@ func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutbo
 	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9096)
 }
 
-func buildExtOutboundBrokersForUnauthTls(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+func buildExtOutboundBrokersForPlaintext(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
 	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
 	if bootstrapStr == "" {
 		return nil, fmt.Errorf("plaintext bootstrap brokers string is empty for cluster %s", cluster.Name)

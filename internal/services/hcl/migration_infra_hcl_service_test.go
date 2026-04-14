@@ -90,7 +90,7 @@ func TestMigrationInfra_ExternalOutbound(t *testing.T) {
 	validateTerraformProject(t, files)
 }
 
-func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
+func TestMigrationInfra_ExternalOutboundPlaintext(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
@@ -105,12 +105,12 @@ func TestMigrationInfra_ExternalOutboundUnauthTls(t *testing.T) {
 				ID:       "b-1",
 				SubnetID: "subnet-1",
 				Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
-					{Host: "b-1.example.com", Port: 9094, IP: "10.0.1.1"},
+					{Host: "b-1.example.com", Port: 9092, IP: "10.0.1.1"},
 				},
 			},
 		},
-		JumpClusterAuthType:             "unauth_tls",
-		SourceUnauthTlsBootstrapServers: "b-1.mskcluster.abc123.c1.kafka.us-east-1.amazonaws.com:9094",
+		JumpClusterAuthType:             "plaintext",
+		SourcePlaintextBootstrapServers: "b-1.mskcluster.abc123.c1.kafka.us-east-1.amazonaws.com:9092",
 		SourceClusterId:                 "msk-cluster-123",
 		SourceRegion:                    "us-east-1",
 		TargetEnvironmentId:             "env-abc123",

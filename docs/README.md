@@ -1695,7 +1695,7 @@ _Public MSK Endpoints:_
 _Private MSK Endpoints:_
 
 - Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise only)
-- Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise only)
+- Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise only)
 - Type 4: Jump Cluster [SASL/SCRAM]
 - Type 5: Jump Cluster [IAM]
 

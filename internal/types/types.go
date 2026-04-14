@@ -97,14 +97,14 @@ type MigrationType int
 const (
 	PublicMskEndpoints                   MigrationType = 1
 	ExternalOutboundClusterLink          MigrationType = 2
-	ExternalOutboundClusterLinkUnauthTls MigrationType = 3
+	ExternalOutboundClusterLinkPlaintext MigrationType = 3
 	JumpClusterSaslScram                 MigrationType = 4
 	JumpClusterIam                       MigrationType = 5
 )
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkUnauthTls, JumpClusterSaslScram, JumpClusterIam:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkPlaintext, JumpClusterSaslScram, JumpClusterIam:
 		return true
 	default:
 		return false
@@ -200,7 +200,7 @@ type MigrationWizardRequest struct {
 	JumpClusterIamAuthRoleName      string `json:"jump_cluster_iam_auth_role_name"`
 	SourceSaslScramBootstrapServers string `json:"source_sasl_scram_bootstrap_servers"`
 	SourceSaslScramMechanism        string `json:"source_sasl_scram_mechanism"`
-	SourceUnauthTlsBootstrapServers string `json:"source_unauth_tls_bootstrap_servers"`
+	SourcePlaintextBootstrapServers string `json:"source_plaintext_bootstrap_servers"`
 	SourceSaslIamBootstrapServers   string `json:"source_sasl_iam_bootstrap_servers"`
 	SourceRegion                    string `json:"source_region"`
 	TargetEnvironmentId             string `json:"target_environment_id"`

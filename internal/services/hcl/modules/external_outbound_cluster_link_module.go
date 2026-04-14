@@ -117,8 +117,8 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				if request.JumpClusterAuthType == "unauth_tls" {
-					return request.SourceUnauthTlsBootstrapServers
+				if request.JumpClusterAuthType == "plaintext" {
+					return request.SourcePlaintextBootstrapServers
 				}
 				return request.SourceSaslScramBootstrapServers
 			},
@@ -136,7 +136,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return request.SourceSaslScramMechanism
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.JumpClusterAuthType != "unauth_tls"
+				return request.JumpClusterAuthType != "plaintext"
 			},
 			FromModuleOutput: "",
 		},
@@ -152,7 +152,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return ""
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.JumpClusterAuthType != "unauth_tls"
+				return request.JumpClusterAuthType != "plaintext"
 			},
 		},
 		{
@@ -167,7 +167,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				return ""
 			},
 			Condition: func(request types.MigrationWizardRequest) bool {
-				return request.JumpClusterAuthType != "unauth_tls"
+				return request.JumpClusterAuthType != "plaintext"
 			},
 		},
 	}
