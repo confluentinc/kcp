@@ -114,3 +114,241 @@ func assertServiceTotal(t *testing.T, svc types.ServiceCostAggregates, expectedT
 	require.True(t, ok, "expected 'total' key in UnblendedCost")
 	assert.InDelta(t, expectedTotal, total, 0.001)
 }
+
+func TestProcessState_OSKMetricsPreservation(t *testing.T) {
+	rs := NewReportService()
+
+	t.Run("OSK cluster with Jolokia metrics preserved", func(t *testing.T) {
+		// Create a test state with OSK cluster containing metrics
+		state := types.State{
+			OSKSources: &types.OSKSourcesState{
+				Clusters: []types.OSKDiscoveredCluster{
+					{
+						ID:               "test-cluster",
+						BootstrapServers: []string{"broker1:9092", "broker2:9092"},
+						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+							SaslMechanism: "SCRAM-SHA-256",
+						},
+						ClusterMetrics: &types.ProcessedClusterMetrics{
+							Metrics: []types.ProcessedMetric{
+								{
+									Start: "2025-01-01T00:00:00Z",
+									End:   "2025-01-01T00:01:00Z",
+									Label: "BytesInPerSec",
+									Value: ptr(100.5),
+								},
+							},
+							Metadata: types.MetricMetadata{
+								Period: 60,
+							},
+						},
+						DiscoveredClients: []types.DiscoveredClient{},
+						Metadata: types.OSKClusterMetadata{
+							Environment: "test",
+						},
+					},
+				},
+			},
+			KcpBuildInfo: types.KcpBuildInfo{
+				Version: "1.0.0",
+			},
+		}
+
+		processedState := rs.ProcessState(state)
+
+		// Verify the state was processed
+		require.Len(t, processedState.Sources, 1)
+		source := processedState.Sources[0]
+		require.Equal(t, types.SourceTypeOSK, source.Type)
+		require.NotNil(t, source.OSKData)
+		require.Len(t, source.OSKData.Clusters, 1)
+
+		cluster := source.OSKData.Clusters[0]
+		assert.Equal(t, "test-cluster", cluster.ID)
+
+		// Verify metrics are preserved
+		require.NotNil(t, cluster.ClusterMetrics)
+		require.Len(t, cluster.ClusterMetrics.Metrics, 1)
+		assert.Equal(t, "BytesInPerSec", cluster.ClusterMetrics.Metrics[0].Label)
+		require.NotNil(t, cluster.ClusterMetrics.Metrics[0].Value)
+		assert.InDelta(t, 100.5, *cluster.ClusterMetrics.Metrics[0].Value, 0.01)
+	})
+
+	t.Run("OSK cluster with Prometheus metrics preserved", func(t *testing.T) {
+		state := types.State{
+			OSKSources: &types.OSKSourcesState{
+				Clusters: []types.OSKDiscoveredCluster{
+					{
+						ID:               "prometheus-cluster",
+						BootstrapServers: []string{"broker1:9092"},
+						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+							SaslMechanism: "SCRAM-SHA-512",
+						},
+						ClusterMetrics: &types.ProcessedClusterMetrics{
+							Metrics: []types.ProcessedMetric{
+								{
+									Start: "2025-01-01T00:00:00Z",
+									End:   "2025-01-01T01:00:00Z",
+									Label: "MessagesInPerSec",
+									Value: ptr(250.0),
+								},
+								{
+									Start: "2025-01-01T01:00:00Z",
+									End:   "2025-01-01T02:00:00Z",
+									Label: "MessagesInPerSec",
+									Value: ptr(300.0),
+								},
+							},
+							Metadata: types.MetricMetadata{
+								Period: 3600,
+							},
+						},
+						DiscoveredClients: []types.DiscoveredClient{},
+						Metadata: types.OSKClusterMetadata{
+							Environment: "prod",
+						},
+					},
+				},
+			},
+			KcpBuildInfo: types.KcpBuildInfo{
+				Version: "1.0.0",
+			},
+		}
+
+		processedState := rs.ProcessState(state)
+
+		require.Len(t, processedState.Sources, 1)
+		cluster := processedState.Sources[0].OSKData.Clusters[0]
+
+		// Verify metrics are preserved
+		require.NotNil(t, cluster.ClusterMetrics)
+		require.Len(t, cluster.ClusterMetrics.Metrics, 2)
+		assert.Equal(t, "MessagesInPerSec", cluster.ClusterMetrics.Metrics[0].Label)
+		assert.Equal(t, "MessagesInPerSec", cluster.ClusterMetrics.Metrics[1].Label)
+		require.NotNil(t, cluster.ClusterMetrics.Metrics[0].Value)
+		require.NotNil(t, cluster.ClusterMetrics.Metrics[1].Value)
+		assert.InDelta(t, 250.0, *cluster.ClusterMetrics.Metrics[0].Value, 0.01)
+		assert.InDelta(t, 300.0, *cluster.ClusterMetrics.Metrics[1].Value, 0.01)
+	})
+
+	t.Run("OSK cluster without metrics handled correctly", func(t *testing.T) {
+		state := types.State{
+			OSKSources: &types.OSKSourcesState{
+				Clusters: []types.OSKDiscoveredCluster{
+					{
+						ID:               "no-metrics-cluster",
+						BootstrapServers: []string{"broker1:9092"},
+						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+							SaslMechanism: "SCRAM-SHA-256",
+						},
+						ClusterMetrics: nil,
+						DiscoveredClients: []types.DiscoveredClient{},
+						Metadata: types.OSKClusterMetadata{
+							Environment: "test",
+						},
+					},
+				},
+			},
+			KcpBuildInfo: types.KcpBuildInfo{
+				Version: "1.0.0",
+			},
+		}
+
+		processedState := rs.ProcessState(state)
+
+		require.Len(t, processedState.Sources, 1)
+		cluster := processedState.Sources[0].OSKData.Clusters[0]
+
+		// Metrics should be nil or empty
+		assert.Nil(t, cluster.ClusterMetrics)
+	})
+
+	t.Run("ProcessState with multiple OSK clusters", func(t *testing.T) {
+		state := types.State{
+			OSKSources: &types.OSKSourcesState{
+				Clusters: []types.OSKDiscoveredCluster{
+					{
+						ID:               "osk-cluster-1",
+						BootstrapServers: []string{"broker1:9092"},
+						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+							SaslMechanism: "SCRAM-SHA-256",
+						},
+						ClusterMetrics: &types.ProcessedClusterMetrics{
+							Metrics: []types.ProcessedMetric{
+								{
+									Start: "2025-01-01T00:00:00Z",
+									End:   "2025-01-01T00:01:00Z",
+									Label: "BytesInPerSec",
+									Value: ptr(100.0),
+								},
+							},
+							Metadata: types.MetricMetadata{
+								Period: 60,
+							},
+						},
+						DiscoveredClients: []types.DiscoveredClient{},
+						Metadata: types.OSKClusterMetadata{
+							Environment: "prod",
+						},
+					},
+					{
+						ID:               "osk-cluster-2",
+						BootstrapServers: []string{"broker1:9092"},
+						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+							SaslMechanism: "SCRAM-SHA-512",
+						},
+						ClusterMetrics: &types.ProcessedClusterMetrics{
+							Metrics: []types.ProcessedMetric{
+								{
+									Start: "2025-01-01T00:00:00Z",
+									End:   "2025-01-01T00:01:00Z",
+									Label: "MessagesInPerSec",
+									Value: ptr(500.0),
+								},
+							},
+							Metadata: types.MetricMetadata{
+								Period: 60,
+							},
+						},
+						DiscoveredClients: []types.DiscoveredClient{},
+						Metadata: types.OSKClusterMetadata{
+							Environment: "staging",
+						},
+					},
+				},
+			},
+			KcpBuildInfo: types.KcpBuildInfo{
+				Version: "1.0.0",
+			},
+		}
+
+		processedState := rs.ProcessState(state)
+
+		// Should have OSK source
+		require.Len(t, processedState.Sources, 1)
+		require.Equal(t, types.SourceTypeOSK, processedState.Sources[0].Type)
+		require.NotNil(t, processedState.Sources[0].OSKData)
+
+		// Verify both OSK clusters have metrics preserved
+		require.Len(t, processedState.Sources[0].OSKData.Clusters, 2)
+
+		cluster1 := processedState.Sources[0].OSKData.Clusters[0]
+		require.NotNil(t, cluster1.ClusterMetrics)
+		require.Len(t, cluster1.ClusterMetrics.Metrics, 1)
+		assert.Equal(t, "BytesInPerSec", cluster1.ClusterMetrics.Metrics[0].Label)
+		require.NotNil(t, cluster1.ClusterMetrics.Metrics[0].Value)
+		assert.InDelta(t, 100.0, *cluster1.ClusterMetrics.Metrics[0].Value, 0.01)
+
+		cluster2 := processedState.Sources[0].OSKData.Clusters[1]
+		require.NotNil(t, cluster2.ClusterMetrics)
+		require.Len(t, cluster2.ClusterMetrics.Metrics, 1)
+		assert.Equal(t, "MessagesInPerSec", cluster2.ClusterMetrics.Metrics[0].Label)
+		require.NotNil(t, cluster2.ClusterMetrics.Metrics[0].Value)
+		assert.InDelta(t, 500.0, *cluster2.ClusterMetrics.Metrics[0].Value, 0.01)
+	})
+}
+
+// ptr is a helper function to convert a float64 value to a pointer
+func ptr(v float64) *float64 {
+	return &v
+}

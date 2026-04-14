@@ -70,6 +70,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 				ID:                          cluster.ID,
 				BootstrapServers:            cluster.BootstrapServers,
 				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+				ClusterMetrics:              cluster.ClusterMetrics,
 				DiscoveredClients:           cluster.DiscoveredClients,
 				Metadata:                    cluster.Metadata,
 			})
