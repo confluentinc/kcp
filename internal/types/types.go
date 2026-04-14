@@ -111,6 +111,15 @@ func (m MigrationType) IsValid() bool {
 	}
 }
 
+func (m MigrationType) RequiresSaslScram() bool {
+	switch m {
+	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram:
+		return true
+	default:
+		return false
+	}
+}
+
 func ToMigrationType(input string) (MigrationType, error) {
 	value, err := strconv.Atoi(input)
 	if err != nil {

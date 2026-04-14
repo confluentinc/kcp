@@ -307,16 +307,14 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			TargetEnvironmentId:      targetEnvironmentId,
 			TargetClusterId:          targetClusterId,
 			TargetRestEndpoint:       targetRestEndpoint,
-			SourceSaslScramMechanism: cluster.KafkaAdminClientInformation.SaslMechanism,
+			SourceSaslScramMechanism: "SCRAM-SHA-512",
 		},
 		OutputDir:     outputDir,
 		Force:         force,
 		MigrationType: targetType,
 	}
 
-	if opts.MigrationWizardRequest.SourceSaslScramMechanism != "" {
-		slog.Info("using SASL/SCRAM mechanism from state file", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
-	}
+	slog.Info("using MSK default SASL/SCRAM mechanism", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
 
 	bootstrapBrokers, err := getBootstrapBrokers(cluster, targetType)
 	if err != nil {
@@ -497,15 +495,19 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		MigrationType: targetType,
 	}
 
-	if sourceSaslScramMechanism != "" {
+	switch {
+	case sourceSaslScramMechanism != "":
 		normalized := types.NormalizeSaslMechanism(sourceSaslScramMechanism)
 		if normalized != "SCRAM-SHA-256" && normalized != "SCRAM-SHA-512" {
 			return nil, fmt.Errorf("invalid --source-sasl-scram-mechanism value %q: must be SCRAM-SHA-256, SCRAM-SHA-512, SHA256, or SHA512", sourceSaslScramMechanism)
 		}
 		opts.MigrationWizardRequest.SourceSaslScramMechanism = normalized
 		slog.Info("using SASL/SCRAM mechanism from --source-sasl-scram-mechanism flag", "mechanism", normalized)
-	} else if opts.MigrationWizardRequest.SourceSaslScramMechanism != "" {
+	case opts.MigrationWizardRequest.SourceSaslScramMechanism != "":
 		slog.Info("using SASL/SCRAM mechanism from state file", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
+	case targetType.RequiresSaslScram():
+		return nil, fmt.Errorf("SASL/SCRAM mechanism is required for migration type %d but was not found in the state file. "+
+			"Provide it with --source-sasl-scram-mechanism (SCRAM-SHA-256 or SCRAM-SHA-512)", int(targetType))
 	}
 
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
