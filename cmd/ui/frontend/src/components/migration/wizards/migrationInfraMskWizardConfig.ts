@@ -683,7 +683,6 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                   cluster?.aws_client_information?.cluster_networking?.vpc_id ||
                   'failed to retrieve VPC ID from statefile.',
               },
-              ...jumpClusterTargetProperties(),
               jump_cluster_instance_type: {
                 type: 'string',
                 title: 'Instance Type',
@@ -719,7 +718,6 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             },
             required: [
               'vpc_id',
-              'existing_private_link_vpce_id',
               'jump_cluster_instance_type',
               'jump_cluster_broker_storage',
               'jump_cluster_broker_subnet_cidr',
@@ -734,7 +732,6 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             vpc_id: {
               'ui:disabled': true,
             },
-            ...jumpClusterTargetUiSchema(),
             jump_cluster_instance_type: {
               'ui:placeholder': 'e.g., m5.large',
             },
@@ -810,8 +807,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
       },
       jump_cluster_authentication_sasl_scram: {
         meta: {
-          title: 'Private Migration | Jump Cluster - Authentication (SASL/SCRAM)',
-          description: 'How will the jump cluster authenticate to the MSK cluster?',
+          title: 'Private Migration | Confluent Cloud & Cluster Link Configuration',
+          description: 'Configure the Confluent Cloud target and cluster link details for your migration.',
           schema: {
             type: 'object',
             properties: {
@@ -884,8 +881,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
       },
       jump_cluster_authentication_iam: {
         meta: {
-          title: 'Private Migration | Jump Cluster - Authentication (IAM)',
-          description: 'How will the jump cluster authenticate to the MSK cluster?',
+          title: 'Private Migration | Confluent Cloud & Cluster Link Configuration',
+          description: 'Configure the Confluent Cloud target and cluster link details for your migration.',
           schema: {
             type: 'object',
             properties: {
