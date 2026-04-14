@@ -207,6 +207,67 @@ func TestOSKCredentials_Validate_SASLScramMissingPassword(t *testing.T) {
 	}
 }
 
+func TestOSKCredentials_Validate_SASLPlainValid(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092", "broker2:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLPlain: &SASLPlainConfig{
+						Use:      true,
+						Username: "admin",
+						Password: "secret",
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	if !valid {
+		t.Errorf("expected valid credentials, got errors: %v", errs)
+	}
+}
+
+func TestOSKCredentials_Validate_SASLPlainMissingUsername(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLPlain: &SASLPlainConfig{Use: true, Username: "", Password: "p"}, // Missing username
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	if valid {
+		t.Error("expected validation to fail when SASL/PLAIN username is missing")
+	}
+}
+
+func TestOSKCredentials_Validate_SASLPlainMissingPassword(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLPlain: &SASLPlainConfig{Use: true, Username: "u", Password: ""}, // Missing password
+				},
+			},
+		},
+	}
+
+	valid, _ := creds.Validate()
+	if valid {
+		t.Error("expected validation to fail when SASL/PLAIN password is missing")
+	}
+}
+
 func TestOSKCredentials_Validate_TLSMissingClientCert(t *testing.T) {
 	// Create temp files for testing
 	tmpDir := t.TempDir()
@@ -364,6 +425,15 @@ func TestOSKClusterAuth_GetAuthMethods(t *testing.T) {
 			expectedMethods: []AuthType{AuthTypeSASLSCRAM},
 		},
 		{
+			name: "SASL/PLAIN enabled",
+			clusterAuth: OSKClusterAuth{
+				AuthMethod: AuthMethodConfig{
+					SASLPlain: &SASLPlainConfig{Use: true},
+				},
+			},
+			expectedMethods: []AuthType{AuthTypeSASLPlain},
+		},
+		{
 			name: "TLS enabled",
 			clusterAuth: OSKClusterAuth{
 				AuthMethod: AuthMethodConfig{
@@ -434,6 +504,16 @@ func TestOSKClusterAuth_GetSelectedAuthType(t *testing.T) {
 				},
 			},
 			expectedType:  AuthTypeSASLSCRAM,
+			expectedError: false,
+		},
+		{
+			name: "SASL/PLAIN auth type",
+			clusterAuth: OSKClusterAuth{
+				AuthMethod: AuthMethodConfig{
+					SASLPlain: &SASLPlainConfig{Use: true},
+				},
+			},
+			expectedType:  AuthTypeSASLPlain,
 			expectedError: false,
 		},
 		{

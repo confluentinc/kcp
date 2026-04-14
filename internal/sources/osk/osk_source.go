@@ -152,6 +152,11 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 		kafkaAdminInfo.SaslMechanism = types.NormalizeSaslMechanism(clusterCreds.AuthMethod.SASLScram.Mechanism)
 	}
 
+	// Store the SASL mechanism for SASL/PLAIN
+	if authType == types.AuthTypeSASLPlain {
+		kafkaAdminInfo.SaslMechanism = "PLAIN"
+	}
+
 	metadata := types.OSKClusterMetadata{
 		Environment: clusterCreds.Metadata.Environment,
 		Location:    clusterCreds.Metadata.Location,
@@ -203,6 +208,17 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 				clusterCreds.AuthMethod.SASLScram.Password,
 				clusterCreds.AuthMethod.SASLScram.Mechanism,
 				clusterCreds.InsecureSkipTLSVerify,
+			),
+		)
+	case types.AuthTypeSASLPlain:
+		kafkaAdmin, err = client.NewKafkaAdmin(
+			clusterCreds.BootstrapServers,
+			kafkatypes.ClientBrokerPlaintext,
+			region,
+			kafkaVersion,
+			client.WithSASLPlainAuthNoTLS(
+				clusterCreds.AuthMethod.SASLPlain.Username,
+				clusterCreds.AuthMethod.SASLPlain.Password,
 			),
 		)
 	case types.AuthTypeUnauthenticatedTLS:
