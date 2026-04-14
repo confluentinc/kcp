@@ -31,7 +31,6 @@ var (
 	existingInternetGateway   bool
 	existingPrivateLinkVpceId string
 	outputDir                 string
-	force                     bool
 
 	targetEnvironmentId     string
 	targetClusterId         string
@@ -83,7 +82,6 @@ func NewMigrationInfraCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&existingInternetGateway, "existing-internet-gateway", false, "Whether to use an existing internet gateway. (default: false)")
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory to output the migration infrastructure assets to. (default: 'migration-infra')")
-	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	migrationInfraCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -310,7 +308,6 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			SourceSaslScramMechanism: "SCRAM-SHA-512",
 		},
 		OutputDir:     outputDir,
-		Force:         force,
 		MigrationType: targetType,
 	}
 
