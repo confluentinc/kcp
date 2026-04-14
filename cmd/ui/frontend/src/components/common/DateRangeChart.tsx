@@ -13,6 +13,7 @@ import {
 import type { CategoricalChartFunc } from 'recharts/types/chart/types'
 import { format } from 'date-fns'
 import { formatDateShort } from '@/lib/formatters'
+import { downsampleChartData } from '@/lib/downsampleData'
 
 export interface ChartDataPoint {
   date: string
@@ -81,7 +82,10 @@ export const DateRangeChart = ({
   onMouseMove,
   onMouseUp,
 }: DateRangeChartProps) => {
-  const chartData = zoomData && zoomData.length > 0 ? zoomData : data
+  const chartData = useMemo(() => {
+    const sourceData = zoomData && zoomData.length > 0 ? zoomData : data
+    return downsampleChartData(sourceData)
+  }, [data, zoomData])
 
   // Calculate domain from data when left/right are not provided
   // Always use 'data' prop for domain calculation to ensure we have the full dataset
