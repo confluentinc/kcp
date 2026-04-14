@@ -19,6 +19,7 @@ import type { TopLevelTab } from '@/types'
 export const Home = () => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
 
   // Global state from Zustand
   const sessionId = useSessionId()
@@ -57,6 +58,8 @@ export const Home = () => {
         }
       } catch {
         // No pre-loaded state, user will upload manually
+      } finally {
+        setIsInitialLoading(false)
       }
     }
 
@@ -178,6 +181,23 @@ export const Home = () => {
                   </div>
                 </MigrationErrorBoundary>
               )}
+            </div>
+          ) : isInitialLoading || isProcessing ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-md mx-auto px-6">
+                <div className="mx-auto w-10 h-10 mb-6">
+                  <svg className="animate-spin w-10 h-10 text-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+                  Loading State File
+                </h2>
+                <p className="text-gray-600 dark:text-gray-400">
+                  {isProcessing ? 'Processing uploaded state file...' : 'Loading pre-configured state file...'}
+                </p>
+              </div>
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">
