@@ -560,3 +560,152 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid")
 	})
 }
+
+func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
+	rs := NewReportService()
+
+	t.Run("OSK cluster with metadata populates Environment and Location", func(t *testing.T) {
+		processedState := types.ProcessedState{
+			Sources: []types.ProcessedSource{
+				{
+					Type: types.SourceTypeOSK,
+					OSKData: &types.ProcessedOSKSource{
+						Clusters: []types.ProcessedOSKCluster{
+							{
+								ID:               "prod-cluster",
+								BootstrapServers: []string{"broker1:9092"},
+								ClusterMetrics: &types.ProcessedClusterMetrics{
+									Metrics: []types.ProcessedMetric{
+										{
+											Start: "2025-01-01T00:00:00Z",
+											End:   "2025-01-01T00:01:00Z",
+											Label: "BytesInPerSec",
+											Value: ptr(100.0),
+										},
+									},
+									Metadata: types.MetricMetadata{Period: 60},
+								},
+								Metadata: types.OSKClusterMetadata{
+									Environment: "production",
+									Location:    "datacenter-1",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		result, err := rs.FilterClusterMetrics(processedState, "prod-cluster", "osk", nil, nil)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "production", result.Environment)
+		assert.Equal(t, "datacenter-1", result.Location)
+	})
+
+	t.Run("OSK cluster without metadata fields has empty Environment and Location", func(t *testing.T) {
+		processedState := types.ProcessedState{
+			Sources: []types.ProcessedSource{
+				{
+					Type: types.SourceTypeOSK,
+					OSKData: &types.ProcessedOSKSource{
+						Clusters: []types.ProcessedOSKCluster{
+							{
+								ID:               "no-metadata-cluster",
+								BootstrapServers: []string{"broker1:9092"},
+								ClusterMetrics: &types.ProcessedClusterMetrics{
+									Metrics:  []types.ProcessedMetric{},
+									Metadata: types.MetricMetadata{Period: 60},
+								},
+								Metadata: types.OSKClusterMetadata{
+									// Environment and Location not set
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		result, err := rs.FilterClusterMetrics(processedState, "no-metadata-cluster", "osk", nil, nil)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "", result.Environment)
+		assert.Equal(t, "", result.Location)
+	})
+
+	t.Run("OSK cluster with nil metrics still populates metadata", func(t *testing.T) {
+		processedState := types.ProcessedState{
+			Sources: []types.ProcessedSource{
+				{
+					Type: types.SourceTypeOSK,
+					OSKData: &types.ProcessedOSKSource{
+						Clusters: []types.ProcessedOSKCluster{
+							{
+								ID:               "no-metrics-cluster",
+								BootstrapServers: []string{"broker1:9092"},
+								ClusterMetrics:   nil,
+								Metadata: types.OSKClusterMetadata{
+									Environment: "staging",
+									Location:    "datacenter-2",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		result, err := rs.FilterClusterMetrics(processedState, "no-metrics-cluster", "osk", nil, nil)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "staging", result.Environment)
+		assert.Equal(t, "datacenter-2", result.Location)
+		assert.Nil(t, result.Metrics)
+		assert.Nil(t, result.Aggregates)
+	})
+
+	t.Run("MSK cluster has empty Environment and Location", func(t *testing.T) {
+		processedState := types.ProcessedState{
+			Sources: []types.ProcessedSource{
+				{
+					Type: types.SourceTypeMSK,
+					MSKData: &types.ProcessedMSKSource{
+						Regions: []types.ProcessedRegion{
+							{
+								Name: "us-east-1",
+								Clusters: []types.ProcessedCluster{
+									{
+										Name: "msk-cluster",
+										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster/abc",
+										ClusterMetrics: types.ProcessedClusterMetrics{
+											Metrics:  []types.ProcessedMetric{},
+											Metadata: types.MetricMetadata{Period: 300},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		result, err := rs.FilterClusterMetrics(
+			processedState,
+			"arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster/abc",
+			"msk",
+			nil,
+			nil,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// MSK clusters should have empty OSK fields
+		assert.Equal(t, "", result.Environment)
+		assert.Equal(t, "", result.Location)
+	})
+}

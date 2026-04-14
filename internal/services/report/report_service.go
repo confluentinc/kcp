@@ -304,12 +304,14 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	// Handle cluster without metrics (nil ClusterMetrics)
 	if targetCluster.ClusterMetrics == nil {
 		return &types.ProcessedClusterMetrics{
-			Region:     "",
-			ClusterArn: clusterID,
-			Metadata:   types.MetricMetadata{},
-			Metrics:    nil,
-			Aggregates: nil,
-			QueryInfo:  nil,
+			Region:      "",
+			ClusterArn:  clusterID,
+			Metadata:    types.MetricMetadata{},
+			Metrics:     nil,
+			Aggregates:  nil,
+			QueryInfo:   nil,
+			Environment: targetCluster.Metadata.Environment,
+			Location:    targetCluster.Metadata.Location,
 		}, nil
 	}
 
@@ -320,12 +322,14 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
-		Region:     "", // OSK clusters don't have regions
-		ClusterArn: clusterID,
-		Metadata:   targetCluster.ClusterMetrics.Metadata,
-		Metrics:    filteredMetrics,
-		Aggregates: aggregates,
-		QueryInfo:  targetCluster.ClusterMetrics.QueryInfo,
+		Region:      "", // OSK clusters don't have regions
+		ClusterArn:  clusterID,
+		Metadata:    targetCluster.ClusterMetrics.Metadata,
+		Metrics:     filteredMetrics,
+		Aggregates:  aggregates,
+		QueryInfo:   targetCluster.ClusterMetrics.QueryInfo,
+		Environment: targetCluster.Metadata.Environment,
+		Location:    targetCluster.Metadata.Location,
 	}, nil
 }
 
