@@ -238,6 +238,11 @@ clusters:
         password: secret
         mechanism: SHA256 # or SHA512
       # OR
+      sasl_plain:
+        use: true
+        username: admin
+        password: secret
+      # OR
       tls:
         use: true
         ca_cert: /path/to/ca.pem
