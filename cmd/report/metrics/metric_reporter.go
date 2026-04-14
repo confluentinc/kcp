@@ -12,7 +12,7 @@ import (
 
 type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
-	FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type MetricReporterOpts struct {
@@ -30,6 +30,7 @@ type MetricReporter struct {
 	state       *types.State
 	startDate   *time.Time
 	endDate     *time.Time
+	sourceType  string
 }
 
 func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *MetricReporter {
@@ -40,6 +41,7 @@ func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *Me
 		state:       opts.State,
 		startDate:   opts.StartDate,
 		endDate:     opts.EndDate,
+		sourceType:  opts.SourceType,
 	}
 }
 
@@ -52,7 +54,7 @@ func (r *MetricReporter) Run() error {
 	// find the clusters in the state
 
 	for _, clusterArn := range r.clusterArns {
-		clusterMetrics, err := r.reportService.FilterClusterMetrics(processedState, clusterArn, r.startDate, r.endDate)
+		clusterMetrics, err := r.reportService.FilterClusterMetrics(processedState, clusterArn, r.sourceType, r.startDate, r.endDate)
 		if err != nil {
 			return fmt.Errorf("failed to filter cluster metrics: %v", err)
 		}
