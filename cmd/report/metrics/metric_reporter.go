@@ -20,6 +20,7 @@ type MetricReporterOpts struct {
 	State       *types.State
 	StartDate   *time.Time
 	EndDate     *time.Time
+	SourceType  string
 }
 
 type MetricReporter struct {
