@@ -22,15 +22,15 @@ var (
 	migrationInfraType string
 	clusterLinkName    string
 
-	sourceType string
-	clusterId  string
-	oskVpcId   string
-	oskRegion  string
+	sourceType               string
+	clusterId                string
+	oskVpcId                 string
+	oskRegion                string
+	sourceSaslScramMechanism string
 
 	existingInternetGateway   bool
 	existingPrivateLinkVpceId string
 	outputDir                 string
-	force                     bool
 
 	targetEnvironmentId     string
 	targetClusterId         string
@@ -74,6 +74,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	oskFlags.SortFlags = false
 	oskFlags.StringVar(&oskVpcId, "vpc-id", "", "The VPC ID where the OSK cluster resides. (required for OSK)")
 	oskFlags.StringVar(&oskRegion, "region", "", "The AWS region where the OSK cluster's VPC resides. (required for OSK)")
+	oskFlags.StringVar(&sourceSaslScramMechanism, "source-sasl-scram-mechanism", "", "[Optional] The SASL/SCRAM mechanism for the source cluster (SCRAM-SHA-256 or SCRAM-SHA-512). Overrides the value from the state file.")
 	migrationInfraCmd.Flags().AddFlagSet(oskFlags)
 	groups[oskFlags] = "OSK Flags"
 
@@ -81,7 +82,6 @@ func NewMigrationInfraCmd() *cobra.Command {
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&existingInternetGateway, "existing-internet-gateway", false, "Whether to use an existing internet gateway. (default: false)")
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory to output the migration infrastructure assets to. (default: 'migration-infra')")
-	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	migrationInfraCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -111,7 +111,7 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeThreeFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeThreeFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeThreeFlags)
-	groups[typeThreeFlags] = "Type Four/Five Flags"
+	groups[typeThreeFlags] = "Type Four Flags"
 
 	typeFourFlags := pflag.NewFlagSet("type-four", pflag.ExitOnError)
 	typeFourFlags.SortFlags = false
@@ -123,19 +123,18 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeFourFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFourFlags)
-	groups[typeFourFlags] = "Type Six Flags"
+	groups[typeFourFlags] = "Type Five Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
-		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four/Five Flags", "Type Six Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, oskFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
+		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four Flags", "Type Five Flags"}
 
 		/*
 			Type 1 = `HasPublicMskEndpoints` = true
 			Type 2 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | SASL/SCRAM
-			Type 3 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | Unauthenticated TLS
+			Type 3 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = false | Unauthenticated Plaintext
 			Type 4 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = SASL/SCRAM
-			Type 5 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = Unauthenticated TLS
-			Type 6 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = IAM
+			Type 5 = `HasPublicMskEndpoints` = false | `UseJumpClusters` = true | `MskJumpClusterAuthType` = IAM
 
 			`HasExistingInternetGateway` does not require new branching as it does not require new inputs from the user. Instead
 			it just uses a data source for the existing internet gateway instead of creating a new one.
@@ -146,12 +145,11 @@ Available Migration Types:
     Type 1: Cluster Link [SASL/SCRAM] (MSK & OSK)
   Private MSK Endpoints:
     Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only) (MSK & OSK)
-    Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise clusters only) (MSK & OSK)
-    Type 4: Jump Cluster [SASL/SCRAM] (MSK & OSK) 
-    Type 5: Jump Cluster [Unauthenticated TLS] (MSK & OSK)
-    Type 6: Jump Cluster [IAM] (MSK)
+    Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise clusters only) (MSK & OSK)
+    Type 4: Jump Cluster [SASL/SCRAM] (MSK & OSK)
+    Type 5: Jump Cluster [IAM] (MSK)
 
-Note: Types 2 and 3 are only supported for Enterprise clusters. Dedicated clusters with private endpoints must use Type 4, 5, or 6.
+Note: Types 2 and 3 are only supported for Enterprise clusters. Dedicated clusters with private endpoints must use Type 4 or 5.
 
 Refer to the kcp docs for more information on each migration type.
 		`)
@@ -189,8 +187,8 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --type: %v", err)
 	}
 
-	if (targetType == types.ExternalOutboundClusterLink || targetType == types.ExternalOutboundClusterLinkUnauthTls) && targetClusterType == "dedicated" {
-		return fmt.Errorf("external outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4, 5, or 6) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible")
+	if (targetType == types.ExternalOutboundClusterLink || targetType == types.ExternalOutboundClusterLinkPlaintext) && targetClusterType == "dedicated" {
+		return fmt.Errorf("external outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4 or 5) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible")
 	}
 
 	if targetType != types.PublicMskEndpoints {
@@ -201,7 +199,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	case types.PublicMskEndpoints:
 		// No additional flag requirements.
 
-	case types.ExternalOutboundClusterLink, types.ExternalOutboundClusterLinkUnauthTls:
+	case types.ExternalOutboundClusterLink, types.ExternalOutboundClusterLinkPlaintext:
 		// No additional flags beyond target-environment-id.
 
 	case types.JumpClusterSaslScram:
@@ -234,7 +232,7 @@ func runMigrationInfra(cmd *cobra.Command, args []string) error {
 		}
 		targetType, _ := types.ToMigrationType(migrationInfraType)
 		if targetType == types.JumpClusterIam {
-			return fmt.Errorf("migration type 4 (Jump Cluster [IAM]) is not supported for OSK sources")
+			return fmt.Errorf("migration type 5 (Jump Cluster [IAM]) is not supported for OSK sources")
 		}
 	default:
 		return fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
@@ -307,12 +305,13 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			TargetEnvironmentId:      targetEnvironmentId,
 			TargetClusterId:          targetClusterId,
 			TargetRestEndpoint:       targetRestEndpoint,
-			SourceSaslScramMechanism: cluster.KafkaAdminClientInformation.SaslMechanism,
+			SourceSaslScramMechanism: "SCRAM-SHA-512",
 		},
 		OutputDir:     outputDir,
-		Force:         force,
 		MigrationType: targetType,
 	}
+
+	slog.Info("using MSK default SASL/SCRAM mechanism", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
 
 	bootstrapBrokers, err := getBootstrapBrokers(cluster, targetType)
 	if err != nil {
@@ -362,7 +361,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		}
 		opts.MigrationWizardRequest.ExtOutboundBrokers = extOutboundBrokers
 
-	case types.ExternalOutboundClusterLinkUnauthTls:
+	case types.ExternalOutboundClusterLinkPlaintext:
 		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = false
 
@@ -385,10 +384,10 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			}
 		}
 
-		opts.MigrationWizardRequest.JumpClusterAuthType = "unauth_tls"
-		opts.MigrationWizardRequest.SourceUnauthTlsBootstrapServers = bootstrapBrokers
+		opts.MigrationWizardRequest.JumpClusterAuthType = "plaintext"
+		opts.MigrationWizardRequest.SourcePlaintextBootstrapServers = bootstrapBrokers
 
-		extOutboundBrokers, err := buildExtOutboundBrokersForUnauthTls(cluster)
+		extOutboundBrokers, err := buildExtOutboundBrokersForPlaintext(cluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build external outbound brokers: %w", err)
 		}
@@ -493,6 +492,21 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		MigrationType: targetType,
 	}
 
+	switch {
+	case sourceSaslScramMechanism != "":
+		normalized := types.NormalizeSaslMechanism(sourceSaslScramMechanism)
+		if normalized != "SCRAM-SHA-256" && normalized != "SCRAM-SHA-512" {
+			return nil, fmt.Errorf("invalid --source-sasl-scram-mechanism value %q: must be SCRAM-SHA-256, SCRAM-SHA-512, SHA256, or SHA512", sourceSaslScramMechanism)
+		}
+		opts.MigrationWizardRequest.SourceSaslScramMechanism = normalized
+		slog.Info("using SASL/SCRAM mechanism from --source-sasl-scram-mechanism flag", "mechanism", normalized)
+	case opts.MigrationWizardRequest.SourceSaslScramMechanism != "":
+		slog.Info("using SASL/SCRAM mechanism from state file", "mechanism", opts.MigrationWizardRequest.SourceSaslScramMechanism)
+	case targetType.RequiresSaslScram():
+		return nil, fmt.Errorf("SASL/SCRAM mechanism is required for migration type %d but was not found in the state file. "+
+			"Provide it with --source-sasl-scram-mechanism (SCRAM-SHA-256 or SCRAM-SHA-512)", int(targetType))
+	}
+
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
 		slog.Warn("no cluster link name provided, using default", "default", "kcp-osk-to-cc-link")
 		opts.MigrationWizardRequest.ClusterLinkName = "kcp-osk-to-cc-link"
@@ -582,9 +596,9 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 	case types.ExternalOutboundClusterLink:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 		authMethod = "SASL/SCRAM"
-	case types.ExternalOutboundClusterLinkUnauthTls:
-		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringTls)
-		authMethod = "Unauthenticated TLS"
+	case types.ExternalOutboundClusterLinkPlaintext:
+		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
+		authMethod = "Plaintext"
 	case types.JumpClusterSaslScram:
 		bootstrap = aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 		authMethod = "SASL/SCRAM"
@@ -611,13 +625,13 @@ func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutbo
 	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9096)
 }
 
-func buildExtOutboundBrokersForUnauthTls(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
-	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringTls)
+func buildExtOutboundBrokersForPlaintext(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
 	if bootstrapStr == "" {
-		return nil, fmt.Errorf("TLS bootstrap brokers string is empty for cluster %s", cluster.Name)
+		return nil, fmt.Errorf("plaintext bootstrap brokers string is empty for cluster %s", cluster.Name)
 	}
 
-	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9094)
+	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9092)
 }
 
 func buildExtOutboundBrokersFromBootstrap(cluster *types.DiscoveredCluster, bootstrapStr string, port int) ([]types.ExtOutboundClusterKafkaBroker, error) {

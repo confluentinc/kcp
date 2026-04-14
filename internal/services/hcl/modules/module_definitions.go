@@ -1,8 +1,6 @@
 package modules
 
 import (
-	"log/slog"
-
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -117,9 +115,6 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 		}
 
 		if _, exists := values[varDef.Definition.Name]; exists {
-			slog.Warn("conflicting variable values, keeping first occurrence",
-				"variable", varDef.Definition.Name,
-			)
 			continue
 		}
 		values[varDef.Definition.Name] = value

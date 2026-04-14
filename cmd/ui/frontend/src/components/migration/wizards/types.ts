@@ -60,6 +60,7 @@ export interface TerraformFiles {
   'outputs.tf'?: string
   'inputs.auto.tfvars'?: string
   modules?: TerraformModule[]
+  per_principal_tf?: Record<string, string>
 }
 
 // Tree node structure for react-arborist

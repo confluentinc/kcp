@@ -48,7 +48,7 @@ func (ms *MigrateSchemasAssetGenerator) Run() error {
 	fmt.Printf("🚀 Generating migrate schemas assets\n")
 
 	outputDir := "migrate_schemas"
-	if err := utils.ValidateOutputDir(outputDir, false); err != nil {
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
 

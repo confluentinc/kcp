@@ -216,8 +216,8 @@ var jumpClusterWithIamClusterLinksUserDataTpl string
 //go:embed ec2_user_data_templates/create-external-outbound-cluster-link.tpl
 var createExternalOutboundClusterLinkTpl string
 
-//go:embed ec2_user_data_templates/create-external-outbound-cluster-link-unauth-tls.tpl
-var createExternalOutboundClusterLinkUnauthTlsTpl string
+//go:embed ec2_user_data_templates/create-external-outbound-cluster-link-plaintext.tpl
+var createExternalOutboundClusterLinkPlaintextTpl string
 
 func GenerateJumpClusterSaslScramSetupHostUserDataTpl() string {
 	return jumpClusterSaslScramSetupHostUserDataTpl
@@ -239,8 +239,8 @@ func GenerateCreateExternalOutboundClusterLinkTpl() string {
 	return createExternalOutboundClusterLinkTpl
 }
 
-func GenerateCreateExternalOutboundClusterLinkUnauthTlsTpl() string {
-	return createExternalOutboundClusterLinkUnauthTlsTpl
+func GenerateCreateExternalOutboundClusterLinkPlaintextTpl() string {
+	return createExternalOutboundClusterLinkPlaintextTpl
 }
 
 // ProvisionerConfig represents configuration for a provisioner block

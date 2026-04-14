@@ -48,7 +48,6 @@ type MigrateMskConnectorOpts struct {
 
 	Connectors []types.ConnectorSummary
 	OutputDir  string
-	Force      bool
 }
 
 type MskConnectorMigrator struct {
@@ -60,7 +59,6 @@ type MskConnectorMigrator struct {
 
 	Connectors []types.ConnectorSummary
 	OutputDir  string
-	Force      bool
 }
 
 func NewMskConnectorMigrator(opts MigrateMskConnectorOpts) *MskConnectorMigrator {
@@ -71,7 +69,6 @@ func NewMskConnectorMigrator(opts MigrateMskConnectorOpts) *MskConnectorMigrator
 		CcApiSecret:   opts.CcApiSecret,
 		Connectors:    opts.Connectors,
 		OutputDir:     opts.OutputDir,
-		Force:         opts.Force,
 	}
 }
 
@@ -82,7 +79,7 @@ func (mc *MskConnectorMigrator) Run() error {
 	}
 
 	if mc.OutputDir != "" {
-		if err := connector_utils.ValidateOutputDir(mc.OutputDir, mc.Force); err != nil {
+		if err := connector_utils.ValidateOutputDir(mc.OutputDir); err != nil {
 			return err
 		}
 		if err := os.MkdirAll(mc.OutputDir, 0755); err != nil {

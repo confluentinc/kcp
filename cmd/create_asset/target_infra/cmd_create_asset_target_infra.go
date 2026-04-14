@@ -39,7 +39,6 @@ var (
 	preventDestroy bool
 
 	outputDir string
-	force     bool
 )
 
 type TargetInfraOpts struct {
@@ -117,7 +116,6 @@ func NewTargetInfraCmd() *cobra.Command {
 	outputFlags := pflag.NewFlagSet("output", pflag.ExitOnError)
 	outputFlags.SortFlags = false
 	outputFlags.StringVar(&outputDir, "output-dir", "target_infra", "Output directory for generated Terraform files")
-	outputFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	targetInfraCmd.Flags().AddFlagSet(outputFlags)
 	groups[outputFlags] = "Output"
 
@@ -259,7 +257,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 	hclService := hcl.NewTargetInfraHCLService()
 	project := hclService.GenerateTerraformFiles(request)
 
-	if err := utils.ValidateOutputDir(outputDir, force); err != nil {
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
 	slog.Debug("creating output directory", "directory", outputDir)
