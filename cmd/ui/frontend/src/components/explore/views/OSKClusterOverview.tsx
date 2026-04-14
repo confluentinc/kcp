@@ -9,15 +9,15 @@ export const OSKClusterOverview = ({ cluster }: OSKClusterOverviewProps) => {
   return (
     <div className="space-y-6">
       {/* Bootstrap Servers */}
-      <div className="bg-white dark:bg-card rounded-xl p-6 shadow-lg border border-gray-200 dark:border-border">
-        <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
+      <div className="bg-card rounded-xl p-6 shadow-lg border border-border">
+        <h3 className="text-lg font-semibold mb-4 text-foreground">
           Bootstrap Servers
         </h3>
         <div className="space-y-2">
           {cluster.bootstrap_servers.map((server, idx) => (
             <div
               key={idx}
-              className="font-mono text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-border"
+              className="font-mono text-sm bg-secondary p-3 rounded border border-border"
             >
               {server}
             </div>
@@ -26,8 +26,8 @@ export const OSKClusterOverview = ({ cluster }: OSKClusterOverviewProps) => {
       </div>
 
       {/* Metadata */}
-      <div className="bg-white dark:bg-card rounded-xl p-6 shadow-lg border border-gray-200 dark:border-border">
-        <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
+      <div className="bg-card rounded-xl p-6 shadow-lg border border-border">
+        <h3 className="text-lg font-semibold mb-4 text-foreground">
           Cluster Metadata
         </h3>
         <KeyValueGrid
@@ -54,8 +54,8 @@ export const OSKClusterOverview = ({ cluster }: OSKClusterOverviewProps) => {
 
       {/* Labels */}
       {cluster.metadata.labels && Object.keys(cluster.metadata.labels).length > 0 && (
-        <div className="bg-white dark:bg-card rounded-xl p-6 shadow-lg border border-gray-200 dark:border-border">
-          <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">Labels</h3>
+        <div className="bg-card rounded-xl p-6 shadow-lg border border-border">
+          <h3 className="text-lg font-semibold mb-4 text-foreground">Labels</h3>
           <div className="flex flex-wrap gap-2">
             {Object.entries(cluster.metadata.labels).map(([key, value]) => (
               <span

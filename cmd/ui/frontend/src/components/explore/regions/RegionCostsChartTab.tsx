@@ -43,7 +43,7 @@ export const RegionCostsChartTab = ({
   zoom,
 }: RegionCostsChartTabProps) => {
   return (
-    <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
+    <div className="bg-card rounded-lg border border-border min-w-0 max-w-full">
       <div className="p-6 rounded-lg">
         {processedData.chartData.length > 0 && processedData.chartOptions.length > 0 ? (
           <div className="space-y-6">
@@ -51,7 +51,7 @@ export const RegionCostsChartTab = ({
             {selectedService && (
               <div className="flex items-center justify-center mb-4">
                 <div className="flex items-center gap-4">
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <span className="text-sm font-medium text-foreground">
                     Service Total for {selectedService} ({formatCostTypeLabel(selectedCostType)}):
                   </span>
                   <span className="text-lg font-bold text-green-600 dark:text-green-400">
@@ -104,7 +104,7 @@ export const RegionCostsChartTab = ({
           </div>
         ) : (
           <div className="text-center py-8">
-            <p className="text-gray-500 dark:text-gray-400">No chart data available</p>
+            <p className="text-muted-foreground">No chart data available</p>
           </div>
         )}
       </div>

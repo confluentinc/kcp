@@ -44,7 +44,7 @@ export const RegionCostsTableTab = ({
       {/* Service Filter for Table */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          <label className="text-sm font-medium text-foreground">
             Filter by Service:
           </label>
           <Select
@@ -69,7 +69,7 @@ export const RegionCostsTableTab = ({
 
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500 dark:text-gray-400">
+            <span className="text-sm text-muted-foreground">
               Total ({formatCostTypeLabel(selectedCostType)}):
             </span>
             <span className="text-lg font-bold text-green-600 dark:text-green-400">
@@ -84,19 +84,19 @@ export const RegionCostsTableTab = ({
         </div>
       </div>
 
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
+      <div className="bg-card rounded-lg border border-border min-w-0 max-w-full">
         <div className="w-full overflow-hidden rounded-lg">
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
             <Table className="min-w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="sticky left-0 bg-white dark:bg-card z-10 w-[150px] min-w-[150px] max-w-[150px] border-r border-gray-200 dark:border-border overflow-hidden">
+                  <TableHead className="sticky left-0 bg-card z-10 w-[150px] min-w-[150px] max-w-[150px] border-r border-border overflow-hidden">
                     Service
                   </TableHead>
-                  <TableHead className="sticky left-[150px] bg-white dark:bg-card z-10 w-[250px] min-w-[250px] max-w-[250px] border-r border-gray-200 dark:border-border overflow-hidden">
+                  <TableHead className="sticky left-[150px] bg-card z-10 w-[250px] min-w-[250px] max-w-[250px] border-r border-border overflow-hidden">
                     Usage Type
                   </TableHead>
-                  <TableHead className="text-center w-[120px] min-w-[120px] max-w-[250px] border-r border-gray-200 dark:border-border">
+                  <TableHead className="text-center w-[120px] min-w-[120px] max-w-[250px] border-r border-border">
                     <div className="text-green-600 dark:text-green-400 font-semibold">
                       Total ({formatCostTypeLabel(selectedCostType)})
                     </div>
@@ -104,7 +104,7 @@ export const RegionCostsTableTab = ({
                   {processedData.uniqueDates.map((date, index) => (
                     <TableHead
                       key={index}
-                      className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-gray-200 dark:border-border"
+                      className="text-center w-[120px] min-w-[120px] max-w-[120px] border-r border-border"
                     >
                       <div className="truncate">{date}</div>
                     </TableHead>
@@ -115,9 +115,9 @@ export const RegionCostsTableTab = ({
                 {(processedData.filteredTableData || []).map((row, rowIndex) => (
                   <TableRow
                     key={rowIndex}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-700"
+                    className="hover:bg-secondary"
                   >
-                    <TableCell className="sticky left-0 bg-white dark:bg-card z-10 font-medium border-r border-gray-200 dark:border-border w-[150px] min-w-[150px] max-w-[150px] overflow-hidden">
+                    <TableCell className="sticky left-0 bg-card z-10 font-medium border-r border-border w-[150px] min-w-[150px] max-w-[150px] overflow-hidden">
                       <div
                         className="truncate pr-2 min-w-0"
                         title={row.service}
@@ -126,7 +126,7 @@ export const RegionCostsTableTab = ({
                       </div>
                     </TableCell>
 
-                    <TableCell className="sticky left-[150px] bg-white dark:bg-card z-10 border-r border-gray-200 dark:border-border w-[250px] min-w-[250px] max-w-[250px] overflow-hidden">
+                    <TableCell className="sticky left-[150px] bg-card z-10 border-r border-border w-[250px] min-w-[250px] max-w-[250px] overflow-hidden">
                       <div
                         className="truncate pr-2 text-sm min-w-0"
                         title={row.usageType}
@@ -136,7 +136,7 @@ export const RegionCostsTableTab = ({
                     </TableCell>
 
                     {/* Total column */}
-                    <TableCell className="text-center border-r border-gray-200 dark:border-border w-[120px] min-w-[120px] max-w-[120px]">
+                    <TableCell className="text-center border-r border-border w-[120px] min-w-[120px] max-w-[120px]">
                       <div className="font-mono text-sm truncate text-green-600 dark:text-green-400 font-semibold">
                         ${row.total.toFixed(2)}
                       </div>
@@ -146,7 +146,7 @@ export const RegionCostsTableTab = ({
                     {row.values.map((value: number, valueIndex: number) => (
                       <TableCell
                         key={valueIndex}
-                        className="text-center border-r border-gray-200 dark:border-border w-[120px] min-w-[120px] max-w-[120px]"
+                        className="text-center border-r border-border w-[120px] min-w-[120px] max-w-[120px]"
                       >
                         <div className="font-mono text-sm truncate">
                           ${value.toFixed(2)}

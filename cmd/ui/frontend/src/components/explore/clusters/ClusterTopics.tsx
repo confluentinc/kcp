@@ -8,11 +8,11 @@ interface ClusterTopicsProps {
 export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
   if (!kafkaAdminInfo?.topics?.details) {
     return (
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
+      <div className="bg-card rounded-lg border border-border p-6 transition-colors">
+        <h3 className="text-xl font-semibold text-foreground mb-4">
           Topics Overview
         </h3>
-        <p className="text-gray-500 dark:text-gray-400">
+        <p className="text-muted-foreground">
           No topic data available for this cluster.
         </p>
       </div>
@@ -22,60 +22,60 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
   return (
     <div className="space-y-6">
       {/* Topic Summary */}
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
+      <div className="bg-card rounded-lg border border-border p-6 transition-colors">
+        <h3 className="text-xl font-semibold text-foreground mb-4">
           Topics Overview
         </h3>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.topics}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Total Topics</div>
+            <div className="text-sm text-muted-foreground">Total Topics</div>
           </div>
-          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.total_partitions}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Total Partitions</div>
+            <div className="text-sm text-muted-foreground">Total Partitions</div>
           </div>
-          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.internal_topics}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Internal Topics</div>
+            <div className="text-sm text-muted-foreground">Internal Topics</div>
           </div>
-          <div className="bg-gray-50 dark:bg-card rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.compact_topics}
             </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Compact Topics</div>
+            <div className="text-sm text-muted-foreground">Compact Topics</div>
           </div>
         </div>
       </div>
 
       {/* Topics Table */}
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors overflow-visible">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">All Topics</h3>
+      <div className="bg-card rounded-lg border border-border p-6 transition-colors overflow-visible">
+        <h3 className="text-xl font-semibold text-foreground mb-4">All Topics</h3>
 
         <div className="overflow-x-auto overflow-y-visible">
           <table className="w-full text-sm overflow-visible">
             <thead className="overflow-visible">
-              <tr className="border-b border-gray-200 dark:border-border overflow-visible">
-                <th className="text-left py-3 font-medium text-gray-900 dark:text-gray-100">
+              <tr className="border-b border-border overflow-visible">
+                <th className="text-left py-3 font-medium text-foreground">
                   Topic Name
                 </th>
-                <th className="text-center py-3 font-medium text-gray-900 dark:text-gray-100">
+                <th className="text-center py-3 font-medium text-foreground">
                   Partitions
                 </th>
-                <th className="text-center py-3 font-medium text-gray-900 dark:text-gray-100">
+                <th className="text-center py-3 font-medium text-foreground">
                   Replication Factor
                 </th>
-                <th className="text-center py-3 font-medium text-gray-900 dark:text-gray-100">
+                <th className="text-center py-3 font-medium text-foreground">
                   Type
                 </th>
-                <th className="text-center py-3 font-medium text-gray-900 dark:text-gray-100">
+                <th className="text-center py-3 font-medium text-foreground">
                   Retention (ms)
                 </th>
               </tr>
@@ -83,7 +83,7 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
             <tbody className="divide-y divide-gray-200 dark:divide-gray-600 overflow-visible">
               {kafkaAdminInfo.topics.details.map((topic: Topic, index: number) => (
                 <tr key={index}>
-                  <td className="py-3 text-gray-900 dark:text-gray-100">
+                  <td className="py-3 text-foreground">
                     <div className="flex items-center">
                       <span className="font-mono text-sm">{topic.name}</span>
                       {topic.name.startsWith('__') && (
@@ -93,10 +93,10 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
                       )}
                     </div>
                   </td>
-                  <td className="py-3 text-center text-gray-900 dark:text-gray-100">
+                  <td className="py-3 text-center text-foreground">
                     {topic.partitions}
                   </td>
-                  <td className="py-3 text-center text-gray-900 dark:text-gray-100">
+                  <td className="py-3 text-center text-foreground">
                     {topic.replication_factor}
                   </td>
                   <td className="py-3 text-center">
@@ -110,7 +110,7 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
                       {topic.configurations['cleanup.policy'] === 'compact' ? 'Compact' : 'Delete'}
                     </span>
                   </td>
-                  <td className="py-3 text-center text-gray-900 dark:text-gray-100">
+                  <td className="py-3 text-center text-foreground">
                     <div className="relative group">
                       <span className="font-mono text-xs cursor-help">
                         {topic.configurations['retention.ms'] === '-1'
@@ -156,7 +156,7 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
           </table>
         </div>
 
-        <div className="mt-4 text-sm text-gray-600 dark:text-gray-400 text-center">
+        <div className="mt-4 text-sm text-muted-foreground text-center">
           Showing all {kafkaAdminInfo.topics.details.length} topics
         </div>
       </div>
