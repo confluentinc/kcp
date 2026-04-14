@@ -151,6 +151,20 @@ export const convertTerraformFilesToTree = (files: TerraformFiles | null): TreeN
     }
   })
 
+  // Per-principal files (ACL migration) — root level, matching CLI output structure
+  if (files.per_principal_tf) {
+    Object.entries(files.per_principal_tf).forEach(([fileName, content]) => {
+      if (content) {
+        treeNodes.push({
+          id: fileName,
+          name: fileName,
+          content,
+          isFolder: false,
+        })
+      }
+    })
+  }
+
   // Module folders and their files
   if (files.modules && Array.isArray(files.modules)) {
     files.modules.forEach((module) => {
@@ -253,6 +267,15 @@ export const flattenTerraformFiles = (files: TerraformFiles | null): Record<stri
       flatFiles[fileName] = content
     }
   })
+
+  // Per-principal files (ACL migration) — flat at root level
+  if (files.per_principal_tf) {
+    Object.entries(files.per_principal_tf).forEach(([fileName, content]) => {
+      if (content) {
+        flatFiles[fileName] = content
+      }
+    })
+  }
 
   // Module files
   if (files.modules && Array.isArray(files.modules)) {

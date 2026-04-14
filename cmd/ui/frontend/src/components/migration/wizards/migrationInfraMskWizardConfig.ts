@@ -193,7 +193,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
         meta: {
           title: 'Private Migration | Method',
           description:
-            'MSK to Confluent Cloud migrations can be performed through jump clusters or external outbound cluster linking. External outbound supports SASL/SCRAM or Unauthenticated TLS authentication.',
+            'MSK to Confluent Cloud migrations can be performed through jump clusters or external outbound cluster linking. External outbound supports SASL/SCRAM or Unauthenticated Plaintext authentication.',
           schema: {
             type: 'object',
             properties: {
@@ -206,8 +206,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                     const: 'external_outbound_sasl_scram',
                   },
                   {
-                    title: 'External Outbound Cluster Link [Unauthenticated TLS]',
-                    const: 'external_outbound_unauth_tls',
+                    title: 'External Outbound Cluster Link [Unauthenticated Plaintext]',
+                    const: 'external_outbound_plaintext',
                   },
                   { title: 'Jump Cluster', const: 'jump_cluster' },
                 ],
@@ -229,8 +229,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               actions: 'save_step_data',
             },
             {
-              target: 'external_outbound_cluster_linking_unauth_tls_inputs',
-              guard: 'use_external_outbound_unauth_tls',
+              target: 'external_outbound_cluster_linking_plaintext_inputs',
+              guard: 'use_external_outbound_plaintext',
               actions: 'save_step_data',
             },
             {
@@ -417,11 +417,11 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
           },
         },
       },
-      external_outbound_cluster_linking_unauth_tls_inputs: {
+      external_outbound_cluster_linking_plaintext_inputs: {
         meta: {
-          title: 'Private Migration | External Outbound Cluster Linking [Unauthenticated TLS]',
+          title: 'Private Migration | External Outbound Cluster Linking [Unauthenticated Plaintext]',
           description:
-            'Enter configuration details for your external outbound cluster linking using unauthenticated TLS (port 9094)',
+            'Enter configuration details for your external outbound cluster linking using unauthenticated plaintext (port 9092)',
           schema: {
             type: 'object',
             properties: {
@@ -476,17 +476,17 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                   cluster?.kafka_admin_client_information?.cluster_id ||
                   'failed to retrieve MSK cluster ID from statefile.',
               },
-              source_unauth_tls_bootstrap_servers: {
+              source_plaintext_bootstrap_servers: {
                 type: 'string',
-                title: 'MSK Bootstrap Servers (TLS)',
+                title: 'MSK Bootstrap Servers (Plaintext)',
                 default:
-                  cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerStringTls ||
-                  'failed to retrieve MSK TLS bootstrap servers from statefile.',
+                  cluster?.aws_client_information?.bootstrap_brokers?.BootstrapBrokerString ||
+                  'failed to retrieve MSK plaintext bootstrap servers from statefile.',
               },
               jump_cluster_auth_type: {
                 type: 'string',
                 title: 'Auth Type',
-                default: 'unauth_tls',
+                default: 'plaintext',
               },
               vpc_id: {
                 type: 'string',
@@ -495,14 +495,14 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                   cluster?.aws_client_information?.cluster_networking?.vpc_id ||
                   'failed to retrieve VPC ID from statefile.',
               },
-              aws_kafka_brokers: {
+              source_kafka_brokers: {
                 type: 'array',
                 title: 'AWS Kafka Brokers',
                 default:
                   awsKafkaBrokers.length > 0
                     ? awsKafkaBrokers.map((b: any) => ({
                         ...b,
-                        endpoints: b.endpoints?.map((e: any) => ({ ...e, port: 9094 })) || [],
+                        endpoints: b.endpoints?.map((e: any) => ({ ...e, port: 9092 })) || [],
                       }))
                     : undefined,
                 items: {
@@ -551,8 +551,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'source_region',
               'vpc_id',
               'source_cluster_id',
-              'source_unauth_tls_bootstrap_servers',
-              'aws_kafka_brokers',
+              'source_plaintext_bootstrap_servers',
+              'source_kafka_brokers',
             ],
           },
           uiSchema: {
@@ -586,7 +586,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            source_unauth_tls_bootstrap_servers: {
+            source_plaintext_bootstrap_servers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
@@ -598,7 +598,7 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               'ui:widget': 'hidden',
               'ui:disabled': true,
             },
-            aws_kafka_brokers: {
+            source_kafka_brokers: {
               'ui:widget': 'hidden',
               'ui:disabled': true,
               'ui:options': {
@@ -683,7 +683,6 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
                   cluster?.aws_client_information?.cluster_networking?.vpc_id ||
                   'failed to retrieve VPC ID from statefile.',
               },
-              ...jumpClusterTargetProperties(),
               jump_cluster_instance_type: {
                 type: 'string',
                 title: 'Instance Type',
@@ -719,7 +718,6 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             },
             required: [
               'vpc_id',
-              'existing_private_link_vpce_id',
               'jump_cluster_instance_type',
               'jump_cluster_broker_storage',
               'jump_cluster_broker_subnet_cidr',
@@ -734,7 +732,6 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
             vpc_id: {
               'ui:disabled': true,
             },
-            ...jumpClusterTargetUiSchema(),
             jump_cluster_instance_type: {
               'ui:placeholder': 'e.g., m5.large',
             },
@@ -810,8 +807,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
       },
       jump_cluster_authentication_sasl_scram: {
         meta: {
-          title: 'Private Migration | Jump Cluster - Authentication (SASL/SCRAM)',
-          description: 'How will the jump cluster authenticate to the MSK cluster?',
+          title: 'Private Migration | Confluent Cloud & Cluster Link Configuration',
+          description: 'Configure the Confluent Cloud target and cluster link details for your migration.',
           schema: {
             type: 'object',
             properties: {
@@ -884,8 +881,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
       },
       jump_cluster_authentication_iam: {
         meta: {
-          title: 'Private Migration | Jump Cluster - Authentication (IAM)',
-          description: 'How will the jump cluster authenticate to the MSK cluster?',
+          title: 'Private Migration | Confluent Cloud & Cluster Link Configuration',
+          description: 'Configure the Confluent Cloud target and cluster link details for your migration.',
           schema: {
             type: 'object',
             properties: {
@@ -979,8 +976,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
               actions: 'undo_save_step_data',
             },
             {
-              target: 'external_outbound_cluster_linking_unauth_tls_inputs',
-              guard: 'came_from_external_outbound_cluster_linking_unauth_tls_inputs',
+              target: 'external_outbound_cluster_linking_plaintext_inputs',
+              guard: 'came_from_external_outbound_cluster_linking_plaintext_inputs',
               actions: 'undo_save_step_data',
             },
             {
@@ -1018,8 +1015,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
       use_external_outbound_sasl_scram: ({ event }) => {
         return event.data?.private_migration_method === 'external_outbound_sasl_scram'
       },
-      use_external_outbound_unauth_tls: ({ event }) => {
-        return event.data?.private_migration_method === 'external_outbound_unauth_tls'
+      use_external_outbound_plaintext: ({ event }) => {
+        return event.data?.private_migration_method === 'external_outbound_plaintext'
       },
       came_from_public_cluster_link_inputs: ({ context }) => {
         return context.previousStep === 'public_cluster_link_inputs'
@@ -1045,8 +1042,8 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
       came_from_external_outbound_cluster_linking_inputs: ({ context }) => {
         return context.previousStep === 'external_outbound_cluster_linking_inputs'
       },
-      came_from_external_outbound_cluster_linking_unauth_tls_inputs: ({ context }) => {
-        return context.previousStep === 'external_outbound_cluster_linking_unauth_tls_inputs'
+      came_from_external_outbound_cluster_linking_plaintext_inputs: ({ context }) => {
+        return context.previousStep === 'external_outbound_cluster_linking_plaintext_inputs'
       },
       came_from_jump_cluster_authentication_sasl_scram: ({ context }) => {
         return context.previousStep === 'msk_jump_cluster_authentication_sasl_scram'

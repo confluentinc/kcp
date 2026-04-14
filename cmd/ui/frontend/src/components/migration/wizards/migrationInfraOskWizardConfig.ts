@@ -354,7 +354,6 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 type: 'string',
                 title: 'VPC ID',
               },
-              ...jumpClusterTargetProperties(),
               jump_cluster_instance_type: {
                 type: 'string',
                 title: 'Instance Type',
@@ -378,13 +377,12 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
                 description: 'The subnet CIDR range for the EC2 instance that will provision the jump cluster instances.',
               },
             },
-            required: ['vpc_id', 'existing_private_link_vpce_id', 'jump_cluster_instance_type', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'jump_cluster_setup_host_subnet_cidr'],
+            required: ['vpc_id', 'jump_cluster_instance_type', 'jump_cluster_broker_storage', 'jump_cluster_broker_subnet_cidr', 'jump_cluster_setup_host_subnet_cidr'],
           },
           uiSchema: {
             vpc_id: {
               'ui:placeholder': 'e.g., vpc-xxxxxxxx',
             },
-            ...jumpClusterTargetUiSchema(),
             jump_cluster_instance_type: {
               'ui:placeholder': 'e.g., m5.xlarge',
             },
@@ -420,8 +418,8 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
       // Jump cluster: SASL/SCRAM auth (direct - no auth question for OSK)
       jump_cluster_authentication_sasl_scram: {
         meta: {
-          title: 'Private Migration | Jump Cluster - Authentication (SASL/SCRAM)',
-          description: 'Configure the cluster link between the jump cluster and Confluent Cloud.',
+          title: 'Private Migration | Confluent Cloud & Cluster Link Configuration',
+          description: 'Configure the Confluent Cloud target and cluster link details for your migration.',
           schema: {
             type: 'object',
             properties: {

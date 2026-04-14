@@ -14,7 +14,6 @@ type MigrationInfraOpts struct {
 	MigrationWizardRequest types.MigrationWizardRequest
 
 	OutputDir     string
-	Force         bool
 	MigrationType types.MigrationType
 }
 
@@ -22,7 +21,6 @@ type MigrationInfraAssetGenerator struct {
 	MigrationWizardRequest types.MigrationWizardRequest
 
 	outputDir     string
-	force         bool
 	migrationType types.MigrationType
 }
 
@@ -30,7 +28,6 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 	return &MigrationInfraAssetGenerator{
 		MigrationWizardRequest: opts.MigrationWizardRequest,
 		outputDir:              opts.OutputDir,
-		force:                  opts.Force,
 		migrationType:          opts.MigrationType,
 	}
 }
@@ -42,7 +39,7 @@ func (mi *MigrationInfraAssetGenerator) Run() error {
 	if outputDir == "" {
 		outputDir = "migration-infra"
 	}
-	if err := utils.ValidateOutputDir(outputDir, mi.force); err != nil {
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
 	slog.Debug("creating migration-infra directory", "directory", outputDir)

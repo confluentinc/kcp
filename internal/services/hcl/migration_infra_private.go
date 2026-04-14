@@ -249,6 +249,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.Mig
 	case "sasl_scram":
 		commonUserDataArgs["source_sasl_scram_username"] = utils.TokensForVarReference(modules.VarMSKSaslScramUsername)
 		commonUserDataArgs["source_sasl_scram_password"] = utils.TokensForVarReference(modules.VarMSKSaslScramPassword)
+		commonUserDataArgs["source_sasl_scram_mechanism"] = utils.TokensForVarReference(modules.VarMSKSaslScramMechanism)
 		rootBody.AppendBlock(aws.GenerateEc2UserDataInstanceResourceWithForEach(
 			"jump_cluster",
 			"data.aws_ami.red_hat_linux_ami.id",
