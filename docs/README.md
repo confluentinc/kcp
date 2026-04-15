@@ -792,49 +792,59 @@ The command generates a `cost_report_YYYY-MM-DD_HH-MM-SS.md` file containing cos
 
 #### `kcp report metrics`
 
-Generate a metrics report for given cluster(s) based on the data collected by `kcp discover`.
+Generate a metrics report for given cluster(s) based on the data collected by `kcp discover` or `kcp scan clusters`.
 
 **Required Arguments**:
 
-- `--state-file`: The path to the kcp state file where the MSK cluster discovery reports have been written to
+- `--state-file`: The path to the kcp state file where the cluster discovery reports have been written to
 
 **Optional Arguments**:
 
-- `--cluster-arn`: The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag). If not provided, all clusters in the state file will be included.
+- `--cluster-id`: The cluster identifier(s) to include in the report (comma separated list or repeated flag). Accepts both MSK ARNs and OSK cluster IDs. Mutually exclusive with `--source-type`.
+- `--source-type`: Source type filter: 'msk' (MSK only) or 'osk' (OSK only). Returns all clusters from the specified source. Mutually exclusive with `--cluster-id`.
 - `--start`: Inclusive start date for metrics report (YYYY-MM-DD). (Defaults to 31 days prior to today)
-- `--end`: Exclusive end date for cost report (YYYY-MM-DD). (Defaults to today)
+- `--end`: Exclusive end date for metrics report (YYYY-MM-DD). (Defaults to today)
 
-The above optional arguments are all required if one is supplied. If none are supplied, a report generating metrics for all clusters present in the `state-file.json` for the last thirty full days will be generated.
+**Note**: `--start` and `--end` must be provided together if specified. If neither `--cluster-id` nor `--source-type` is provided, metrics for all clusters (both MSK and OSK) will be included.
 
 **Example Usage**
 
+Generate report for all clusters (MSK and OSK):
+
 ```shell
 kcp report metrics \
-  --state-file kcp-state.json \
-  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/def456
+  --state-file kcp-state.json
 ```
 
-or
+Generate report for specific cluster IDs (supports both MSK ARNs and OSK IDs):
 
 ```shell
 kcp report metrics \
   --state-file kcp-state.json \
-  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-  --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/def456 \
+  --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+  --cluster-id osk-prod-cluster
+```
+
+Generate report for all MSK clusters only:
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+  --source-type msk
+```
+
+Generate report for all OSK clusters with specific date range:
+
+```shell
+kcp report metrics \
+  --state-file kcp-state.json \
+  --source-type osk \
   --start 2024-01-01 \
   --end 2024-01-31
 ```
 
 **Output:**
 The command generates a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file containing metrics analysis for the specified clusters and time period.
-
-or
-
-```shell
-kcp report metrics \
-  --state-file kcp-state.json \
-```
 
 ---
 
