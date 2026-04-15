@@ -310,9 +310,14 @@ func (r *MetricReporter) formatTimestamp(timestamp string) string {
 		return "N/A"
 	}
 
-	// Parse the timestamp and format it in a more readable way
+	// Try parsing with RFC3339 first (handles timezone offsets like +01:00 from OSK metrics)
+	if parsedTime, err := time.Parse(time.RFC3339, timestamp); err == nil {
+		return parsedTime.Format("2006-01-02 15:04 MST")
+	}
+
+	// Fall back to MSK format without timezone
 	if parsedTime, err := time.Parse("2006-01-02T15:04:05Z", timestamp); err == nil {
-		return parsedTime.Format("2006-01-02 15:04:05")
+		return parsedTime.Format("2006-01-02 15:04 UTC")
 	}
 
 	// If parsing fails, return the original timestamp
