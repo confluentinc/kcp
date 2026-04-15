@@ -17,7 +17,6 @@ type MigrateTopicsOpts struct {
 	TargetClusterRestEndpoint string
 	ClusterLinkName           string
 	OutputDir                 string
-	Force                     bool
 }
 
 type MigrateTopicsAssetGenerator struct {
@@ -37,7 +36,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 	if outputDir == "" {
 		outputDir = "migrate_topics"
 	}
-	if err := utils.ValidateOutputDir(outputDir, mt.opts.Force); err != nil {
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {

@@ -170,8 +170,8 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				switch request.JumpClusterAuthType {
 				case "sasl_scram":
 					return request.SourceSaslScramBootstrapServers
-				case "unauth_tls":
-					return request.SourceUnauthTlsBootstrapServers
+				case "plaintext":
+					return request.SourcePlaintextBootstrapServers
 				default:
 					return request.SourceSaslIamBootstrapServers
 				}

@@ -24,7 +24,7 @@ curl --request POST \
       },
       {
         "name": "security.protocol",
-        "value": "SSL"
+        "value": "PLAINTEXT"
       }
     ]
   }'

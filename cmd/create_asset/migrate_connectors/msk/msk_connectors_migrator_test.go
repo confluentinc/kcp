@@ -378,7 +378,6 @@ func TestMskConnectorMigrator_MultipleConnectors(t *testing.T) {
 		CcApiSecret:   "test-secret",
 		Connectors:    connectors,
 		OutputDir:     tmpDir,
-		Force:         true,
 	}
 
 	migrator := NewMskConnectorMigrator(opts)

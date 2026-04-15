@@ -96,9 +96,6 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
 
     // Jump cluster networking - fill ALL required fields (no defaults for OSK)
     await page.fill('#root_vpc_id', 'vpc-test123')
-    await page.fill('#root_target_environment_id', 'env-test123')
-    await page.fill('#root_target_bootstrap_endpoint', 'pkc-test.confluent.cloud:9092')
-    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
     await page.fill('#root_jump_cluster_instance_type', 'm5.xlarge')
     await page.fill('#root_jump_cluster_broker_storage', '100')
     // Fill broker subnet CIDR array items (3 items by default)

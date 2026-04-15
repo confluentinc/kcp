@@ -6,6 +6,7 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
   // For OSK, those fields will use defaults
   const cluster = sourceType === 'msk' ? getClusterDataByArn(clusterKey) : null
   const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
+  const isMsk = sourceType === 'msk'
 
   return {
     id: 'target-infra-wizard',
@@ -62,6 +63,11 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
           schema: {
             type: 'object',
             properties: {
+              aws_region: {
+                type: 'string',
+                title: 'AWS Region',
+                ...(isMsk ? { default: cluster?.region || '' } : {}),
+              },
               environment_name: {
                 type: 'string',
                 title: 'Environment Name',
@@ -87,7 +93,7 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
                 default: true,
               },
             },
-            required: ['environment_name', 'cluster_name', 'cluster_type'],
+            required: ['aws_region', 'environment_name', 'cluster_name', 'cluster_type'],
             dependencies: {
               cluster_type: {
                 oneOf: [
@@ -122,6 +128,9 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
             },
           },
           uiSchema: {
+            aws_region: isMsk
+              ? { 'ui:widget': 'hidden', 'ui:disabled': true }
+              : { 'ui:placeholder': 'e.g., us-east-1' },
             environment_name: {
               'ui:placeholder': 'e.g., production-env',
             },
@@ -194,6 +203,11 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
           schema: {
             type: 'object',
             properties: {
+              aws_region: {
+                type: 'string',
+                title: 'AWS Region',
+                ...(isMsk ? { default: cluster?.region || '' } : {}),
+              },
               environment_id: {
                 type: 'string',
                 title: 'Environment ID',
@@ -218,7 +232,7 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
                 default: true,
               },
             },
-            required: ['environment_id', 'cluster_name', 'cluster_type'],
+            required: ['aws_region', 'environment_id', 'cluster_name', 'cluster_type'],
             dependencies: {
               cluster_type: {
                 oneOf: [
@@ -253,6 +267,9 @@ export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'm
             },
           },
           uiSchema: {
+            aws_region: isMsk
+              ? { 'ui:widget': 'hidden', 'ui:disabled': true }
+              : { 'ui:placeholder': 'e.g., us-east-1' },
             environment_id: {
               'ui:placeholder': 'e.g., env-xxxx',
             },

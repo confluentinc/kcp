@@ -1646,7 +1646,7 @@ This command generates the required Terraform to provision your migration enviro
 
 - `--state-file`: Path to kcp-state.json file
 - `--cluster-arn`: The cluster-arn to target
-- `--type`: The migration infrastructure type (1-6). See Type Options below.
+- `--type`: The migration infrastructure type (1-5). See Type Options below.
 
 **Base Migration Flags**:
 
@@ -1665,7 +1665,7 @@ This command generates the required Terraform to provision your migration enviro
 - `--subnet-id`: [Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default: MSK broker #1 subnet).
 - `--security-group-id`: [Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).
 
-**Type 4/5 Flags** (Jump Cluster — SASL/SCRAM and Unauthenticated TLS):
+**Type 4 Flags** (Jump Cluster — SASL/SCRAM):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
@@ -1675,7 +1675,7 @@ This command generates the required Terraform to provision your migration enviro
 - `--jump-cluster-instance-type`: [Optional] The instance type to use for the jump cluster. (default: MSK broker type).
 - `--jump-cluster-broker-storage`: [Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).
 
-**Type 6 Flags** (Jump Cluster — IAM):
+**Type 5 Flags** (Jump Cluster — IAM):
 
 - `--target-environment-id`: The Confluent Cloud environment ID.
 - `--target-bootstrap-endpoint`: The bootstrap endpoint to use for the Confluent Cloud cluster.
@@ -1695,18 +1695,14 @@ _Public MSK Endpoints:_
 _Private MSK Endpoints:_
 
 - Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise only)
-- Type 3: External Outbound Cluster Link [Unauthenticated TLS] (Enterprise only)
+- Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise only)
 - Type 4: Jump Cluster [SASL/SCRAM]
-- Type 5: Jump Cluster [Unauthenticated TLS]
-- Type 6: Jump Cluster [IAM]
+- Type 5: Jump Cluster [IAM]
 
 > **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for
 > Enterprise clusters. Dedicated clusters with private MSK endpoints must use
-> Jump Clusters (Type 4, 5, or 6). Dedicated clusters with public MSK endpoints
+> Jump Clusters (Type 4 or 5). Dedicated clusters with public MSK endpoints
 > can use Type 1 (Cluster Link).
->
-> **Breaking change:** Types have been renumbered from the previous 1-4 scheme.
-> Former Type 3 (Jump Cluster SASL/SCRAM) is now Type 4, and former Type 4 (Jump Cluster IAM) is now Type 6.
 
 **Example Usage**
 
