@@ -113,11 +113,6 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 		return nil, fmt.Errorf("failed to load existing state file: %v", err)
 	}
 
-	// Validate source type if provided
-	if sourceType != "" && sourceType != "msk" && sourceType != "osk" {
-		return nil, fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
-	}
-
 	// start and end date are optional
 	var startDate, endDate *time.Time
 	if start != "" {
@@ -155,9 +150,7 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 
 	if len(clusterIds) == 0 {
 		// No cluster IDs provided - retrieve clusters based on source-type
-		switch sourceType {
-		case "msk":
-			// Only MSK clusters
+		if sourceType == "" || sourceType == "msk" {
 			if state.MSKSources != nil {
 				for _, region := range state.MSKSources.Regions {
 					for _, cluster := range region.Clusters {
@@ -165,36 +158,19 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 					}
 				}
 			}
-			if len(allClusterIds) == 0 {
-				return nil, fmt.Errorf("no msk clusters found in state file")
-			}
-		case "osk":
-			// Only OSK clusters
+		}
+		if sourceType == "" || sourceType == "osk" {
 			if state.OSKSources != nil {
 				for _, cluster := range state.OSKSources.Clusters {
 					allClusterIds = append(allClusterIds, cluster.ID)
 				}
 			}
-			if len(allClusterIds) == 0 {
-				return nil, fmt.Errorf("no osk clusters found in state file")
-			}
-		default:
-			// No source-type specified - include all clusters from both sources
-			if state.MSKSources != nil {
-				for _, region := range state.MSKSources.Regions {
-					for _, cluster := range region.Clusters {
-						allClusterIds = append(allClusterIds, cluster.Arn)
-					}
-				}
-			}
-			if state.OSKSources != nil {
-				for _, cluster := range state.OSKSources.Clusters {
-					allClusterIds = append(allClusterIds, cluster.ID)
-				}
-			}
-			if len(allClusterIds) == 0 {
+		}
+		if len(allClusterIds) == 0 {
+			if sourceType == "" {
 				return nil, fmt.Errorf("no clusters found in state file")
 			}
+			return nil, fmt.Errorf("no %s clusters found in state file", sourceType)
 		}
 	} else {
 		// Use provided cluster IDs
