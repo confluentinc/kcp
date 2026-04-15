@@ -397,7 +397,7 @@ func TestNewReportMetricsCmd_MutuallyExclusiveFlags(t *testing.T) {
 
 	err = cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mutually exclusive")
+	assert.Contains(t, err.Error(), "if any flags in the group [cluster-id source-type] are set none of the others can be")
 }
 
 func TestParseMetricReporterOpts_NeitherFlagProvided(t *testing.T) {
