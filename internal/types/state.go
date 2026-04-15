@@ -891,6 +891,9 @@ type ProcessedClusterMetrics struct {
 	Metrics    []ProcessedMetric          `json:"results"`
 	Aggregates map[string]MetricAggregate `json:"aggregates"`
 	QueryInfo  []MetricQueryInfo          `json:"query_info"`
+	// OSK-specific fields (optional, omitempty for MSK clusters)
+	Environment string `json:"environment,omitempty"`
+	Location    string `json:"location,omitempty"`
 }
 
 type ProcessedMetric struct {
