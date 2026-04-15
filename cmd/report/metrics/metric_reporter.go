@@ -16,45 +16,45 @@ type ReportService interface {
 }
 
 type MetricReporterOpts struct {
-	ClusterArns []string
-	State       *types.State
-	StartDate   *time.Time
-	EndDate     *time.Time
-	SourceType  string
+	ClusterIds []string
+	State      *types.State
+	StartDate  *time.Time
+	EndDate    *time.Time
+	SourceType string
 }
 
 type MetricReporter struct {
 	reportService ReportService
 
-	clusterArns []string
-	state       *types.State
-	startDate   *time.Time
-	endDate     *time.Time
-	sourceType  string
+	clusterIds []string
+	state      *types.State
+	startDate  *time.Time
+	endDate    *time.Time
+	sourceType string
 }
 
 func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *MetricReporter {
 	return &MetricReporter{
 		reportService: reportService,
 
-		clusterArns: opts.ClusterArns,
-		state:       opts.State,
-		startDate:   opts.StartDate,
-		endDate:     opts.EndDate,
-		sourceType:  opts.SourceType,
+		clusterIds: opts.ClusterIds,
+		state:      opts.State,
+		startDate:  opts.StartDate,
+		endDate:    opts.EndDate,
+		sourceType: opts.SourceType,
 	}
 }
 
 func (r *MetricReporter) Run() error {
-	fmt.Printf("🔍 Processing clusters: %v (from %s to %s)\n", r.clusterArns, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
+	fmt.Printf("🔍 Processing clusters: %v (from %s to %s)\n", r.clusterIds, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
 
 	processedState := r.reportService.ProcessState(*r.state)
 	processedClusterMetrics := []types.ProcessedClusterMetrics{}
 
 	// find the clusters in the state
 
-	for _, clusterArn := range r.clusterArns {
-		clusterMetrics, err := r.reportService.FilterClusterMetrics(processedState, clusterArn, r.sourceType, r.startDate, r.endDate)
+	for _, clusterId := range r.clusterIds {
+		clusterMetrics, err := r.reportService.FilterClusterMetrics(processedState, clusterId, r.sourceType, r.startDate, r.endDate)
 		if err != nil {
 			return fmt.Errorf("failed to filter cluster metrics: %v", err)
 		}
@@ -88,10 +88,10 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 		r.startDate.Format("2006-01-02"),
 		r.endDate.Format("2006-01-02")))
 
-	if len(r.clusterArns) > 0 {
+	if len(r.clusterIds) > 0 {
 		md.AddParagraph("**Clusters included in report:**")
-		for _, arn := range r.clusterArns {
-			md.AddParagraph(fmt.Sprintf("- %s", arn))
+		for _, clusterId := range r.clusterIds {
+			md.AddParagraph(fmt.Sprintf("- %s", clusterId))
 		}
 	}
 

@@ -156,7 +156,7 @@ func (s *State) WriteReportCommands(filePath string, stateFilePath string) error
 			// Loop through clusters in this region
 			for _, cluster := range region.Clusters {
 				clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
-				clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-arn %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
+				clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-id %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
 				clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
 			}
 		}

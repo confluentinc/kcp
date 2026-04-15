@@ -481,6 +481,36 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		assert.Equal(t, "my-osk-cluster", result.ClusterArn)
 	})
 
+	t.Run("empty sourceType detects ARN and searches MSK", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			processedState,
+			"arn:aws:kafka:us-east-1:123456789012:cluster/test-msk-cluster/abc-123",
+			"",
+			nil,
+			nil,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "us-east-1", result.Region)
+		assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-msk-cluster/abc-123", result.ClusterArn)
+	})
+
+	t.Run("empty sourceType detects non-ARN and searches OSK", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			processedState,
+			"my-osk-cluster",
+			"",
+			nil,
+			nil,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "", result.Region)
+		assert.Equal(t, "my-osk-cluster", result.ClusterArn)
+	})
+
 	t.Run("cluster not found in MSK sources shows clear error", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
 			processedState,

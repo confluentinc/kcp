@@ -205,8 +205,8 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 // filterClusterMetrics filters the processed state by region, clusterArn, and date range
 // sourceType can be "msk", "osk", or "auto" (auto-detects based on identifier pattern)
 func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	// Auto-detection: if sourceType is "auto", detect based on identifier pattern
-	if sourceType == "auto" {
+	// Auto-detection: if sourceType is empty or "auto", detect based on identifier pattern
+	if sourceType == "" || sourceType == "auto" {
 		if strings.HasPrefix(clusterArn, "arn:") {
 			sourceType = "msk"
 		} else {
@@ -221,7 +221,7 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 	case "osk":
 		return rs.filterOSKClusterMetrics(processedState, clusterArn, startTime, endTime)
 	default:
-		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk', 'osk', or 'auto')", sourceType)
+		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'osk')", sourceType)
 	}
 }
 
