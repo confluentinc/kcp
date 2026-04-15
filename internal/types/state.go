@@ -885,12 +885,15 @@ type ProcessedCluster struct {
 }
 
 type ProcessedClusterMetrics struct {
-	Region     string                     `json:"region"`
-	ClusterArn string                     `json:"cluster_arn"`
-	Metadata   MetricMetadata             `json:"metadata"`
-	Metrics    []ProcessedMetric          `json:"results"`
-	Aggregates map[string]MetricAggregate `json:"aggregates"`
-	QueryInfo  []MetricQueryInfo          `json:"query_info"`
+	Region      string                     `json:"region"`
+	ClusterArn  string                     `json:"cluster_arn"`
+	Metadata    MetricMetadata             `json:"metadata"`
+	Metrics     []ProcessedMetric          `json:"results"`
+	Aggregates  map[string]MetricAggregate `json:"aggregates"`
+	QueryInfo   []MetricQueryInfo          `json:"query_info"`
+	// OSK-specific fields (optional, omitempty for MSK clusters)
+	Environment string `json:"environment,omitempty"`
+	Location    string `json:"location,omitempty"`
 }
 
 type ProcessedMetric struct {

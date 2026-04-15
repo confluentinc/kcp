@@ -10,6 +10,11 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+const (
+	// metricTimestampFormat is the timestamp format used for metric data
+	metricTimestampFormat = "2006-01-02T15:04:05Z"
+)
+
 type ReportService struct{}
 
 func NewReportService() *ReportService {
@@ -70,6 +75,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 				ID:                          cluster.ID,
 				BootstrapServers:            cluster.BootstrapServers,
 				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
+				ClusterMetrics:              cluster.ClusterMetrics,
 				DiscoveredClients:           cluster.DiscoveredClients,
 				Metadata:                    cluster.Metadata,
 			})
@@ -93,6 +99,33 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 	}
 
 	return processedState
+}
+
+// filterMetricsByDateRange filters metrics by the given date range.
+// If no date filters are provided (both startTime and endTime are nil), all metrics are returned.
+func (rs *ReportService) filterMetricsByDateRange(metrics []types.ProcessedMetric, startTime, endTime *time.Time) []types.ProcessedMetric {
+	// If no date filters, use all metrics
+	if startTime == nil && endTime == nil {
+		return metrics
+	}
+
+	var filteredMetrics []types.ProcessedMetric
+	for _, metric := range metrics {
+		metricStartTime, err := time.Parse(metricTimestampFormat, metric.Start)
+		if err != nil {
+			continue // Skip metrics with invalid timestamps
+		}
+
+		if startTime != nil && metricStartTime.Before(*startTime) {
+			continue
+		}
+		if endTime != nil && metricStartTime.After(*endTime) {
+			continue
+		}
+
+		filteredMetrics = append(filteredMetrics, metric)
+	}
+	return filteredMetrics
 }
 
 // FilterRegionCosts filters the processed state to return cost data for a specific region
@@ -165,7 +198,30 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 // TODO we should ask for clusterArn instead of clusterName
 
 // filterClusterMetrics filters the processed state by region, clusterArn, and date range
-func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+// sourceType can be "msk", "osk", or "auto" (auto-detects based on identifier pattern)
+func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	// Auto-detection: if sourceType is "auto", detect based on identifier pattern
+	if sourceType == "auto" {
+		if strings.HasPrefix(clusterArn, "arn:") {
+			sourceType = "msk"
+		} else {
+			sourceType = "osk"
+		}
+	}
+
+	// Route to appropriate source
+	switch sourceType {
+	case "msk":
+		return rs.filterMSKClusterMetrics(processedState, clusterArn, startTime, endTime)
+	case "osk":
+		return rs.filterOSKClusterMetrics(processedState, clusterArn, startTime, endTime)
+	default:
+		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk', 'osk', or 'auto')", sourceType)
+	}
+}
+
+// filterMSKClusterMetrics filters MSK cluster metrics by ARN
+func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	var regionName string
 	var targetCluster *types.ProcessedCluster
 
@@ -191,35 +247,23 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 	}
 
 	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found", clusterArn)
+		return nil, fmt.Errorf("cluster '%s' not found in MSK sources", clusterArn)
 	}
 
-	var filteredMetrics []types.ProcessedMetric
-
-	// If no date filters, use all metrics
-	if startTime == nil && endTime == nil {
-		filteredMetrics = targetCluster.ClusterMetrics.Metrics
-	} else {
-		// Filter metrics by date range
-		for _, metric := range targetCluster.ClusterMetrics.Metrics {
-			// Parse the metric start time
-			metricStartTime, err := time.Parse("2006-01-02T15:04:05Z", metric.Start)
-			if err != nil {
-				// Skip metrics with invalid timestamps
-				continue
-			}
-
-			// Apply date filters
-			if startTime != nil && metricStartTime.Before(*startTime) {
-				continue
-			}
-			if endTime != nil && metricStartTime.After(*endTime) {
-				continue
-			}
-
-			filteredMetrics = append(filteredMetrics, metric)
-		}
+	// Handle cluster without metrics
+	if targetCluster.ClusterMetrics.Metrics == nil {
+		return &types.ProcessedClusterMetrics{
+			Region:     regionName,
+			ClusterArn: clusterArn,
+			Metadata:   targetCluster.ClusterMetrics.Metadata,
+			Metrics:    nil,
+			Aggregates: nil,
+			QueryInfo:  targetCluster.ClusterMetrics.QueryInfo,
+		}, nil
 	}
+
+	// Filter metrics by date range
+	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
 
 	// Calculate aggregates from filtered metrics
 	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
@@ -231,6 +275,61 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,
 		QueryInfo:  targetCluster.ClusterMetrics.QueryInfo,
+	}, nil
+}
+
+// filterOSKClusterMetrics filters OSK cluster metrics by cluster ID
+func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var targetCluster *types.ProcessedOSKCluster
+
+	// Find the cluster in OSK sources
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeOSK && source.OSKData != nil {
+			for _, cluster := range source.OSKData.Clusters {
+				if strings.EqualFold(cluster.ID, clusterID) {
+					targetCluster = &cluster
+					break
+				}
+			}
+		}
+		if targetCluster != nil {
+			break
+		}
+	}
+
+	if targetCluster == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+	}
+
+	// Handle cluster without metrics (nil ClusterMetrics)
+	if targetCluster.ClusterMetrics == nil {
+		return &types.ProcessedClusterMetrics{
+			Region:      "",
+			ClusterArn:  clusterID,
+			Metadata:    types.MetricMetadata{},
+			Metrics:     nil,
+			Aggregates:  nil,
+			QueryInfo:   nil,
+			Environment: targetCluster.Metadata.Environment,
+			Location:    targetCluster.Metadata.Location,
+		}, nil
+	}
+
+	// Filter metrics by date range
+	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
+
+	// Calculate aggregates from filtered metrics
+	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+
+	return &types.ProcessedClusterMetrics{
+		Region:      "", // OSK clusters don't have regions
+		ClusterArn:  clusterID,
+		Metadata:    targetCluster.ClusterMetrics.Metadata,
+		Metrics:     filteredMetrics,
+		Aggregates:  aggregates,
+		QueryInfo:   targetCluster.ClusterMetrics.QueryInfo,
+		Environment: targetCluster.Metadata.Environment,
+		Location:    targetCluster.Metadata.Location,
 	}, nil
 }
 
@@ -267,32 +366,8 @@ func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regi
 		return nil, fmt.Errorf("cluster '%s' not found in region '%s'", clusterName, regionName)
 	}
 
-	var filteredMetrics []types.ProcessedMetric
-
-	// If no date filters, use all metrics
-	if startTime == nil && endTime == nil {
-		filteredMetrics = targetCluster.ClusterMetrics.Metrics
-	} else {
-		// Filter metrics by date range
-		for _, metric := range targetCluster.ClusterMetrics.Metrics {
-			// Parse the metric start time
-			metricStartTime, err := time.Parse("2006-01-02T15:04:05Z", metric.Start)
-			if err != nil {
-				// Skip metrics with invalid timestamps
-				continue
-			}
-
-			// Apply date filters
-			if startTime != nil && metricStartTime.Before(*startTime) {
-				continue
-			}
-			if endTime != nil && metricStartTime.After(*endTime) {
-				continue
-			}
-
-			filteredMetrics = append(filteredMetrics, metric)
-		}
-	}
+	// Filter metrics by date range
+	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
 
 	// Calculate aggregates from filtered metrics
 	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
@@ -555,8 +630,8 @@ func (rs *ReportService) flattenMetrics(cluster types.DiscoveredCluster) types.P
 			endTime := timestamp.Add(time.Duration(period-1) * time.Second)
 
 			// Convert to strings
-			startStr := startTime.Format("2006-01-02T15:04:05Z")
-			endStr := endTime.Format("2006-01-02T15:04:05Z")
+			startStr := startTime.Format(metricTimestampFormat)
+			endStr := endTime.Format(metricTimestampFormat)
 			value := result.Values[i]
 
 			processedMetrics = append(processedMetrics, types.ProcessedMetric{
