@@ -241,7 +241,7 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
 							SaslMechanism: "SCRAM-SHA-256",
 						},
-						ClusterMetrics: nil,
+						ClusterMetrics:    nil,
 						DiscoveredClients: []types.DiscoveredClient{},
 						Metadata: types.OSKClusterMetadata{
 							Environment: "test",

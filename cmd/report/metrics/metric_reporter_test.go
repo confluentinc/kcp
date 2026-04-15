@@ -132,14 +132,14 @@ func TestGenerateReport_MSKCluster(t *testing.T) {
 			ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-msk/abc-123",
 			Region:     "us-east-1",
 			Metadata: types.MetricMetadata{
-				ClusterType:        "PROVISIONED",
+				ClusterType:         "PROVISIONED",
 				NumberOfBrokerNodes: 3,
-				KafkaVersion:       "3.5.1",
-				EnhancedMonitoring: "PER_BROKER",
-				Period:             300,
-				InstanceType:       "kafka.m5.large",
-				TieredStorage:      false,
-				FollowerFetching:   true,
+				KafkaVersion:        "3.5.1",
+				EnhancedMonitoring:  "PER_BROKER",
+				Period:              300,
+				InstanceType:        "kafka.m5.large",
+				TieredStorage:       false,
+				FollowerFetching:    true,
 			},
 			Aggregates: map[string]types.MetricAggregate{
 				"BytesInPerSec": {
@@ -201,8 +201,8 @@ func TestGenerateReport_OSKCluster(t *testing.T) {
 			Location:    "datacenter-1",
 			Metadata: types.MetricMetadata{
 				NumberOfBrokerNodes: 5,
-				KafkaVersion:       "3.6.0",
-				Period:             60,
+				KafkaVersion:        "3.6.0",
+				Period:              60,
 			},
 			Aggregates: map[string]types.MetricAggregate{
 				"MessagesInPerSec": {
@@ -261,8 +261,8 @@ func TestGenerateReport_OSKCluster_MissingMetadata(t *testing.T) {
 			Location:    "", // Empty location
 			Metadata: types.MetricMetadata{
 				NumberOfBrokerNodes: 3,
-				KafkaVersion:       "3.5.0",
-				Period:             300,
+				KafkaVersion:        "3.5.0",
+				Period:              300,
 			},
 		},
 	}
