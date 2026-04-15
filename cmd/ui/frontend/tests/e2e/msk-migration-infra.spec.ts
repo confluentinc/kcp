@@ -110,8 +110,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
 
     // Networking inputs - fill required fields not pre-populated
     // vpc_id, instance_type, storage are pre-populated from MSK state
-    // but existing_private_link_vpce_id, broker CIDRs, setup host CIDR need filling
-    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
+    // broker CIDRs and setup host CIDR need filling
     await page.fill('#root_jump_cluster_broker_subnet_cidr_0', '10.0.1.0/24')
     await page.fill('#root_jump_cluster_broker_subnet_cidr_1', '10.0.2.0/24')
     await page.fill('#root_jump_cluster_broker_subnet_cidr_2', '10.0.3.0/24')
@@ -174,7 +173,6 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     // Networking - fill required fields
-    await page.fill('#root_existing_private_link_vpce_id', 'vpce-test123')
     await page.fill('#root_jump_cluster_broker_subnet_cidr_0', '10.0.1.0/24')
     await page.fill('#root_jump_cluster_broker_subnet_cidr_1', '10.0.2.0/24')
     await page.fill('#root_jump_cluster_broker_subnet_cidr_2', '10.0.3.0/24')
