@@ -111,9 +111,14 @@ func (rs *ReportService) filterMetricsByDateRange(metrics []types.ProcessedMetri
 
 	var filteredMetrics []types.ProcessedMetric
 	for _, metric := range metrics {
-		metricStartTime, err := time.Parse(metricTimestampFormat, metric.Start)
+		// Try parsing with RFC3339 first (handles timezone offsets like +01:00 from OSK metrics)
+		metricStartTime, err := time.Parse(time.RFC3339, metric.Start)
 		if err != nil {
-			continue // Skip metrics with invalid timestamps
+			// Fall back to the MSK format without timezone offset
+			metricStartTime, err = time.Parse(metricTimestampFormat, metric.Start)
+			if err != nil {
+				continue // Skip metrics with invalid timestamps
+			}
 		}
 
 		if startTime != nil && metricStartTime.Before(*startTime) {
