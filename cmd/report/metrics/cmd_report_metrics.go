@@ -155,7 +155,8 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 
 	if len(clusterIds) == 0 {
 		// No cluster IDs provided - retrieve clusters based on source-type
-		if sourceType == "msk" {
+		switch sourceType {
+		case "msk":
 			// Only MSK clusters
 			if state.MSKSources != nil {
 				for _, region := range state.MSKSources.Regions {
@@ -167,7 +168,7 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 			if len(allClusterIds) == 0 {
 				return nil, fmt.Errorf("no msk clusters found in state file")
 			}
-		} else if sourceType == "osk" {
+		case "osk":
 			// Only OSK clusters
 			if state.OSKSources != nil {
 				for _, cluster := range state.OSKSources.Clusters {
@@ -177,7 +178,7 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 			if len(allClusterIds) == 0 {
 				return nil, fmt.Errorf("no osk clusters found in state file")
 			}
-		} else {
+		default:
 			// No source-type specified - include all clusters from both sources
 			if state.MSKSources != nil {
 				for _, region := range state.MSKSources.Regions {

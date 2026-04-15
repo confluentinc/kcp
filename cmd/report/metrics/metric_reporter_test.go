@@ -34,7 +34,7 @@ func TestDetermineReportTitle(t *testing.T) {
 
 	t.Run("Only MSK clusters", func(t *testing.T) {
 		reporter := NewMetricReporter(nil, MetricReporterOpts{
-			ClusterArns: []string{
+			ClusterIds: []string{
 				"arn:aws:kafka:us-east-1:123456789012:cluster/test-msk-cluster/abc-123",
 			},
 			State:     &types.State{},
@@ -54,10 +54,10 @@ func TestDetermineReportTitle(t *testing.T) {
 
 	t.Run("Only OSK clusters", func(t *testing.T) {
 		reporter := NewMetricReporter(nil, MetricReporterOpts{
-			ClusterArns: []string{"osk-cluster-1"},
-			State:       &types.State{},
-			StartDate:   &startTime,
-			EndDate:     &endTime,
+			ClusterIds: []string{"osk-cluster-1"},
+			State:      &types.State{},
+			StartDate:  &startTime,
+			EndDate:    &endTime,
 		})
 
 		clusters := []types.ProcessedClusterMetrics{
@@ -72,7 +72,7 @@ func TestDetermineReportTitle(t *testing.T) {
 
 	t.Run("Mixed MSK and OSK clusters", func(t *testing.T) {
 		reporter := NewMetricReporter(nil, MetricReporterOpts{
-			ClusterArns: []string{
+			ClusterIds: []string{
 				"arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster/abc-123",
 				"osk-cluster-1",
 			},
@@ -121,10 +121,10 @@ func TestGenerateReport_MSKCluster(t *testing.T) {
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterArns: []string{"arn:aws:kafka:us-east-1:123456789012:cluster/test-msk/abc-123"},
-		State:       &types.State{},
-		StartDate:   &startTime,
-		EndDate:     &endTime,
+		ClusterIds: []string{"arn:aws:kafka:us-east-1:123456789012:cluster/test-msk/abc-123"},
+		State:      &types.State{},
+		StartDate:  &startTime,
+		EndDate:    &endTime,
 	})
 
 	clusters := []types.ProcessedClusterMetrics{
@@ -187,10 +187,10 @@ func TestGenerateReport_OSKCluster(t *testing.T) {
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterArns: []string{"my-osk-cluster"},
-		State:       &types.State{},
-		StartDate:   &startTime,
-		EndDate:     &endTime,
+		ClusterIds: []string{"my-osk-cluster"},
+		State:      &types.State{},
+		StartDate:  &startTime,
+		EndDate:    &endTime,
 	})
 
 	clusters := []types.ProcessedClusterMetrics{
@@ -247,10 +247,10 @@ func TestGenerateReport_OSKCluster_MissingMetadata(t *testing.T) {
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterArns: []string{"osk-no-metadata"},
-		State:       &types.State{},
-		StartDate:   &startTime,
-		EndDate:     &endTime,
+		ClusterIds: []string{"osk-no-metadata"},
+		State:      &types.State{},
+		StartDate:  &startTime,
+		EndDate:    &endTime,
 	})
 
 	clusters := []types.ProcessedClusterMetrics{
@@ -285,7 +285,7 @@ func TestGenerateReport_MixedClusters(t *testing.T) {
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterArns: []string{
+		ClusterIds: []string{
 			"arn:aws:kafka:us-east-1:123456789012:cluster/msk/abc",
 			"osk-cluster",
 		},
@@ -336,10 +336,10 @@ func TestBackwardCompatibility_MSKReport(t *testing.T) {
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterArns: []string{"arn:aws:kafka:us-east-1:123456789012:cluster/legacy/xyz"},
-		State:       &types.State{},
-		StartDate:   &startTime,
-		EndDate:     &endTime,
+		ClusterIds: []string{"arn:aws:kafka:us-east-1:123456789012:cluster/legacy/xyz"},
+		State:      &types.State{},
+		StartDate:  &startTime,
+		EndDate:    &endTime,
 	})
 
 	// MSK cluster without OSK fields (backward compatibility test)
