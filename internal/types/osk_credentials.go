@@ -170,6 +170,9 @@ func (c OSKClusterAuth) GetAuthMethods() []AuthType {
 	if c.AuthMethod.SASLScram != nil && c.AuthMethod.SASLScram.Use {
 		enabledMethods = append(enabledMethods, AuthTypeSASLSCRAM)
 	}
+	if c.AuthMethod.SASLPlain != nil && c.AuthMethod.SASLPlain.Use {
+		enabledMethods = append(enabledMethods, AuthTypeSASLPlain)
+	}
 	if c.AuthMethod.TLS != nil && c.AuthMethod.TLS.Use {
 		enabledMethods = append(enabledMethods, AuthTypeTLS)
 	}
@@ -250,6 +253,17 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 			// valid
 		default:
 			return fmt.Errorf("unsupported sasl_scram mechanism %q: must be SHA256, SHA512, SCRAM-SHA-256, or SCRAM-SHA-512", authMethod.SASLScram.Mechanism)
+		}
+
+	case AuthTypeSASLPlain:
+		if authMethod.SASLPlain == nil {
+			return fmt.Errorf("sasl_plain config is nil")
+		}
+		if authMethod.SASLPlain.Username == "" {
+			return fmt.Errorf("sasl_plain username is required")
+		}
+		if authMethod.SASLPlain.Password == "" {
+			return fmt.Errorf("sasl_plain password is required")
 		}
 
 	case AuthTypeTLS:

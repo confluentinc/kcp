@@ -8,6 +8,7 @@ services:
       - "9093:9093"
       - "9094:9094"
       - "9095:9095"
+      - "9098:9098"
       - "8778:8778"
     volumes:
       - ./kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf
@@ -16,15 +17,21 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@osk-kafka:29093'
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://osk-kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092,SASL_HOST://0.0.0.0:9093,SSL_HOST://0.0.0.0:9094,SASL_SSL_HOST://0.0.0.0:9095'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://osk-kafka:29092,PLAINTEXT_HOST://localhost:9092,SASL_HOST://localhost:9093,SSL_HOST://localhost:9094,SASL_SSL_HOST://localhost:9095'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SASL_HOST:SASL_SSL,SSL_HOST:SSL,SASL_SSL_HOST:SASL_SSL'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://osk-kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092,SASL_HOST://0.0.0.0:9093,SSL_HOST://0.0.0.0:9094,SASL_SSL_HOST://0.0.0.0:9095,SASL_PLAIN_HOST://0.0.0.0:9098'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://osk-kafka:29092,PLAINTEXT_HOST://localhost:9092,SASL_HOST://localhost:9093,SSL_HOST://localhost:9094,SASL_SSL_HOST://localhost:9095,SASL_PLAIN_HOST://localhost:9098'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SASL_HOST:SASL_SSL,SSL_HOST:SSL,SASL_SSL_HOST:SASL_SSL,SASL_PLAIN_HOST:SASL_PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       # SASL configuration
-      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,PLAIN
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
       KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+      # SASL/PLAIN per-listener JAAS config (avoids modifying the shared JAAS file)
+      KAFKA_LISTENER_NAME_SASL__PLAIN__HOST_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="admin"
+        password="admin-secret"
+        user_plainuser="plainpass";
       # SSL/TLS configuration
       KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.server.keystore.jks
       KAFKA_SSL_KEYSTORE_PASSWORD: keystorepass
@@ -42,7 +49,7 @@ services:
       # Authorization
       KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
-      KAFKA_SUPER_USERS: 'User:ANONYMOUS;User:admin;User:kafkauser;User:CN=kafka-client,OU=Test,O=Test,L=San Francisco,ST=CA,C=US'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS;User:admin;User:kafkauser;User:plainuser;User:CN=kafka-client,OU=Test,O=Test,L=San Francisco,ST=CA,C=US'
     command: >
       bash -c "
         echo 'Downloading Jolokia agent...'
