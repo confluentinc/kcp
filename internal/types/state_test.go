@@ -1010,6 +1010,36 @@ func TestNewStateFromFile_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
+	// Simulate a state file from a different KCP version where a field's type
+	// changed (e.g. msk_sources was a plain array, now an object). The full
+	// unmarshal will fail but the version should still be surfaced.
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Valid JSON with a readable version but msk_sources as an array (type mismatch
+	// against the current struct which expects an object)
+	brokenSchema := `{"kcp_build_info":{"version":"0.5.0"},"msk_sources":["unexpected","array"]}`
+	if _, err := tmpFile.WriteString(brokenSchema); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	_, err = NewStateFromFile(tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "state file version mismatch") {
+		t.Errorf("expected version mismatch error from fallback, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "0.5.0") {
+		t.Errorf("expected error to contain file version, got: %v", err)
+	}
+}
+
 func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {

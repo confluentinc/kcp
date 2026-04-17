@@ -114,6 +114,17 @@ func NewStateFromFile(stateFile string) (*State, error) {
 
 	var state State
 	if err := json.Unmarshal(file, &state); err != nil {
+		// Unmarshal failed — the schema may have changed between versions.
+		// Try to extract just the version from the raw bytes to give a more
+		// actionable error than a raw JSON type error.
+		var raw struct {
+			KcpBuildInfo struct {
+				Version string `json:"version"`
+			} `json:"kcp_build_info"`
+		}
+		if jsonErr := json.Unmarshal(file, &raw); jsonErr == nil && raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
+			return nil, fmt.Errorf("state file version mismatch: file was created with KCP version %q but you are running version %q — please re-export the state file using the current version of KCP or upgrade/downgrade KCP to match", raw.KcpBuildInfo.Version, build_info.Version)
+		}
 		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
 	}
 
