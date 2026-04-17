@@ -64,10 +64,18 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 
 // mockClusterLinkService implements clusterlink.Service using function fields for test control.
 type mockClusterLinkService struct {
+	getClusterLinkFn      func(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error)
 	listMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error)
 	listConfigsFn         func(ctx context.Context, config clusterlink.Config) (map[string]string, error)
 	validateTopicsFn      func(topics []string, clusterLinkTopics []string) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
+}
+
+func (m *mockClusterLinkService) GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error) {
+	if m.getClusterLinkFn != nil {
+		return m.getClusterLinkFn(ctx, config)
+	}
+	return nil, fmt.Errorf("mockClusterLinkService.GetClusterLink not configured")
 }
 
 func (m *mockClusterLinkService) ListMirrorTopics(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error) {

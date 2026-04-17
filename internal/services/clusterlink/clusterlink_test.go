@@ -2,6 +2,7 @@ package clusterlink
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -344,6 +345,173 @@ func TestPromoteMirrorTopics_HTTPError(t *testing.T) {
 
 	_, err := svc.PromoteMirrorTopics(context.Background(), cfg, []string{"topic-1"})
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "500")
+}
+
+func TestGetClusterLink_Success(t *testing.T) {
+	clusterID := "lkc-abc123"
+	linkName := "my-cluster-link"
+	expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("key:secret"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/kafka/v3/clusters/" + clusterID + "/links/" + linkName
+		assert.Equal(t, expectedPath, r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
+		assert.Equal(t, expectedAuth, r.Header.Get("Authorization"), "Authorization header")
+
+		resp := map[string]interface{}{
+			"link_name":         linkName,
+			"link_id":           "link-id-42",
+			"cluster_id":        clusterID,
+			"source_cluster_id": "lkc-source",
+			"link_state":        "ACTIVE",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    clusterID,
+		LinkName:     linkName,
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	link, err := svc.GetClusterLink(context.Background(), cfg)
+	require.NoError(t, err)
+	require.NotNil(t, link)
+	assert.Equal(t, linkName, link.LinkName)
+	assert.Equal(t, "link-id-42", link.LinkID)
+	assert.Equal(t, clusterID, link.ClusterID)
+	assert.Equal(t, "lkc-source", link.SourceClusterID)
+	assert.Equal(t, "ACTIVE", link.LinkState)
+}
+
+func TestGetClusterLink_PathIsEscaped(t *testing.T) {
+	clusterID := "lkc abc"       // whitespace
+	linkName := "link/with?bits" // characters that would otherwise alter the path
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// r.URL.Path is already URL-decoded by net/http; asserting on it confirms
+		// the server received exactly the values we sent (i.e. nothing escaped
+		// past the intended path segment).
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/links/"+linkName, r.URL.Path)
+		assert.Empty(t, r.URL.RawQuery, "query string must not leak from link name")
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"link_name":  linkName,
+			"cluster_id": clusterID,
+			"link_state": "ACTIVE",
+		})
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    clusterID,
+		LinkName:     linkName,
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	_, err := svc.GetClusterLink(context.Background(), cfg)
+	require.NoError(t, err)
+}
+
+func TestGetClusterLink_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error_code":404,"message":"link not found"}`))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    "lkc-missing",
+		LinkName:     "missing-link",
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	link, err := svc.GetClusterLink(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Nil(t, link)
+	assert.Contains(t, err.Error(), "missing-link")
+	assert.Contains(t, err.Error(), "lkc-missing")
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestGetClusterLink_Unauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("unauthorized"))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    "lkc-err",
+		LinkName:     "link-err",
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	link, err := svc.GetClusterLink(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Nil(t, link)
+	assert.Contains(t, err.Error(), "401")
+	assert.Contains(t, err.Error(), "authentication failed")
+	assert.Contains(t, err.Error(), "--cluster-api-key")
+}
+
+func TestGetClusterLink_Forbidden(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    "lkc-err",
+		LinkName:     "link-err",
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	_, err := svc.GetClusterLink(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "403")
+	assert.Contains(t, err.Error(), "authentication failed")
+}
+
+func TestGetClusterLink_UnexpectedStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("oops"))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    "lkc-err",
+		LinkName:     "link-err",
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	link, err := svc.GetClusterLink(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Nil(t, link)
+	assert.Contains(t, err.Error(), "failed to get cluster link")
 	assert.Contains(t, err.Error(), "500")
 }
 
