@@ -1,16 +1,15 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -35,9 +34,11 @@ type UI struct {
 	migrationInfraHCLService   hcl.MigrationInfraGenerator
 	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
-	port        string
-	states      map[string]*types.State // Session-based state storage (key: sessionId)
-	statesMutex sync.RWMutex            // Protects concurrent access to states map
+	port              string
+	states            map[string]*types.State // Session-based state storage (key: sessionId)
+	statesMutex       sync.RWMutex            // Protects concurrent access to states map
+	preloadError      string                  // Set when --state-file preload fails, surfaced via /state
+	preloadErrorType  string                  // Machine-readable error type for /state response
 }
 
 func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
@@ -53,17 +54,18 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 
 	// Pre-load state file if provided
 	if opts.StateFile != "" {
-		data, err := os.ReadFile(opts.StateFile)
+		state, err := types.NewStateFromFile(opts.StateFile)
 		if err != nil {
-			slog.Error("Failed to read state file", "path", opts.StateFile, "error", err)
-		} else {
-			var state types.State
-			if err := json.Unmarshal(data, &state); err != nil {
-				slog.Error("Failed to parse state file", "path", opts.StateFile, "error", err)
+			slog.Error("Failed to load state file", "path", opts.StateFile, "error", err)
+			ui.preloadError = err.Error()
+			if strings.Contains(err.Error(), "state file version mismatch") {
+				ui.preloadErrorType = "version_mismatch"
 			} else {
-				ui.states["default"] = &state
-				slog.Info("Pre-loaded state file", "path", opts.StateFile)
+				ui.preloadErrorType = "load_error"
 			}
+		} else {
+			ui.states["default"] = state
+			slog.Info("Pre-loaded state file", "path", opts.StateFile)
 		}
 	}
 
@@ -105,29 +107,7 @@ func (ui *UI) Run() error {
 	})
 
 	// Get pre-loaded state endpoint
-	e.GET("/state", func(c echo.Context) error {
-		sessionId := c.QueryParam("sessionId")
-		if sessionId == "" {
-			sessionId = "default"
-		}
-		ui.statesMutex.Lock()
-		state, exists := ui.states[sessionId]
-		// Fall back to "default" session if specific session not found
-		if !exists && sessionId != "default" {
-			state, exists = ui.states["default"]
-			if exists {
-				// Copy default state to the requesting session so subsequent
-				// requests (uploads, asset generation) work with this session ID
-				ui.states[sessionId] = state
-			}
-		}
-		ui.statesMutex.Unlock()
-		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
-		}
-		processedState := ui.reportService.ProcessState(*state)
-		return c.JSON(http.StatusOK, processedState)
-	})
+	e.GET("/state", ui.handleGetState)
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
@@ -168,6 +148,40 @@ func parseDateRange(c echo.Context) (*time.Time, *time.Time, error) {
 		endTime = &parsed
 	}
 	return startTime, endTime, nil
+}
+
+func (ui *UI) handleGetState(c echo.Context) error {
+	sessionId := c.QueryParam("sessionId")
+	if sessionId == "" {
+		sessionId = "default"
+	}
+	ui.statesMutex.Lock()
+	state, exists := ui.states[sessionId]
+	// Fall back to "default" session if specific session not found
+	if !exists && sessionId != "default" {
+		state, exists = ui.states["default"]
+		if exists {
+			// Copy default state to the requesting session so subsequent
+			// requests (uploads, asset generation) work with this session ID
+			ui.states[sessionId] = state
+		}
+	}
+	ui.statesMutex.Unlock()
+	if !exists {
+		if ui.preloadError != "" {
+			errorField := "State file could not be loaded"
+			if ui.preloadErrorType == "version_mismatch" {
+				errorField = "State file version mismatch"
+			}
+			return c.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":   errorField,
+				"message": ui.preloadError,
+			})
+		}
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
+	}
+	processedState := ui.reportService.ProcessState(*state)
+	return c.JSON(http.StatusOK, processedState)
 }
 
 func (ui *UI) handleGetMetrics(c echo.Context) error {
@@ -295,6 +309,13 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
 			"message": err.Error(),
+		})
+	}
+
+	if state.KcpBuildInfo.Version != build_info.Version {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "State file version mismatch",
+			"message": fmt.Sprintf("file was created with KCP version %q but you are running version %q — please re-export the state file using the current version of KCP or upgrade/downgrade KCP to match", state.KcpBuildInfo.Version, build_info.Version),
 		})
 	}
 

@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/confluentinc/kcp/internal/build_info"
 )
 
 func TestNewState(t *testing.T) {
@@ -934,5 +936,97 @@ func TestSchemaRegistriesState_UpsertGlueSchemaRegistry(t *testing.T) {
 	}
 	if s.AWSGlue[0].RegistryArn != "arn1-updated" {
 		t.Errorf("expected updated ARN, got %q", s.AWSGlue[0].RegistryArn)
+	}
+}
+
+func TestNewStateFromFile_VersionMatch(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	state := &State{KcpBuildInfo: KcpBuildInfo{Version: build_info.Version}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	loaded, err := NewStateFromFile(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if loaded.KcpBuildInfo.Version != build_info.Version {
+		t.Errorf("expected version %q, got %q", build_info.Version, loaded.KcpBuildInfo.Version)
+	}
+}
+
+func TestNewStateFromFile_VersionMismatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{"older version", "0.5.0"},
+		{"newer version", "2.0.0"},
+		{"empty version", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+			if err != nil {
+				t.Fatalf("failed to create temp file: %v", err)
+			}
+			defer os.Remove(tmpFile.Name())
+
+			state := &State{KcpBuildInfo: KcpBuildInfo{Version: tt.version}}
+			if err := state.WriteToFile(tmpFile.Name()); err != nil {
+				t.Fatalf("failed to write state file: %v", err)
+			}
+
+			_, err = NewStateFromFile(tmpFile.Name())
+			if err == nil {
+				t.Fatal("expected version mismatch error, got nil")
+			}
+			if !strings.Contains(err.Error(), "state file version mismatch") {
+				t.Errorf("expected version mismatch error, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.version) {
+				t.Errorf("expected error to contain file version %q, got: %v", tt.version, err)
+			}
+			if !strings.Contains(err.Error(), build_info.Version) {
+				t.Errorf("expected error to contain running version %q, got: %v", build_info.Version, err)
+			}
+		})
+	}
+}
+
+func TestNewStateFromFile_FileNotFound(t *testing.T) {
+	_, err := NewStateFromFile("/nonexistent/path/state.json")
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read state file") {
+		t.Errorf("expected file read error, got: %v", err)
+	}
+}
+
+func TestNewStateFromFile_InvalidJSON(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString("not valid json {{{"); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	_, err = NewStateFromFile(tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to unmarshal state") {
+		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
