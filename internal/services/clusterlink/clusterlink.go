@@ -12,6 +12,17 @@ import (
 	"slices"
 )
 
+// ClusterLink describes a Confluent Cloud cluster link as returned by
+// GET /kafka/v3/clusters/{cluster_id}/links/{link_name}.
+type ClusterLink struct {
+	LinkName        string `json:"link_name"`
+	LinkID          string `json:"link_id"`
+	ClusterID       string `json:"cluster_id"`
+	SourceClusterID string `json:"source_cluster_id"`
+	LinkState       string `json:"link_state"`
+	LinkError       string `json:"link_error,omitempty"`
+}
+
 type MirrorLag struct {
 	Partition             int `json:"partition"`
 	Lag                   int `json:"lag"`
@@ -50,6 +61,7 @@ type PromoteMirrorTopicsResponse struct {
 
 // Service defines cluster link operations
 type Service interface {
+	GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error)
 	ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error)
 	ListConfigs(ctx context.Context, config Config) (map[string]string, error)
 	ValidateTopics(topics []string, clusterLinkTopics []string) error
@@ -74,6 +86,47 @@ func NewConfluentCloudService(httpClient HTTPClient) *ConfluentCloudService {
 	return &ConfluentCloudService{
 		httpClient: httpClient,
 	}
+}
+
+// GetClusterLink fetches the cluster link resource. Returns a descriptive
+// error when the Confluent Cloud REST API responds with HTTP 404 so callers
+// can surface the missing link to the user.
+func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error) {
+	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s", config.ClusterID, config.LinkName)
+	url := config.RestEndpoint + path
+	auth := base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", config.APIKey, config.APISecret))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Add("Authorization", "Basic "+auth)
+
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("cluster link %q not found on cluster %s", config.LinkName, config.ClusterID)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("unexpected status code %d: %s", res.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var link ClusterLink
+	if err := json.Unmarshal(body, &link); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &link, nil
 }
 
 func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error) {

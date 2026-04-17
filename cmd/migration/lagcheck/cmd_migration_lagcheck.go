@@ -1,7 +1,9 @@
 package lagcheck
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -80,10 +82,16 @@ func runMigrationLagCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	svc := clusterlink.NewConfluentCloudService(nil)
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+	defer cancel()
+	if _, err := svc.GetClusterLink(ctx, config); err != nil {
+		return fmt.Errorf("failed to verify cluster link: %w", err)
+	}
+
 	model := newModel(svc, config, interval)
 	p := newProgram(model)
-	_, err := p.Run()
-	if err != nil {
+	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI: %w", err)
 	}
 	return nil
