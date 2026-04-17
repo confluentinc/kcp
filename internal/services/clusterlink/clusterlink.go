@@ -5,12 +5,39 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 )
+
+// httpStatusError is returned by doRequest/doPostRequest when the server
+// responds with a non-success status code. Callers can use errors.As to
+// branch on StatusCode (e.g. to distinguish 404 from 401).
+type httpStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("unexpected status code %d: %s", e.StatusCode, e.Body)
+}
+
+// basicAuthHeader returns the full "Basic <base64>" header value built from
+// the config's API key and secret.
+func basicAuthHeader(config Config) string {
+	return "Basic " + base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", config.APIKey, config.APISecret))
+}
+
+// linkPath returns the escaped base path for the cluster link resource.
+func linkPath(config Config) string {
+	return fmt.Sprintf("/kafka/v3/clusters/%s/links/%s",
+		url.PathEscape(config.ClusterID),
+		url.PathEscape(config.LinkName))
+}
 
 // ClusterLink describes a Confluent Cloud cluster link as returned by
 // GET /kafka/v3/clusters/{cluster_id}/links/{link_name}.
@@ -88,49 +115,28 @@ func NewConfluentCloudService(httpClient HTTPClient) *ConfluentCloudService {
 	}
 }
 
-// GetClusterLink fetches the cluster link resource. Returns a descriptive
-// error when the Confluent Cloud REST API responds with HTTP 404 so callers
-// can surface the missing link to the user.
+// GetClusterLink fetches the cluster link resource. Translates common
+// failure statuses (404, 401/403) into user-facing messages so callers can
+// surface actionable errors to the CLI.
 func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error) {
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s", config.ClusterID, config.LinkName)
-	url := config.RestEndpoint + path
-	auth := base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", config.APIKey, config.APISecret))
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Add("Authorization", "Basic "+auth)
-
-	res, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-
-	if res.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("cluster link %q not found on cluster %s", config.LinkName, config.ClusterID)
-	}
-
-	if res.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(res.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", res.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
 	var link ClusterLink
-	if err := json.Unmarshal(body, &link); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := s.doRequest(ctx, config, linkPath(config), &link); err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) {
+			switch statusErr.StatusCode {
+			case http.StatusNotFound:
+				return nil, fmt.Errorf("cluster link %q not found on cluster %s", config.LinkName, config.ClusterID)
+			case http.StatusUnauthorized, http.StatusForbidden:
+				return nil, fmt.Errorf("authentication failed (status %d) — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode)
+			}
+		}
+		return nil, fmt.Errorf("failed to get cluster link: %w", err)
 	}
 	return &link, nil
 }
 
 func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error) {
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/mirrors", config.ClusterID, config.LinkName)
+	path := linkPath(config) + "/mirrors"
 
 	var response struct {
 		Data []MirrorTopic `json:"data"`
@@ -158,7 +164,7 @@ func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Con
 
 // ListConfigs retrieves cluster link configurations
 func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (map[string]string, error) {
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/configs", config.ClusterID, config.LinkName)
+	path := linkPath(config) + "/configs"
 
 	var response struct {
 		Data []struct {
@@ -195,7 +201,7 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 		return &PromoteMirrorTopicsResponse{}, nil
 	}
 
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/mirrors:promote", config.ClusterID, config.LinkName)
+	path := linkPath(config) + "/mirrors:promote"
 
 	requestBody := struct {
 		MirrorTopicNames []string `json:"mirror_topic_names"`
@@ -211,17 +217,15 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 	return &response, nil
 }
 
-// doRequest performs an authenticated HTTP GET request to Confluent Cloud API
+// doRequest performs an authenticated HTTP GET request to Confluent Cloud API.
+// Non-2xx responses are returned as *httpStatusError so callers can branch on
+// the status code.
 func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, path string, result interface{}) error {
-	url := config.RestEndpoint + path
-	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", config.APIKey, config.APISecret)))
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
+	req.Header.Set("Authorization", basicAuthHeader(config))
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -231,7 +235,7 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("unexpected status code %d: %s", res.StatusCode, string(body))
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(body)}
 	}
 
 	body, err := io.ReadAll(res.Body)
@@ -248,21 +252,17 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 
 // doPostRequest performs an authenticated HTTP POST request to Confluent Cloud API
 func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config, path string, requestBody interface{}, result interface{}) error {
-	url := config.RestEndpoint + path
-	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", config.APIKey, config.APISecret)))
-
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.RestEndpoint+path, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	req.Header.Add("Content-Type", "application/json")
+	req.Header.Set("Authorization", basicAuthHeader(config))
+	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -272,7 +272,7 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("unexpected status code %d: %s", res.StatusCode, string(body))
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(body)}
 	}
 
 	body, err := io.ReadAll(res.Body)

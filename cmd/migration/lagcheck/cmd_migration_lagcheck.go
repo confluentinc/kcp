@@ -2,6 +2,7 @@ package lagcheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+// clusterLinkVerifyTimeout bounds the pre-TUI GetClusterLink probe so the
+// command fails fast with a clear error instead of hanging on a bad endpoint.
+const clusterLinkVerifyTimeout = 15 * time.Second
 
 var (
 	restEndpoint string
@@ -83,9 +88,12 @@ func runMigrationLagCheck(cmd *cobra.Command, args []string) error {
 
 	svc := clusterlink.NewConfluentCloudService(nil)
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), clusterLinkVerifyTimeout)
 	defer cancel()
 	if _, err := svc.GetClusterLink(ctx, config); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out verifying cluster link after %s — check network connectivity to %s", clusterLinkVerifyTimeout, restEndpoint)
+		}
 		return fmt.Errorf("failed to verify cluster link: %w", err)
 	}
 
