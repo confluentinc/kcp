@@ -13,6 +13,10 @@
         <link rel="canonical" href="https://confluentinc.github.io/kcp/0.7.1/getting-started-with-zero-cut-migrations/">
       
       
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../gateway-switchover-examples/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -20,7 +24,7 @@
     
     
       
-        <title>Confluent Cloud Migration: KCP + Gateway Reference Guide - KCP — Kafka Copy</title>
+        <title>Getting Started (Zero-Cut) - KCP — Kafka Copy</title>
       
     
     
@@ -110,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Confluent Cloud Migration: KCP + Gateway Reference Guide
+              Getting Started (Zero-Cut)
             
           </span>
         </div>
@@ -234,6 +238,25 @@
         
   
   
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+    
+  
+  Getting Started (Zero-Cut)
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
   
     
     
@@ -318,6 +341,282 @@
       
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Getting Started (Zero-Cut)
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Getting Started (Zero-Cut)
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-how-this-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. How This Works
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Components
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-licensing" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Licensing
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-infrastructure-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Infrastructure Requirements
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Infrastructure Requirements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-what-needs-to-be-in-place-before-running-kcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 What Needs to Be in Place Before Running KCP
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-migration-infrastructure-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Migration Infrastructure Types
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-authentication-support-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Authentication Support Matrix
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Authentication Support Matrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-auth-combination-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.1 Auth Combination Matrix
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-iam-pre-migration-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.2 IAM Pre-Migration Path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-saslscram-how-the-gateway-handles-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.3 SASL/SCRAM: How the Gateway Handles It
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-mtls-how-the-gateway-handles-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.4 mTLS: How the Gateway Handles It
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#55-credential-rotation-and-secret-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.5 Credential Rotation and Secret Stores
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-cluster-linking" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Cluster Linking
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-kcp-permissions-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. KCP Permissions Required
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-client-experience-during-cutover" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Client Experience During Cutover
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-known-constraints-and-operational-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Known Constraints and Operational Guidance
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-client-migration-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Client Migration Walkthrough
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Client Migration Walkthrough">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prerequisites
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-1-prepare-gateway-crs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 1: Prepare Gateway CRs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-kcp-migration-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 2: kcp migration init
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-kcp-migration-lag-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 3: kcp migration lag-check
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-kcp-migration-execute" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 4: kcp migration execute
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
   
   
     
@@ -333,10 +632,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -347,8 +646,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Gateway Switchover
           </label>
