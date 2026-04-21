@@ -1,0 +1,1084 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CLI tool for planning and executing Kafka migrations from AWS MSK and Open Source Kafka to Confluent Cloud.">
+      
+      
+      
+        <link rel="canonical" href="https://confluentinc.github.io/kcp/0.7.2/getting-started-with-zero-cut-migrations/">
+      
+      
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.44">
+    
+    
+      
+        <title>Confluent Cloud Migration: KCP + Gateway Reference Guide - KCP — Kafka Copy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.0253249f.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#confluent-cloud-migration-kcp-gateway-reference-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="KCP — Kafka Copy" class="md-header__button md-logo" aria-label="KCP — Kafka Copy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            KCP — Kafka Copy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Confluent Cloud Migration: KCP + Gateway Reference Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/confluentinc/kcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    confluentinc/kcp
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../gateway-switchover-examples/" class="md-tabs__link">
+          
+  
+  Gateway Switchover
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="KCP — Kafka Copy" class="md-nav__button md-logo" aria-label="KCP — Kafka Copy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    KCP — Kafka Copy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/confluentinc/kcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    confluentinc/kcp
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Gateway Switchover
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Gateway Switchover
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway-switchover-examples/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Examples
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-none-to-mtls/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    none → mTLS
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-none-to-oauth/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    none → OAuth
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-none-to-saslplain/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    none → SASL/PLAIN
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-mtls-to-mtls/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mTLS → mTLS
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-mtls-to-oauth/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mTLS → OAuth
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-mtls-to-sasl-plain/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mTLS → SASL/PLAIN
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-sasl-scram-to-oauth/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SASL/SCRAM → OAuth
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../switchover-sasl-scram-to-sasl-plain/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SASL/SCRAM → SASL/PLAIN
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-how-this-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. How This Works
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Components
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-licensing" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Licensing
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-infrastructure-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Infrastructure Requirements
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Infrastructure Requirements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-what-needs-to-be-in-place-before-running-kcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 What Needs to Be in Place Before Running KCP
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-migration-infrastructure-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Migration Infrastructure Types
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-authentication-support-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Authentication Support Matrix
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Authentication Support Matrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-auth-combination-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.1 Auth Combination Matrix
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-iam-pre-migration-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.2 IAM Pre-Migration Path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-saslscram-how-the-gateway-handles-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.3 SASL/SCRAM: How the Gateway Handles It
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-mtls-how-the-gateway-handles-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.4 mTLS: How the Gateway Handles It
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#55-credential-rotation-and-secret-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.5 Credential Rotation and Secret Stores
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-cluster-linking" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Cluster Linking
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-kcp-permissions-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. KCP Permissions Required
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-client-experience-during-cutover" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Client Experience During Cutover
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-known-constraints-and-operational-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Known Constraints and Operational Guidance
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-client-migration-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Client Migration Walkthrough
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Client Migration Walkthrough">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prerequisites
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-1-prepare-gateway-crs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 1: Prepare Gateway CRs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-kcp-migration-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 2: kcp migration init
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-kcp-migration-lag-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 3: kcp migration lag-check
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-kcp-migration-execute" class="md-nav__link">
+    <span class="md-ellipsis">
+      Step 4: kcp migration execute
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="confluent-cloud-migration-kcp-gateway-reference-guide">Confluent Cloud Migration: KCP + Gateway Reference Guide<a class="headerlink" href="#confluent-cloud-migration-kcp-gateway-reference-guide" title="Permanent link">&para;</a></h1>
+<p><strong>Scope</strong>: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (<code>kcp migration init</code>, <code>kcp migration lag-check</code>, <code>kcp migration execute</code>) that orchestrate the client cutover. KCP's discovery and provisioning commands (<code>kcp scan</code>, <code>kcp create-asset</code>, etc.) are covered in the <a href="https://github.com/confluentinc/kcp/tree/main/docs">KCP repository documentation</a> and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.</p>
+<hr />
+<h2 id="1-how-this-works">1. How This Works<a class="headerlink" href="#1-how-this-works" title="Permanent link">&para;</a></h2>
+<p>The central idea: route all Kafka client traffic through a Kafka-aware proxy gateway deployed in (or adjacent to) the source cluster's network. The gateway forwards traffic to the source cluster while Cluster Linking replicates data to Confluent Cloud, then atomically flips to Confluent Cloud once replication lag is zero. Clients reconnect transparently with no code changes required.</p>
+<p>Clients point at a stable gateway bootstrap URL for the entire migration. They don't know when the cutover happens. The gateway handles auth translation so clients can keep their existing source credentials until they're ready to update them. KCP orchestrates the full cutover sequence: pre-flight lag check, traffic block, topic promotion, route switch, unblock. It can resume from the last completed step if interrupted.</p>
+<p>Migration scope is organized into groups. A group is any set of topics you define: one topic, a service boundary, an entire cluster. All topics in a group flip together in a single cutover. You control the scope of each cutover by how you define your groups. Two constraints to be aware of: clients using AWS IAM for MSK auth must pre-migrate to SASL/SCRAM or mTLS before onboarding to the gateway (see §5.2), and topic promotion via Cluster Linking is one-way. Rollback before promotion is fully supported; rollback after requires recreating the cluster link.</p>
+<hr />
+<h2 id="2-components">2. Components<a class="headerlink" href="#2-components" title="Permanent link">&para;</a></h2>
+<p>There are three active components in the migration:</p>
+<p><strong>KCP CLI</strong> orchestrates the cutover through three commands: <code>kcp migration init</code> (validates setup and creates the migration plan), <code>kcp migration lag-check</code> (monitors replication lag), and <code>kcp migration execute</code> (runs the cutover). It runs from a local machine or bastion host and can be installed as a Confluent CLI plugin.</p>
+<p><strong>CC Gateway</strong> is a Kafka protocol proxy deployed in (or adjacent to) the source cluster's network. Clients connect to the gateway instead of the source cluster directly. The gateway forwards traffic to the source cluster during the migration window, handles auth translation between source credentials and Confluent Cloud credentials, and switches routing to Confluent Cloud at cutover, all without a restart. It is deployed on Kubernetes via Confluent for Kubernetes and requires a Confluent Platform license.</p>
+<p><strong>Cluster Linking</strong> runs in Confluent Cloud and replicates topics from the source cluster to the destination in real time, including consumer offset synchronization. At cutover, KCP triggers topic promotion once replication lag reaches zero. Cluster Linking is available on Dedicated and Enterprise cluster types.</p>
+<p><img alt="Description" src="../assets/image-20260112-172320.png" /></p>
+<p><strong>Prerequisites already in place:</strong> Kubernetes (to host the gateway), a secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) to hold gateway backend credentials, and network connectivity between the gateway and both the source cluster and Confluent Cloud. KCP generates Terraform for any of these that need to be provisioned as part of the migration.</p>
+<hr />
+<h2 id="3-licensing">3. Licensing<a class="headerlink" href="#3-licensing" title="Permanent link">&para;</a></h2>
+<p><strong>KCP CLI</strong> is Apache 2.0 and free to use. Binaries are available for Linux, macOS (amd64/arm64), and Windows via GitHub Releases at <a href="https://github.com/confluentinc/kcp">github.com/confluentinc/kcp</a>. It can also be installed as a Confluent CLI plugin (<code>confluent plugin install kcp</code>), which lets it inherit existing Confluent CLI authentication and eliminates the need for separate API key flags.</p>
+<p><strong>CC Gateway</strong> requires a Confluent Cloud Gateway Add-On license. This is delivered as a Confluent license key (JWT) configured on the Gateway container via <code>GATEWAY_LICENSES</code>. The license is org-scoped: one license covers all Confluent Cloud clusters in a customer's org, with no per-node or per-cluster fees.</p>
+<p>Without a license, the Gateway starts in trial mode, which supports up to 4 routes and is suitable for evaluation and testing. Production and at-scale deployments require the Add-On license to remove that limit.</p>
+<p>For public product documentation, see the <a href="https://docs.confluent.io/cloud/current/clusters/connect-self-managed-gateway/overview.html">Confluent Cloud Gateway Overview</a> in Confluent Docs.</p>
+<hr />
+<h2 id="4-infrastructure-requirements">4. Infrastructure Requirements<a class="headerlink" href="#4-infrastructure-requirements" title="Permanent link">&para;</a></h2>
+<h3 id="41-what-needs-to-be-in-place-before-running-kcp">4.1 What Needs to Be in Place Before Running KCP<a class="headerlink" href="#41-what-needs-to-be-in-place-before-running-kcp" title="Permanent link">&para;</a></h3>
+<p>KCP expects three things to already exist and be reachable: the CC Gateway deployed in Kubernetes with Confluent for Kubernetes, a Confluent Cloud destination cluster (Dedicated or Enterprise) with Cluster Linking enabled, and a network path from wherever KCP runs to both the source cluster brokers and the CC REST API.</p>
+<p>The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before migration init.</p>
+<p>KCP itself needs credentials to the source cluster's cloud provider in the standard credential chain and a kubeconfig pointing at the Kubernetes cluster hosting the gateway. Full permissions required are in §7.</p>
+<h3 id="42-migration-infrastructure-types">4.2 Migration Infrastructure Types<a class="headerlink" href="#42-migration-infrastructure-types" title="Permanent link">&para;</a></h3>
+<p>For MSK clusters, when the source is not publicly accessible, KCP can provision the required migration infrastructure via <code>kcp create-asset migration-infra</code>. This covers four connectivity patterns:</p>
+<p>For non-MSK clusters and full Cluster Linking configuration guidance, see the <a href="https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html">Cluster Linking documentation</a>. For AWS MSK over private networking specifically, see <a href="https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html">Cluster Linking with Private Networking</a>.</p>
+<hr />
+<h2 id="5-authentication-support-matrix">5. Authentication Support Matrix<a class="headerlink" href="#5-authentication-support-matrix" title="Permanent link">&para;</a></h2>
+<p>This is the most operationally complex part of the migration. There are three distinct auth boundaries, each configured independently:</p>
+<ol>
+<li><strong>Client → Gateway</strong>: how client applications authenticate to the gateway proxy.</li>
+<li><strong>Gateway → Source</strong>: how the gateway authenticates to the source cluster on the client's behalf.</li>
+<li><strong>Gateway → CC</strong>: how the gateway authenticates to Confluent Cloud after cutover.</li>
+</ol>
+<p>The <code>--auth-mode</code> parameter in <code>kcp migration init</code> determines which direction uses passthrough vs. swap:
+- <code>dest_swap</code> (default): clients present their <strong>source credentials</strong> to the gateway. Gateway passes these through to the source; gateway swaps them for CC credentials when routing to CC.
+- <code>source_swap</code>: clients present their <strong>CC credentials</strong> to the gateway. Gateway passes these through to CC; gateway swaps them for source credentials when routing to the source.</p>
+<h3 id="51-auth-combination-matrix">5.1 Auth Combination Matrix<a class="headerlink" href="#51-auth-combination-matrix" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Source auth</th>
+<th>CC SASL/PLAIN</th>
+<th>CC mTLS</th>
+<th>CC OAuth</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>IAM</strong></td>
+<td>🔴 Not supported</td>
+<td>🔴 Not supported</td>
+<td>🔴 Not supported</td>
+</tr>
+<tr>
+<td><strong>mTLS</strong></td>
+<td>🟢 Supported, see §5.4</td>
+<td>🟢 Supported, see §5.4</td>
+<td>🟢 Supported, see §5.4</td>
+</tr>
+<tr>
+<td><strong>SASL/SCRAM</strong></td>
+<td>🟢 Supported, see §5.3</td>
+<td>🔴 Not supported</td>
+<td>🟢 Supported, see §5.3</td>
+</tr>
+<tr>
+<td><strong>Unauthenticated</strong></td>
+<td>🟢 Supported</td>
+<td>🟢 Supported</td>
+<td>🟢 Supported</td>
+</tr>
+</tbody>
+</table>
+<p>Note: Confluent Cloud does not support SASL/SCRAM as a target protocol. When the source uses SCRAM, the gateway's auth swap translates client credentials to CC SASL/PLAIN (API key) or OAuth. This is handled transparently and requires no client changes.</p>
+<p>Clients using AWS IAM must complete a pre-migration step to SASL/SCRAM or mTLS before onboarding to the gateway, see §5.2. All other auth types can onboard directly.</p>
+<h3 id="52-iam-pre-migration-path">5.2 IAM Pre-Migration Path<a class="headerlink" href="#52-iam-pre-migration-path" title="Permanent link">&para;</a></h3>
+<p>IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP migration commands are run. The broad steps are:</p>
+<ol>
+<li>Provision a corresponding SCRAM user in the source cluster for each IAM principal.</li>
+<li>Update each client's auth config from <code>sasl.mechanism=AWS_MSK_IAM</code> to <code>sasl.mechanism=SCRAM-SHA-512</code> with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).</li>
+<li>Once all clients are confirmed on SCRAM, they can onboard to the gateway.</li>
+</ol>
+<p>For MSK clusters, KCP provides tooling to accelerate this: <code>kcp scan clusters</code> discovers IAM principals from Kafka ACLs, and <code>kcp create-asset migrate-acls iam</code> generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the <a href="https://github.com/confluentinc/kcp/tree/main/docs">KCP repository</a>.</p>
+<h3 id="53-saslscram-how-the-gateway-handles-it">5.3 SASL/SCRAM: How the Gateway Handles It<a class="headerlink" href="#53-saslscram-how-the-gateway-handles-it" title="Permanent link">&para;</a></h3>
+<p>SASL/SCRAM is not natively supported in Confluent Cloud. The gateway's auth swap makes this transparent: clients keep their existing SCRAM credentials throughout the migration, while the gateway maps them to CC credentials (SASL/PLAIN API key or OAuth token) stored in a secret store. No client configuration changes are required during the migration.</p>
+<p>There are three ways to manage SCRAM credentials in the gateway:</p>
+<ul>
+<li><strong>Automatic management via Kafka admin API</strong> (<code>alterScramCredentials: true</code>): The gateway creates and updates SCRAM user credentials directly through the Kafka admin API. No manual pre-population of the secret store is required. The gateway needs admin credentials with <code>AlterUserScramCredentials</code> and <code>DescribeUserScramCredentials</code> permissions on the source cluster.</li>
+<li><strong>SCRAM credentials in the auth swap secret store</strong>: SCRAM verifiers are stored alongside the gateway-to-CC credential mappings in the same secret store (Vault, AWS Secrets Manager, etc.).</li>
+<li><strong>SCRAM credentials in a dedicated secret store</strong>: SCRAM verifiers are stored in a separate secret store from other auth swap credentials, useful when your SCRAM store and your CC credential store are managed separately.</li>
+</ul>
+<h3 id="54-mtls-how-the-gateway-handles-it">5.4 mTLS: How the Gateway Handles It<a class="headerlink" href="#54-mtls-how-the-gateway-handles-it" title="Permanent link">&para;</a></h3>
+<p>Identity passthrough cannot be used for mTLS because TLS terminates at the gateway. Auth swap is the only supported mode for mTLS clients. The gateway extracts the client's principal from the certificate CN/SAN using configured <code>principalMappingRules</code>, then opens a new connection to the source cluster using an ACM PCA-issued certificate with the same CN. The source cluster sees the same principal on both hops, so the gateway is transparent to the source cluster's ACL system and client ACLs continue to be enforced normally.</p>
+<p>At cutover, the principal extracted from the cert is used to look up the corresponding CC credential in the secret store, and the gateway authenticates to CC on the client's behalf. If the CC target is mTLS, the gateway presents a certificate from its secret store; if SASL/PLAIN or OAuth, it swaps to the mapped credential.</p>
+<p>Clients require no certificate changes or reconfiguration for any of these paths.</p>
+<h3 id="55-credential-rotation-and-secret-stores">5.5 Credential Rotation and Secret Stores<a class="headerlink" href="#55-credential-rotation-and-secret-stores" title="Permanent link">&para;</a></h3>
+<p>The gateway supports HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, and file-based secret stores for credential mappings. Because the gateway CR references credentials by secret name rather than by embedded value, rotation does not require a gateway restart or CR change. Update the secret in the store and the gateway picks it up on the next connection establishment.</p>
+<p>One important configuration best practice from the official docs: each client should have its own gateway-to-broker credential. Mapping multiple clients to a single shared credential undermines the per-principal isolation the auth swap provides.</p>
+<hr />
+<h2 id="6-cluster-linking">6. Cluster Linking<a class="headerlink" href="#6-cluster-linking" title="Permanent link">&para;</a></h2>
+<p>Cluster Linking must be configured before running any KCP migration commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the <a href="https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html">Cluster Linking documentation</a> and is out of scope here.</p>
+<p>KCP's <code>kcp migration init</code> validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.</p>
+<hr />
+<h2 id="7-kcp-permissions-required">7. KCP Permissions Required<a class="headerlink" href="#7-kcp-permissions-required" title="Permanent link">&para;</a></h2>
+<p>The following permissions are required specifically for the three migration commands (<code>kcp migration init</code>, <code>kcp migration lag-check</code>, <code>kcp migration execute</code>). Permissions for discovery and provisioning commands are documented in the <a href="https://github.com/confluentinc/kcp/tree/main/docs">KCP repository</a>.</p>
+<p><strong>Confluent Cloud:</strong>
+- <code>CloudClusterAdmin</code> on the destination cluster: for cluster link operations (describe, list mirror topics, promote)
+- <code>MetricsViewer</code>: for lag monitoring via the Confluent metrics API</p>
+<p><strong>Kubernetes (for gateway CRD patching during cutover):</strong>
+- <code>get</code>, <code>patch</code>, <code>update</code> on <code>Gateway</code> resources in the gateway namespace
+- Validate with: <code>kubectl auth can-i patch gateways -n confluent</code></p>
+<hr />
+<h2 id="8-client-experience-during-cutover">8. Client Experience During Cutover<a class="headerlink" href="#8-client-experience-during-cutover" title="Permanent link">&para;</a></h2>
+<p>When KCP blocks traffic on the gateway route (Step 2 of <code>kcp migration execute</code>), clients see:</p>
+<ul>
+<li><strong>Error code</strong>: <code>BROKER_NOT_AVAILABLE</code> (standard Kafka error code 8)</li>
+<li><strong>Error message</strong>: <code>"Migration to Confluent Cloud in progress. Your client will automatically retry. Expected completion: 60 seconds."</code></li>
+</ul>
+<p>This error code triggers <strong>automatic retries in all standard Kafka clients</strong> (Java, Python, Go, librdkafka). Producers buffer locally and retry. Consumers pause and retry fetch requests. No application code changes or client restarts are required.</p>
+<p>Once KCP unblocks traffic (after all topics are promoted), the next retry from each client succeeds immediately, now writing to or reading from Confluent Cloud. From the application's perspective, this is indistinguishable from a temporary broker restart.</p>
+<p>Clients should expect a brief partial downtime window of approximately 60 seconds. This covers two components: the gateway rolling restart that applies the routing change (typically a few seconds per pod), and any remaining replication lag that must drain before promotion completes. If Cluster Linking is fully caught up when the cutover starts, the lag drain time is negligible and the window is dominated by the gateway restart.</p>
+<hr />
+<h2 id="9-known-constraints-and-operational-guidance">9. Known Constraints and Operational Guidance<a class="headerlink" href="#9-known-constraints-and-operational-guidance" title="Permanent link">&para;</a></h2>
+<p><strong>Cutover scope is per group, route, and topic set</strong>: Each migration group corresponds to a gateway route and a set of topics that flip together. This means you control the scope of each cutover precisely by how you define your groups. A group scoped to a single service boundary affects only the topics in that service. Defining smaller, more carefully scoped groups reduces the impact of any single cutover.</p>
+<p><strong>IAM clients require advance prep</strong>: IAM clients must migrate to SCRAM or mTLS before gateway onboarding. Build this pre-migration step into the project timeline as it requires client-team coordination and application restarts.</p>
+<p><strong>Consumer group offsets</strong>: Consumer offset sync (<code>consumer.offset.sync.enable=true</code>) must be enabled on the cluster link before migration. Without it, consumers reconnecting after cutover may restart from an incorrect position. KCP validates this during <code>kcp migration init</code>. Post-cutover, consider stopping consumer offset sync for fully migrated consumer groups, as syncing stale offsets back from the source cluster after promotion serves no purpose.</p>
+<p><strong>Gateway HA</strong>: KCP patches gateway Kubernetes CRDs atomically across all gateway nodes. A gateway pod restart mid-cutover causes a brief client reconnection but does not lose data. A minimum of 2 gateway replicas (3 recommended) is the standard for production migrations.</p>
+<p><strong>Cost during migration window</strong>: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. <code>kcp report costs</code> gives you the source cluster baseline; <code>kcp create-asset target-infra</code> with appropriate sizing gives you the CC estimate.</p>
+<p><strong>Rollback states</strong>:
+- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD.
+- Rollback after promotion: possible (no data loss) but the cluster link is broken. Requires recreating the cluster link and mirror topics from scratch. This is not automated.
+- Rollback after unblock (traffic flowing to CC): not supported. Manual intervention required.</p>
+<hr />
+<h2 id="10-client-migration-walkthrough">10. Client Migration Walkthrough<a class="headerlink" href="#10-client-migration-walkthrough" title="Permanent link">&para;</a></h2>
+<p>The cutover is three commands run in sequence. Everything else — gateway deployment, Cluster Linking setup, client onboarding to the gateway — must be in place beforehand.</p>
+<p>KCP sits outside the data path. It configures and orchestrates the gateway (patching Kubernetes CRs to block, reroute, and unblock traffic) and monitors and promotes topics on the Cluster Link. Clients only ever talk to the gateway; they are unaware of KCP or the cutover happening underneath them.</p>
+<h3 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h3>
+<p>Before running any <code>kcp migration</code> command, confirm the following are in place:</p>
+<ul>
+<li><strong>CC Gateway</strong> deployed in Kubernetes, configured with two streaming domains (source cluster and CC), auth configured per §5, and clients already pointing at the gateway bootstrap URL</li>
+<li><strong>Cluster Linking</strong> active: cluster link in CC, mirror topics replicating for all topics in the group, consumer offset sync enabled</li>
+<li><strong>KCP</strong> has <code>CloudClusterAdmin</code> + <code>MetricsViewer</code> on the CC cluster and <code>get</code>/<code>patch</code>/<code>update</code> on the Gateway CR in Kubernetes</li>
+</ul>
+<p><img alt="Description" src="../assets/image-20260112-174645.png" /></p>
+<hr />
+<h3 id="step-1-prepare-gateway-crs">Step 1: Prepare Gateway CRs<a class="headerlink" href="#step-1-prepare-gateway-crs" title="Permanent link">&para;</a></h3>
+<p>Before init, you need three gateway CR files ready on disk. The <strong>initial CR</strong> is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The <strong>fenced CR</strong> is a modified version that blocks all traffic on the route and returns <code>BROKER_NOT_AVAILABLE</code> to clients. The <strong>switchover CR</strong> is another version that points the route at Confluent Cloud instead of the source cluster.</p>
+<p>KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to <code>kcp migration init</code>. Working examples for every supported auth combination are in the KCP repo at <a href="https://github.com/confluentinc/kcp/tree/main/docs"><code>docs/switchover-*</code></a>.</p>
+<p><img alt="Description" src="../assets/image-20260112-174757.png" /></p>
+<hr />
+<h3 id="step-2-kcp-migration-init">Step 2: <code>kcp migration init</code><a class="headerlink" href="#step-2-kcp-migration-init" title="Permanent link">&para;</a></h3>
+<p>Run once per migration group. Init validates the entire setup before anything is changed: it confirms the cluster link is active, all topics in the group are replicating, the gateway CR exists and matches expectations, the fenced and switchover files parse correctly, and consumer offset sync is enabled. No traffic is affected at this step.</p>
+<p>On success, KCP writes a <code>migration-state.json</code> file and prints a <code>migration-id</code>. That ID ties together all state for this group — you pass it to <code>lag-check</code> and <code>execute</code>. If KCP is installed as a Confluent CLI plugin, it inherits authentication from <code>confluent login</code> and the CC credential flags are not required.</p>
+<p>Full flag reference: <a href="https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration"><code>kcp migration init --help</code></a></p>
+<hr />
+<h3 id="step-3-kcp-migration-lag-check">Step 3: <code>kcp migration lag-check</code><a class="headerlink" href="#step-3-kcp-migration-lag-check" title="Permanent link">&para;</a></h3>
+<p>A live terminal UI that polls the Cluster Link REST API and shows per-topic replication lag in real time. Use it to judge when the group is ready to cut over. There is no rule for what "ready" means — it depends on your tolerance for the block window. Topics with large lag take longer to promote, so a group with one very high-lag topic extends the downtime window for all clients in that group.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>TOPIC NAME    STATUS   TOTAL LAG   LAG TREND
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>demo-topic1   ACTIVE   115,779     ████████████████
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>demo-topic2   ACTIVE     9,718     ████████
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>demo-topic3   ACTIVE     9,503     ███████
+</span></code></pre></div>
+<p>Run it until lag is consistently near zero across all topics, then Ctrl+C and proceed.</p>
+<p>Full flag reference: <a href="https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration"><code>kcp migration lag-check --help</code></a></p>
+<hr />
+<h3 id="step-4-kcp-migration-execute">Step 4: <code>kcp migration execute</code><a class="headerlink" href="#step-4-kcp-migration-execute" title="Permanent link">&para;</a></h3>
+<p>Performs the cutover in four automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>What KCP does</th>
+<th>What clients see</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pre-flight</strong></td>
+<td>Re-checks lag against <code>--lag-threshold</code>; aborts if any topic exceeds it</td>
+<td>Normal traffic</td>
+</tr>
+<tr>
+<td><strong>Block</strong></td>
+<td>Applies the fenced CR to the gateway; the route stops accepting produce/consume requests</td>
+<td><code>BROKER_NOT_AVAILABLE</code>; standard clients buffer and retry automatically</td>
+</tr>
+<tr>
+<td><strong>Promote</strong></td>
+<td>Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion</td>
+<td>Still retrying; records buffered locally</td>
+</tr>
+<tr>
+<td><strong>Switch + unblock</strong></td>
+<td>Applies the switchover CR; gateway route now targets CC, traffic is unblocked</td>
+<td>First retry succeeds; clients now on CC</td>
+</tr>
+</tbody>
+</table>
+<p>The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).</p>
+<p>Steps:
+<img alt="Description" src="../assets/image-20260112-175128.png" />
+<img alt="Description" src="../assets/image-20260112-175142.png" />
+<img alt="Description" src="../assets/image-20260112-175201.png" />
+<img alt="Description" src="../assets/image-20260112-175219.png" />
+<img alt="Description" src="../assets/image-20260112-175233.png" />
+<img alt="Description" src="../assets/image-20260112-175246.png" /></p>
+<p>Full flag reference: <a href="https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration"><code>kcp migration execute --help</code></a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "content.code.copy", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.83f73b43.min.js"></script>
+      
+    
+  </body>
+</html>
