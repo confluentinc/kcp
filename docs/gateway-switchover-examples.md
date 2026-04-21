@@ -16,7 +16,7 @@ KCP uses a three-state switchover pattern to migrate clients without reconfigura
 | mTLS | mTLS | [switchover-mtls-to-mtls](switchover-mtls-to-mtls/README.md) |
 | mTLS | OAuth | [switchover-mtls-to-oauth](switchover-mtls-to-oauth/README.md) |
 | mTLS | SASL/PLAIN | [switchover-mtls-to-sasl-plain](switchover-mtls-to-sasl-plain/README.md) |
-| SASL/SCRAM | SASL/PLAIN | [switchover-sasl-scram-to-saslplain](switchover-sasl-scram-to-saslplain/README.md) |
+| SASL/SCRAM | SASL/PLAIN | [switchover-sasl-scram-to-sasl-plain](switchover-sasl-scram-to-sasl-plain/README.md) |
 | SASL/SCRAM | OAuth | [switchover-sasl-scram-to-oauth](switchover-sasl-scram-to-oauth/README.md) |
 
 ## Auth Class Considerations
