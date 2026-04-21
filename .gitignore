@@ -78,3 +78,6 @@ scratch/
 docs/plans/
 docs/brainstorms/
 docs/ideation/
+
+# MkDocs build output
+site/

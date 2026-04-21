@@ -11,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/create_asset"
 	"github.com/confluentinc/kcp/cmd/discover"
+	"github.com/confluentinc/kcp/cmd/docs"
 	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
@@ -28,7 +29,7 @@ var verbose bool
 var RootCmd = &cobra.Command{
 	Use:   "kcp",
 	Short: "A CLI tool for kafka cluster planning and migration",
-	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + getDocURL(),
+	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + build_info.DocsURL(),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// --- Logging setup (must be here so --verbose flag is parsed) ---
 		lumberjackLogger := &lumberjack.Logger{
@@ -96,6 +97,7 @@ func init() {
 		migration.NewMigrationCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
+		docs.NewDocsCmd(),
 	)
 }
 
@@ -106,14 +108,6 @@ type PrettyHandlerOptions struct {
 type PrettyHandler struct {
 	slog.Handler
 	l *log.Logger
-}
-
-func getDocURL() string {
-	if build_info.Version == "dev" {
-		return "https://github.com/confluentinc/kcp/tree/latest/docs"
-	}
-	return "https://github.com/confluentinc/kcp/tree/v" + build_info.Version + "/docs"
-
 }
 
 func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
