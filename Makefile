@@ -119,13 +119,28 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 	@bash integration-tests/schema-registry/teardown.sh
 
 # ==============================================================================
+# Documentation (MkDocs Material + mike)
+# ==============================================================================
+
+.PHONY: docs-install docs-serve docs-build
+
+docs-install: ## Install MkDocs and plugins (pip)
+	pip install -r requirements-docs.txt
+
+docs-serve: ## Serve docs locally with live reload on http://localhost:8000
+	mkdocs serve
+
+docs-build: ## Build the docs site into ./site
+	mkdocs build --strict
+
+# ==============================================================================
 # Utilities
 # ==============================================================================
 
 .PHONY: clean help
 
 clean: ## Clean build artifacts
-	rm -f $(BINARY_NAME) coverage.out
+	rm -rf $(BINARY_NAME) coverage.out site/
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \

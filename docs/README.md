@@ -37,6 +37,7 @@
 
 > [!NOTE]
 > KCP supports migrations from two source types:
+>
 > - **AWS MSK (Managed Streaming for Kafka)** - Full discovery via AWS APIs + Kafka Admin API
 > - **Open Source Kafka (OSK)** - Direct scanning via Kafka Admin API
 >
@@ -56,7 +57,7 @@ LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/late
 
 Set a variable for your platform (comment and uncomment as appropriate):
 
-```
+```shell
 PLATFORM=darwin_amd64
 # PLATFORM=darwin_arm64
 # PLATFORM=linux_amd64
@@ -465,15 +466,15 @@ A 30-minute scan with a 10-second interval produces 180 data points per metric â
 
 **Metrics Collected**
 
-| Metric | Description | Type |
-|--------|-------------|------|
-| `BytesInPerSec` | Bytes received by brokers per second | Rate (from counter) |
-| `BytesOutPerSec` | Bytes sent to consumers per second | Rate (from counter) |
-| `MessagesInPerSec` | Messages received per second | Rate (from counter) |
-| `PartitionCount` | Total partitions across queried brokers | Gauge |
-| `GlobalPartitionCount` | Same as PartitionCount (summed across brokers) | Gauge |
-| `ClientConnectionCount` | Active client connections across all listeners | Gauge (aggregated) |
-| `TotalLocalStorageUsage` | Total log storage in GB | Gauge (aggregated, bytes to GB) |
+| Metric                   | Description                                    | Type                            |
+| ------------------------ | ---------------------------------------------- | ------------------------------- |
+| `BytesInPerSec`          | Bytes received by brokers per second           | Rate (from counter)             |
+| `BytesOutPerSec`         | Bytes sent to consumers per second             | Rate (from counter)             |
+| `MessagesInPerSec`       | Messages received per second                   | Rate (from counter)             |
+| `PartitionCount`         | Total partitions across queried brokers        | Gauge                           |
+| `GlobalPartitionCount`   | Same as PartitionCount (summed across brokers) | Gauge                           |
+| `ClientConnectionCount`  | Active client connections across all listeners | Gauge (aggregated)              |
+| `TotalLocalStorageUsage` | Total log storage in GB                        | Gauge (aggregated, bytes to GB) |
 
 **Jolokia Authentication**
 

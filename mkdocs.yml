@@ -1,0 +1,77 @@
+site_name: KCP — Kafka Copy
+site_description: CLI tool for planning and executing Kafka migrations from AWS MSK and Open Source Kafka to Confluent Cloud.
+site_url: https://confluentinc.github.io/kcp/
+repo_url: https://github.com/confluentinc/kcp
+repo_name: confluentinc/kcp
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+exclude_docs: |
+  brainstorms/
+  ideation/
+  plans/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - callouts
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  version:
+    provider: mike
+    default: latest
+
+nav:
+  - Home: README.md
+  - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
+  - Gateway Switchover:
+      - Examples: gateway-switchover-examples.md
+      - none → mTLS: switchover-none-to-mtls/README.md
+      - none → OAuth: switchover-none-to-oauth/README.md
+      - none → SASL/PLAIN: switchover-none-to-saslplain/README.md
+      - mTLS → mTLS: switchover-mtls-to-mtls/README.md
+      - mTLS → OAuth: switchover-mtls-to-oauth/README.md
+      - mTLS → SASL/PLAIN: switchover-mtls-to-sasl-plain/README.md
+      - SASL/SCRAM → OAuth: switchover-sasl-scram-to-oauth/README.md
+      - SASL/SCRAM → SASL/PLAIN: switchover-sasl-scram-to-sasl-plain/README.md
