@@ -62,7 +62,7 @@ var RootCmd = &cobra.Command{
 
 		// --- End logging setup ---
 
-		if build_info.Version == "dev" {
+		if build_info.IsDev() {
 			fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
 				color.RedString("┌─────────────────────────────────────────────────────────────────────────┐"),
 				color.RedString("│ ⚠️  WARNING: This is a development build                                │"),
