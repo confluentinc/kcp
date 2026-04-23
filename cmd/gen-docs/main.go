@@ -1,6 +1,12 @@
 // Command gen-docs regenerates the per-command markdown reference under
 // docs/command-reference/ from the Cobra command tree. It is not a user-facing
 // kcp subcommand — invoke via `make docs-gen`.
+//
+// Parent commands (and the root) are emitted as <path>/index.md; leaves are
+// emitted as <parent-path>/<name>.md. SEE ALSO links are rewritten so they
+// resolve correctly inside the nested layout. This lets mkdocs-awesome-pages
+// infer the sidebar from the filesystem instead of requiring manual nav
+// maintenance in mkdocs.yml.
 package main
 
 import (
@@ -31,18 +37,11 @@ func main() {
 	root := cmd.RootCmd
 	root.DisableAutoGenTag = true
 
-	frontmatter := func(filename string) string {
-		base := strings.TrimSuffix(filepath.Base(filename), ".md")
-		title := strings.ReplaceAll(base, "_", " ")
-		return fmt.Sprintf("---\ntitle: %s\n---\n\n", title)
-	}
+	linkMap := buildLinkMap(root, *outDir)
 
-	linkHandler := func(name string) string { return name }
-
-	if err := doc.GenMarkdownTreeCustom(root, *outDir, frontmatter, linkHandler); err != nil {
+	if err := emit(root, *outDir, linkMap); err != nil {
 		die(err)
 	}
-
 	if err := walkAndInjectIAM(root, *outDir); err != nil {
 		die(err)
 	}
@@ -50,10 +49,94 @@ func main() {
 	fmt.Printf("gen-docs: wrote command reference to %s\n", *outDir)
 }
 
+// outputPath returns the markdown file path for a command within outDir.
+// A command with visible subcommands (or the root) gets <path>/index.md;
+// a leaf gets <parent-path>/<name>.md.
+func outputPath(c *cobra.Command, outDir string) string {
+	segs := strings.Fields(c.CommandPath())
+	tail := segs[1:] // drop the root program name ("kcp")
+
+	if !c.HasParent() || c.HasAvailableSubCommands() {
+		parts := append([]string{outDir}, tail...)
+		parts = append(parts, "index.md")
+		return filepath.Join(parts...)
+	}
+	parts := append([]string{outDir}, tail[:len(tail)-1]...)
+	parts = append(parts, tail[len(tail)-1]+".md")
+	return filepath.Join(parts...)
+}
+
+// cobraBasename is the default filename Cobra embeds in SEE ALSO links for
+// a given command: `<CommandPath with spaces→_>.md`. linkHandler receives this.
+func cobraBasename(c *cobra.Command) string {
+	return strings.ReplaceAll(c.CommandPath(), " ", "_") + ".md"
+}
+
+// buildLinkMap maps each command's Cobra default SEE ALSO filename to the
+// real output path we'll write, so linkHandler can rewrite links from any
+// page to any other without knowing the caller's location beforehand.
+func buildLinkMap(root *cobra.Command, outDir string) map[string]string {
+	m := map[string]string{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		m[cobraBasename(c)] = outputPath(c, outDir)
+		for _, sub := range c.Commands() {
+			if !sub.IsAvailableCommand() || sub.IsAdditionalHelpTopicCommand() {
+				continue
+			}
+			walk(sub)
+		}
+	}
+	walk(root)
+	return m
+}
+
+func emit(c *cobra.Command, outDir string, linkMap map[string]string) error {
+	path := outputPath(c, outDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := fmt.Fprintf(f, "---\ntitle: %s\n---\n\n", c.CommandPath()); err != nil {
+		return err
+	}
+
+	linkHandler := func(cobraName string) string {
+		target, ok := linkMap[cobraName]
+		if !ok {
+			return cobraName
+		}
+		rel, err := filepath.Rel(filepath.Dir(path), target)
+		if err != nil {
+			return cobraName
+		}
+		return filepath.ToSlash(rel)
+	}
+
+	if err := doc.GenMarkdownCustom(c, f, linkHandler); err != nil {
+		return err
+	}
+
+	for _, sub := range c.Commands() {
+		if !sub.IsAvailableCommand() || sub.IsAdditionalHelpTopicCommand() {
+			continue
+		}
+		if err := emit(sub, outDir, linkMap); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func walkAndInjectIAM(c *cobra.Command, outDir string) error {
 	if !c.Hidden {
 		if perms := strings.TrimSpace(c.Annotations[iamAnnotationKey]); perms != "" {
-			path := filepath.Join(outDir, mdFilename(c))
+			path := outputPath(c, outDir)
 			if err := injectIAMSection(path, perms); err != nil {
 				return fmt.Errorf("inject %s: %w", path, err)
 			}
@@ -67,14 +150,9 @@ func walkAndInjectIAM(c *cobra.Command, outDir string) error {
 	return nil
 }
 
-func mdFilename(c *cobra.Command) string {
-	parts := strings.Fields(c.CommandPath())
-	return strings.Join(parts, "_") + ".md"
-}
-
-// injectIAMSection inserts an "## AWS IAM Permissions" section immediately
-// before the generated "### SEE ALSO" block. If SEE ALSO is absent (e.g. no
-// parent cross-reference), the section is appended at the end.
+// injectIAMSection inserts an "### AWS IAM Permissions" section immediately
+// before the generated "### SEE ALSO" block. If SEE ALSO is absent (no parent
+// cross-reference), the section is appended at the end.
 func injectIAMSection(path, perms string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {

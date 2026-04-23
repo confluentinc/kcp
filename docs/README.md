@@ -8,7 +8,7 @@ KCP (Kafka Copy) is a CLI tool for planning and executing Kafka migrations to Co
 > - **AWS MSK (Managed Streaming for Kafka)** — full discovery via AWS APIs + Kafka Admin API.
 > - **Open Source Kafka (OSK)** — direct scanning via Kafka Admin API.
 >
-> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/kcp.md) for per-command specifics.
+> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics.
 
 ## Installation
 
@@ -75,10 +75,10 @@ Verify with:
 aws sts get-caller-identity
 ```
 
-Each command's per-command AWS IAM permission requirements are documented on its page in the [Command Reference](command-reference/kcp.md).
+Each command's per-command AWS IAM permission requirements are documented on its page in the [Command Reference](command-reference/index.md).
 
 > [!NOTE]
-> **OSK (Open Source Kafka)** migrations do not require AWS authentication. OSK clusters are accessed directly via Kafka Admin API using the credentials you provide in `osk-credentials.yaml`. See [`kcp scan clusters`](command-reference/kcp_scan_clusters.md) for details.
+> **OSK (Open Source Kafka)** migrations do not require AWS authentication. OSK clusters are accessed directly via Kafka Admin API using the credentials you provide in `osk-credentials.yaml`. See [`kcp scan clusters`](command-reference/scan/clusters.md) for details.
 
 ## Workflow
 
@@ -99,13 +99,13 @@ Before starting, decide on:
 2. If private, do you already have a bastion / jump host, or do you need one?
 3. What authentication methods are enabled on the source, and which will you use for the migration cluster link?
 
-Only certain migration topologies are possible for a given combination — see [`kcp create-asset migration-infra`](command-reference/kcp_create-asset_migration-infra.md) for the type matrix.
+Only certain migration topologies are possible for a given combination — see [`kcp create-asset migration-infra`](command-reference/create-asset/migration-infra.md) for the type matrix.
 
 ### Bastion host requirements
 
 - **Public endpoints** — you can run `kcp` commands directly from your local machine.
 - **Private endpoints** — `kcp` must run from inside the source VPC. Either:
-  1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/kcp_create-asset_bastion-host.md), or
+  1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/create-asset/bastion-host.md), or
   2. Use an existing jump server and copy the `kcp` binary onto it.
 
 > [!NOTE]
@@ -113,15 +113,15 @@ Only certain migration topologies are possible for a given combination — see [
 
 ## Command reference
 
-The full CLI reference is generated directly from the Cobra command definitions and lives under **[Command Reference](command-reference/kcp.md)**. Entry points:
+The full CLI reference is generated directly from the Cobra command definitions and lives under **[Command Reference](command-reference/index.md)**. Entry points:
 
-- [`kcp discover`](command-reference/kcp_discover.md) — scan AWS for MSK clusters
-- [`kcp scan`](command-reference/kcp_scan.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
-- [`kcp report`](command-reference/kcp_report.md) — generate cost and metrics reports
-- [`kcp create-asset`](command-reference/kcp_create-asset.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
-- [`kcp migration`](command-reference/kcp_migration.md) — initialize, list, monitor and execute migrations
-- [`kcp ui`](command-reference/kcp_ui.md) — launch the local web UI
-- [`kcp update`](command-reference/kcp_update.md) / [`kcp version`](command-reference/kcp_version.md) / [`kcp docs`](command-reference/kcp_docs.md) — housekeeping
+- [`kcp discover`](command-reference/discover.md) — scan AWS for MSK clusters
+- [`kcp scan`](command-reference/scan/index.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
+- [`kcp report`](command-reference/report/index.md) — generate cost and metrics reports
+- [`kcp create-asset`](command-reference/create-asset/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
+- [`kcp migration`](command-reference/migration/index.md) — initialize, list, monitor and execute migrations
+- [`kcp ui`](command-reference/ui.md) — launch the local web UI
+- [`kcp update`](command-reference/update.md) / [`kcp version`](command-reference/version.md) / [`kcp docs`](command-reference/docs.md) — housekeeping
 
 ## Related guides
 
