@@ -39,11 +39,11 @@ func TestLoadOrCreateState_ExistingFile_LoadsState(t *testing.T) {
 	// Write a valid state file and confirm it is loaded correctly
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString(`{"kcp_build_info":{"version":"` + build_info.Version + `","commit":"abc","date":"2024-01-01"}}`)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	state, err := loadOrCreateState(tmpFile.Name())
 
@@ -55,11 +55,11 @@ func TestLoadOrCreateState_ExistingFile_LoadsState(t *testing.T) {
 func TestLoadOrCreateState_CorruptFile_ReturnsError(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.WriteString("not valid json {{{")
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	_, err = loadOrCreateState(tmpFile.Name())
 
