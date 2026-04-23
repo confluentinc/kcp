@@ -12,7 +12,9 @@ import {
   ExploreErrorBoundary,
   MigrationErrorBoundary,
   TCOErrorBoundary,
+  WorkbenchErrorBoundary,
 } from '@/components/common/ErrorBoundary'
+import { Workbench } from '@/components/workbench/Workbench'
 import { TOP_LEVEL_TABS } from '@/constants'
 import type { TopLevelTab } from '@/types'
 
@@ -129,6 +131,7 @@ export const Home = () => {
           error={error}
           tabs={kcpState !== null ? [
             { id: 'explore', label: 'Explore' },
+            { id: 'workbench', label: 'Workbench' },
             { id: 'migration-assets', label: 'Migrate' },
             { id: 'tco-inputs', label: 'TCO Inputs' },
           ] : undefined}
@@ -161,6 +164,14 @@ export const Home = () => {
                     </div>
                   </div>
                 </ExploreErrorBoundary>
+              )}
+
+              {activeTopTab === TOP_LEVEL_TABS.WORKBENCH && (
+                <WorkbenchErrorBoundary>
+                  <div className="flex-1 min-h-0 bg-background">
+                    <Workbench />
+                  </div>
+                </WorkbenchErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.TCO_INPUTS && (
