@@ -61,6 +61,11 @@ extra:
   version:
     provider: mike
     default: latest
+    # GitHub Pages rejects POSIX symlinks (mike's default on Linux), so the
+    # `latest` alias must be a redirect stub instead. Without this, release
+    # deploys fail with "Failed to deploy site, please ensure the repository
+    # does not contain any hard links, symlinks".
+    alias_type: redirect
 
 nav:
   - Home: README.md
