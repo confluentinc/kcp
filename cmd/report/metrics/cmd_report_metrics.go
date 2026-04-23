@@ -22,9 +22,41 @@ var (
 
 func NewReportMetricsCmd() *cobra.Command {
 	reportMetricsCmd := &cobra.Command{
-		Use:           "metrics",
-		Short:         "Generate a report of metrics for given cluster(s)",
-		Long:          "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover`",
+		Use:   "metrics",
+		Short: "Generate a report of metrics for given cluster(s)",
+		Long:  "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover` or `kcp scan clusters`",
+		Example: `  # All clusters (MSK and OSK) in the state file
+  kcp report metrics --state-file kcp-state.json
+
+  # Specific clusters (supports both MSK ARNs and OSK cluster IDs)
+  kcp report metrics --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+      --cluster-id osk-prod-cluster
+
+  # All MSK clusters only
+  kcp report metrics --state-file kcp-state.json --source-type msk
+
+  # All OSK clusters, custom date range
+  kcp report metrics --state-file kcp-state.json --source-type osk \
+      --start 2024-01-01 --end 2024-01-31`,
+		Annotations: map[string]string{
+			"aws_iam_permissions": "Required only for MSK clusters (CloudWatch metrics). OSK metrics come from the state file (Jolokia/Prometheus).\n\n" +
+				"```json\n" +
+				`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics"
+      ],
+      "Resource": "*"
+    }
+  ]
+}` + "\n```\n",
+		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunReportMetrics,

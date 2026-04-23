@@ -16,11 +16,36 @@ var (
 	stateFile string
 )
 
+const clientInventoryIAMPermissions = "```json\n" +
+	`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+        "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
+      ]
+    }
+  ]
+}` + "\n```\n"
+
 func NewScanClientInventoryCmd() *cobra.Command {
 	clientInventoryCmd := &cobra.Command{
-		Use:           "client-inventory",
-		Short:         "Scan the broker logs for client activity",
-		Long:          "Scan the broker logs in s3 to help identify clients that are using the cluster based on activity",
+		Use:   "client-inventory",
+		Short: "Scan the broker logs for client activity",
+		Long: `Scan the broker logs in s3 to help identify clients that are using the cluster based on activity.
+
+Prerequisites:
+  - The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
+  - Broker logs must be delivered to S3.`,
+		Example: `  kcp scan client-inventory \
+      --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
+      --state-file kcp-state.json`,
+		Annotations: map[string]string{
+			"aws_iam_permissions": clientInventoryIAMPermissions,
+		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanClientInventory,
