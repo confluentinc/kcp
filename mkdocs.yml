@@ -71,6 +71,44 @@ extra:
 nav:
   - Home: README.md
   - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
+  - Command Reference:
+      - Overview: command-reference/kcp.md
+      - kcp discover: command-reference/kcp_discover.md
+      - kcp scan:
+          - Overview: command-reference/kcp_scan.md
+          - clusters: command-reference/kcp_scan_clusters.md
+          - client-inventory: command-reference/kcp_scan_client-inventory.md
+          - schema-registry: command-reference/kcp_scan_schema-registry.md
+      - kcp report:
+          - Overview: command-reference/kcp_report.md
+          - costs: command-reference/kcp_report_costs.md
+          - metrics: command-reference/kcp_report_metrics.md
+      - kcp create-asset:
+          - Overview: command-reference/kcp_create-asset.md
+          - bastion-host: command-reference/kcp_create-asset_bastion-host.md
+          - target-infra: command-reference/kcp_create-asset_target-infra.md
+          - migration-infra: command-reference/kcp_create-asset_migration-infra.md
+          - migrate-topics: command-reference/kcp_create-asset_migrate-topics.md
+          - migrate-schemas: command-reference/kcp_create-asset_migrate-schemas.md
+          - migrate-acls:
+              - Overview: command-reference/kcp_create-asset_migrate-acls.md
+              - kafka: command-reference/kcp_create-asset_migrate-acls_kafka.md
+              - iam: command-reference/kcp_create-asset_migrate-acls_iam.md
+          - migrate-connectors:
+              - Overview: command-reference/kcp_create-asset_migrate-connectors.md
+              - msk: command-reference/kcp_create-asset_migrate-connectors_msk.md
+              - self-managed: command-reference/kcp_create-asset_migrate-connectors_self-managed.md
+              - connector-utility: command-reference/kcp_create-asset_migrate-connectors_connector-utility.md
+      - kcp migration:
+          - Overview: command-reference/kcp_migration.md
+          - init: command-reference/kcp_migration_init.md
+          - execute: command-reference/kcp_migration_execute.md
+          - lag-check: command-reference/kcp_migration_lag-check.md
+          - list: command-reference/kcp_migration_list.md
+      - kcp ui: command-reference/kcp_ui.md
+      - kcp update: command-reference/kcp_update.md
+      - kcp version: command-reference/kcp_version.md
+      - kcp docs: command-reference/kcp_docs.md
   - Gateway Switchover:
       - Examples: gateway-switchover-examples.md
       - none → mTLS: switchover-none-to-mtls/README.md

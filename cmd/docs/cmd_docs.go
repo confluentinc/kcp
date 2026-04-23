@@ -13,6 +13,7 @@ func NewDocsCmd() *cobra.Command {
 		Short: "Show the documentation URL for this build",
 		Long: `Print the documentation site URL matching the running kcp binary's version.
 Development builds resolve to the 'dev' alias; released builds resolve to their vX.Y.Z subdirectory.`,
+		Example: "  kcp docs",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), build_info.DocsURL())
 			return err

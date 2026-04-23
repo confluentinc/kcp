@@ -24,9 +24,15 @@ var (
 
 func NewConvertKafkaAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
-		Use:           "kafka",
-		Short:         "Convert Kafka ACLs to Confluent Cloud ACLs.",
-		Long:          "Convert Kafka ACLs to Confluent Cloud ACLs as individual Terraform resources.",
+		Use:   "kafka",
+		Short: "Convert Kafka ACLs to Confluent Cloud ACLs.",
+		Long:  "Convert Kafka ACLs to Confluent Cloud ACLs as individual Terraform resources.",
+		Example: `  kcp create-asset migrate-acls kafka \
+      --state-file kcp-state.json \
+      --source-type msk \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --target-cluster-id lkc-xyz123 \
+      --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443`,
 		SilenceErrors: true,
 		PreRunE:       preRunConvertKafkaAcls,
 		RunE:          runConvertKafkaAcls,
