@@ -46,6 +46,23 @@ lag checking, gateway fencing, topic promotion, and gateway switchover.
 
 The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.`,
+		Example: `  # MSK source with IAM auth
+  kcp migration execute \
+      --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+      --lag-threshold 0 \
+      --cluster-api-key ABCDEFGHIJKLMNOP \
+      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+      --use-sasl-iam --aws-region us-east-1
+
+  # OSK source with TLS
+  kcp migration execute \
+      --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+      --lag-threshold 0 \
+      --cluster-api-key ABCDEFGHIJKLMNOP \
+      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+      --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key
+
+Credentials (cluster-api-key, cluster-api-secret) are intentionally not stored in the migration state file and must be provided each time.`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationExecute,
@@ -138,6 +155,11 @@ interrupted, re-running this command will resume from the last completed step.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+
+	// If any credential in a pair/trio is set, the whole set must be set.
+	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
 
 	return migrationExecuteCmd
 }
