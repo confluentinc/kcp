@@ -11,11 +11,12 @@ Create migration infrastructure Terraform for a source cluster
 Generate the Terraform needed to provision the migration path between the source Kafka cluster and Confluent Cloud. The --type flag selects the migration topology and authentication method.
 
 Type options:
-  1  Public MSK endpoints — Cluster Link (SASL/SCRAM)
-  2  Private MSK endpoints — External Outbound Cluster Link (SASL/SCRAM, Enterprise only)
-  3  Private MSK endpoints — External Outbound Cluster Link (Unauthenticated Plaintext, Enterprise only)
-  4  Private MSK endpoints — Jump Cluster (SASL/SCRAM)
-  5  Private MSK endpoints — Jump Cluster (IAM, MSK only)
+
+1. Public MSK endpoints — Cluster Link (SASL/SCRAM)
+2. Private MSK endpoints — External Outbound Cluster Link (SASL/SCRAM, Enterprise only)
+3. Private MSK endpoints — External Outbound Cluster Link (Unauthenticated Plaintext, Enterprise only)
+4. Private MSK endpoints — Jump Cluster (SASL/SCRAM)
+5. Private MSK endpoints — Jump Cluster (IAM, MSK only)
 
 ```
 kcp create-asset migration-infra [flags]

@@ -14,26 +14,21 @@ exclude_docs: |
 
 theme:
   name: material
+  font:
+    text: Inter
+    code: Roboto Mono
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.indexes
     - navigation.top
     - content.code.copy
     - search.suggest
     - search.highlight
   palette:
-    - scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    scheme: default
+    primary: white
+    accent: custom
 
 plugins:
   - search
@@ -66,6 +61,9 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.tabbed:
       alternate_style: true
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   version:

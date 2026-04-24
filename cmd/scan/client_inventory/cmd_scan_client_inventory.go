@@ -39,8 +39,9 @@ func NewScanClientInventoryCmd() *cobra.Command {
 		Long: `Scan the broker logs in s3 to help identify clients that are using the cluster based on activity.
 
 Prerequisites:
-  - The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
-  - Broker logs must be delivered to S3.`,
+
+- The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
+- Broker logs must be delivered to S3.`,
 		Example: `  kcp scan client-inventory \
       --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
       --state-file kcp-state.json`,

@@ -11,8 +11,9 @@ Scan the broker logs for client activity
 Scan the broker logs in s3 to help identify clients that are using the cluster based on activity.
 
 Prerequisites:
-  - The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
-  - Broker logs must be delivered to S3.
+
+- The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
+- Broker logs must be delivered to S3.
 
 ```
 kcp scan client-inventory [flags]
