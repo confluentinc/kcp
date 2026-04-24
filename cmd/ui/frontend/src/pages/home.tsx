@@ -78,7 +78,7 @@ export const Home = () => {
         const parsed = JSON.parse(content) as StateUploadRequest
 
         // Lightweight check: confirm the file is a JSON object before uploading
-        if (parsed && typeof parsed === 'object') {
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
