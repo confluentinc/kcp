@@ -1,0 +1,245 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/labstack/echo/v4"
+)
+
+// mockReportService satisfies the ReportService interface for testing
+type mockReportService struct{}
+
+func (m *mockReportService) ProcessState(state types.State) types.ProcessedState {
+	return types.ProcessedState{}
+}
+
+func (m *mockReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
+	return nil, nil
+}
+
+func (m *mockReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	return nil, nil
+}
+
+func newTestUI() *UI {
+	return &UI{
+		reportService: &mockReportService{},
+		states:        make(map[string]*types.State),
+	}
+}
+
+func TestHandleUploadState_VersionMatch(t *testing.T) {
+	ui := newTestUI()
+	e := echo.New()
+
+	body := `{"kcp_build_info":{"version":"` + build_info.Version + `"}}`
+	req := httptest.NewRequest(http.MethodPost, "/upload-state?sessionId=test-session", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleUploadState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	ui.statesMutex.RLock()
+	_, stored := ui.states["test-session"]
+	ui.statesMutex.RUnlock()
+	if !stored {
+		t.Error("expected state to be stored in session, but it was not")
+	}
+}
+
+func TestHandleUploadState_VersionMismatch(t *testing.T) {
+	ui := newTestUI()
+	e := echo.New()
+
+	body := `{"kcp_build_info":{"version":"0.5.0"}}`
+	req := httptest.NewRequest(http.MethodPost, "/upload-state?sessionId=test-session", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleUploadState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", rec.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response body: %v", err)
+	}
+	if resp["error"] != "State file version mismatch" {
+		t.Errorf("unexpected error field: %v", resp["error"])
+	}
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "0.5.0") {
+		t.Errorf("expected message to contain file version, got: %s", msg)
+	}
+	if !strings.Contains(msg, build_info.Version) {
+		t.Errorf("expected message to contain running version, got: %s", msg)
+	}
+
+	ui.statesMutex.RLock()
+	_, stored := ui.states["test-session"]
+	ui.statesMutex.RUnlock()
+	if stored {
+		t.Error("expected state NOT to be stored on version mismatch, but it was")
+	}
+}
+
+func TestHandleUploadState_MissingSessionId(t *testing.T) {
+	ui := newTestUI()
+	e := echo.New()
+
+	req := httptest.NewRequest(http.MethodPost, "/upload-state", strings.NewReader(`{}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleUploadState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: build_info.Version}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+
+	ui.statesMutex.RLock()
+	_, loaded := ui.states["default"]
+	ui.statesMutex.RUnlock()
+
+	if !loaded {
+		t.Error("expected state to be pre-loaded into default session")
+	}
+	if ui.preloadError != "" {
+		t.Errorf("expected no preload error, got: %s", ui.preloadError)
+	}
+}
+
+func TestNewUI_PreloadStateFile_VersionMismatch(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+
+	ui.statesMutex.RLock()
+	_, loaded := ui.states["default"]
+	ui.statesMutex.RUnlock()
+
+	if loaded {
+		t.Error("expected state NOT to be loaded on version mismatch")
+	}
+	if ui.preloadError == "" {
+		t.Error("expected preloadError to be set on version mismatch")
+	}
+	if !strings.Contains(ui.preloadError, "state file version mismatch") {
+		t.Errorf("expected preloadError to contain version mismatch message, got: %s", ui.preloadError)
+	}
+}
+
+func TestNewUI_PreloadStateFile_FileNotFound(t *testing.T) {
+	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: "/nonexistent/state.json"})
+
+	if ui.preloadError == "" {
+		t.Error("expected preloadError to be set for missing file")
+	}
+}
+
+func TestGetState_PreloadVersionMismatch_ReturnsVersionMismatchError(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	e := echo.New()
+
+	req := httptest.NewRequest(http.MethodGet, "/state", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleGetState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected status 422, got %d", rec.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response body: %v", err)
+	}
+	if resp["error"] != "State file version mismatch" {
+		t.Errorf("expected error 'State file version mismatch', got: %v", resp["error"])
+	}
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "0.5.0") {
+		t.Errorf("expected message to contain file version, got: %s", msg)
+	}
+}
+
+func TestGetState_PreloadFileNotFound_ReturnsGenericLoadError(t *testing.T) {
+	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: "/nonexistent/state.json"})
+	e := echo.New()
+
+	req := httptest.NewRequest(http.MethodGet, "/state", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleGetState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected status 422, got %d", rec.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response body: %v", err)
+	}
+	if resp["error"] != "State file could not be loaded" {
+		t.Errorf("expected error 'State file could not be loaded', got: %v", resp["error"])
+	}
+}
