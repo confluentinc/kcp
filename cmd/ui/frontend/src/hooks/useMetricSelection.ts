@@ -12,6 +12,7 @@ interface MetricSelectionConfig {
 interface MetricSelectionReturn {
   selectedMetric: string
   setSelectedMetric: (metric: string) => void
+  preselectedMetricMissing: boolean
 }
 
 /**
@@ -37,8 +38,7 @@ export const useMetricSelection = ({
   // Set default selected metric when data loads, prioritizing modal preselected metric
   useEffect(() => {
     if (availableMetrics.length > 0) {
-      // In modal mode, always use the modal preselected metric if provided
-      if (inModal && modalPreselectedMetric && availableMetrics.includes(modalPreselectedMetric)) {
+      if (inModal && modalPreselectedMetric) {
         setSelectedMetric(modalPreselectedMetric)
       } else if (
         !inModal &&
@@ -61,8 +61,16 @@ export const useMetricSelection = ({
     modalPreselectedMetric,
   ])
 
+  const preselectedMetricMissing =
+    inModal &&
+    !!modalPreselectedMetric &&
+    availableMetrics.length > 0 &&
+    !availableMetrics.includes(modalPreselectedMetric) &&
+    selectedMetric === modalPreselectedMetric
+
   return {
     selectedMetric,
     setSelectedMetric,
+    preselectedMetricMissing,
   }
 }
