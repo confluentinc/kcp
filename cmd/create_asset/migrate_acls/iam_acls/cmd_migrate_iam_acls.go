@@ -45,28 +45,18 @@ func NewMigrateIamAclsCmd() *cobra.Command {
       --target-cluster-id lkc-xyz123 \
       --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: "```json\n" +
-				`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "iam:GetRole",
-        "iam:GetUser",
-        "iam:GetRolePolicy",
-        "iam:ListRolePolicies",
-        "iam:ListAttachedRolePolicies",
-        "iam:GetUserPolicy",
-        "iam:ListUserPolicies",
-        "iam:ListAttachedUserPolicies",
-        "iam:GetPolicy",
-        "iam:GetPolicyVersion"
-      ],
-      "Resource": "*"
-    }
-  ]
-}` + "\n```\n",
+			iampolicy.AnnotationKey: iampolicy.RenderSingle("", []string{
+				"iam:GetRole",
+				"iam:GetUser",
+				"iam:GetRolePolicy",
+				"iam:ListRolePolicies",
+				"iam:ListAttachedRolePolicies",
+				"iam:GetUserPolicy",
+				"iam:ListUserPolicies",
+				"iam:ListAttachedUserPolicies",
+				"iam:GetPolicy",
+				"iam:GetPolicyVersion",
+			}),
 		},
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateIamAcls,

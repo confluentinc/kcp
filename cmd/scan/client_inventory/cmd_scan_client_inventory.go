@@ -17,20 +17,13 @@ var (
 	stateFile string
 )
 
-const clientInventoryIAMPermissions = "```json\n" +
-	`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:ListBucket"],
-      "Resource": [
-        "arn:aws:s3:::<BROKER_LOGS_BUCKET>",
-        "arn:aws:s3:::<BROKER_LOGS_BUCKET>/*"
-      ]
-    }
-  ]
-}` + "\n```\n"
+func clientInventoryIAMAnnotation() string {
+	return iampolicy.RenderSingle("",
+		[]string{"s3:GetObject", "s3:ListBucket"},
+		"arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+		"arn:aws:s3:::<BROKER_LOGS_BUCKET>/*",
+	)
+}
 
 func NewScanClientInventoryCmd() *cobra.Command {
 	clientInventoryCmd := &cobra.Command{
@@ -46,7 +39,7 @@ Prerequisites:
       --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
       --state-file kcp-state.json`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: clientInventoryIAMPermissions,
+			iampolicy.AnnotationKey: clientInventoryIAMAnnotation(),
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

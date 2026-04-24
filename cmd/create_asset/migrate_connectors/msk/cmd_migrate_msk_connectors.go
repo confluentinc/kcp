@@ -35,22 +35,12 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
       --cc-api-key ABCDEFGHIJKLMNOP \
       --cc-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: "```json\n" +
-				`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector",
-        "kafkaconnect:DescribeWorkerConfiguration",
-        "kafkaconnect:DescribeCustomPlugin"
-      ],
-      "Resource": "*"
-    }
-  ]
-}` + "\n```\n",
+			iampolicy.AnnotationKey: iampolicy.RenderSingle("", []string{
+				"kafkaconnect:ListConnectors",
+				"kafkaconnect:DescribeConnector",
+				"kafkaconnect:DescribeWorkerConfiguration",
+				"kafkaconnect:DescribeCustomPlugin",
+			}),
 		},
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateMskConnectors,

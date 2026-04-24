@@ -27,28 +27,21 @@ var (
 	region             string
 )
 
-const schemaRegistryIAMPermissions = "Only required for `--sr-type glue`. AWS Glue scans use the AWS default credential chain.\n\n" +
-	"```json\n" +
-	`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "glue:ListSchemas",
-        "glue:ListSchemaVersions",
-        "glue:GetSchema",
-        "glue:GetSchemaByDefinition",
-        "glue:GetSchemaVersion",
-        "glue:GetRegistry"
-      ],
-      "Resource": [
-        "arn:aws:glue:<AWS REGION>:<AWS ACCOUNT ID>:registry/<REGISTRY NAME>",
-        "arn:aws:glue:<AWS REGION>:<AWS ACCOUNT ID>:schema/<REGISTRY NAME>/*"
-      ]
-    }
-  ]
-}` + "\n```\n"
+func schemaRegistryIAMAnnotation() string {
+	return iampolicy.RenderSingle(
+		"Only required for `--sr-type glue`. AWS Glue scans use the AWS default credential chain.",
+		[]string{
+			"glue:ListSchemas",
+			"glue:ListSchemaVersions",
+			"glue:GetSchema",
+			"glue:GetSchemaByDefinition",
+			"glue:GetSchemaVersion",
+			"glue:GetRegistry",
+		},
+		"arn:aws:glue:<AWS REGION>:<AWS ACCOUNT ID>:registry/<REGISTRY NAME>",
+		"arn:aws:glue:<AWS REGION>:<AWS ACCOUNT ID>:schema/<REGISTRY NAME>/*",
+	)
+}
 
 func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd := &cobra.Command{
@@ -68,7 +61,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
   kcp scan schema-registry --sr-type glue --state-file kcp-state.json \
       --region us-east-1 --registry-name my-glue-registry`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: schemaRegistryIAMPermissions,
+			iampolicy.AnnotationKey: schemaRegistryIAMAnnotation(),
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

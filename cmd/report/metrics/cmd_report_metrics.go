@@ -41,22 +41,14 @@ func NewReportMetricsCmd() *cobra.Command {
   kcp report metrics --state-file kcp-state.json --source-type osk \
       --start 2024-01-01 --end 2024-01-31`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: "Required only for MSK clusters (CloudWatch metrics). OSK metrics come from the state file (Jolokia/Prometheus).\n\n" +
-				"```json\n" +
-				`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "cloudwatch:GetMetricData",
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics"
-      ],
-      "Resource": "*"
-    }
-  ]
-}` + "\n```\n",
+			iampolicy.AnnotationKey: iampolicy.RenderSingle(
+				"Required only for MSK clusters (CloudWatch metrics). OSK metrics come from the state file (Jolokia/Prometheus).",
+				[]string{
+					"cloudwatch:GetMetricData",
+					"cloudwatch:GetMetricStatistics",
+					"cloudwatch:ListMetrics",
+				},
+			),
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

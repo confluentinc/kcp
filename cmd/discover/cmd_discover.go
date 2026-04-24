@@ -18,71 +18,64 @@ const (
 	reportCommandsFileName = "report-commands.txt"
 )
 
-const discoverIAMPermissions = "The following policy covers a full run. If you pass `--skip-topics`, `--skip-costs`, or `--skip-metrics`, the corresponding statements can be omitted.\n\n" +
-	"```json\n" +
-	`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "MSKScanPermissions",
-      "Effect": "Allow",
-      "Action": [
-        "kafka:ListClustersV2",
-        "kafka:ListReplicators",
-        "kafka:ListVpcConnections",
-        "kafka:GetCompatibleKafkaVersions",
-        "kafka:GetBootstrapBrokers",
-        "kafka:ListConfigurations",
-        "kafka:DescribeClusterV2",
-        "kafka:ListKafkaVersions",
-        "kafka:ListNodes",
-        "kafka:ListClusterOperationsV2",
-        "kafka:ListScramSecrets",
-        "kafka:ListClientVpcConnections",
-        "kafka:GetClusterPolicy",
-        "kafka:DescribeConfigurationRevision",
-        "kafka:DescribeReplicator",
-        "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "MSKClusterConnect",
-      "Effect": "Allow",
-      "Action": ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"],
-      "Resource": "*"
-    },
-    {
-      "Sid": "MSKTopicActions",
-      "Effect": "Allow",
-      "Action": [
-        "kafka:ListTopics",
-        "kafka:DescribeTopic",
-        "kafka-cluster:DescribeTopic",
-        "kafka-cluster:DescribeTopicDynamicConfiguration"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "CostMetricsScanPermissions",
-      "Effect": "Allow",
-      "Action": [
-        "cloudwatch:GetMetricData",
-        "ce:GetCostAndUsage",
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "MSKNetworkingScanPermission",
-      "Effect": "Allow",
-      "Action": ["ec2:DescribeSubnets"],
-      "Resource": "*"
-    }
-  ]
-}` + "\n```\n"
+func discoverIAMAnnotation() string {
+	return iampolicy.RenderStatements(
+		"The following policy covers a full run. If you pass `--skip-topics`, `--skip-costs`, or `--skip-metrics`, the corresponding statements can be omitted.",
+		[]iampolicy.Statement{
+			{
+				Sid: "MSKScanPermissions",
+				Actions: []string{
+					"kafka:ListClustersV2",
+					"kafka:ListReplicators",
+					"kafka:ListVpcConnections",
+					"kafka:GetCompatibleKafkaVersions",
+					"kafka:GetBootstrapBrokers",
+					"kafka:ListConfigurations",
+					"kafka:DescribeClusterV2",
+					"kafka:ListKafkaVersions",
+					"kafka:ListNodes",
+					"kafka:ListClusterOperationsV2",
+					"kafka:ListScramSecrets",
+					"kafka:ListClientVpcConnections",
+					"kafka:GetClusterPolicy",
+					"kafka:DescribeConfigurationRevision",
+					"kafka:DescribeReplicator",
+					"kafkaconnect:ListConnectors",
+					"kafkaconnect:DescribeConnector",
+				},
+			},
+			{
+				Sid: "MSKClusterConnect",
+				Actions: []string{
+					"kafka-cluster:Connect",
+					"kafka-cluster:DescribeCluster",
+				},
+			},
+			{
+				Sid: "MSKTopicActions",
+				Actions: []string{
+					"kafka:ListTopics",
+					"kafka:DescribeTopic",
+					"kafka-cluster:DescribeTopic",
+					"kafka-cluster:DescribeTopicDynamicConfiguration",
+				},
+			},
+			{
+				Sid: "CostMetricsScanPermissions",
+				Actions: []string{
+					"cloudwatch:GetMetricData",
+					"ce:GetCostAndUsage",
+					"cloudwatch:GetMetricStatistics",
+					"cloudwatch:ListMetrics",
+				},
+			},
+			{
+				Sid:     "MSKNetworkingScanPermission",
+				Actions: []string{"ec2:DescribeSubnets"},
+			},
+		},
+	)
+}
 
 var (
 	regions     []string
@@ -106,7 +99,7 @@ func NewDiscoverCmd() *cobra.Command {
   # Skip topic/cost/metric discovery for faster runs or reduced IAM scope
   kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: discoverIAMPermissions,
+			iampolicy.AnnotationKey: discoverIAMAnnotation(),
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

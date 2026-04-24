@@ -62,7 +62,7 @@ func Render(intro string, base []string, variants []Variant) string {
 	}
 
 	b.WriteString("#### Base — always required\n\n")
-	b.WriteString(policyBlock(base))
+	b.WriteString(policyBlock([]Statement{{Actions: base}}))
 
 	for _, v := range variants {
 		b.WriteString("\n#### Additional for `")
@@ -76,40 +76,126 @@ func Render(intro string, base []string, variants []Variant) string {
 			b.WriteString("_No additional permissions beyond the base._\n")
 			continue
 		}
-		b.WriteString(policyBlock(v.Additions))
+		b.WriteString(policyBlock([]Statement{{Actions: v.Additions}}))
 	}
 
 	return b.String()
 }
 
-// policyBlock renders a fenced JSON code block containing a single-statement
-// Allow policy with the given (sorted, deduped) actions and Resource "*".
-// Field ordering (Version→Statement, Effect→Action→Resource) matches AWS
-// documentation conventions and the hand-written discover policy.
-func policyBlock(actions []string) string {
-	type statement struct {
+// Statement describes one entry in an IAM policy's Statement array for
+// commands that publish their permissions via RenderSingle / RenderStatements.
+// Effect is always "Allow"; there is no legitimate reason to publish a Deny
+// policy as a tooling requirement, so it's not exposed.
+type Statement struct {
+	// Sid is an optional label shown in the rendered JSON to help docs
+	// readers map a statement to its purpose (e.g. "MSKClusterKafkaAccess").
+	// Omit to skip the Sid field entirely.
+	Sid string
+
+	// Actions is the set of IAM actions this statement grants. Sorted and
+	// deduped by the renderer.
+	Actions []string
+
+	// Resources scopes the statement. If empty or nil, renders as
+	// "Resource": "*". If a single element, renders as a bare string. If
+	// two or more, renders as a JSON array in the given order.
+	Resources []string
+}
+
+// RenderSingle renders the body of a cobra aws_iam_permissions annotation
+// for a command whose IAM footprint is a single Allow statement. Pass zero
+// resources to produce `"Resource": "*"`, one resource for a bare string,
+// or multiple for a JSON array. Actions are sorted alphabetically and
+// deduped. The output is intro + fenced JSON block (no "Base/Additional"
+// headings — those only make sense for variant-bearing commands).
+func RenderSingle(intro string, actions []string, resources ...string) string {
+	return RenderStatements(intro, []Statement{{
+		Actions:   actions,
+		Resources: resources,
+	}})
+}
+
+// RenderStatements renders the body of a cobra aws_iam_permissions
+// annotation as a fenced JSON block with one or more Allow statements.
+// Use for commands whose documented policy spans multiple Sid-labeled
+// statements (e.g. discover, bastion-host, scan-clusters). Actions inside
+// each statement are sorted alphabetically and deduped; statement order
+// is preserved from the input so operators see them in the order the
+// author intended.
+func RenderStatements(intro string, statements []Statement) string {
+	var b strings.Builder
+	if intro = strings.TrimSpace(intro); intro != "" {
+		b.WriteString(intro)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(policyBlock(statements))
+	return b.String()
+}
+
+// policyBlock renders a fenced JSON code block containing a policy with
+// the given statements. Field ordering (Version→Statement, then
+// Sid→Effect→Action→Resource) matches AWS documentation conventions and
+// the hand-written policies this helper is replacing.
+//
+// Uses a json.Encoder with SetEscapeHTML(false) because placeholder ARNs
+// like "arn:aws:kafka:<AWS REGION>:..." appear in Resource fields and
+// must render as literal `<` / `>` (not `<` / `>`) so operators
+// can copy-paste the JSON block.
+func policyBlock(statements []Statement) string {
+	type jsonStatement struct {
+		Sid      string   `json:"Sid,omitempty"`
 		Effect   string   `json:"Effect"`
 		Action   []string `json:"Action"`
-		Resource string   `json:"Resource"`
+		Resource any      `json:"Resource"`
 	}
 	type policy struct {
-		Version   string      `json:"Version"`
-		Statement []statement `json:"Statement"`
+		Version   string          `json:"Version"`
+		Statement []jsonStatement `json:"Statement"`
 	}
-	out, err := json.MarshalIndent(policy{
-		Version: "2012-10-17",
-		Statement: []statement{{
+	js := make([]jsonStatement, 0, len(statements))
+	for _, s := range statements {
+		js = append(js, jsonStatement{
+			Sid:      s.Sid,
 			Effect:   "Allow",
-			Action:   sortedUnique(actions),
-			Resource: "*",
-		}},
-	}, "", "  ")
-	if err != nil {
-		// json.MarshalIndent over the shape above cannot fail; treat any
-		// error as a programming bug so it surfaces in tests.
+			Action:   sortedUnique(s.Actions),
+			Resource: resourceField(s.Resources),
+		})
+	}
+
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(policy{
+		Version:   "2012-10-17",
+		Statement: js,
+	}); err != nil {
+		// Encoding the shape above cannot fail; treat any error as a
+		// programming bug so it surfaces in tests.
 		panic("iampolicy: marshal policy: " + err.Error())
 	}
-	return "```json\n" + string(out) + "\n```\n"
+	// Encoder.Encode appends a trailing newline that the existing fenced
+	// block contract does not want (we already control the newlines around
+	// the block).
+	return "```json\n" + strings.TrimRight(buf.String(), "\n") + "\n```\n"
+}
+
+// resourceField picks the JSON shape for the Resource field:
+//   - nil or empty → "*"  (Resource: "*")
+//   - single entry → that string (Resource: "arn:...")
+//   - multiple     → the slice (Resource: [ ... ])
+//
+// AWS accepts all three shapes; matching these keeps rendered output
+// terse for the common cases.
+func resourceField(resources []string) any {
+	switch len(resources) {
+	case 0:
+		return "*"
+	case 1:
+		return resources[0]
+	default:
+		return resources
+	}
 }
 
 // sortedUnique returns actions sorted alphabetically with duplicates removed.
