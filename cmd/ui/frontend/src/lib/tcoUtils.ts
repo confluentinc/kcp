@@ -1,13 +1,7 @@
 import { DEFAULTS, METRIC_TYPE_MAP } from '@/constants'
 import { findClusterInRegions } from './clusterUtils'
 import type { Region } from '@/types'
-
-interface TCOCluster {
-  name: string
-  regionName: string
-  arn: string
-  key: string
-}
+import type { TCOCluster } from '@/hooks/useTCOClusters'
 
 interface TCOWorkloadData {
   [clusterKey: string]: {

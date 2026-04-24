@@ -2,13 +2,7 @@ import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
 import { findClusterInRegions } from '@/lib/clusterUtils'
 import type { Region, Cluster } from '@/types'
-
-interface TCOCluster {
-  name: string
-  regionName: string
-  arn: string
-  key: string
-}
+import type { TCOCluster } from '@/hooks/useTCOClusters'
 
 interface TCOWorkloadData {
   [clusterKey: string]: {

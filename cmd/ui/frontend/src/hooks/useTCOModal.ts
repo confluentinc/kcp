@@ -2,13 +2,7 @@ import { useState, useCallback } from 'react'
 import { useRegions } from '@/stores/store'
 import { findClusterInRegions, getClusterArn } from '@/lib/clusterUtils'
 import { getMetricConfig } from '@/lib/tcoUtils'
-
-interface TCOCluster {
-  name: string
-  regionName: string
-  arn: string
-  key: string
-}
+import type { TCOCluster } from './useTCOClusters'
 
 interface ModalCluster {
   name: string
@@ -58,7 +52,8 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
 
       const metricConfig = getMetricConfig(metricType)
 
-      const clusterArn = cluster.arn || getClusterArn(clusterObj)
+      // For MSK clusters, key is the ARN. For OSK, we need to get it from the cluster object.
+      const clusterArn = cluster.sourceType === 'msk' ? cluster.key : getClusterArn(clusterObj)
       if (!clusterArn) {
         console.error(`Cluster "${clusterObj.name}" missing ARN`)
         return
