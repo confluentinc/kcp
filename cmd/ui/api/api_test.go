@@ -86,7 +86,7 @@ func TestHandleUploadState_VersionMismatch_Succeeds(t *testing.T) {
 	}
 }
 
-func TestHandleUploadState_MissingVersion_ReturnsError(t *testing.T) {
+func TestHandleUploadState_EmptyVersion_Succeeds(t *testing.T) {
 	ui := newTestUI()
 	e := echo.New()
 
@@ -99,23 +99,15 @@ func TestHandleUploadState_MissingVersion_ReturnsError(t *testing.T) {
 	if err := ui.handleUploadState(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", rec.Code)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to parse response body: %v", err)
-	}
-	if resp["error"] != "Invalid state file" {
-		t.Errorf("unexpected error field: %v", resp["error"])
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200 for versionless state file, got %d", rec.Code)
 	}
 
 	ui.statesMutex.RLock()
 	_, stored := ui.states["test-session"]
 	ui.statesMutex.RUnlock()
-	if stored {
-		t.Error("expected state NOT to be stored on missing version, but it was")
+	if !stored {
+		t.Error("expected versionless state to be stored, but it was not")
 	}
 }
 

@@ -967,6 +967,7 @@ func TestNewStateFromFile_VersionMismatch_SucceedsWhenDeserialisable(t *testing.
 	}{
 		{"older version", "0.5.0"},
 		{"newer version", "2.0.0"},
+		{"empty version", ""},
 	}
 
 	for _, tt := range tests {
@@ -1054,7 +1055,7 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestNewStateFromFile_EmptyVersion_ReturnsError(t *testing.T) {
+func TestNewStateFromFile_EmptyVersion_Succeeds(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
@@ -1066,11 +1067,11 @@ func TestNewStateFromFile_EmptyVersion_ReturnsError(t *testing.T) {
 		t.Fatalf("failed to write state file: %v", err)
 	}
 
-	_, err = NewStateFromFile(tmpFile.Name())
-	if err == nil {
-		t.Fatal("expected error for missing version, got nil")
+	loaded, err := NewStateFromFile(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("expected success for versionless state file, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "kcp_build_info.version is missing") {
-		t.Errorf("expected missing version error, got: %v", err)
+	if loaded.KcpBuildInfo.Version != "" {
+		t.Errorf("expected empty version to be preserved, got: %s", loaded.KcpBuildInfo.Version)
 	}
 }
