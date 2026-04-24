@@ -108,10 +108,17 @@ func emit(c *cobra.Command, outDir string, linkMap map[string]string) error {
 	// For parent commands (anything rendered as index.md), emit a sibling
 	// `.pages` so mkdocs-material's navigation.indexes picks up the full
 	// command path (e.g. "kcp create-asset migrate-acls") as the section
-	// label instead of a titleized directory name ("Migrate acls").
+	// label instead of a titleized directory name ("Migrate acls"). The
+	// root gets "Command Reference" so the top-nav tab doesn't read "kcp"
+	// (awesome-pages: a directory's own .pages title beats any override
+	// from the parent nav, so this has to be fixed at the source).
 	if filepath.Base(path) == "index.md" {
+		title := c.CommandPath()
+		if !c.HasParent() {
+			title = "Command Reference"
+		}
 		pagesPath := filepath.Join(filepath.Dir(path), ".pages")
-		pagesContent := fmt.Sprintf("title: %s\n", c.CommandPath())
+		pagesContent := fmt.Sprintf("title: %s\n", title)
 		if err := os.WriteFile(pagesPath, []byte(pagesContent), 0o644); err != nil {
 			return err
 		}
