@@ -14,6 +14,8 @@ exclude_docs: |
 
 theme:
   name: material
+  logo: assets/confluent-logo.svg
+  favicon: assets/confluent-logo.svg
   font:
     text: Inter
     code: Roboto Mono
