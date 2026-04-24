@@ -49,17 +49,6 @@ var (
 	targetClusterType          string
 )
 
-const migrationInfraIAMPermissions = "`kcp create-asset migration-infra` itself only reads local configuration. The generated Terraform varies by `--type`:\n\n" +
-	"- **Type 1** — Public endpoints, SASL/SCRAM cluster link. Confluent-only; no AWS resources provisioned.\n" +
-	"- **Type 2** — External outbound cluster link (SASL/SCRAM). Provisions an AWS EC2 host, subnet, security group and route table in the source VPC.\n" +
-	"- **Type 3** — External outbound cluster link (unauthenticated plaintext). Same AWS resources as Type 2.\n" +
-	"- **Type 4** — Jump cluster with SASL/SCRAM. Provisions multiple AWS EC2 hosts (jump brokers + setup host), subnets, security groups, route tables and VPC endpoints.\n" +
-	"- **Type 5** — Jump cluster with IAM (MSK only). Same AWS resources as Type 4, plus an IAM role/instance profile for MSK IAM authentication.\n\n" +
-	"The executor of `terraform apply` needs a policy equivalent to:\n\n" +
-	"> **TODO:** Populate from an `iamlive` capture against the generated Terraform for each type. Either provide a single policy covering the union of types 1–5, or split by type if the permission sets diverge meaningfully.\n\n" +
-	"```json\n" +
-	`{}` + "\n```\n"
-
 func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd := &cobra.Command{
 		Use:   "migration-infra",
@@ -99,7 +88,7 @@ Type options:
       --target-cluster-id lkc-w89xyz \
       --target-rest-endpoint https://lkc-w89xyz.us-east-1.aws.confluent.cloud:443`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": migrationInfraIAMPermissions,
+			"aws_iam_permissions": iamAnnotation(),
 		},
 		SilenceErrors: true,
 		RunE:          runMigrationInfra,
