@@ -19,9 +19,17 @@ var (
 
 func NewConnectorUtilityCmd() *cobra.Command {
 	connectorUtilityCmd := &cobra.Command{
-		Use:           "connector-utility",
-		Short:         "Utility to migrate connectors to Confluent Cloud",
-		Long:          "Utility to migrate connectors to Confluent Cloud",
+		Use:   "connector-utility",
+		Short: "Export discovered connector configs for the Connect Migration Utility",
+		Long:  "Emit a JSON file per MSK cluster containing its discovered connector configs, in the format expected by the [Connect Migration Utility](https://github.com/confluentinc/connect-migration-utility).",
+		Example: `  # All MSK clusters in the state file
+  kcp create-asset migrate-connectors connector-utility --state-file kcp-state.json
+
+  # Single cluster, custom output directory
+  kcp create-asset migrate-connectors connector-utility \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --output-dir connector-configs`,
 		SilenceErrors: true,
 		PreRunE:       preRunConnectorUtility,
 		RunE:          runConnectorUtility,

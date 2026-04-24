@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -51,9 +52,46 @@ var (
 
 func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd := &cobra.Command{
-		Use:           "migration-infra",
-		Short:         "migration-infra",
-		Long:          "migration-infra",
+		Use:   "migration-infra",
+		Short: "Create migration infrastructure Terraform for a source cluster",
+		Long: `Generate the Terraform needed to provision the migration path between the source Kafka cluster and Confluent Cloud. The --type flag selects the migration topology and authentication method.
+
+Type options:
+
+1. Public MSK endpoints — Cluster Link (SASL/SCRAM)
+2. Private MSK endpoints — External Outbound Cluster Link (SASL/SCRAM, Enterprise only)
+3. Private MSK endpoints — External Outbound Cluster Link (Unauthenticated Plaintext, Enterprise only)
+4. Private MSK endpoints — Jump Cluster (SASL/SCRAM)
+5. Private MSK endpoints — Jump Cluster (IAM, MSK only)`,
+		Example: `  # Type 4 — Jump Cluster with SASL/SCRAM, against a private MSK
+  kcp create-asset migration-infra \
+      --state-file kcp-state.json \
+      --source-type msk \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --type 4 \
+      --existing-internet-gateway \
+      --output-dir type-4 \
+      --existing-private-link-vpce-id vpce-0abc123def456789 \
+      --jump-cluster-broker-subnet-cidr 10.0.101.0/24,10.0.102.0/24,10.0.103.0/24 \
+      --jump-cluster-setup-host-subnet-cidr 10.0.104.0/24 \
+      --cluster-link-name type-4-link \
+      --target-environment-id env-a1bcde \
+      --target-cluster-id lkc-w89xyz \
+      --target-rest-endpoint https://lkc-w89xyz.XXX.aws.private.confluent.cloud:443 \
+      --target-bootstrap-endpoint lkc-w89xyz.XXX.aws.private.confluent.cloud:9092
+
+  # Type 1 — Public MSK, simple cluster link
+  kcp create-asset migration-infra \
+      --state-file kcp-state.json \
+      --source-type msk \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --type 1 \
+      --cluster-link-name simple-link \
+      --target-cluster-id lkc-w89xyz \
+      --target-rest-endpoint https://lkc-w89xyz.us-east-1.aws.confluent.cloud:443`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iamAnnotation(),
+		},
 		SilenceErrors: true,
 		RunE:          runMigrationInfra,
 		PreRunE:       preRunMigrationInfra,
