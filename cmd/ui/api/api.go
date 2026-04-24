@@ -311,13 +311,6 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
-	if state.KcpBuildInfo.Version == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid state file",
-			"message": "kcp_build_info.version is missing — this does not appear to be a valid KCP state file",
-		})
-	}
-
 	// Store state in map using session ID as key
 	ui.statesMutex.Lock()
 	ui.states[sessionId] = &state

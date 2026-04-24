@@ -128,10 +128,6 @@ func NewStateFromFile(stateFile string) (*State, error) {
 		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
 	}
 
-	if state.KcpBuildInfo.Version == "" {
-		return nil, fmt.Errorf("invalid state file: kcp_build_info.version is missing — this does not appear to be a valid KCP state file")
-	}
-
 	return &state, nil
 }
 
