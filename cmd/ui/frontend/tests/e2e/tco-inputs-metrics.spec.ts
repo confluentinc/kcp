@@ -74,6 +74,19 @@ test.describe('TCO Inputs Metrics Modal', () => {
     expect(parseFloat(inputValue)).toBeGreaterThan(0)
   })
 
+  test('OSK partition lookup shows GlobalPartitionCount chart', async ({ page }) => {
+    await page.locator('button:has-text("OSK")').click()
+
+    const partitionButtons = page.locator('button[title="Go to cluster metrics for partition data"]')
+    await partitionButtons.first().click()
+
+    await expect(page.locator('text=GlobalPartitionCount - Partitions')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('MIN', { exact: true })).toBeVisible()
+    await expect(page.getByText('AVG', { exact: true })).toBeVisible()
+
+    await expect(page.locator('text=No data available for')).not.toBeVisible()
+  })
+
   test('OSK metrics stats update when date range changes', async ({ page }) => {
     await page.locator('button:has-text("OSK")').click()
 

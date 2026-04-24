@@ -118,7 +118,7 @@ export const ClusterMetrics = ({
   )
 
   // Metric selection with preselected metric support
-  const { selectedMetric, setSelectedMetric } = useMetricSelection({
+  const { selectedMetric, setSelectedMetric, preselectedMetricMissing } = useMetricSelection({
     availableMetrics: processedData.metrics,
     inModal,
     modalPreselectedMetric,
@@ -205,6 +205,7 @@ export const ClusterMetrics = ({
             <MetricsChartTab
               selectedMetric={selectedMetric}
               setSelectedMetric={setSelectedMetric}
+              preselectedMetricMissing={preselectedMetricMissing}
               processedData={processedData}
               metricsResponse={metricsResponse}
               inModal={inModal}
