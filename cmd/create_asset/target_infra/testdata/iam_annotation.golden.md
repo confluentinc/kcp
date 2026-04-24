@@ -1,4 +1,8 @@
-`kcp create-asset target-infra` itself only reads local configuration. The generated Terraform provisions Confluent Cloud resources and (when `--needs-private-link` is set) AWS networking — VPC endpoint, security group, and optionally a Route53 private hosted zone with alias records. The executor of `terraform apply` / `terraform destroy` needs the base policy below plus the addition matching the chosen `--cluster-type`. `Resource: "*"` mirrors the captured `iamlive` output — operators are free to tighten scope in production.
+`kcp create-asset target-infra` itself only reads local configuration. The generated Terraform provisions Confluent Cloud resources and (when `--needs-private-link` is set) AWS networking — VPC endpoint, security group, and optionally a Route53 private hosted zone with alias records. The executor of `terraform apply` / `terraform destroy` needs the base policy below plus the addition matching the chosen `--cluster-type`.
+
+!!! warning "Scope down for production"
+
+    The policies below use `"Resource": "*"`. Narrow each statement to specific ARNs or `aws:ResourceTag` conditions before granting this policy to a CI/CD or pipeline role.
 
 #### Base — always required
 

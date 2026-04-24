@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -40,7 +41,7 @@ func NewReportMetricsCmd() *cobra.Command {
   kcp report metrics --state-file kcp-state.json --source-type osk \
       --start 2024-01-01 --end 2024-01-31`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": "Required only for MSK clusters (CloudWatch metrics). OSK metrics come from the state file (Jolokia/Prometheus).\n\n" +
+			iampolicy.AnnotationKey: "Required only for MSK clusters (CloudWatch metrics). OSK metrics come from the state file (Jolokia/Prometheus).\n\n" +
 				"```json\n" +
 				`{
   "Version": "2012-10-17",

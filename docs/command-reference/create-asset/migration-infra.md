@@ -89,7 +89,11 @@ kcp create-asset migration-infra [flags]
 
 ### AWS IAM Permissions
 
-`kcp create-asset migration-infra` itself only reads local configuration. The AWS IAM policy required to `terraform apply` / `terraform destroy` the generated output depends on `--type` and (for Types 4 & 5) the target cluster type. **Type 1** (public MSK + Confluent Cluster Link) provisions only Confluent Cloud resources and needs no AWS IAM permissions. For Types 2–5, apply the base policy below plus the matching variant block. `Resource: "*"` mirrors the captured `iamlive` output — operators may tighten scope in production.
+`kcp create-asset migration-infra` itself only reads local configuration. The AWS IAM policy required to `terraform apply` / `terraform destroy` the generated output depends on `--type` and (for Types 4 & 5) the target cluster type. **Type 1** (public MSK + Confluent Cluster Link) provisions only Confluent Cloud resources and needs no AWS IAM permissions. For Types 2–5, apply the base policy below plus the matching variant block.
+
+!!! warning "Scope down for production"
+
+    The policies below use `"Resource": "*"` and include destructive actions (e.g. `ec2:TerminateInstances`, `ec2:DeleteNatGateway`, `elasticloadbalancing:DeleteLoadBalancer`). Narrow each statement to specific ARNs or `aws:ResourceTag` conditions before granting this policy to a CI/CD or pipeline role.
 
 #### Base — always required
 

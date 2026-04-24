@@ -6,6 +6,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	glue_service "github.com/confluentinc/kcp/internal/services/glue_schema_registry"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/schema_registry"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -67,7 +68,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
   kcp scan schema-registry --sr-type glue --state-file kcp-state.json \
       --region us-east-1 --registry-name my-glue-registry`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": schemaRegistryIAMPermissions,
+			iampolicy.AnnotationKey: schemaRegistryIAMPermissions,
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

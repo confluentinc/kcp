@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -34,7 +35,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
       --cc-api-key ABCDEFGHIJKLMNOP \
       --cc-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": "```json\n" +
+			iampolicy.AnnotationKey: "```json\n" +
 				`{
   "Version": "2012-10-17",
   "Statement": [

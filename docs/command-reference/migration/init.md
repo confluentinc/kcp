@@ -16,6 +16,8 @@ fenced, and switchover gateway CRs, and writes the migration configuration to th
 
 The state file can then be used by 'kcp migration execute' to run the migration.
 
+All flags can be provided via environment variables (uppercase, with underscores).
+
 ```
 kcp migration init [flags]
 ```
@@ -47,8 +49,6 @@ kcp migration init [flags]
       --cluster-api-key ABCDEFGHIJKLMNOP --cluster-api-secret xxxx \
       --fenced-cr-yaml gateway-fenced.yaml --switchover-cr-yaml gateway-switchover.yaml \
       --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass
-
-All flags can be provided via environment variables (uppercase, with underscores).
 ```
 
 ### Options

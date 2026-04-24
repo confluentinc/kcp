@@ -1,7 +1,7 @@
 // Package iampolicy renders AWS IAM policy documentation for commands that
 // have multiple variants (e.g. create-asset target-infra, migration-infra).
-// It is consumed by the aws_iam_permissions annotation on each command and
-// injected into generated markdown by cmd/gen-docs.
+// It is consumed by the AnnotationKey annotation on each command and injected
+// into generated markdown by cmd/gen-docs.
 package iampolicy
 
 import (
@@ -9,6 +9,10 @@ import (
 	"sort"
 	"strings"
 )
+
+// AnnotationKey is the Cobra Annotations map key under which commands publish
+// their AWS IAM permissions markdown for cmd/gen-docs to pick up.
+const AnnotationKey = "aws_iam_permissions"
 
 // Variant describes one permutation of a command's AWS IAM footprint.
 type Variant struct {

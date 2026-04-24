@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -88,7 +89,7 @@ Type options:
       --target-cluster-id lkc-w89xyz \
       --target-rest-endpoint https://lkc-w89xyz.us-east-1.aws.confluent.cloud:443`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": iamAnnotation(),
+			iampolicy.AnnotationKey: iamAnnotation(),
 		},
 		SilenceErrors: true,
 		RunE:          runMigrationInfra,

@@ -16,6 +16,9 @@ lag checking, gateway fencing, topic promotion, and gateway switchover.
 The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.
 
+Credentials (cluster-api-key, cluster-api-secret) are intentionally not stored in
+the migration state file and must be provided each time.
+
 ```
 kcp migration execute [flags]
 ```
@@ -38,8 +41,6 @@ kcp migration execute [flags]
       --cluster-api-key ABCDEFGHIJKLMNOP \
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key
-
-Credentials (cluster-api-key, cluster-api-secret) are intentionally not stored in the migration state file and must be provided each time.
 ```
 
 ### Options
