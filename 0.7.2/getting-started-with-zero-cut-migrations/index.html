@@ -16,10 +16,10 @@
         <link rel="prev" href="../command-reference/scan/schema-registry/">
       
       
-        <link rel="next" href="../gateway-switchover-examples/">
+        <link rel="next" href="../gateway-switchover/">
       
       
-      <link rel="icon" href="../assets/confluent-logo.svg">
+      <link rel="icon" href="../images/confluent-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.44">
     
     
@@ -96,7 +96,7 @@
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="KCP — Kafka Copy" class="md-header__button md-logo" aria-label="KCP — Kafka Copy" data-md-component="logo">
       
-  <img src="../assets/confluent-logo.svg" alt="logo">
+  <img src="../images/confluent-logo.svg" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -254,7 +254,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../gateway-switchover-examples/" class="md-tabs__link">
+        <a href="../gateway-switchover/" class="md-tabs__link">
           
   
     
@@ -291,7 +291,7 @@
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="KCP — Kafka Copy" class="md-nav__button md-logo" aria-label="KCP — Kafka Copy" data-md-component="logo">
       
-  <img src="../assets/confluent-logo.svg" alt="logo">
+  <img src="../images/confluent-logo.svg" alt="logo">
 
     </a>
     KCP — Kafka Copy
@@ -1628,6 +1628,8 @@
     
       
         
+          
+        
       
         
       
@@ -1660,16 +1662,24 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/" class="md-nav__link ">
+              
   
   <span class="md-ellipsis">
     Gateway Switchover
   </span>
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
@@ -1678,25 +1688,6 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gateway-switchover-examples/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Examples
-  </span>
-  
-
-      </a>
-    </li>
-  
-
               
             
               
@@ -1729,7 +1720,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-none-to-mtls/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-none-to-mtls/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1788,7 +1779,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-none-to-oauth/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-none-to-oauth/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1847,7 +1838,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-none-to-saslplain/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-none-to-saslplain/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1906,7 +1897,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-mtls-to-mtls/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-mtls-to-mtls/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1965,7 +1956,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-mtls-to-oauth/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-mtls-to-oauth/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2024,7 +2015,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-mtls-to-sasl-plain/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-mtls-to-sasl-plain/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2083,7 +2074,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-sasl-scram-to-oauth/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-sasl-scram-to-oauth/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2142,7 +2133,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../switchover-sasl-scram-to-sasl-plain/" class="md-nav__link ">
+            <a href="../gateway-switchover/switchover-sasl-scram-to-sasl-plain/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2451,7 +2442,7 @@
 <p><strong>KCP CLI</strong> orchestrates the cutover through three commands: <code>kcp migration init</code> (validates setup and creates the migration plan), <code>kcp migration lag-check</code> (monitors replication lag), and <code>kcp migration execute</code> (runs the cutover). It runs from a local machine or bastion host and can be installed as a Confluent CLI plugin.</p>
 <p><strong>CC Gateway</strong> is a Kafka protocol proxy deployed in (or adjacent to) the source cluster's network. Clients connect to the gateway instead of the source cluster directly. The gateway forwards traffic to the source cluster during the migration window, handles auth translation between source credentials and Confluent Cloud credentials, and switches routing to Confluent Cloud at cutover, all without a restart. It is deployed on Kubernetes via Confluent for Kubernetes and requires a Confluent Platform license.</p>
 <p><strong>Cluster Linking</strong> runs in Confluent Cloud and replicates topics from the source cluster to the destination in real time, including consumer offset synchronization. At cutover, KCP triggers topic promotion once replication lag reaches zero. Cluster Linking is available on Dedicated and Enterprise cluster types.</p>
-<p><img alt="Description" src="../assets/image-20260112-172320.png" /></p>
+<p><img alt="Description" src="../images/image-20260112-172320.png" /></p>
 <p><strong>Prerequisites already in place:</strong> Kubernetes (to host the gateway), a secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) to hold gateway backend credentials, and network connectivity between the gateway and both the source cluster and Confluent Cloud. KCP generates Terraform for any of these that need to be provisioned as part of the migration.</p>
 <hr />
 <h2 id="3-licensing">3. Licensing<a class="headerlink" href="#3-licensing" title="Permanent link">&para;</a></h2>
@@ -2586,12 +2577,12 @@
 <li><strong>Cluster Linking</strong> active: cluster link in CC, mirror topics replicating for all topics in the group, consumer offset sync enabled</li>
 <li><strong>KCP</strong> has <code>CloudClusterAdmin</code> + <code>MetricsViewer</code> on the CC cluster and <code>get</code>/<code>patch</code>/<code>update</code> on the Gateway CR in Kubernetes</li>
 </ul>
-<p><img alt="Description" src="../assets/image-20260112-174645.png" /></p>
+<p><img alt="Description" src="../images/image-20260112-174645.png" /></p>
 <hr />
 <h3 id="step-1-prepare-gateway-crs">Step 1: Prepare Gateway CRs<a class="headerlink" href="#step-1-prepare-gateway-crs" title="Permanent link">&para;</a></h3>
 <p>Before init, you need three gateway CR files ready on disk. The <strong>initial CR</strong> is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The <strong>fenced CR</strong> is a modified version that blocks all traffic on the route and returns <code>BROKER_NOT_AVAILABLE</code> to clients. The <strong>switchover CR</strong> is another version that points the route at Confluent Cloud instead of the source cluster.</p>
 <p>KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to <code>kcp migration init</code>. Working examples for every supported auth combination are in the KCP repo at <a href="https://github.com/confluentinc/kcp/tree/main/docs"><code>docs/switchover-*</code></a>.</p>
-<p><img alt="Description" src="../assets/image-20260112-174757.png" /></p>
+<p><img alt="Description" src="../images/image-20260112-174757.png" /></p>
 <hr />
 <h3 id="step-2-kcp-migration-init">Step 2: <code>kcp migration init</code><a class="headerlink" href="#step-2-kcp-migration-init" title="Permanent link">&para;</a></h3>
 <p>Run once per migration group. Init validates the entire setup before anything is changed: it confirms the cluster link is active, all topics in the group are replicating, the gateway CR exists and matches expectations, the fenced and switchover files parse correctly, and consumer offset sync is enabled. No traffic is affected at this step.</p>
@@ -2643,12 +2634,12 @@
 </table>
 <p>The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).</p>
 <p>Steps:
-<img alt="Description" src="../assets/image-20260112-175128.png" />
-<img alt="Description" src="../assets/image-20260112-175142.png" />
-<img alt="Description" src="../assets/image-20260112-175201.png" />
-<img alt="Description" src="../assets/image-20260112-175219.png" />
-<img alt="Description" src="../assets/image-20260112-175233.png" />
-<img alt="Description" src="../assets/image-20260112-175246.png" /></p>
+<img alt="Description" src="../images/image-20260112-175128.png" />
+<img alt="Description" src="../images/image-20260112-175142.png" />
+<img alt="Description" src="../images/image-20260112-175201.png" />
+<img alt="Description" src="../images/image-20260112-175219.png" />
+<img alt="Description" src="../images/image-20260112-175233.png" />
+<img alt="Description" src="../images/image-20260112-175246.png" /></p>
 <p>Full flag reference: <a href="https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration"><code>kcp migration execute --help</code></a></p>
 
 

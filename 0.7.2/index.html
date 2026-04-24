@@ -17,7 +17,7 @@
         <link rel="next" href="command-reference/">
       
       
-      <link rel="icon" href="assets/confluent-logo.svg">
+      <link rel="icon" href="images/confluent-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.44">
     
     
@@ -94,7 +94,7 @@
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href="." title="KCP — Kafka Copy" class="md-header__button md-logo" aria-label="KCP — Kafka Copy" data-md-component="logo">
       
-  <img src="assets/confluent-logo.svg" alt="logo">
+  <img src="images/confluent-logo.svg" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -252,7 +252,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="gateway-switchover-examples/" class="md-tabs__link">
+        <a href="gateway-switchover/" class="md-tabs__link">
           
   
     
@@ -289,7 +289,7 @@
   <label class="md-nav__title" for="__drawer">
     <a href="." title="KCP — Kafka Copy" class="md-nav__button md-logo" aria-label="KCP — Kafka Copy" data-md-component="logo">
       
-  <img src="assets/confluent-logo.svg" alt="logo">
+  <img src="images/confluent-logo.svg" alt="logo">
 
     </a>
     KCP — Kafka Copy
@@ -372,18 +372,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#linux-macos" class="md-nav__link">
+  <a href="#picking-the-right-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Linux / macOS
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#windows" class="md-nav__link">
-    <span class="md-ellipsis">
-      Windows
+      Picking the right architecture
     </span>
   </a>
   
@@ -1503,6 +1494,8 @@
     
       
         
+          
+        
       
         
       
@@ -1535,16 +1528,24 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="gateway-switchover/" class="md-nav__link ">
+              
   
   <span class="md-ellipsis">
     Gateway Switchover
   </span>
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
@@ -1553,25 +1554,6 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="gateway-switchover-examples/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Examples
-  </span>
-  
-
-      </a>
-    </li>
-  
-
               
             
               
@@ -1604,7 +1586,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-none-to-mtls/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-none-to-mtls/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1663,7 +1645,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-none-to-oauth/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-none-to-oauth/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1722,7 +1704,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-none-to-saslplain/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-none-to-saslplain/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1781,7 +1763,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-mtls-to-mtls/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-mtls-to-mtls/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1840,7 +1822,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-mtls-to-oauth/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-mtls-to-oauth/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1899,7 +1881,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-mtls-to-sasl-plain/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-mtls-to-sasl-plain/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1958,7 +1940,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-sasl-scram-to-oauth/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-sasl-scram-to-oauth/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2017,7 +1999,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="switchover-sasl-scram-to-sasl-plain/" class="md-nav__link ">
+            <a href="gateway-switchover/switchover-sasl-scram-to-sasl-plain/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2090,18 +2072,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#linux-macos" class="md-nav__link">
+  <a href="#picking-the-right-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Linux / macOS
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#windows" class="md-nav__link">
-    <span class="md-ellipsis">
-      Windows
+      Picking the right architecture
     </span>
   </a>
   
@@ -2202,37 +2175,15 @@
 <p>The workflow differs slightly based on your source type. See the <a href="command-reference/">Command Reference</a> for per-command specifics.</p>
 </div>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
-<p>Download <code>kcp</code> from GitHub under the <a href="https://github.com/confluentinc/kcp/releases/latest">releases tab</a>. Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).</p>
-<h3 id="linux-macos">Linux / macOS<a class="headerlink" href="#linux-macos" title="Permanent link">&para;</a></h3>
-<p>Set a variable for the latest release:</p>
-<div class="language-shell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">LATEST_TAG</span><span class="o">=</span><span class="k">$(</span>curl<span class="w"> </span>-s<span class="w"> </span>https://api.github.com/repos/confluentinc/kcp/releases/latest<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s1">&#39;&quot;tag_name&quot;:&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sed<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;s/.*&quot;([^&quot;]+)&quot;.*/\1/&#39;</span><span class="k">)</span>
-</span></code></pre></div>
-<p>Pick your platform:</p>
-<div class="language-shell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">PLATFORM</span><span class="o">=</span>darwin_amd64
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="c1"># PLATFORM=darwin_arm64</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># PLATFORM=linux_amd64</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># PLATFORM=linux_arm64</span>
-</span></code></pre></div>
-<p>Download, extract, and install:</p>
-<div class="language-shell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>-L<span class="w"> </span>-o<span class="w"> </span><span class="s2">&quot;kcp_</span><span class="si">${</span><span class="nv">LATEST_TAG</span><span class="si">}</span><span class="s2">.tar.gz&quot;</span><span class="w"> </span><span class="s2">&quot;https://github.com/confluentinc/kcp/releases/download/</span><span class="si">${</span><span class="nv">LATEST_TAG</span><span class="si">}</span><span class="s2">/kcp_</span><span class="si">${</span><span class="nv">PLATFORM</span><span class="si">}</span><span class="s2">.tar.gz&quot;</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>tar<span class="w"> </span>-xzf<span class="w"> </span><span class="s2">&quot;kcp_</span><span class="si">${</span><span class="nv">LATEST_TAG</span><span class="si">}</span><span class="s2">.tar.gz&quot;</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>chmod<span class="w"> </span>+x<span class="w"> </span>./kcp/kcp
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>sudo<span class="w"> </span>mv<span class="w"> </span>./kcp/kcp<span class="w"> </span>/usr/local/bin/kcp
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>kcp<span class="w"> </span>version
-</span></code></pre></div>
-<p>You should see output similar to:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Executing kcp with build version=0.4.5 commit=a8ef9fd... date=2025-11-13T12:56:00Z
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Version: 0.4.5
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Commit:  a8ef9fd...
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>Date:    2025-11-13T12:56:00Z
-</span></code></pre></div>
-<h3 id="windows">Windows<a class="headerlink" href="#windows" title="Permanent link">&para;</a></h3>
-<p>Download the latest Windows artifact from the <a href="https://github.com/confluentinc/kcp/releases/latest">releases page</a>:</p>
+<p>Download the <code>kcp</code> binary for your platform from the <a href="https://github.com/confluentinc/kcp/releases/latest">latest release on GitHub</a>. Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).</p>
+<p>Extract the archive, place the <code>kcp</code> binary somewhere on your <code>PATH</code>, and run <code>kcp version</code> to verify.</p>
+<h3 id="picking-the-right-architecture">Picking the right architecture<a class="headerlink" href="#picking-the-right-architecture" title="Permanent link">&para;</a></h3>
+<p>If you're unsure whether to download the <code>amd64</code> or <code>arm64</code> build:</p>
 <ul>
-<li><code>kcp_windows_amd64.exe</code> — single executable</li>
-<li><code>kcp_windows_amd64.zip</code> — packaged archive</li>
+<li><strong>macOS</strong>: run <code>uname -m</code> — <code>arm64</code> means Apple Silicon (M1/M2/M3/M4); <code>x86_64</code> means Intel (use <code>amd64</code>).</li>
+<li><strong>Linux</strong>: run <code>uname -m</code> — <code>aarch64</code> maps to <code>arm64</code>; <code>x86_64</code> maps to <code>amd64</code>.</li>
+<li><strong>Windows</strong>: open <em>System Information</em> and check <em>System type</em>, or run <code>echo %PROCESSOR_ARCHITECTURE%</code> in cmd — <code>ARM64</code> maps to <code>arm64</code>; <code>AMD64</code> maps to <code>amd64</code>. Only <code>amd64</code> is currently published for Windows.</li>
 </ul>
-<p>Extract (if zipped), optionally move <code>kcp.exe</code> onto your <code>PATH</code>, and run <code>kcp version</code> to verify.</p>
 <h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
 <p>KCP uses the standard AWS credential chain for any command that calls AWS APIs. Supported auth methods:</p>
 <ul>
@@ -2243,7 +2194,7 @@
 <li><strong>Credential helpers</strong>: any tool that writes to the standard AWS credential locations (e.g. <code>granted</code>).</li>
 </ul>
 <p>Verify with:</p>
-<div class="language-shell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>aws<span class="w"> </span>sts<span class="w"> </span>get-caller-identity
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aws<span class="w"> </span>sts<span class="w"> </span>get-caller-identity
 </span></code></pre></div>
 <p>Each command's per-command AWS IAM permission requirements are documented on its page in the <a href="command-reference/">Command Reference</a>.</p>
 <div class="admonition note">
@@ -2270,9 +2221,11 @@
 <h3 id="bastion-host-requirements">Bastion host requirements<a class="headerlink" href="#bastion-host-requirements" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Public endpoints</strong> — you can run <code>kcp</code> commands directly from your local machine.</li>
-<li><strong>Private endpoints</strong> — <code>kcp</code> must run from inside the source VPC. Either:</li>
+<li><strong>Private endpoints</strong> — <code>kcp</code> must run from inside the source VPC. Either:<ol>
 <li>Provision a new bastion with <a href="command-reference/create-asset/bastion-host/"><code>kcp create-asset bastion-host</code></a>, or</li>
 <li>Use an existing jump server and copy the <code>kcp</code> binary onto it.</li>
+</ol>
+</li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -2292,7 +2245,7 @@
 <h2 id="related-guides">Related guides<a class="headerlink" href="#related-guides" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="getting-started-with-zero-cut-migrations/">Getting Started with Zero-Cut Migrations</a></li>
-<li><a href="gateway-switchover-examples/">Gateway Switchover Examples</a></li>
+<li><a href="gateway-switchover/">Gateway Switchover Examples</a></li>
 </ul>
 
 

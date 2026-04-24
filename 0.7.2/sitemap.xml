@@ -5,10 +5,6 @@
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover-examples/</loc>
-         <lastmod>2026-04-24</lastmod>
-    </url>
-    <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/getting-started-with-zero-cut-migrations/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
@@ -137,35 +133,39 @@
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-mtls-to-mtls/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-mtls-to-oauth/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-mtls-to-mtls/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-mtls-to-sasl-plain/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-mtls-to-oauth/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-none-to-mtls/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-mtls-to-sasl-plain/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-none-to-oauth/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-none-to-mtls/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-none-to-saslplain/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-none-to-oauth/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-sasl-scram-to-oauth/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-none-to-saslplain/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
     <url>
-         <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-sasl-scram-to-sasl-plain/</loc>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-sasl-scram-to-oauth/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover/switchover-sasl-scram-to-sasl-plain/</loc>
          <lastmod>2026-04-24</lastmod>
     </url>
 </urlset>
