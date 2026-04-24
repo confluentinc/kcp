@@ -2,46 +2,170 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/gateway-switchover-examples/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/getting-started-with-zero-cut-migrations/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/discover/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/docs/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/ui/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/update/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/version/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/bastion-host/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-schemas/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-topics/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migration-infra/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/target-infra/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-acls/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-acls/iam/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-acls/kafka/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-connectors/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-connectors/connector-utility/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-connectors/msk/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/create-asset/migrate-connectors/self-managed/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/migration/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/migration/execute/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/migration/init/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/migration/lag-check/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/migration/list/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/report/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/report/costs/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/report/metrics/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/scan/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/scan/client-inventory/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/scan/clusters/</loc>
+         <lastmod>2026-04-24</lastmod>
+    </url>
+    <url>
+         <loc>https://confluentinc.github.io/kcp/0.7.2/command-reference/scan/schema-registry/</loc>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-mtls-to-mtls/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-mtls-to-oauth/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-mtls-to-sasl-plain/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-none-to-mtls/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-none-to-oauth/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-none-to-saslplain/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-sasl-scram-to-oauth/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
     <url>
          <loc>https://confluentinc.github.io/kcp/0.7.2/switchover-sasl-scram-to-sasl-plain/</loc>
-         <lastmod>2026-04-22</lastmod>
+         <lastmod>2026-04-24</lastmod>
     </url>
 </urlset>
