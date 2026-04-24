@@ -1,14 +1,15 @@
 nav:
-  - Home: README.md
-  - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
-  - command-reference
-  - Gateway Switchover:
-      - Examples: gateway-switchover-examples.md
-      - none → mTLS: switchover-none-to-mtls
-      - none → OAuth: switchover-none-to-oauth
-      - none → SASL/PLAIN: switchover-none-to-saslplain
-      - mTLS → mTLS: switchover-mtls-to-mtls
-      - mTLS → OAuth: switchover-mtls-to-oauth
-      - mTLS → SASL/PLAIN: switchover-mtls-to-sasl-plain
-      - SASL/SCRAM → OAuth: switchover-sasl-scram-to-oauth
-      - SASL/SCRAM → SASL/PLAIN: switchover-sasl-scram-to-sasl-plain
+
+- Home: README.md
+- command-reference
+- Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
+- Gateway Switchover:
+  - Examples: gateway-switchover-examples.md
+  - none → mTLS: switchover-none-to-mtls
+  - none → OAuth: switchover-none-to-oauth
+  - none → SASL/PLAIN: switchover-none-to-saslplain
+  - mTLS → mTLS: switchover-mtls-to-mtls
+  - mTLS → OAuth: switchover-mtls-to-oauth
+  - mTLS → SASL/PLAIN: switchover-mtls-to-sasl-plain
+  - SASL/SCRAM → OAuth: switchover-sasl-scram-to-oauth
+  - SASL/SCRAM → SASL/PLAIN: switchover-sasl-scram-to-sasl-plain
