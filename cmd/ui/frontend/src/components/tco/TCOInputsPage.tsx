@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/common/ui/button'
 import { Modal } from '@/components/common/ui/modal'
 import { useAppStore, useRegions } from '@/stores/store'
@@ -20,11 +20,12 @@ export const TCOInputs = () => {
 
   const mskClusters = useTCOClusters()
   const oskClusters = useOSKTCOClusters()
+  const allClusters = useMemo(() => [...mskClusters, ...oskClusters], [mskClusters, oskClusters])
 
   const [activeTab, setActiveTab] = useState<SourceTab>('msk')
   const activeClusters = activeTab === 'msk' ? mskClusters : oskClusters
 
-  const { modalState, openModal, closeModal } = useTCOModal(activeClusters)
+  const { modalState, openModal, closeModal } = useTCOModal(allClusters)
 
   const [copySuccess, setCopySuccess] = useState(false)
 
@@ -55,8 +56,7 @@ export const TCOInputs = () => {
   const handleOpenMetricsModal = (clusterKey: string, metricType: string) => {
     openModal(
       clusterKey,
-      metricType as 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions',
-      activeTab
+      metricType as 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
     )
   }
 
@@ -173,7 +173,7 @@ export const TCOInputs = () => {
                     {activeClusters.map((cluster) => (
                       <th
                         key={cluster.key}
-                        className="px-4 py-3 text-left text-sm font-medium text-foreground min-w-[150px]"
+                        className="px-4 py-3 text-left text-sm font-medium text-foreground min-w-[150px] align-top"
                       >
                         {renderColumnHeader(cluster)}
                       </th>
@@ -185,7 +185,6 @@ export const TCOInputs = () => {
                     label="Avg Ingress Throughput (MB/s)"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="avgIngressThroughput"
                     onInputChange={handleInputChange}
                     onMetricsClick={handleOpenMetricsModal}
@@ -198,7 +197,6 @@ export const TCOInputs = () => {
                     label="Peak Ingress Throughput (MB/s)"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="peakIngressThroughput"
                     onInputChange={handleInputChange}
                     onMetricsClick={handleOpenMetricsModal}
@@ -211,7 +209,6 @@ export const TCOInputs = () => {
                     label="Avg Egress Throughput (MB/s)"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="avgEgressThroughput"
                     onInputChange={handleInputChange}
                     onMetricsClick={handleOpenMetricsModal}
@@ -224,7 +221,6 @@ export const TCOInputs = () => {
                     label="Peak Egress Throughput (MB/s)"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="peakEgressThroughput"
                     onInputChange={handleInputChange}
                     onMetricsClick={handleOpenMetricsModal}
@@ -237,7 +233,6 @@ export const TCOInputs = () => {
                     label="Retention Days"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="retentionDays"
                     onInputChange={handleInputChange}
                     step="1"
@@ -250,7 +245,6 @@ export const TCOInputs = () => {
                     label="Partitions"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="partitions"
                     onInputChange={handleInputChange}
                     onMetricsClick={handleOpenMetricsModal}
@@ -264,7 +258,6 @@ export const TCOInputs = () => {
                     label="Replication Factor"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="replicationFactor"
                     onInputChange={handleInputChange}
                     step="1"
@@ -277,10 +270,9 @@ export const TCOInputs = () => {
                     label="Follower Fetching"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     readOnly={true}
-                    readOnlyValue={(cluster, oskCluster) => {
-                      if (oskCluster) return undefined
+                    readOnlyValue={(cluster, sourceType) => {
+                      if (sourceType === 'osk') return undefined
                       return cluster?.metrics?.metadata?.follower_fetching
                     }}
                   />
@@ -288,10 +280,9 @@ export const TCOInputs = () => {
                     label="Tiered Storage"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     readOnly={true}
-                    readOnlyValue={(cluster, oskCluster) => {
-                      if (oskCluster) return undefined
+                    readOnlyValue={(cluster, sourceType) => {
+                      if (sourceType === 'osk') return undefined
                       return cluster?.metrics?.metadata?.tiered_storage
                     }}
                   />
@@ -299,7 +290,6 @@ export const TCOInputs = () => {
                     label="Local Retention in Primary Storage Hours"
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
-                    regions={regions}
                     field="localRetentionHours"
                     onInputChange={handleInputChange}
                     step="1"

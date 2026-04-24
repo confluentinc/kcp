@@ -96,12 +96,11 @@ test.describe('TCO Inputs Metrics Modal', () => {
     await page.locator('button.rdp-button_previous').click()
     await expect(page.locator('text=March 2026')).toBeVisible()
 
-    // Click day 28 in the March calendar using text filter
+    // Click day 28 in the March calendar — set up response listener before clicking
+    const metricsResponse = page.waitForResponse((resp) => resp.url().includes('/metrics/osk/'))
     const day28 = page.locator('[data-slot="calendar"]').locator('button').filter({ hasText: /^28$/ }).first()
     await day28.click()
-
-    // Wait for re-fetch with the new date range
-    await page.waitForTimeout(1500)
+    await metricsResponse
 
     // Verify stats have been recalculated
     await expect(avgLabel).toBeVisible()

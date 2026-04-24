@@ -151,14 +151,29 @@ func (ui *UI) Run() error {
 	return nil
 }
 
+func parseDateRange(c echo.Context) (*time.Time, *time.Time, error) {
+	var startTime, endTime *time.Time
+	if s := c.QueryParam("startDate"); s != "" {
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid start date format: must be RFC3339 (e.g., 2025-09-01T00:00:00Z)")
+		}
+		startTime = &parsed
+	}
+	if s := c.QueryParam("endDate"); s != "" {
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid end date format: must be RFC3339 (e.g., 2025-09-27T23:59:59Z)")
+		}
+		endTime = &parsed
+	}
+	return startTime, endTime, nil
+}
+
 func (ui *UI) handleGetMetrics(c echo.Context) error {
 	region := c.Param("region")
 	cluster := c.Param("cluster")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
-	// Get state by session ID
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -167,30 +182,14 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
 	}
 
-	// Process the full state to get structured data
 	processedState := ui.reportService.ProcessState(*state)
 
 	// Filter by region and cluster
@@ -208,9 +207,6 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	clusterId := c.Param("clusterId")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -225,26 +221,12 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 		})
 	}
 
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
 	}
 
 	processedState := ui.reportService.ProcessState(*state)
@@ -263,10 +245,6 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 func (ui *UI) handleGetCosts(c echo.Context) error {
 	region := c.Param("region")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
-	// Get state by session ID
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -275,33 +253,16 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
 	}
 
-	// Process the full state to get structured data
 	processedState := ui.reportService.ProcessState(*state)
 
-	// Filter costs by region
 	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{

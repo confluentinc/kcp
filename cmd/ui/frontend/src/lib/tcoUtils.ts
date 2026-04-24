@@ -1,24 +1,12 @@
 import { DEFAULTS, METRIC_TYPE_MAP } from '@/constants'
 import { findClusterInRegions } from './clusterUtils'
 import type { Region } from '@/types'
+import type { WorkloadData } from '@/stores/store'
 import type { TCOCluster } from '@/hooks/useTCOClusters'
-
-interface TCOWorkloadData {
-  [clusterKey: string]: {
-    avgIngressThroughput?: string
-    peakIngressThroughput?: string
-    avgEgressThroughput?: string
-    peakEgressThroughput?: string
-    retentionDays?: string
-    partitions?: string
-    replicationFactor?: string
-    localRetentionHours?: string
-  }
-}
 
 export const generateTCOCSV = (
   allClusters: TCOCluster[],
-  tcoWorkloadData: TCOWorkloadData,
+  tcoWorkloadData: WorkloadData,
   regions: Region[]
 ): string => {
   if (allClusters.length === 0) {

@@ -38,15 +38,14 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
   const openModal = useCallback(
     (
       clusterKey: string,
-      metricType: 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions',
-      sourceType: 'msk' | 'osk'
+      metricType: 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
     ) => {
       const cluster = allClusters.find((c) => c.key === clusterKey)
       if (!cluster) return
 
       const metricConfig = getMetricConfig(metricType)
 
-      if (sourceType === 'osk') {
+      if (cluster.sourceType === 'osk') {
         const oskCluster = getOSKClusterDataById(clusterKey)
         if (!oskCluster) return
 

@@ -4,11 +4,11 @@ import { getOSKSource } from '@/lib/sourceUtils'
 import type { TCOCluster } from './useTCOClusters'
 
 export const useOSKTCOClusters = (): TCOCluster[] => {
-  const kcpState = useAppStore((state) => state.kcpState)
+  const sources = useAppStore((state) => state.kcpState?.sources)
 
   return useMemo(() => {
-    if (!kcpState) return []
-    const oskSource = getOSKSource(kcpState.sources)
+    if (!sources) return []
+    const oskSource = getOSKSource(sources)
     if (!oskSource) return []
 
     return oskSource.clusters.map((cluster) => ({
@@ -18,5 +18,5 @@ export const useOSKTCOClusters = (): TCOCluster[] => {
       regionName: '',
       metadata: cluster.metadata,
     }))
-  }, [kcpState])
+  }, [sources])
 }

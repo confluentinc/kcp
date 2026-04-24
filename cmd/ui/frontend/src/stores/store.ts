@@ -25,7 +25,7 @@ interface RegionState extends DateFilters {
   activeCostsTab: string
 }
 
-interface WorkloadData {
+export interface WorkloadData {
   [clusterKey: string]: {
     avgIngressThroughput: string
     peakIngressThroughput: string
@@ -332,7 +332,7 @@ export const useAppStore = create<AppState>()(
       initializeTCOData: (clusters) =>
         set(
           (state) => {
-            const newData: WorkloadData = {}
+            const newData: WorkloadData = { ...state.tcoWorkloadData }
             clusters.forEach((cluster) => {
               // Keep existing data if it exists, otherwise initialize with defaults
               newData[cluster.key] = state.tcoWorkloadData[cluster.key] || {
