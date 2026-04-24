@@ -9,10 +9,10 @@ interface ClusterMetricsQueryTabProps {
 export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProps) => {
   if (!queryInfo || queryInfo.length === 0) {
     return (
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-8 text-center">
-        <p className="text-gray-500 dark:text-gray-400">
+      <div className="bg-card rounded-lg border border-border p-8 text-center">
+        <p className="text-muted-foreground">
           No query information available. Re-run{' '}
-          <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-sm">
+          <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">
             kcp discover
           </code>{' '}
           to generate metrics query details.
@@ -34,28 +34,28 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
       {queryInfo.map((info, index) => (
         <div
           key={`${info.metric_name}-${index}`}
-          className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6"
+          className="bg-card rounded-lg border border-border p-6"
         >
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+          <h3 className="text-lg font-semibold text-foreground mb-4">
             {info.metric_name}
           </h3>
 
           {/* Query Parameters */}
           <div className="grid grid-cols-2 gap-x-8 gap-y-3 mb-4">
             <div>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-sm font-medium text-foreground">
                 Namespace
               </span>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{info.namespace}</p>
+              <p className="text-sm text-muted-foreground">{info.namespace}</p>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-sm font-medium text-foreground">
                 Statistic
               </span>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{info.statistic}</p>
+              <p className="text-sm text-muted-foreground">{info.statistic}</p>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-sm font-medium text-foreground">
                 Dimensions
               </span>
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -70,19 +70,19 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
               </div>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Period</span>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{info.period} seconds</p>
+              <span className="text-sm font-medium text-foreground">Period</span>
+              <p className="text-sm text-muted-foreground">{info.period} seconds</p>
             </div>
           </div>
 
           {/* Math Expression */}
           {info.math_expression && (
             <div className="mb-4">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-sm font-medium text-foreground">
                 Aggregation
               </span>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs">
+              <p className="text-sm text-muted-foreground">
+                <code className="px-1.5 py-0.5 rounded bg-secondary text-xs">
                   {info.math_expression}
                 </code>
               </p>
@@ -93,7 +93,7 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
           {info.console_source_json && (
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span className="text-sm font-medium text-foreground">
                   CloudWatch Console Source JSON
                 </span>
                 <Button
@@ -105,11 +105,11 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
                   {copiedKey === `console-${index}` ? 'Copied!' : 'Copy'}
                 </Button>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              <p className="text-xs text-muted-foreground mb-2">
                 Paste into CloudWatch &rarr; Metrics &rarr; All metrics &rarr;{' '}
                 <strong>Source</strong> tab, then click <strong>Update</strong>.
               </p>
-              <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-48 bg-gray-50 dark:bg-gray-900 p-3 rounded border">
+              <pre className="text-xs font-mono text-foreground overflow-auto max-h-48 bg-secondary p-3 rounded border">
                 {info.console_source_json}
               </pre>
             </div>
@@ -119,7 +119,7 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
           {info.aws_cli_command && (
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span className="text-sm font-medium text-foreground">
                   AWS CLI Command
                 </span>
                 <Button
@@ -131,14 +131,14 @@ export const ClusterMetricsQueryTab = ({ queryInfo }: ClusterMetricsQueryTabProp
                   {copiedKey === `cli-${index}` ? 'Copied!' : 'Copy'}
                 </Button>
               </div>
-              <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-48 bg-gray-50 dark:bg-gray-900 p-3 rounded border">
+              <pre className="text-xs font-mono text-foreground overflow-auto max-h-48 bg-secondary p-3 rounded border">
                 {info.aws_cli_command}
               </pre>
             </div>
           )}
 
           {/* Aggregation Note */}
-          <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+          <p className="text-xs text-muted-foreground italic">
             {info.aggregation_note}
           </p>
         </div>

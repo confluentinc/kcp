@@ -32,7 +32,7 @@ function AggregateStatRow({
   return (
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300 uppercase w-8">
+        <span className="text-xs font-medium text-foreground uppercase w-8">
           {typeLabels[type]}
         </span>
         <span className={`text-sm font-semibold ${typeColors[type]}`}>
@@ -87,7 +87,7 @@ export const MetricsAggregateStats = ({
 
   if (!metricAggregate) {
     return (
-      <span className="text-sm text-gray-500 dark:text-gray-400">No data available</span>
+      <span className="text-sm text-muted-foreground">No data available</span>
     )
   }
 

@@ -23,6 +23,7 @@ interface ProcessedData {
 interface MetricsChartTabProps {
   selectedMetric: string
   setSelectedMetric: (metric: string) => void
+  preselectedMetricMissing?: boolean
   processedData: ProcessedData
   metricsResponse: {
     aggregates?: Record<string, { min?: number; avg?: number; max?: number }>
@@ -45,6 +46,7 @@ interface MetricsChartTabProps {
 export const MetricsChartTab = ({
   selectedMetric,
   setSelectedMetric,
+  preselectedMetricMissing = false,
   processedData,
   metricsResponse,
   inModal,
@@ -63,16 +65,42 @@ export const MetricsChartTab = ({
 }: MetricsChartTabProps) => {
   return (
     <div className="space-y-4 min-w-0">
-      <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border min-w-0 max-w-full">
+      <div className="bg-card rounded-lg border border-border min-w-0 max-w-full">
         <div className="p-6 rounded-lg">
-          {processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
+          {preselectedMetricMissing ? (
+            <div className="space-y-4 py-6">
+              <div className="text-center">
+                <p className="text-muted-foreground">
+                  No data available for <span className="font-semibold">{selectedMetric}</span>.
+                  This cluster may not have been scanned with metrics collection
+                  (<code className="text-xs bg-muted px-1 py-0.5 rounded">--metrics jolokia</code> or{' '}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">--metrics prometheus</code>).
+                </p>
+              </div>
+              {processedData.metrics.length > 0 && (
+                <div className="flex flex-col items-center gap-2">
+                  <label className="text-sm text-muted-foreground">View available metrics instead:</label>
+                  <Select value="" onValueChange={setSelectedMetric}>
+                    <SelectTrigger className="w-[300px]">
+                      <SelectValue placeholder="Choose a metric" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {processedData.metrics.map((metric) => (
+                        <SelectItem key={metric} value={metric}>{metric}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          ) : processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
             <div className="space-y-6">
               {/* Metric Selector and Summary Stats */}
               <div className="flex items-center justify-between">
                 {/* Left side: Metric Selector (hidden in modal mode) */}
                 {!inModal && (
                   <div className="flex items-center gap-4">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label className="text-sm font-medium text-foreground">
                       Select Metric:
                     </label>
                     <Select
@@ -99,7 +127,7 @@ export const MetricsChartTab = ({
                 {/* In modal mode, show the selected metric as a title */}
                 {inModal && selectedMetric && (
                   <div className="flex items-center gap-4">
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                    <h3 className="text-lg font-semibold text-foreground">
                       {selectedMetric} -{' '}
                       {modalWorkloadAssumption || getWorkloadAssumptionName(selectedMetric)}
                     </h3>
@@ -155,7 +183,7 @@ export const MetricsChartTab = ({
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-gray-500 dark:text-gray-400">No chart data available</p>
+              <p className="text-muted-foreground">No chart data available</p>
             </div>
           )}
         </div>

@@ -13,7 +13,7 @@ import (
 
 var (
 	stateFile       string
-	clusterArn      string
+	clusterId       string
 	ccClusterId     string
 	ccEnvironmentId string
 	ccApiKey        string
@@ -36,7 +36,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the cluster to migrate connectors from.")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster.")
 	requiredFlags.StringVar(&ccEnvironmentId, "cc-environment-id", "", "The ID of the Confluent Cloud environment to migrate connectors to.")
 	requiredFlags.StringVar(&ccClusterId, "cc-cluster-id", "", "The ID of the Confluent Cloud cluster to migrate connectors to.")
 	requiredFlags.StringVar(&ccApiKey, "cc-api-key", "", "The API key for the Confluent Cloud cluster to migrate connectors to.")
@@ -69,6 +69,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	})
 
 	_ = mskConnectorsCmd.MarkFlagRequired("state-file")
+	_ = mskConnectorsCmd.MarkFlagRequired("cluster-id")
 	_ = mskConnectorsCmd.MarkFlagRequired("cc-environment-id")
 	_ = mskConnectorsCmd.MarkFlagRequired("cc-cluster-id")
 	_ = mskConnectorsCmd.MarkFlagRequired("cc-api-key")
@@ -106,7 +107,7 @@ func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
 	}
 
 	if outputDir == "" {
-		outputDir = fmt.Sprintf("%s-connectors", utils.ExtractClusterNameFromArn(clusterArn))
+		outputDir = fmt.Sprintf("%s-connectors", utils.ExtractClusterNameFromArn(clusterId))
 	}
 
 	var state types.State
@@ -114,7 +115,7 @@ func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&state, clusterArn)
+	cluster, err := state.GetClusterByArn(clusterId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}

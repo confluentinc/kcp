@@ -5,144 +5,85 @@ import "github.com/confluentinc/kcp/internal/types"
 func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
-			Name: "msk_sasl_scram_username",
-			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_username",
-				Description: "MSK SASL SCRAM Username",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaSaslScramUsername.Name,
+			Definition: SchemaSaslScramUsername.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // User prompted for value at Terraform apply.
+				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_sasl_scram_password",
-			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_password",
-				Description: "MSK SASL SCRAM Password",
-				Sensitive:   true,
-				Type:        "string",
-			},
+			Name:       SchemaSaslScramPassword.Name,
+			Definition: SchemaSaslScramPassword.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // User prompted for value at Terraform apply.
+				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
-			Name: "confluent_cloud_cluster_api_key",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_cluster_api_key",
-				Description: "Confluent Cloud cluster API key",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudClusterAPIKey.Name,
+			Definition: SchemaConfluentCloudClusterAPIKey.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // User prompted for value at Terraform apply.
+				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
-			Name: "confluent_cloud_cluster_api_secret",
-			Definition: types.TerraformVariable{
-				Name:        "confluent_cloud_cluster_api_secret",
-				Description: "Confluent Cloud cluster API secret",
-				Sensitive:   true,
-				Type:        "string",
-			},
+			Name:       SchemaConfluentCloudClusterAPISecret.Name,
+			Definition: SchemaConfluentCloudClusterAPISecret.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
-				return "" // User prompted for value at Terraform apply.
+				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
-			Name: "target_cluster_rest_endpoint",
-			Definition: types.TerraformVariable{
-				Name:        "target_cluster_rest_endpoint",
-				Description: "The REST endpoint of the target Confluent Cloud cluster that data will be migrated to.",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaTargetClusterRestEndpoint.Name,
+			Definition: SchemaTargetClusterRestEndpoint.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetRestEndpoint
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
-			Name: "target_cluster_id",
-			Definition: types.TerraformVariable{
-				Name:        "target_cluster_id",
-				Description: "The ID of the target Confluent Cloud cluster that data will be migrated to.",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaTargetClusterID.Name,
+			Definition: SchemaTargetClusterID.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 		{
-			Name: "cluster_link_name",
-			Definition: types.TerraformVariable{
-				Name:        "cluster_link_name",
-				Description: "The name of the cluster link that will be created between the source and target Confluent Cloud clusters.",
-				Sensitive:   false,
-				Type:        "string",
-			},
+			Name:       SchemaClusterLinkName.Name,
+			Definition: SchemaClusterLinkName.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ClusterLinkName
 			},
+		},
+		{
+			Name:       SchemaClusterID.Name,
+			Definition: SchemaClusterID.ToDefinition(),
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceClusterId
+			},
+		},
+		{
+			Name:       SchemaSaslScramBootstrapServers.Name,
+			Definition: SchemaSaslScramBootstrapServers.ToDefinition(),
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceSaslScramBootstrapServers
+			},
 			Condition:        nil,
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_cluster_id",
+			Name: "source_sasl_scram_mechanism",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_id",
-				Description: "The ID of the source MSK cluster that data will be migrated from.",
+				Name:        "source_sasl_scram_mechanism",
+				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
 				Sensitive:   false,
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskClusterId
+				return request.SourceSaslScramMechanism
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
-		},
-		{
-			Name: "msk_sasl_scram_bootstrap_servers",
-			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_bootstrap_servers",
-				Description: "The SASL/SCRAM bootstrap servers of the source MSK cluster that data will be migrated from.",
-				Sensitive:   false,
-				Type:        "string",
-			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskSaslScramBootstrapServers
-			},
-			Condition:        nil,
-			FromModuleOutput: "",
 		},
 	}
 }
 
 func GetClusterLinkModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	clusterLinkVars := GetClusterLinkVariables()
-
-	for _, varDef := range clusterLinkVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetClusterLinkVariables(), request)
 }

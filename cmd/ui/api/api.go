@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,25 +21,27 @@ type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
 	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
 	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type UICmdOpts struct {
-	Port string
+	Port      string
+	StateFile string
 }
 
 type UI struct {
 	reportService              ReportService
-	targetInfraHCLService      hcl.TargetInfraHCLService
-	migrationInfraHCLService   hcl.MigrationInfraHCLService
-	migrationScriptsHCLService hcl.MigrationScriptsHCLService
+	targetInfraHCLService      hcl.TargetInfraGenerator
+	migrationInfraHCLService   hcl.MigrationInfraGenerator
+	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
 	port        string
 	states      map[string]*types.State // Session-based state storage (key: sessionId)
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCLService, migrationInfraHCLService hcl.MigrationInfraHCLService, migrationScriptsHCLService hcl.MigrationScriptsHCLService, opts UICmdOpts) *UI {
-	return &UI{
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
+	ui := &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
 		migrationInfraHCLService:   migrationInfraHCLService,
@@ -45,6 +50,24 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraHCL
 		port:   opts.Port,
 		states: make(map[string]*types.State),
 	}
+
+	// Pre-load state file if provided
+	if opts.StateFile != "" {
+		data, err := os.ReadFile(opts.StateFile)
+		if err != nil {
+			slog.Error("Failed to read state file", "path", opts.StateFile, "error", err)
+		} else {
+			var state types.State
+			if err := json.Unmarshal(data, &state); err != nil {
+				slog.Error("Failed to parse state file", "path", opts.StateFile, "error", err)
+			} else {
+				ui.states["default"] = &state
+				slog.Info("Pre-loaded state file", "path", opts.StateFile)
+			}
+		}
+	}
+
+	return ui
 }
 
 // getStateBySession extracts the sessionId from the request and retrieves the corresponding state
@@ -81,7 +104,33 @@ func (ui *UI) Run() error {
 		})
 	})
 
+	// Get pre-loaded state endpoint
+	e.GET("/state", func(c echo.Context) error {
+		sessionId := c.QueryParam("sessionId")
+		if sessionId == "" {
+			sessionId = "default"
+		}
+		ui.statesMutex.Lock()
+		state, exists := ui.states[sessionId]
+		// Fall back to "default" session if specific session not found
+		if !exists && sessionId != "default" {
+			state, exists = ui.states["default"]
+			if exists {
+				// Copy default state to the requesting session so subsequent
+				// requests (uploads, asset generation) work with this session ID
+				ui.states[sessionId] = state
+			}
+		}
+		ui.statesMutex.Unlock()
+		if !exists {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
+		}
+		processedState := ui.reportService.ProcessState(*state)
+		return c.JSON(http.StatusOK, processedState)
+	})
+
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
+	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -91,6 +140,7 @@ func (ui *UI) Run() error {
 	e.POST("/assets/migration-scripts/connectors", ui.handleMigrateConnectorsAssets)
 	e.POST("/assets/migration-scripts/topics", ui.handleMigrateTopicsAssets)
 	e.POST("/assets/migration-scripts/schemas", ui.handleMigrateSchemasAssets)
+	e.POST("/assets/migration-scripts/glue-schemas", ui.handleMigrateGlueSchemasAssets)
 
 	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
 	fullURL := fmt.Sprintf("http://%s", serverAddr)
@@ -101,14 +151,29 @@ func (ui *UI) Run() error {
 	return nil
 }
 
+func parseDateRange(c echo.Context) (*time.Time, *time.Time, error) {
+	var startTime, endTime *time.Time
+	if s := c.QueryParam("startDate"); s != "" {
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid start date format: must be RFC3339 (e.g., 2025-09-01T00:00:00Z)")
+		}
+		startTime = &parsed
+	}
+	if s := c.QueryParam("endDate"); s != "" {
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid end date format: must be RFC3339 (e.g., 2025-09-27T23:59:59Z)")
+		}
+		endTime = &parsed
+	}
+	return startTime, endTime, nil
+}
+
 func (ui *UI) handleGetMetrics(c echo.Context) error {
 	region := c.Param("region")
 	cluster := c.Param("cluster")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
-	// Get state by session ID
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -117,30 +182,14 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
 	}
 
-	// Process the full state to get structured data
 	processedState := ui.reportService.ProcessState(*state)
 
 	// Filter by region and cluster
@@ -155,13 +204,9 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 	return c.JSON(http.StatusOK, filteredMetrics)
 }
 
-func (ui *UI) handleGetCosts(c echo.Context) error {
-	region := c.Param("region")
+func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
+	clusterId := c.Param("clusterId")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
-	// Get state by session ID
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -170,33 +215,61 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	if state.OSKSources == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error": "No OSK sources in state",
+		})
 	}
 
-	// Process the full state to get structured data
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
 	processedState := ui.reportService.ProcessState(*state)
 
-	// Filter costs by region
+	filteredMetrics, err := ui.reportService.FilterClusterMetrics(processedState, clusterId, "osk", startTime, endTime)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found or no metrics available",
+			"message": err.Error(),
+		})
+	}
+
+	if filteredMetrics.Metrics == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "No metrics available for this cluster",
+			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
+		})
+	}
+
+	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
+func (ui *UI) handleGetCosts(c echo.Context) error {
+	region := c.Param("region")
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": err.Error(),
+		})
+	}
+
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
+	processedState := ui.reportService.ProcessState(*state)
+
 	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
@@ -244,7 +317,15 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 		})
 	}
 
-	if req.HasPublicMskEndpoints {
+	// Block external outbound cluster linking for dedicated clusters
+	if !req.HasPublicEndpoints && !req.UseJumpClusters && req.TargetClusterType == "dedicated" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Unsupported configuration",
+			"message": "External outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4, 5, or 6) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible.",
+		})
+	}
+
+	if req.HasPublicEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",
@@ -286,8 +367,8 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	if req.ClusterLinkName == "" {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
-	if req.MskSaslScramBootstrapServers == "" {
-		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	if req.SourceSaslScramBootstrapServers == "" {
+		missingFields = append(missingFields, "sourceSaslScramBootstrapServers")
 	}
 
 	if len(missingFields) > 0 {
@@ -316,15 +397,15 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	if req.JumpClusterSetupHostSubnetCidr == "" {
 		missingFields = append(missingFields, "jumpClusterSetupHostSubnetCidr")
 	}
-	if req.MskJumpClusterAuthType == "" {
-		missingFields = append(missingFields, "mskJumpClusterAuthType")
+	if req.JumpClusterAuthType == "" {
+		missingFields = append(missingFields, "jumpClusterAuthType")
 	}
 	if req.TargetClusterId == "" {
 		missingFields = append(missingFields, "targetClusterId")
 	}
 	// This might be missing depending on the MskJumpClusterAuthType.
 	// if req.MskSaslScramBootstrapServers == "" {
-	// 	missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	// 	missingFields = append(missingFields, "sourceSaslScramBootstrapServers")
 	// }
 	if req.TargetRestEndpoint == "" {
 		missingFields = append(missingFields, "targetRestEndpoint")
@@ -349,11 +430,11 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	if req.VpcId == "" {
 		missingFields = append(missingFields, "vpcId")
 	}
-	if req.MskRegion == "" {
-		missingFields = append(missingFields, "mskRegion")
+	if req.SourceRegion == "" {
+		missingFields = append(missingFields, "sourceRegion")
 	}
-	if req.MskClusterId == "" {
-		missingFields = append(missingFields, "mskClusterId")
+	if req.SourceClusterId == "" {
+		missingFields = append(missingFields, "sourceClusterId")
 	}
 	if req.ExtOutboundSecurityGroupId == "" {
 		missingFields = append(missingFields, "extOutboundSecurityGroupId")
@@ -377,13 +458,8 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
 
-	var conditionalErrors []string
-
 	if len(missingFields) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
-	}
-	if len(conditionalErrors) > 0 {
-		return fmt.Errorf("invalid configuration: %s", strings.Join(conditionalErrors, "; "))
 	}
 
 	return nil
@@ -469,24 +545,27 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 		})
 	}
 
-	var targetCluster *types.DiscoveredCluster
-	for _, region := range state.Regions {
-		if region.Name != req.MskRegion {
-			continue
+	// Look up cluster ACLs based on source type
+	var allAcls []types.Acls
+	switch req.SourceType {
+	case "osk":
+		oskCluster, err := state.GetOSKClusterByID(req.ClusterId)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "Cluster not found",
+				"message": fmt.Sprintf("OSK cluster '%s' not found: %v", req.ClusterId, err),
+			})
 		}
-		for i := range region.Clusters {
-			if region.Clusters[i].Arn == req.MskClusterArn {
-				targetCluster = &region.Clusters[i]
-				break
-			}
+		allAcls = oskCluster.KafkaAdminClientInformation.Acls
+	default: // "msk" or empty (backward compat)
+		cluster, err := state.GetClusterByArn(req.ClusterId)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "Cluster not found",
+				"message": fmt.Sprintf("MSK cluster '%s' not found: %v", req.ClusterId, err),
+			})
 		}
-	}
-
-	if targetCluster == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "Cluster not found",
-			"message": fmt.Sprintf("No cluster found with ARN %s in region %s", req.MskClusterArn, req.MskRegion),
-		})
+		allAcls = cluster.KafkaAdminClientInformation.Acls
 	}
 
 	selectedPrincipalsSet := make(map[string]bool)
@@ -495,7 +574,7 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 	}
 
 	aclsByPrincipal := make(map[string][]types.Acls)
-	for _, acl := range targetCluster.KafkaAdminClientInformation.Acls {
+	for _, acl := range allAcls {
 		if selectedPrincipalsSet[acl.Principal] {
 			aclsByPrincipal[acl.Principal] = append(aclsByPrincipal[acl.Principal], acl)
 		}
@@ -552,6 +631,26 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Migration Scripts project",
+			"message": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusCreated, migrationScriptsProject)
+}
+
+func (ui *UI) handleMigrateGlueSchemasAssets(c echo.Context) error {
+	var req types.MigrateGlueSchemasRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid request body",
+			"message": err.Error(),
+		})
+	}
+
+	migrationScriptsProject, err := ui.migrationScriptsHCLService.GenerateMigrateGlueSchemasFiles(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{
+			"error":   "Failed to generate Glue schema migration project",
 			"message": err.Error(),
 		})
 	}

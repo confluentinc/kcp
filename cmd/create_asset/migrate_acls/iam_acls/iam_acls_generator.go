@@ -85,6 +85,9 @@ func (ig *IamAclsGenerator) Run() error {
 		}
 	}
 
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}

@@ -250,11 +250,12 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLSCRAMAuth sets SASL/SCRAM auth",
-			option: WithSASLSCRAMAuth("test-user", "test-pass"),
+			option: WithSASLSCRAMAuth("test-user", "test-pass", "SHA256", false),
 			expectedConfig: AdminConfig{
-				authType: types.AuthTypeSASLSCRAM,
-				username: "test-user",
-				password: "test-pass",
+				authType:      types.AuthTypeSASLSCRAM,
+				username:      "test-user",
+				password:      "test-pass",
+				saslMechanism: "SHA256",
 			},
 		},
 		{
@@ -274,6 +275,25 @@ func TestAdminOptionFunctions(t *testing.T) {
 				clientKeyFile:  "client.key",
 			},
 		},
+		{
+			name:   "WithSASLPlainAuth sets SASL/PLAIN auth with TLS",
+			option: WithSASLPlainAuth("test-user", "test-pass"),
+			expectedConfig: AdminConfig{
+				authType: types.AuthTypeSASLPlain,
+				username: "test-user",
+				password: "test-pass",
+			},
+		},
+		{
+			name:   "WithSASLPlainAuthNoTLS sets SASL/PLAIN auth without TLS",
+			option: WithSASLPlainAuthNoTLS("test-user", "test-pass"),
+			expectedConfig: AdminConfig{
+				authType:   types.AuthTypeSASLPlain,
+				username:   "test-user",
+				password:   "test-pass",
+				disableTLS: true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -284,11 +304,13 @@ func TestAdminOptionFunctions(t *testing.T) {
 			assert.Equal(t, tt.expectedConfig.authType, config.authType)
 			assert.Equal(t, tt.expectedConfig.username, config.username)
 			assert.Equal(t, tt.expectedConfig.password, config.password)
+			assert.Equal(t, tt.expectedConfig.saslMechanism, config.saslMechanism)
 			assert.Equal(t, tt.expectedConfig.awsAccessKey, config.awsAccessKey)
 			assert.Equal(t, tt.expectedConfig.awsAccessSecret, config.awsAccessSecret)
 			assert.Equal(t, tt.expectedConfig.caCertFile, config.caCertFile)
 			assert.Equal(t, tt.expectedConfig.clientCertFile, config.clientCertFile)
 			assert.Equal(t, tt.expectedConfig.clientKeyFile, config.clientKeyFile)
+			assert.Equal(t, tt.expectedConfig.disableTLS, config.disableTLS)
 		})
 	}
 }
@@ -314,7 +336,7 @@ func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
 	config := sarama.NewConfig()
 	region := "us-west-2"
 
-	configureSASLTypeOAuthAuthentication(config, region)
+	configureSASLTypeOAuthAuthentication(config, region, false)
 
 	// Verify SASL/OAuth configuration
 	assert.True(t, config.Net.TLS.Enable)
@@ -330,25 +352,103 @@ func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
 }
 
 func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
-	config := sarama.NewConfig()
-	username := "test-user"
-	password := "test-pass"
+	tests := []struct {
+		name              string
+		mechanism         string
+		expectedMechanism sarama.SASLMechanism
+	}{
+		{
+			name:              "SHA256 mechanism",
+			mechanism:         "SHA256",
+			expectedMechanism: sarama.SASLTypeSCRAMSHA256,
+		},
+		{
+			name:              "SHA512 mechanism",
+			mechanism:         "SHA512",
+			expectedMechanism: sarama.SASLTypeSCRAMSHA512,
+		},
+		{
+			name:              "empty mechanism defaults to SHA256",
+			mechanism:         "",
+			expectedMechanism: sarama.SASLTypeSCRAMSHA256,
+		},
+	}
 
-	configureSASLTypeSCRAMAuthentication(config, username, password)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := sarama.NewConfig()
+			username := "test-user"
+			password := "test-pass"
 
-	// Verify SASL/SCRAM configuration
-	assert.True(t, config.Net.TLS.Enable)
-	assert.NotNil(t, config.Net.TLS.Config)
-	assert.True(t, config.Net.SASL.Enable)
-	assert.Equal(t, username, config.Net.SASL.User)
-	assert.Equal(t, password, config.Net.SASL.Password)
-	assert.True(t, config.Net.SASL.Handshake)
-	assert.Equal(t, string(sarama.SASLTypeSCRAMSHA512), string(config.Net.SASL.Mechanism))
-	assert.NotNil(t, config.Net.SASL.SCRAMClientGeneratorFunc)
+			_ = configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, false)
 
-	// Verify SCRAM client generator function
-	scramClient := config.Net.SASL.SCRAMClientGeneratorFunc()
-	assert.NotNil(t, scramClient)
+			// Verify SASL/SCRAM configuration
+			assert.True(t, config.Net.TLS.Enable)
+			assert.NotNil(t, config.Net.TLS.Config)
+			assert.True(t, config.Net.SASL.Enable)
+			assert.Equal(t, username, config.Net.SASL.User)
+			assert.Equal(t, password, config.Net.SASL.Password)
+			assert.True(t, config.Net.SASL.Handshake)
+			assert.Equal(t, string(tt.expectedMechanism), string(config.Net.SASL.Mechanism))
+			assert.NotNil(t, config.Net.SASL.SCRAMClientGeneratorFunc)
+
+			// Verify SCRAM client generator function
+			scramClient := config.Net.SASL.SCRAMClientGeneratorFunc()
+			assert.NotNil(t, scramClient)
+		})
+	}
+}
+
+func TestConfigureSASLTypePlainAuthentication(t *testing.T) {
+	tests := []struct {
+		name               string
+		withTLSEncryption  bool
+		expectedTLSEnabled bool
+	}{
+		{
+			name:               "with TLS encryption (SASL_SSL)",
+			withTLSEncryption:  true,
+			expectedTLSEnabled: true,
+		},
+		{
+			name:               "without TLS encryption (SASL_PLAINTEXT)",
+			withTLSEncryption:  false,
+			expectedTLSEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := sarama.NewConfig()
+			configureSASLTypePlainAuthentication(config, "user", "pass", tt.withTLSEncryption, false)
+
+			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
+			assert.True(t, config.Net.SASL.Enable)
+			assert.Equal(t, "user", config.Net.SASL.User)
+			assert.Equal(t, "pass", config.Net.SASL.Password)
+			assert.Equal(t, string(sarama.SASLTypePlaintext), string(config.Net.SASL.Mechanism))
+		})
+	}
+}
+
+func TestAdminOptionForAuth_SASLPlain(t *testing.T) {
+	clusterAuth := types.ClusterAuth{
+		AuthMethod: types.AuthMethodConfig{
+			SASLPlain: &types.SASLPlainConfig{
+				Use:      true,
+				Username: "test-user",
+				Password: "test-pass",
+			},
+		},
+	}
+	opt := AdminOptionForAuth(types.AuthTypeSASLPlain, clusterAuth)
+	config := AdminConfig{}
+	opt(&config)
+
+	assert.Equal(t, types.AuthTypeSASLPlain, config.authType)
+	assert.Equal(t, "test-user", config.username)
+	assert.Equal(t, "test-pass", config.password)
+	assert.True(t, config.disableTLS)
 }
 
 func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
@@ -380,7 +480,7 @@ func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 
 			// Determine if TLS should be enabled based on the encryption type
 			withTLSEncryption := tt.clientBrokerEncryptionInTransit != kafkatypes.ClientBrokerPlaintext
-			configureUnauthenticatedAuthentication(config, withTLSEncryption)
+			configureUnauthenticatedAuthentication(config, withTLSEncryption, false)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			if tt.expectedTLSEnabled {
@@ -438,7 +538,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
 
-			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile)
+			err := configureTLSAuth(config, tt.caCertFile, tt.clientCertFile, tt.clientKeyFile, false)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -510,7 +610,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9096"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass")},
+			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass", "SHA256", false)},
 			expectError:                     false,
 		},
 		{
@@ -603,7 +703,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	// Test that multiple options can be applied
 	opts := []AdminOption{
 		WithIAMAuth(),
-		WithSASLSCRAMAuth("user", "pass"), // This should override the IAM auth
+		WithSASLSCRAMAuth("user", "pass", "SHA256", false), // This should override the IAM auth
 	}
 
 	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0", opts...)

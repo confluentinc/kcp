@@ -1,5 +1,26 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
+import { useSchemaRegistries } from '@/stores/store'
+
+import { Tabs } from '@/components/common/Tabs'
+import type { GlueSchemaRegistry, GlueSchema, GlueSchemaVersion } from '@/types/api/state'
+
+function useToggleSet() {
+  const [set, setSet] = useState<Set<string>>(new Set())
+  const toggle = (key: string) => {
+    setSet((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+  return [set, toggle] as const
+}
 
 interface SchemaVersion {
   schema: string
@@ -16,57 +37,39 @@ interface SchemaSubject {
   latest_schema: SchemaVersion
 }
 
-interface SchemaRegistry {
+interface ConfluentSchemaRegistry {
   type: string
   url: string
   subjects: SchemaSubject[]
 }
 
-interface SchemaRegistriesProps {
-  schemaRegistries: SchemaRegistry[]
-}
+export const SchemaRegistries = () => {
+  const schemaRegistries = useSchemaRegistries()
+  const confluentRegistries = schemaRegistries?.confluent_schema_registry ?? []
+  const glueRegistries = schemaRegistries?.aws_glue ?? []
+  const totalCount = confluentRegistries.length + glueRegistries.length
 
-export const SchemaRegistries = ({ schemaRegistries }: SchemaRegistriesProps) => {
-  const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set())
-  const [expandedVersions, setExpandedVersions] = useState<Set<string>>(new Set())
-
-  const toggleSubject = (subjectKey: string) => {
-    const newExpanded = new Set(expandedSubjects)
-    if (newExpanded.has(subjectKey)) {
-      newExpanded.delete(subjectKey)
-    } else {
-      newExpanded.add(subjectKey)
+  const tabs = useMemo(() => {
+    const result = []
+    if (confluentRegistries.length > 0) {
+      result.push({
+        id: 'confluent',
+        label: `Confluent Schema Registry (${confluentRegistries.length})`,
+      })
     }
-    setExpandedSubjects(newExpanded)
-  }
-
-  const toggleVersion = (versionKey: string) => {
-    const newExpanded = new Set(expandedVersions)
-    if (newExpanded.has(versionKey)) {
-      newExpanded.delete(versionKey)
-    } else {
-      newExpanded.add(versionKey)
+    if (glueRegistries.length > 0) {
+      result.push({ id: 'glue', label: `AWS Glue (${glueRegistries.length})` })
     }
-    setExpandedVersions(newExpanded)
-  }
+    return result
+  }, [confluentRegistries.length, glueRegistries.length])
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-  }
+  const [activeTab, setActiveTab] = useState(tabs[0]?.id ?? 'confluent')
 
-  const formatSchema = (schema: string) => {
-    try {
-      return JSON.stringify(JSON.parse(schema), null, 2)
-    } catch {
-      return schema
-    }
-  }
-
-  if (!schemaRegistries || schemaRegistries.length === 0) {
+  if (totalCount === 0) {
     return (
       <div className="text-center py-12">
-        <div className="text-gray-500 dark:text-gray-400 text-lg">No schema registries found</div>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+        <div className="text-muted-foreground text-lg">No schema registries found</div>
+        <p className="text-sm text-muted-foreground mt-2">
           No schema registries were discovered in the KCP state file.
         </p>
       </div>
@@ -74,155 +77,400 @@ export const SchemaRegistries = ({ schemaRegistries }: SchemaRegistriesProps) =>
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Schema Registries ({schemaRegistries.length})
+    <div className="space-y-0">
+      <div className="px-6 pt-6 pb-4 bg-card">
+        <h3 className="text-lg font-semibold text-foreground">
+          Schema Registries ({totalCount})
         </h3>
       </div>
 
-      <div className="space-y-6">
-        {schemaRegistries.map((registry, registryIndex) => (
-          <div
-            key={`${registry.type}-${registry.url}-${registryIndex}`}
-            className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors"
-          >
-            {/* Registry Header */}
-            <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                      {registry.type === 'confluent' ? 'Confluent Schema Registry' : registry.type}
-                    </h4>
-                    <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent rounded-full">
-                      {registry.subjects.length} subjects
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">URL: {registry.url}</p>
-                </div>
-              </div>
+      <Tabs
+        tabs={tabs}
+        activeId={activeTab}
+        onChange={setActiveTab}
+      />
+
+      <div className="p-6 space-y-6">
+        {activeTab === 'confluent' &&
+          confluentRegistries.map((registry, registryIndex) => (
+            <ConfluentRegistryCard
+              key={`confluent-${registry.url}-${registryIndex}`}
+              registry={registry}
+              registryIndex={registryIndex}
+            />
+          ))}
+
+        {activeTab === 'glue' &&
+          glueRegistries.map((registry, registryIndex) => (
+            <GlueRegistryCard
+              key={`glue-${registry.registry_name}-${registry.region}-${registryIndex}`}
+              registry={registry}
+              registryIndex={registryIndex}
+            />
+          ))}
+      </div>
+    </div>
+  )
+}
+
+// --- Confluent Schema Registry Card ---
+
+const ConfluentRegistryCard = ({
+  registry,
+  registryIndex,
+}: {
+  registry: ConfluentSchemaRegistry
+  registryIndex: number
+}) => {
+  const [expandedSubjects, toggleSubject] = useToggleSet()
+  const [expandedVersions, toggleVersion] = useToggleSet()
+
+  return (
+    <div className="bg-card border border-border rounded-lg shadow-sm transition-colors">
+      {/* Registry Header */}
+      <div className="p-6 border-b border-border bg-secondary rounded-t-lg">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h4 className="text-xl font-semibold text-foreground">
+                Confluent Schema Registry
+              </h4>
+              <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent rounded-full">
+                {registry.subjects.length} subjects
+              </span>
             </div>
+            <p className="text-sm text-muted-foreground">URL: {registry.url}</p>
+          </div>
+        </div>
+      </div>
 
-            {/* Subjects */}
-            <div className="p-6">
-              <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-4">Schema Subjects</h5>
+      {/* Subjects */}
+      <div className="p-6">
+        <h5 className="font-medium text-foreground mb-4">Schema Subjects</h5>
 
-              <div className="space-y-4">
-                {registry.subjects.map((subject, subjectIndex) => {
-                  const subjectKey = `${registryIndex}-${subjectIndex}`
-                  const isExpanded = expandedSubjects.has(subjectKey)
+        <div className="space-y-4">
+          {registry.subjects.map((subject, subjectIndex) => {
+            const subjectKey = `confluent-${registryIndex}-${subjectIndex}`
+            const isExpanded = expandedSubjects.has(subjectKey)
 
-                  return (
-                    <div
-                      key={subjectKey}
-                      className="border border-gray-200 dark:border-border rounded-lg"
-                    >
-                      {/* Subject Header */}
-                      <div className="p-4 bg-gray-50 dark:bg-card border-b border-gray-200 dark:border-border">
-                        <button
-                          onClick={() => toggleSubject(subjectKey)}
-                          className="w-full text-left flex items-center justify-between"
+            return (
+              <div
+                key={subjectKey}
+                className="border border-border rounded-lg"
+              >
+                {/* Subject Header */}
+                <div
+                  className={`p-4 bg-secondary ${isExpanded ? 'border-b border-border rounded-t-lg' : 'rounded-lg'}`}
+                >
+                  <button
+                    onClick={() => toggleSubject(subjectKey)}
+                    className="w-full text-left flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      )}
+                      <h6 className="font-medium text-foreground">
+                        {subject.name}
+                      </h6>
+                      <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
+                        {subject.schema_type}
+                      </span>
+                      <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded-full">
+                        v{subject.latest_schema.version}
+                      </span>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {subject.versions.length} version
+                      {subject.versions.length !== 1 ? 's' : ''}
+                    </div>
+                  </button>
+                </div>
+
+                {/* Subject Content */}
+                {isExpanded && (
+                  <div className="p-4 space-y-4">
+                    {/* Latest Schema */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h6 className="font-medium text-foreground">
+                          Latest Schema (v{subject.latest_schema.version})
+                        </h6>
+                        <Button
+                          onClick={() =>
+                            copyToClipboard(formatSchema(subject.latest_schema.schema))
+                          }
+                          variant="outline"
+                          size="sm"
                         >
-                          <div className="flex items-center gap-3">
-                            <div
-                              className={`w-2 h-2 rounded-full ${
-                                isExpanded ? 'bg-blue-600' : 'bg-gray-400'
-                              }`}
-                            ></div>
-                            <h6 className="font-medium text-gray-900 dark:text-gray-100">
-                              {subject.name}
-                            </h6>
-                            <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
-                              {subject.schema_type}
-                            </span>
-                            <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded-full">
-                              v{subject.latest_schema.version}
-                            </span>
-                          </div>
-                          <div className="text-sm text-gray-500 dark:text-gray-400">
-                            {subject.versions.length} version
-                            {subject.versions.length !== 1 ? 's' : ''}
-                          </div>
-                        </button>
+                          Copy Schema
+                        </Button>
                       </div>
+                      <textarea
+                        readOnly
+                        value={formatSchema(subject.latest_schema.schema)}
+                        className="w-full h-32 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                      />
+                    </div>
 
-                      {/* Subject Content */}
-                      {isExpanded && (
-                        <div className="p-4 space-y-4">
-                          {/* Latest Schema */}
-                          <div>
-                            <div className="flex items-center justify-between mb-2">
-                              <h6 className="font-medium text-gray-900 dark:text-gray-100">
-                                Latest Schema (v{subject.latest_schema.version})
-                              </h6>
-                              <Button
-                                onClick={() =>
-                                  copyToClipboard(formatSchema(subject.latest_schema.schema))
-                                }
-                                variant="outline"
-                                size="sm"
+                    {/* Version History */}
+                    <div>
+                      <h6 className="font-medium text-foreground mb-3 block">
+                        Version History
+                      </h6>
+                      <div className="space-y-2">
+                        {subject.versions.map((version, versionIndex) => {
+                          const versionKey = `${subjectKey}-${versionIndex}`
+                          const isVersionExpanded = expandedVersions.has(versionKey)
+
+                          return (
+                            <div
+                              key={versionKey}
+                              className="border border-border rounded-md"
+                            >
+                              <button
+                                onClick={() => toggleVersion(versionKey)}
+                                className="w-full text-left p-3 hover:bg-secondary transition-colors"
                               >
-                                Copy Schema
-                              </Button>
-                            </div>
-                            <textarea
-                              readOnly
-                              value={formatSchema(subject.latest_schema.schema)}
-                              className="w-full h-32 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
-                            />
-                          </div>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    {isVersionExpanded ? (
+                                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                    )}
+                                    <span className="font-medium text-foreground">
+                                      Version {version.version}
+                                    </span>
+                                    {version.schemaType && (
+                                      <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
+                                        {version.schemaType}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-sm text-muted-foreground">
+                                    ID: {version.id}
+                                  </span>
+                                </div>
+                              </button>
 
-                          {/* Version History */}
-                          <div>
-                            <h6 className="font-medium text-gray-900 dark:text-gray-100 mb-3 block">
-                              Version History
+                              {isVersionExpanded && (
+                                <div className="p-3 border-t border-border bg-secondary">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-sm font-medium text-foreground">
+                                      Schema Definition
+                                    </span>
+                                    <Button
+                                      onClick={() => copyToClipboard(formatSchema(version.schema))}
+                                      variant="outline"
+                                      size="sm"
+                                    >
+                                      Copy Schema
+                                    </Button>
+                                  </div>
+                                  <textarea
+                                    readOnly
+                                    value={formatSchema(version.schema)}
+                                    className="w-full h-24 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// --- AWS Glue Schema Registry Card ---
+
+const GlueRegistryCard = ({
+  registry,
+  registryIndex,
+}: {
+  registry: GlueSchemaRegistry
+  registryIndex: number
+}) => {
+  const [expandedSchemas, toggleSchema] = useToggleSet()
+  const [expandedVersions, toggleVersion] = useToggleSet()
+
+  return (
+    <div className="bg-card border border-border rounded-lg shadow-sm transition-colors">
+      {/* Registry Header */}
+      <div className="p-6 border-b border-border bg-secondary rounded-t-lg">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h4 className="text-xl font-semibold text-foreground">
+                AWS Glue Schema Registry
+              </h4>
+              <span className="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 rounded-full">
+                {registry.schemas?.length ?? 0} schemas
+              </span>
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                Registry: {registry.registry_name}
+              </p>
+              <p className="text-sm text-muted-foreground">Region: {registry.region}</p>
+              <p className="text-xs text-muted-foreground font-mono">
+                {registry.registry_arn}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Schemas */}
+      <div className="p-6">
+        <h5 className="font-medium text-foreground mb-4">Schemas</h5>
+
+        {!registry.schemas || registry.schemas.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No schemas found in this registry.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {registry.schemas.map((schema: GlueSchema, schemaIndex: number) => {
+              const schemaKey = `glue-${registryIndex}-${schemaIndex}`
+              const isExpanded = expandedSchemas.has(schemaKey)
+
+              return (
+                <div
+                  key={schemaKey}
+                  className="border border-border rounded-lg"
+                >
+                  {/* Schema Header */}
+                  <div
+                    className={`p-4 bg-secondary ${isExpanded ? 'border-b border-border rounded-t-lg' : 'rounded-lg'}`}
+                  >
+                    <button
+                      onClick={() => toggleSchema(schemaKey)}
+                      className="w-full text-left flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-3">
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        )}
+                        <h6 className="font-medium text-foreground">
+                          {schema.schema_name}
+                        </h6>
+                        <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
+                          {schema.data_format}
+                        </span>
+                        {schema.latest_version && (
+                          <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded-full">
+                            v{schema.latest_version.version_number}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {schema.versions?.length ?? 0} version
+                        {(schema.versions?.length ?? 0) !== 1 ? 's' : ''}
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Schema Content */}
+                  {isExpanded && (
+                    <div className="p-4 space-y-4">
+                      {/* Latest Version */}
+                      {schema.latest_version && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h6 className="font-medium text-foreground">
+                              Latest Version (v{schema.latest_version.version_number})
                             </h6>
-                            <div className="space-y-2">
-                              {subject.versions.map((version, versionIndex) => {
-                                const versionKey = `${subjectKey}-${versionIndex}`
+                            <Button
+                              onClick={() =>
+                                copyToClipboard(
+                                  formatSchema(schema.latest_version!.schema_definition)
+                                )
+                              }
+                              variant="outline"
+                              size="sm"
+                            >
+                              Copy Schema
+                            </Button>
+                          </div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
+                              {schema.latest_version.status}
+                            </span>
+                          </div>
+                          <textarea
+                            readOnly
+                            value={formatSchema(schema.latest_version.schema_definition)}
+                            className="w-full h-32 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                          />
+                        </div>
+                      )}
+
+                      {/* Version History */}
+                      {schema.versions && schema.versions.length > 0 && (
+                        <div>
+                          <h6 className="font-medium text-foreground mb-3 block">
+                            Version History
+                          </h6>
+                          <div className="space-y-2">
+                            {schema.versions.map(
+                              (version: GlueSchemaVersion, versionIndex: number) => {
+                                const versionKey = `${schemaKey}-${versionIndex}`
                                 const isVersionExpanded = expandedVersions.has(versionKey)
 
                                 return (
                                   <div
                                     key={versionKey}
-                                    className="border border-gray-200 dark:border-border rounded-md"
+                                    className="border border-border rounded-md"
                                   >
                                     <button
                                       onClick={() => toggleVersion(versionKey)}
-                                      className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                                      className="w-full text-left p-3 hover:bg-secondary transition-colors"
                                     >
                                       <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                          <div
-                                            className={`w-1.5 h-1.5 rounded-full ${
-                                              isVersionExpanded ? 'bg-blue-500' : 'bg-gray-400'
-                                            }`}
-                                          ></div>
-                                          <span className="font-medium text-gray-900 dark:text-gray-100">
-                                            Version {version.version}
-                                          </span>
-                                          {version.schemaType && (
-                                            <span className="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 rounded-full">
-                                              {version.schemaType}
-                                            </span>
+                                          {isVersionExpanded ? (
+                                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                          ) : (
+                                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                           )}
+                                          <span className="font-medium text-foreground">
+                                            Version {version.version_number}
+                                          </span>
+                                          <span className="px-2 py-1 text-xs font-medium bg-secondary text-foreground rounded-full">
+                                            {version.data_format}
+                                          </span>
                                         </div>
-                                        <span className="text-sm text-gray-500 dark:text-gray-400">
-                                          ID: {version.id}
+                                        <span className="text-sm text-muted-foreground">
+                                          {version.status}
                                         </span>
                                       </div>
                                     </button>
 
                                     {isVersionExpanded && (
-                                      <div className="p-3 border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+                                      <div className="p-3 border-t border-border bg-secondary">
                                         <div className="flex items-center justify-between mb-2">
-                                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                          <span className="text-sm font-medium text-foreground">
                                             Schema Definition
                                           </span>
                                           <Button
                                             onClick={() =>
-                                              copyToClipboard(formatSchema(version.schema))
+                                              copyToClipboard(
+                                                formatSchema(version.schema_definition)
+                                              )
                                             }
                                             variant="outline"
                                             size="sm"
@@ -232,26 +480,45 @@ export const SchemaRegistries = ({ schemaRegistries }: SchemaRegistriesProps) =>
                                         </div>
                                         <textarea
                                           readOnly
-                                          value={formatSchema(version.schema)}
-                                          className="w-full h-24 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                                          value={formatSchema(version.schema_definition)}
+                                          className="w-full h-24 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                                         />
                                       </div>
                                     )}
                                   </div>
                                 )
-                              })}
-                            </div>
+                              }
+                            )}
                           </div>
                         </div>
                       )}
                     </div>
-                  )
-                })}
-              </div>
-            </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
-        ))}
+        )}
       </div>
     </div>
   )
+}
+
+// --- Utility functions ---
+
+const copyToClipboard = (text: string) => {
+  navigator.clipboard.writeText(text)
+}
+
+const formatSchemaCache = new Map<string, string>()
+const formatSchema = (schema: string) => {
+  if (formatSchemaCache.has(schema)) return formatSchemaCache.get(schema)!
+  let result: string
+  try {
+    result = JSON.stringify(JSON.parse(schema), null, 2)
+  } catch {
+    result = schema
+  }
+  formatSchemaCache.set(schema, result)
+  return result
 }

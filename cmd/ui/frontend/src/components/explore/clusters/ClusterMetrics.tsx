@@ -20,7 +20,7 @@ interface ClusterMetricsProps {
   cluster: {
     name: string
     region?: string
-    arn: string // ARN is required - all clusters have ARNs
+    arn?: string
     metrics?: {
       metadata?: {
         start_date?: string
@@ -28,6 +28,8 @@ interface ClusterMetricsProps {
       }
     }
   }
+  sourceType?: 'msk' | 'osk'
+  clusterId?: string
   isActive?: boolean
   inModal?: boolean
   modalPreselectedMetric?: string
@@ -36,6 +38,8 @@ interface ClusterMetricsProps {
 
 export const ClusterMetrics = ({
   cluster,
+  sourceType = 'msk',
+  clusterId,
   isActive,
   inModal = false,
   modalPreselectedMetric,
@@ -47,8 +51,8 @@ export const ClusterMetrics = ({
   const [transferSuccess, setTransferSuccess] = useState<string | null>(null)
 
   // Cluster-specific date state from Zustand (only used in non-modal mode)
-  // Use ARN for cluster key (required for proper state management)
-  const storeDateFilters = useClusterDateFilters(cluster.arn)
+  const clusterKey = cluster.arn || clusterId || cluster.name
+  const storeDateFilters = useClusterDateFilters(clusterKey)
 
   // Modal date management - simple local state (not stored in Zustand)
   // useDateFilters hook handles all initialization and reset logic
@@ -68,6 +72,8 @@ export const ClusterMetrics = ({
     clusterRegion: cluster.region || 'unknown',
     startDate: startDate,
     endDate: endDate,
+    sourceType,
+    clusterId,
   })
 
   // Process metrics data
@@ -112,7 +118,7 @@ export const ClusterMetrics = ({
   )
 
   // Metric selection with preselected metric support
-  const { selectedMetric, setSelectedMetric } = useMetricSelection({
+  const { selectedMetric, setSelectedMetric, preselectedMetricMissing } = useMetricSelection({
     availableMetrics: processedData.metrics,
     inModal,
     modalPreselectedMetric,
@@ -132,7 +138,7 @@ export const ClusterMetrics = ({
     const convertedValue =
       tcoField === 'partitions' ? Math.round(value).toString() : convertBytesToMB(value)
 
-    setTCOWorkloadValue(cluster.arn, tcoField, convertedValue)
+    setTCOWorkloadValue(clusterKey, tcoField, convertedValue)
 
     // Show success feedback with stat type
     setTransferSuccess(`${tcoField}-${statType}`)
@@ -163,7 +169,7 @@ export const ClusterMetrics = ({
 
   // Main component render
   return (
-    <div className="bg-white dark:bg-card rounded-lg border border-gray-200 dark:border-border p-6 transition-colors">
+    <div className="bg-card rounded-lg border border-border p-6 transition-colors">
       {/* Date Picker Controls */}
       <DateRangePicker
         startDate={startDate}
@@ -199,6 +205,7 @@ export const ClusterMetrics = ({
             <MetricsChartTab
               selectedMetric={selectedMetric}
               setSelectedMetric={setSelectedMetric}
+              preselectedMetricMissing={preselectedMetricMissing}
               processedData={processedData}
               metricsResponse={metricsResponse}
               inModal={inModal}
@@ -230,7 +237,7 @@ export const ClusterMetrics = ({
 
       {!metricsResponse && !error && !isLoading && (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400">
+          <p className="text-muted-foreground">
             Select dates and fetch metrics to view data for this cluster.
           </p>
         </div>

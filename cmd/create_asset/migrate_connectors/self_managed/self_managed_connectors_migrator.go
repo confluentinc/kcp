@@ -79,6 +79,9 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	}
 
 	if mc.OutputDir != "" {
+		if err := connector_utils.ValidateOutputDir(mc.OutputDir); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(mc.OutputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory %s: %w", mc.OutputDir, err)
 		}

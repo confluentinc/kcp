@@ -45,6 +45,9 @@ func (cu *ConnectorUtility) Run() error {
 		return nil
 	}
 
+	if err := utils.ValidateOutputDir(cu.outputDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(cu.outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory %s: %w", cu.outputDir, err)
 	}

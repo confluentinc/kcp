@@ -1,14 +1,23 @@
 import { useState, useEffect } from 'react'
-import { Header, HeaderSection, HeaderTitle, HeaderSubtitle } from '@/components/common/ui/header'
+import { Header, HeaderSection, HeaderTitle } from '@/components/common/ui/header'
 import { Button } from '@/components/common/ui/button'
+import { Sun, Moon } from 'lucide-react'
+
+interface HeaderTab {
+  id: string
+  label: string
+}
 
 interface AppHeaderProps {
   onFileUpload?: () => void
   isProcessing?: boolean
   error?: string | null
+  tabs?: HeaderTab[]
+  activeTab?: string
+  onTabChange?: (id: string) => void
 }
 
-export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: AppHeaderProps) => {
+export const AppHeader = ({ onFileUpload, isProcessing = false, error = null, tabs, activeTab, onTabChange }: AppHeaderProps) => {
   const [darkMode, setDarkMode] = useState(true)
 
   // Initialize dark mode from localStorage or default to dark
@@ -42,17 +51,33 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: 
     >
       <HeaderSection position="left">
         <img
-          src={darkMode ? '/images/logo-light.svg' : '/images/logo-dark.svg'}
+          src="/images/logo-light.svg"
           alt="KCP Logo"
           className="h-6 w-6"
         />
-        <HeaderTitle>KCP</HeaderTitle>
-        <HeaderSubtitle>Migrate your Kafka clusters to Confluent Cloud</HeaderSubtitle>
+        <HeaderTitle className={darkMode ? '' : 'text-white'}>KCP</HeaderTitle>
+        {tabs && tabs.length > 0 && (
+          <nav className="flex items-center ml-6 gap-1">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => onTabChange?.(tab.id)}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors duration-150 border-b-2 ${
+                  activeTab === tab.id
+                    ? 'text-white border-accent'
+                    : 'text-white/60 border-transparent hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        )}
       </HeaderSection>
       <HeaderSection position="right">
         {error && (
-          <div className="mr-4 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-md">
-            <div className="text-sm text-red-800 dark:text-red-200">
+          <div className="mr-4 p-2 bg-destructive/10 border border-destructive/20 rounded-md">
+            <div className="text-sm text-destructive">
               <strong>Error:</strong> {error}
             </div>
           </div>
@@ -63,17 +88,18 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null }: 
             variant="outline"
             size="sm"
             disabled={isProcessing}
-            className="mr-2"
+            className={`mr-2 ${darkMode ? '' : 'border-white/30 text-white hover:bg-white/10 bg-transparent'}`}
           >
             {isProcessing ? 'Processing...' : 'Upload KCP State File'}
           </Button>
         )}
         <Button
           onClick={toggleDarkMode}
-          variant="outline"
-          size="sm"
+          variant="ghost"
+          size="icon"
+          className={darkMode ? '' : 'text-white hover:bg-white/10'}
         >
-          {darkMode ? '☀️' : '🌙'}
+          {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
       </HeaderSection>
     </Header>

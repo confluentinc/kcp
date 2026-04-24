@@ -62,14 +62,14 @@ export const ClusterConnectors = ({
   const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
     <div
       key={connector.name}
-      className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors"
+      className="bg-card border border-border rounded-lg shadow-sm transition-colors"
     >
       {/* Connector Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+      <div className="p-6 border-b border-border bg-secondary">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
-              <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+              <h4 className="text-xl font-semibold text-foreground">
                 {connector.name}
               </h4>
             </div>
@@ -80,7 +80,7 @@ export const ClusterConnectors = ({
       {/* Connector Configuration */}
       <div className="p-6">
         <div className="flex items-center justify-between mb-3">
-          <h5 className="font-medium text-gray-900 dark:text-gray-100">Connector Configuration</h5>
+          <h5 className="font-medium text-foreground">Connector Configuration</h5>
           <Button
             onClick={() => {
               const configText = Object.entries(connector.config)
@@ -100,7 +100,7 @@ export const ClusterConnectors = ({
           value={Object.entries(connector.config)
             .map(([key, value]) => `${key}=${value}`)
             .join('\n')}
-          className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+          className="w-full h-48 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
         />
       </div>
     </div>
@@ -110,8 +110,8 @@ export const ClusterConnectors = ({
     if (!connectors || connectors.length === 0) {
       return (
         <div className="text-center py-12">
-          <div className="text-gray-500 dark:text-gray-400 text-lg">No MSK connectors found</div>
-          <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+          <div className="text-muted-foreground text-lg">No MSK connectors found</div>
+          <p className="text-sm text-muted-foreground mt-2">
             This cluster doesn't have any MSK Connect connectors configured.
           </p>
         </div>
@@ -123,21 +123,21 @@ export const ClusterConnectors = ({
         {connectors.map((connector) => (
           <div
             key={connector.connector_arn}
-            className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-lg shadow-sm transition-colors"
+            className="bg-card border border-border rounded-lg shadow-sm transition-colors"
           >
             {/* Connector Header */}
-            <div className="p-6 border-b border-gray-200 dark:border-border bg-gray-50 dark:bg-card">
+            <div className="p-6 border-b border-border bg-secondary">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    <h4 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                    <h4 className="text-xl font-semibold text-foreground">
                       {connector.connector_name}
                     </h4>
                   </div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                  <p className="text-sm text-muted-foreground">
                     Created: {formatDate(connector.creation_time)}
                   </p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-1">
+                  <p className="text-xs text-muted-foreground font-mono mt-1">
                     {connector.connector_arn}
                   </p>
                 </div>
@@ -149,13 +149,13 @@ export const ClusterConnectors = ({
               {/* Basic Information - All in one row */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 divide-x divide-gray-200 dark:divide-gray-600">
                 <div className="lg:pr-6">
-                  <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                  <h5 className="font-medium text-foreground mb-3">
                     Authentication
                   </h5>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Type:</span>
-                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                      <span className="text-muted-foreground">Type:</span>
+                      <span className="font-medium text-foreground">
                         {connector.kafka_cluster_client_authentication.AuthenticationType}
                       </span>
                     </div>
@@ -163,31 +163,31 @@ export const ClusterConnectors = ({
                 </div>
 
                 <div className="lg:px-6">
-                  <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Capacity</h5>
+                  <h5 className="font-medium text-foreground mb-3">Capacity</h5>
                   <div className="space-y-2 text-sm">
                     {connector.capacity.AutoScaling ? (
                       <>
                         <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">Min Workers:</span>
-                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                          <span className="text-muted-foreground">Min Workers:</span>
+                          <span className="font-medium text-foreground">
                             {connector.capacity.AutoScaling.MinWorkerCount}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">Max Workers:</span>
-                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                          <span className="text-muted-foreground">Max Workers:</span>
+                          <span className="font-medium text-foreground">
                             {connector.capacity.AutoScaling.MaxWorkerCount}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">MCU Count:</span>
-                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                          <span className="text-muted-foreground">MCU Count:</span>
+                          <span className="font-medium text-foreground">
                             {connector.capacity.AutoScaling.McuCount}
                           </span>
                         </div>
                       </>
                     ) : (
-                      <div className="text-gray-500 dark:text-gray-400">
+                      <div className="text-muted-foreground">
                         Provisioned capacity configuration
                       </div>
                     )}
@@ -197,15 +197,15 @@ export const ClusterConnectors = ({
                 {/* Auto Scaling Policies */}
                 {connector.capacity.AutoScaling && (
                   <div className="lg:pl-6">
-                    <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                    <h5 className="font-medium text-foreground mb-3">
                       Auto Scaling Policies
                     </h5>
                     <div className="space-y-2">
-                      <div className="text-sm text-gray-900 dark:text-gray-100">
+                      <div className="text-sm text-foreground">
                         <span className="font-medium">Scale Out Policy</span> CPU ≥{' '}
                         {connector.capacity.AutoScaling.ScaleOutPolicy.CpuUtilizationPercentage}%
                       </div>
-                      <div className="text-sm text-gray-900 dark:text-gray-100">
+                      <div className="text-sm text-foreground">
                         <span className="font-medium">Scale In Policy</span> CPU ≤{' '}
                         {connector.capacity.AutoScaling.ScaleInPolicy.CpuUtilizationPercentage}%
                       </div>
@@ -217,7 +217,7 @@ export const ClusterConnectors = ({
               {/* Connector Configuration */}
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h5 className="font-medium text-gray-900 dark:text-gray-100">
+                  <h5 className="font-medium text-foreground">
                     Connector Configuration
                   </h5>
                   <Button
@@ -239,7 +239,7 @@ export const ClusterConnectors = ({
                   value={Object.entries(connector.connector_configuration)
                     .map(([key, value]) => `${key}=${value}`)
                     .join('\n')}
-                  className="w-full h-48 p-3 text-sm font-mono bg-gray-50 dark:bg-card border border-gray-200 dark:border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
+                  className="w-full h-48 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
                 />
               </div>
             </div>
@@ -253,10 +253,10 @@ export const ClusterConnectors = ({
     if (!selfManagedConnectors || selfManagedConnectors.length === 0) {
       return (
         <div className="text-center py-12">
-          <div className="text-gray-500 dark:text-gray-400 text-lg">
+          <div className="text-muted-foreground text-lg">
             No self-managed connectors found
           </div>
-          <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+          <p className="text-sm text-muted-foreground mt-2">
             This cluster doesn't have any self-managed Kafka Connect connectors configured.
           </p>
         </div>
@@ -280,11 +280,11 @@ export const ClusterConnectors = ({
             key={connectHost}
             className="space-y-4"
           >
-            <div className="border-b border-gray-200 dark:border-border pb-2">
-              <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <div className="border-b border-border pb-2">
+              <h4 className="text-lg font-semibold text-foreground">
                 Connect Cluster URL: {connectHost}
               </h4>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-muted-foreground">
                 {connectors.length} connector{connectors.length !== 1 ? 's' : ''}
               </p>
             </div>
@@ -302,8 +302,8 @@ export const ClusterConnectors = ({
   if (!hasMSKConnectors && !hasSelfManagedConnectors) {
     return (
       <div className="text-center py-12">
-        <div className="text-gray-500 dark:text-gray-400 text-lg">No connectors found</div>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+        <div className="text-muted-foreground text-lg">No connectors found</div>
+        <p className="text-sm text-muted-foreground mt-2">
           This cluster doesn't have any Kafka Connect connectors configured.
         </p>
       </div>
@@ -313,13 +313,13 @@ export const ClusterConnectors = ({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-foreground">
           Kafka Connect Connectors
         </h3>
       </div>
 
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200 dark:border-border">
+      <div className="border-b border-border">
         <nav className="-mb-px flex space-x-8">
           <button
             onClick={() => setActiveTab(CONNECTOR_TABS.MSK)}

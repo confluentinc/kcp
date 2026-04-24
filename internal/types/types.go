@@ -95,15 +95,25 @@ type ConnectTlsAuth struct {
 type MigrationType int
 
 const (
-	PublicMskEndpoints          MigrationType = 1
-	ExternalOutboundClusterLink MigrationType = 2
-	JumpClusterSaslScram        MigrationType = 3
-	JumpClusterIam              MigrationType = 4
+	PublicMskEndpoints                   MigrationType = 1
+	ExternalOutboundClusterLink          MigrationType = 2
+	ExternalOutboundClusterLinkPlaintext MigrationType = 3
+	JumpClusterSaslScram                 MigrationType = 4
+	JumpClusterIam                       MigrationType = 5
 )
 
 func (m MigrationType) IsValid() bool {
 	switch m {
-	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram, JumpClusterIam:
+	case PublicMskEndpoints, ExternalOutboundClusterLink, ExternalOutboundClusterLinkPlaintext, JumpClusterSaslScram, JumpClusterIam:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m MigrationType) RequiresSaslScram() bool {
+	switch m {
+	case PublicMskEndpoints, ExternalOutboundClusterLink, JumpClusterSaslScram:
 		return true
 	default:
 		return false
@@ -127,19 +137,20 @@ type Manifest struct {
 }
 
 type TargetClusterWizardRequest struct {
-	AwsRegion           string   `json:"aws_region"`
-	NeedsEnvironment    bool     `json:"needs_environment"`
-	EnvironmentName     string   `json:"environment_name"`
-	EnvironmentId       string   `json:"environment_id"`
-	NeedsCluster        bool     `json:"needs_cluster"`
-	ClusterName         string   `json:"cluster_name"`
-	ClusterType         string   `json:"cluster_type"`
-	ClusterAvailability string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
-	ClusterCku          int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
-	NeedsPrivateLink    bool     `json:"needs_private_link"`
-	PreventDestroy      bool     `json:"prevent_destroy"`
-	VpcId               string   `json:"vpc_id"`
-	SubnetCidrRanges    []string `json:"subnet_cidr_ranges"`
+	AwsRegion              string   `json:"aws_region"`
+	NeedsEnvironment       bool     `json:"needs_environment"`
+	EnvironmentName        string   `json:"environment_name"`
+	EnvironmentId          string   `json:"environment_id"`
+	NeedsCluster           bool     `json:"needs_cluster"`
+	ClusterName            string   `json:"cluster_name"`
+	ClusterType            string   `json:"cluster_type"`
+	ClusterAvailability    string   `json:"cluster_availability"` // "SINGLE_ZONE" or "MULTI_ZONE"
+	ClusterCku             int      `json:"cluster_cku"`          // Number of CKUs (1+, MULTI_ZONE requires >= 2)
+	NeedsPrivateLink       bool     `json:"needs_private_link"`
+	UseExistingRoute53Zone bool     `json:"use_existing_route53_zone"`
+	PreventDestroy         bool     `json:"prevent_destroy"`
+	VpcId                  string   `json:"vpc_id"`
+	SubnetCidrRanges       []string `json:"subnet_cidr_ranges"`
 }
 
 type TerraformFiles struct {
@@ -166,14 +177,14 @@ type TerraformOutput struct {
 }
 
 type MigrationWizardRequest struct {
-	HasPublicMskEndpoints bool `json:"has_public_msk_brokers"`
+	HasPublicEndpoints bool `json:"has_public_brokers"`
 
 	VpcId string `json:"vpc_id"`
 
 	UseJumpClusters            bool                            `json:"use_jump_clusters"`
 	ExtOutboundSecurityGroupId string                          `json:"ext_outbound_security_group_id"`
 	ExtOutboundSubnetId        string                          `json:"ext_outbound_subnet_id"`
-	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"aws_kafka_brokers"`
+	ExtOutboundBrokers         []ExtOutboundClusterKafkaBroker `json:"source_kafka_brokers"`
 
 	ExistingPrivateLinkVpceId string `json:"existing_private_link_vpce_id"`
 
@@ -184,17 +195,20 @@ type MigrationWizardRequest struct {
 	JumpClusterBrokerSubnetCidr    []string `json:"jump_cluster_broker_subnet_cidr"`
 	JumpClusterSetupHostSubnetCidr string   `json:"jump_cluster_setup_host_subnet_cidr"`
 
-	MskJumpClusterAuthType       string `json:"msk_jump_cluster_auth_type"`
-	MskClusterId                 string `json:"msk_cluster_id"`
-	JumpClusterIamAuthRoleName   string `json:"jump_cluster_iam_auth_role_name"`
-	MskSaslScramBootstrapServers string `json:"msk_sasl_scram_bootstrap_servers"`
-	MskSaslIamBootstrapServers   string `json:"msk_sasl_iam_bootstrap_servers"`
-	MskRegion                    string `json:"msk_region"`
-	TargetEnvironmentId          string `json:"target_environment_id"`
-	TargetClusterId              string `json:"target_cluster_id"`
-	TargetRestEndpoint           string `json:"target_rest_endpoint"`
-	TargetBootstrapEndpoint      string `json:"target_bootstrap_endpoint"`
-	ClusterLinkName              string `json:"cluster_link_name"`
+	JumpClusterAuthType             string `json:"jump_cluster_auth_type"`
+	SourceClusterId                 string `json:"source_cluster_id"`
+	JumpClusterIamAuthRoleName      string `json:"jump_cluster_iam_auth_role_name"`
+	SourceSaslScramBootstrapServers string `json:"source_sasl_scram_bootstrap_servers"`
+	SourceSaslScramMechanism        string `json:"source_sasl_scram_mechanism"`
+	SourcePlaintextBootstrapServers string `json:"source_plaintext_bootstrap_servers"`
+	SourceSaslIamBootstrapServers   string `json:"source_sasl_iam_bootstrap_servers"`
+	SourceRegion                    string `json:"source_region"`
+	TargetEnvironmentId             string `json:"target_environment_id"`
+	TargetClusterId                 string `json:"target_cluster_id"`
+	TargetRestEndpoint              string `json:"target_rest_endpoint"`
+	TargetBootstrapEndpoint         string `json:"target_bootstrap_endpoint"`
+	ClusterLinkName                 string `json:"cluster_link_name"`
+	TargetClusterType               string `json:"target_cluster_type"`
 }
 
 type ExtOutboundClusterKafkaBroker struct {
@@ -215,8 +229,8 @@ type MigrateAclsRequest struct {
 	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
 	PreventDestroy            bool     `json:"prevent_destroy"`
 
-	MskRegion     string `json:"msk_region"`
-	MskClusterArn string `json:"msk_cluster_arn"`
+	SourceType string `json:"source_type"`
+	ClusterId  string `json:"cluster_id"`
 
 	// This is not sent by the UI payload but instead built by the API service before being passed on to the HCL service.
 	AclsByPrincipal map[string][]Acls `json:"-"`
@@ -245,6 +259,18 @@ type SchemaRegistryExporterConfig struct {
 	Migrate   bool     `json:"migrate"`
 	Subjects  []string `json:"subjects"`
 	SourceURL string   `json:"source_url"`
+}
+
+type MigrateGlueSchemasRequest struct {
+	ConfluentCloudSchemaRegistryURL string                              `json:"confluent_cloud_schema_registry_url"`
+	GlueRegistries                  []GlueSchemaRegistryMigrationConfig `json:"glue_registries"`
+}
+
+type GlueSchemaRegistryMigrationConfig struct {
+	Migrate      bool         `json:"migrate"`
+	RegistryName string       `json:"registry_name"`
+	Region       string       `json:"region"`
+	Schemas      []GlueSchema `json:"schemas"`
 }
 
 // MigrationInfraTerraformModule represents a Terraform module within the migration infrastructure
@@ -278,9 +304,10 @@ type MigrationScriptsTerraformProject struct {
 
 // MigrationScriptsTerraformFolder represents a Terraform folder within the migration scripts
 type MigrationScriptsTerraformFolder struct {
-	Name             string `json:"name"`
-	MainTf           string `json:"main.tf"`
-	ProvidersTf      string `json:"providers.tf"`
-	VariablesTf      string `json:"variables.tf"`
-	InputsAutoTfvars string `json:"inputs.auto.tfvars"`
+	Name             string            `json:"name"`
+	MainTf           string            `json:"main.tf"`
+	ProvidersTf      string            `json:"providers.tf"`
+	VariablesTf      string            `json:"variables.tf"`
+	InputsAutoTfvars string            `json:"inputs.auto.tfvars"`
+	AdditionalFiles  map[string]string `json:"additional_files,omitempty"`
 }

@@ -275,7 +275,7 @@ func TestMskConnectorMigrator_Run_InvalidOutputDirectory(t *testing.T) {
 	err = migrator.Run()
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create output directory")
+	assert.Contains(t, err.Error(), "failed to check output directory")
 }
 
 func TestTranslateResponse_JSON(t *testing.T) {

@@ -2,6 +2,7 @@ package execute
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,21 +17,24 @@ import (
 )
 
 type MigrationExecutorOpts struct {
-	MigrationStateFile string
-	MigrationState     types.MigrationState
-	MigrationConfig    types.MigrationConfig
-	LagThreshold       int64
-	ClusterApiKey      string
-	ClusterApiSecret   string
-	ClusterBootstrap   string
-	SourceBootstrap    string
-	AWSRegion          string
-	AuthType           types.AuthType
-	SaslScramUsername  string
-	SaslScramPassword  string
-	TlsCaCert          string
-	TlsClientCert      string
-	TlsClientKey       string
+	MigrationStateFile    string
+	MigrationState        types.MigrationState
+	MigrationConfig       types.MigrationConfig
+	LagThreshold          int64
+	ClusterApiKey         string
+	ClusterApiSecret      string
+	ClusterBootstrap      string
+	SourceBootstrap       string
+	AWSRegion             string
+	AuthType              types.AuthType
+	SaslScramUsername     string
+	SaslScramPassword     string
+	SaslPlainUsername     string
+	SaslPlainPassword     string
+	TlsCaCert             string
+	TlsClientCert         string
+	TlsClientKey          string
+	InsecureSkipTLSVerify bool
 }
 
 type MigrationExecutor struct {
@@ -61,8 +65,17 @@ func (m *MigrationExecutor) Run() error {
 	}
 	defer destinationOffset.Close()
 
+	httpClient := http.DefaultClient
+	if m.opts.InsecureSkipTLSVerify {
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-controlled flag
+			},
+		}
+	}
+
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
-	clusterLinkService := clusterlink.NewConfluentCloudService(http.DefaultClient)
+	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 
 	orchestrator := migration.NewMigrationOrchestrator(
@@ -102,6 +115,12 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 			ClientCert: m.opts.TlsClientCert,
 			ClientKey:  m.opts.TlsClientKey,
 		}
+	case types.AuthTypeSASLPlain:
+		clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{
+			Use:      true,
+			Username: m.opts.SaslPlainUsername,
+			Password: m.opts.SaslPlainPassword,
+		}
 	case types.AuthTypeIAM:
 		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}
 	case types.AuthTypeUnauthenticatedTLS:
@@ -110,8 +129,13 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
 	}
 
+	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterAuth)}
+	if m.opts.InsecureSkipTLSVerify {
+		opts = append(opts, client.WithInsecureSkipVerify())
+	}
+
 	slog.Debug("connecting to source cluster")
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, client.AdminOptionForAuth(authType, clusterAuth))
+	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
 	}
@@ -123,7 +147,11 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
-	destClient, err := client.NewKafkaClient(ccBrokers, "", client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret))
+	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret)}
+	if m.opts.InsecureSkipTLSVerify {
+		destOpts = append(destOpts, client.WithInsecureSkipVerify())
+	}
+	destClient, err := client.NewKafkaClient(ccBrokers, "", destOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)
 	}

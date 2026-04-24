@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText, MessageSquare, Shield, ArrowLeft, Eye } from 'lucide-react'
+import { FileText, MessageSquare, Shield, ArrowLeft, Eye, Database } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
 import { WIZARD_TYPES } from '@/constants'
 import type { WizardType } from '@/types'
@@ -7,11 +7,14 @@ import {
     Wizard,
     createAclMigrationScriptsWizardConfig,
     createSchemaRegistryMigrationScriptsWizardConfig,
+    createGlueSchemaRegistryMigrationScriptsWizardConfig,
     createMirrorTopicsMigrationScriptsWizardConfig,
 } from '@/components/migration/wizards'
+import { getAllGlueSchemaRegistries } from '@/stores/store'
 
 interface MigrationScriptsSelectionProps {
     clusterArn: string
+    sourceType: 'msk' | 'osk'
     onComplete: (wizardType: WizardType) => void
     onClose: () => void
     hasGeneratedFiles?: (wizardType: WizardType) => boolean
@@ -20,6 +23,7 @@ interface MigrationScriptsSelectionProps {
 
 export const MigrationScriptsSelection = ({
     clusterArn,
+    sourceType,
     onComplete,
     onClose,
     hasGeneratedFiles,
@@ -54,11 +58,13 @@ export const MigrationScriptsSelection = ({
         const getWizardConfig = () => {
             switch (selectedWizardType) {
                 case WIZARD_TYPES.MIGRATE_ACLS:
-                    return createAclMigrationScriptsWizardConfig(clusterArn)
+                    return createAclMigrationScriptsWizardConfig(clusterArn, sourceType)
                 case WIZARD_TYPES.MIGRATE_SCHEMAS:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
+                case WIZARD_TYPES.MIGRATE_GLUE_SCHEMAS:
+                    return createGlueSchemaRegistryMigrationScriptsWizardConfig()
                 case WIZARD_TYPES.MIGRATE_TOPICS:
-                    return createMirrorTopicsMigrationScriptsWizardConfig(clusterArn)
+                    return createMirrorTopicsMigrationScriptsWizardConfig(clusterArn, sourceType)
                 default:
                     return createSchemaRegistryMigrationScriptsWizardConfig()
             }
@@ -84,6 +90,8 @@ export const MigrationScriptsSelection = ({
             </div>
         )
     }
+
+    const hasGlueRegistries = getAllGlueSchemaRegistries().length > 0
 
     // Show selection cards
     return (
@@ -146,6 +154,35 @@ export const MigrationScriptsSelection = ({
                         )}
                     </button>
                 </div>
+                {hasGlueRegistries && (
+                    <div className="relative">
+                        <button
+                            onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_GLUE_SCHEMAS)}
+                            className="flex flex-col items-center p-6 rounded-lg border-2 border-gray-200 dark:border-border bg-white dark:bg-card hover:border-accent hover:shadow-md transition-all cursor-pointer group w-full h-full min-h-[240px]"
+                        >
+                            <div className="mb-4 p-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 group-hover:bg-accent/10 group-hover:text-accent transition-colors">
+                                <Database className="w-6 h-6" />
+                            </div>
+                            <h3 className="text-lg font-semibold mb-2 text-center text-gray-900 dark:text-gray-100 group-hover:text-accent transition-colors">
+                                Glue Schema Migration Scripts
+                            </h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 text-center flex-1">
+                                Generate Terraform to migrate AWS Glue schemas to Confluent Cloud
+                            </p>
+                            {hasGeneratedFiles && hasGeneratedFiles(WIZARD_TYPES.MIGRATE_GLUE_SCHEMAS) && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => handleViewTerraform(e, WIZARD_TYPES.MIGRATE_GLUE_SCHEMAS)}
+                                    className="text-xs mt-4"
+                                >
+                                    <Eye className="h-3 w-3 mr-1" />
+                                    View Terraform
+                                </Button>
+                            )}
+                        </button>
+                    </div>
+                )}
                 <div className="relative">
                     <button
                         onClick={() => handleCardClick(WIZARD_TYPES.MIGRATE_TOPICS)}

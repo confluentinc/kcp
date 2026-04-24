@@ -71,20 +71,22 @@ interface ProcessedData {
 export const useRegionCostsData = (
   costsResponse: CostsApiResponse | null | undefined,
   selectedTableService: string,
-  selectedCostType: string
+  selectedCostType: string,
+  selectedChartService: string
 ): ProcessedData => {
-  return useMemo(() => {
+  // Base memo: expensive grouping work that depends only on raw data and cost type.
+  // Does NOT depend on selectedTableService or selectedChartService.
+  const baseData = useMemo(() => {
     if (!costsResponse?.results || !Array.isArray(costsResponse.results)) {
       return {
-        tableData: [],
-        filteredTableData: [],
+        costsByServiceAndUsage: {} as Record<string, Record<string, Record<string, number>>>,
+        uniqueDates: [] as string[],
+        services: [] as string[],
+        serviceTotals: {} as Record<string, number>,
+        tableData: [] as ProcessedData['tableData'],
         csvData: '',
-        chartData: [],
-        chartOptions: [],
-        getUsageTypesForService: () => [],
-        uniqueDates: [],
-        services: [],
-        serviceTotals: {},
+        chartOptions: [] as ProcessedData['chartOptions'],
+        getUsageTypesForService: (() => []) as (serviceName: string) => string[],
       }
     }
 
@@ -176,12 +178,7 @@ export const useRegionCostsData = (
     })
 
     // Create table data using backend aggregates for totals (with fallback)
-    const tableData: Array<{
-      service: string
-      usageType: string
-      values: number[]
-      total: number
-    }> = []
+    const tableData: ProcessedData['tableData'] = []
     services.forEach((service) => {
       if (costsByServiceAndUsage[service]) {
         Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
@@ -195,7 +192,7 @@ export const useRegionCostsData = (
             values: uniqueDates.map(
               (date) => costsByServiceAndUsage[service][usageType][date] || 0
             ),
-            total: total, // ✅ From backend aggregates, not calculated here
+            total: total, // From backend aggregates, not calculated here
           })
         })
       }
@@ -208,11 +205,6 @@ export const useRegionCostsData = (
       }
       return a.usageType.localeCompare(b.usageType)
     })
-
-    // Filter table data by selected service
-    const filteredTableData = selectedTableService
-      ? tableData.filter((row) => row.service === selectedTableService)
-      : tableData
 
     // Create CSV data
     const csvHeaders = [
@@ -231,39 +223,6 @@ export const useRegionCostsData = (
       .map((row) => row.map((cell) => `"${cell || ''}"`).join(','))
       .join('\n')
 
-    // Create chart data (dates with both service totals and individual usage types)
-    const chartData: ProcessedData['chartData'] = uniqueDates.map((date) => {
-      const dateObj = new Date(date)
-      const dataPoint: ProcessedData['chartData'][number] = {
-        date: date,
-        formattedDate: formatDateShort(date),
-        epochTime: dateObj.getTime(),
-      }
-
-      // Add service-level aggregates
-      services.forEach((service) => {
-        let serviceCostForDate = 0
-        if (costsByServiceAndUsage[service]) {
-          Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
-            serviceCostForDate += costsByServiceAndUsage[service][usageType][date] || 0
-          })
-        }
-        dataPoint[service] = serviceCostForDate
-      })
-
-      // Add individual usage types
-      services.forEach((service) => {
-        if (costsByServiceAndUsage[service]) {
-          Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
-            const usageKey = `${service}:${usageType}`
-            dataPoint[usageKey] = costsByServiceAndUsage[service][usageType][date] || 0
-          })
-        }
-      })
-
-      return dataPoint
-    })
-
     // Create chart options (services only)
     const chartOptions = services.map((service) => ({
       value: service,
@@ -278,6 +237,81 @@ export const useRegionCostsData = (
     }
 
     return {
+      costsByServiceAndUsage,
+      uniqueDates,
+      services,
+      serviceTotals,
+      tableData,
+      csvData,
+      chartOptions,
+      getUsageTypesForService,
+    }
+  }, [costsResponse, selectedCostType])
+
+  // Derived memo: cheap computation for chart data (slim, selected service only) and table filter.
+  // Depends on selectedChartService and selectedTableService but NOT on the raw data.
+  return useMemo(() => {
+    const {
+      costsByServiceAndUsage,
+      uniqueDates,
+      services,
+      serviceTotals,
+      tableData,
+      csvData,
+      chartOptions,
+      getUsageTypesForService,
+    } = baseData
+
+    // Filter table data by selected service
+    const filteredTableData = selectedTableService
+      ? tableData.filter((row) => row.service === selectedTableService)
+      : tableData
+
+    // Build slim chart data with only the selected chart service's usage type keys
+    const chartData: ProcessedData['chartData'] = uniqueDates.map((date) => {
+      const dateObj = new Date(date)
+      const dataPoint: ProcessedData['chartData'][number] = {
+        date: date,
+        formattedDate: formatDateShort(date),
+        epochTime: dateObj.getTime(),
+      }
+
+      if (selectedChartService) {
+        // Add service-level total for the selected service
+        let serviceCostForDate = 0
+        if (costsByServiceAndUsage[selectedChartService]) {
+          Object.keys(costsByServiceAndUsage[selectedChartService]).forEach((usageType) => {
+            serviceCostForDate +=
+              costsByServiceAndUsage[selectedChartService][usageType][date] || 0
+          })
+        }
+        dataPoint[selectedChartService] = serviceCostForDate
+
+        // Add individual usage type keys for the selected service only
+        if (costsByServiceAndUsage[selectedChartService]) {
+          Object.keys(costsByServiceAndUsage[selectedChartService]).forEach((usageType) => {
+            const usageKey = `${selectedChartService}:${usageType}`
+            dataPoint[usageKey] =
+              costsByServiceAndUsage[selectedChartService][usageType][date] || 0
+          })
+        }
+      } else {
+        // No service selected: include only service-level totals (no usage type keys)
+        services.forEach((service) => {
+          let serviceCostForDate = 0
+          if (costsByServiceAndUsage[service]) {
+            Object.keys(costsByServiceAndUsage[service]).forEach((usageType) => {
+              serviceCostForDate += costsByServiceAndUsage[service][usageType][date] || 0
+            })
+          }
+          dataPoint[service] = serviceCostForDate
+        })
+      }
+
+      return dataPoint
+    })
+
+    return {
       tableData,
       filteredTableData,
       csvData,
@@ -288,5 +322,5 @@ export const useRegionCostsData = (
       services,
       serviceTotals,
     }
-  }, [costsResponse, selectedTableService, selectedCostType])
+  }, [baseData, selectedChartService, selectedTableService])
 }

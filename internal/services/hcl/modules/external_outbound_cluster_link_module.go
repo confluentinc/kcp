@@ -15,8 +15,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ExtOutboundSubnetId
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
 			Name: "security_group_id",
@@ -29,13 +28,12 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ExtOutboundSecurityGroupId
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
-			Name: "target_cluster_api_key",
+			Name: "confluent_cloud_cluster_api_key",
 			Definition: types.TerraformVariable{
-				Name:        "target_cluster_api_key",
+				Name:        "confluent_cloud_cluster_api_key",
 				Description: "API key of the Confluent Cloud cluster that data will be migrated to.",
 				Sensitive:   true,
 				Type:        "string",
@@ -43,13 +41,12 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
-			Name: "target_cluster_api_secret",
+			Name: "confluent_cloud_cluster_api_secret",
 			Definition: types.TerraformVariable{
-				Name:        "target_cluster_api_secret",
+				Name:        "confluent_cloud_cluster_api_secret",
 				Description: "API secret of the Confluent Cloud cluster that data will be migrated to.",
 				Sensitive:   true,
 				Type:        "string",
@@ -57,8 +54,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
 			Name: "target_cluster_rest_endpoint",
@@ -71,8 +67,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetRestEndpoint
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
 			Name: "target_cluster_id",
@@ -85,8 +80,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
 			Name: "cluster_link_name",
@@ -99,89 +93,86 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ClusterLinkName
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
-			Name: "msk_cluster_id",
+			Name: "source_cluster_id",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_id",
-				Description: "ID of the source MSK cluster that data will be migrated from.",
+				Name:        "source_cluster_id",
+				Description: "ID of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskClusterId
+				return request.SourceClusterId
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: nil,
 		},
 		{
-			Name: "msk_cluster_bootstrap_servers",
+			Name: "source_cluster_bootstrap_servers",
 			Definition: types.TerraformVariable{
-				Name:        "msk_cluster_bootstrap_servers",
-				Description: "Bootstrap brokers of the MSK cluster that data will be migrated to.",
+				Name:        "source_cluster_bootstrap_servers",
+				Description: "Bootstrap brokers of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   false,
 				Type:        "string",
 			},
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskSaslScramBootstrapServers
+				if request.JumpClusterAuthType == "plaintext" {
+					return request.SourcePlaintextBootstrapServers
+				}
+				return request.SourceSaslScramBootstrapServers
 			},
-			Condition:        nil,
+			Condition: nil,
+		},
+		{
+			Name: "source_sasl_scram_mechanism",
+			Definition: types.TerraformVariable{
+				Name:        "source_sasl_scram_mechanism",
+				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceSaslScramMechanism
+			},
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.JumpClusterAuthType != "plaintext"
+			},
 			FromModuleOutput: "",
 		},
 		{
-			Name: "msk_sasl_scram_username",
+			Name: "source_sasl_scram_username",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_username",
-				Description: "SASL SCRAM username of the source MSK cluster that data will be migrated from.",
+				Name:        "source_sasl_scram_username",
+				Description: "SASL SCRAM username of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.JumpClusterAuthType != "plaintext"
+			},
 		},
 		{
-			Name: "msk_sasl_scram_password",
+			Name: "source_sasl_scram_password",
 			Definition: types.TerraformVariable{
-				Name:        "msk_sasl_scram_password",
-				Description: "SASL SCRAM password of the source MSK cluster that data will be migrated from.",
+				Name:        "source_sasl_scram_password",
+				Description: "SASL SCRAM password of the source Kafka cluster that data will be migrated from.",
 				Sensitive:   true,
 				Type:        "string",
 			},
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
-			FromModuleOutput: "",
+			Condition: func(request types.MigrationWizardRequest) bool {
+				return request.JumpClusterAuthType != "plaintext"
+			},
 		},
 	}
-}
-
-func GetExternalOutboundClusterLinkingModuleVariableNames() map[string]string {
-	vars := GetExternalOutboundClusterLinkingVariables()
-	names := make(map[string]string)
-
-	for _, v := range vars {
-		names[v.Name] = v.Name
-	}
-
-	return names
 }
 
 func GetExternalOutboundClusterLinkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
-	extOutboundClusterLinkingVars := GetExternalOutboundClusterLinkingVariables()
-
-	for _, varDef := range extOutboundClusterLinkingVars {
-		if varDef.Condition != nil && !varDef.Condition(request) {
-			continue
-		}
-		definitions = append(definitions, varDef.Definition)
-	}
-
-	return definitions
+	return ExtractModuleVariableDefinitions(GetExternalOutboundClusterLinkingVariables(), request)
 }

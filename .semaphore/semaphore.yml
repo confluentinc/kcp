@@ -20,7 +20,7 @@ global_job_config:
     commands:
       - sem-version node 24.6.0
       - npm install -g yarn@1.22.22
-      - sem-version go 1.25.8
+      - sem-version go 1.25.9
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -28,11 +28,11 @@ global_job_config:
       - checkout
 
 blocks:
-  - name: "resolve frontend dependencies"
+  - name: 'resolve frontend dependencies'
     dependencies: []
     task:
       jobs:
-        - name: "dependencies"
+        - name: 'frontend dependencies'
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install
@@ -45,30 +45,100 @@ blocks:
                 cache store frontend-dependencies node_modules/;
               fi
 
-  - name: "test and security scan"
-    dependencies: ["resolve frontend dependencies"]
+  - name: 'test and security scan'
+    dependencies: ['resolve frontend dependencies']
     task:
       env_vars:
         - name: TRIVY_DB_REPOSITORIES
-          value: "ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db"
+          value: 'ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db'
 
       jobs:
-        - name: "run tests"
+        - name: 'run tests'
           commands:
             - cache restore frontend-dependencies
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
-            - make test
+            - (cd cmd/ui/frontend && npx playwright install chromium chromium-headless-shell --with-deps)
+            - |
+              if [ "$SKIP_TERRAFORM_VALIDATION" = "true" ]; then
+                echo "ERROR: SKIP_TERRAFORM_VALIDATION cannot be set in CI"
+                echo "This environment variable is for local development only."
+                echo "All tests must run with full Terraform validation in CI."
+                exit 1
+              fi
+            - make test-go GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
+            - make test-playwright
 
-        - name: "trivy scan"
+        - name: 'trivy scan'
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
 
-  - name: "lint"
-    dependencies: ["resolve frontend dependencies"]
+  - name: 'osk scan tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/osk-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       prologue:
         commands:
-          - sem-version go 1.25.8
+          # keytool (from JDK) is required for TLS certificate generation
+          - sem-version java 17
+      jobs:
+        - name: 'osk scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-osk-scan
+
+  - name: 'schema registry scan tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/scan/schema_registry/', '/internal/client/schema_registry.go', '/internal/services/schema_registry/', '/integration-tests/schema-registry/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      jobs:
+        - name: 'schema registry scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-schema-registry
+
+  - name: 'e2e migration tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/integration-tests/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      agent:
+        machine:
+          type: s1-prod-ubuntu24-04-amd64-2
+      prologue:
+        commands:
+          # Minikube is not pre-installed on Semaphore agents
+          - curl -LO https://storage.googleapis.com/minikube/releases/v1.35.0/minikube-linux-amd64
+          - sudo install minikube-linux-amd64 /usr/local/bin/minikube
+          # Upgrade kubectl to v1.30.0 (agent has 1.23.6, we need 1.30.0 for K8s compatibility)
+          - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+          - sudo install kubectl /usr/local/bin/kubectl
+          # Restore cached minikube preloads (K8s tarballs) to skip re-download
+          - cache restore minikube-cache
+      jobs:
+        - name: 'migration e2e'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-migration-setup
+            - make test-migration
+      epilogue:
+        always:
+          commands:
+            - make test-migration-teardown
+        on_pass:
+          commands:
+            - cache store minikube-cache ~/.minikube/cache/
+
+  - name: 'lint'
+    dependencies: ['resolve frontend dependencies']
+    task:
+      prologue:
+        commands:
+          - sem-version go 1.25.9
           - export "GOPATH=$(go env GOPATH)"
           - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
           - export "PATH=${GOPATH}/bin:${PATH}"
@@ -76,7 +146,7 @@ blocks:
           - cache restore frontend-dependencies
           - cd cmd/ui/frontend && yarn install && yarn build && cd -
       jobs:
-        - name: "golangci-lint"
+        - name: 'golangci-lint'
           commands:
             - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
             - git fetch origin main

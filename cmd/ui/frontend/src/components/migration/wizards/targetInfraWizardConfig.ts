@@ -1,8 +1,12 @@
 import type { WizardConfig } from './types'
-import { getClusterDataByArn } from '@/stores/store'
+import { getClusterDataByArn, getClusterDataBySourceType } from '@/stores/store'
 
-export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig => {
-  const cluster = getClusterDataByArn(clusterArn)
+export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+  // Target infra needs full MSK cluster data for AWS-specific fields
+  // For OSK, those fields will use defaults
+  const cluster = sourceType === 'msk' ? getClusterDataByArn(clusterKey) : null
+  const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
+  const isMsk = sourceType === 'msk'
 
   return {
     id: 'target-infra-wizard',
@@ -59,6 +63,11 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
           schema: {
             type: 'object',
             properties: {
+              aws_region: {
+                type: 'string',
+                title: 'AWS Region',
+                ...(isMsk ? { default: cluster?.region || '' } : {}),
+              },
               environment_name: {
                 type: 'string',
                 title: 'Environment Name',
@@ -67,7 +76,7 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
               cluster_name: {
                 type: 'string',
                 title: 'Cluster Name',
-                default: cluster?.name,
+                default: clusterData?.name || cluster?.name,
                 description: 'Name for your new Confluent Cloud cluster',
               },
               cluster_type: {
@@ -84,7 +93,7 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 default: true,
               },
             },
-            required: ['environment_name', 'cluster_name', 'cluster_type'],
+            required: ['aws_region', 'environment_name', 'cluster_name', 'cluster_type'],
             dependencies: {
               cluster_type: {
                 oneOf: [
@@ -119,6 +128,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
             },
           },
           uiSchema: {
+            aws_region: isMsk
+              ? { 'ui:widget': 'hidden', 'ui:disabled': true }
+              : { 'ui:placeholder': 'e.g., us-east-1' },
             environment_name: {
               'ui:placeholder': 'e.g., production-env',
             },
@@ -191,6 +203,11 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
           schema: {
             type: 'object',
             properties: {
+              aws_region: {
+                type: 'string',
+                title: 'AWS Region',
+                ...(isMsk ? { default: cluster?.region || '' } : {}),
+              },
               environment_id: {
                 type: 'string',
                 title: 'Environment ID',
@@ -215,7 +232,7 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 default: true,
               },
             },
-            required: ['environment_id', 'cluster_name', 'cluster_type'],
+            required: ['aws_region', 'environment_id', 'cluster_name', 'cluster_type'],
             dependencies: {
               cluster_type: {
                 oneOf: [
@@ -250,6 +267,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
             },
           },
           uiSchema: {
+            aws_region: isMsk
+              ? { 'ui:widget': 'hidden', 'ui:disabled': true }
+              : { 'ui:placeholder': 'e.g., us-east-1' },
             environment_id: {
               'ui:placeholder': 'e.g., env-xxxx',
             },
@@ -348,6 +368,13 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 maxItems: 3,
                 default: ['', '', ''],
               },
+              use_existing_route53_zone: {
+                type: 'boolean',
+                title: 'Use existing Route53 hosted zone',
+                description:
+                  'Enable this if a Route53 hosted zone already exists for this VPC and Confluent domain, to avoid conflicts.',
+                default: false,
+              },
             },
             required: ['vpc_id', 'subnet_cidr_ranges'],
           },
@@ -364,6 +391,9 @@ export const createTargetInfraWizardConfig = (clusterArn: string): WizardConfig 
                 orderable: false,
                 removable: false,
               },
+            },
+            use_existing_route53_zone: {
+              'ui:widget': 'checkbox',
             },
           },
         },

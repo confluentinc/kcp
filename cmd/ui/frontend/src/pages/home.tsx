@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { TCOInputs as TCOInputsPage } from '@/components/tco/TCOInputsPage'
 import { Sidebar } from '@/components/explore/Sidebar'
 import { MigrationAssets as MigrationAssetsPage } from '@/components/migration/MigrationAssets'
 import { Explore } from '@/components/explore/Explore'
 import { AppHeader } from '@/components/common/AppHeader'
-import { Tabs } from '@/components/common/Tabs'
 import { useAppStore, useSessionId } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
 import type { StateUploadRequest } from '@/types/api'
@@ -20,6 +19,7 @@ import type { TopLevelTab } from '@/types'
 export const Home = () => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [activeTopTab, setActiveTopTab] = useState<TopLevelTab>(TOP_LEVEL_TABS.EXPLORE)
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
 
   // Global state from Zustand
   const sessionId = useSessionId()
@@ -31,6 +31,40 @@ export const Home = () => {
   const setError = useAppStore((state) => state.setError)
   const clearSelection = useAppStore((state) => state.clearSelection)
   const selectSummary = useAppStore((state) => state.selectSummary)
+  const selectOSKCluster = useAppStore((state) => state.selectOSKCluster)
+
+  // Check for pre-loaded state on mount
+  useEffect(() => {
+    const checkPreloadedState = async () => {
+      try {
+        // Backend falls back to "default" session if session-specific state not found
+        const response = await apiClient.state.getState(sessionId)
+
+        if (response && response.sources) {
+          setKcpState(response)
+
+          // Auto-select summary view if we have MSK sources with regions
+          const mskSource = response.sources.find((s: any) => s.type === 'msk' && s.msk_data !== undefined)
+          if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
+            selectSummary()
+          } else {
+            // Fallback: auto-select first OSK cluster if no MSK sources
+            const oskSource = response.sources.find((s: any) => s.type === 'osk' && s.osk_data !== undefined)
+            const firstCluster = oskSource?.osk_data?.clusters?.[0]
+            if (firstCluster) {
+              selectOSKCluster(firstCluster.id)
+            }
+          }
+        }
+      } catch {
+        // No pre-loaded state, user will upload manually
+      } finally {
+        setIsInitialLoading(false)
+      }
+    }
+
+    checkPreloadedState()
+  }, [sessionId, setKcpState, selectSummary, selectOSKCluster])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -46,25 +80,33 @@ export const Home = () => {
         const content = e.target?.result as string
         const parsed = JSON.parse(content) as StateUploadRequest
 
-        // Validate that we have a Discovery object with regions
-        if (parsed && typeof parsed === 'object' && 'regions' in parsed) {
+        // Validate that we have a State object with sources (msk_sources or osk_sources)
+        if (parsed && typeof parsed === 'object' && ('msk_sources' in parsed || 'osk_sources' in parsed)) {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
           // Set the entire processed state in one action
-          if (result && result.regions) {
+          if (result && result.sources) {
             setKcpState(result)
             setIsProcessing(false)
 
-            // Auto-select summary view if we have regions
-            if (result.regions.length > 0) {
+            // Auto-select summary view if we have MSK sources with regions
+            const mskSource = result.sources.find((s) => s.type === 'msk' && s.msk_data !== undefined)
+            if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
               selectSummary()
+            } else {
+              // Fallback: auto-select first OSK cluster if no MSK sources
+              const oskSource = result.sources.find((s) => s.type === 'osk' && s.osk_data !== undefined)
+              const firstCluster = oskSource?.osk_data?.clusters?.[0]
+              if (firstCluster) {
+                selectOSKCluster(firstCluster.id)
+              }
             }
           } else {
             throw new Error('Invalid response format from server')
           }
         } else {
-          throw new Error('Invalid file format. Expected a KCP state file with regions.')
+          throw new Error('Invalid file format. Expected a KCP state file with msk_sources or osk_sources.')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to process file')
@@ -83,14 +125,21 @@ export const Home = () => {
 
   return (
     <PageErrorBoundary>
-      <div className="min-h-svh flex flex-col w-full h-full bg-gray-50 dark:bg-card transition-colors">
+      <div className="h-svh flex flex-col w-full bg-background transition-colors overflow-hidden">
         <AppHeader
           onFileUpload={triggerFileUpload}
           isProcessing={isProcessing}
           error={error}
+          tabs={kcpState !== null ? [
+            { id: 'explore', label: 'Explore' },
+            { id: 'migration-assets', label: 'Migrate' },
+            { id: 'tco-inputs', label: 'TCO Inputs' },
+          ] : undefined}
+          activeTab={activeTopTab}
+          onTabChange={(id) => setActiveTopTab(id as TopLevelTab)}
         />
 
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col min-h-0">
           <input
             ref={fileInputRef}
             type="file"
@@ -100,26 +149,16 @@ export const Home = () => {
           />
 
           {kcpState !== null ? (
-            <div className="flex flex-1 flex-col">
-              <Tabs
-                tabs={[
-                  { id: 'explore', label: 'Explore' },
-                  { id: 'migration-assets', label: 'Migrate' },
-                  { id: 'tco-inputs', label: 'TCO Inputs' },
-                ]}
-                activeId={activeTopTab}
-                onChange={(id) => setActiveTopTab(id as TopLevelTab)}
-                size="lg"
-              />
+            <div className="flex flex-1 flex-col min-h-0">
 
               {activeTopTab === TOP_LEVEL_TABS.EXPLORE && (
                 <ExploreErrorBoundary>
-                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
+                  <div className="flex-1 min-h-0 bg-background">
                     <div className="flex h-full">
-                      <div className="w-80 bg-gray-50 dark:bg-card border-r border-gray-200 dark:border-border flex-shrink-0">
+                      <div className="w-80 bg-secondary border-r border-border flex-shrink-0">
                         <Sidebar />
                       </div>
-                      <main className="flex flex-1 p-4 w-full min-w-0 max-w-full overflow-hidden">
+                      <main className="flex-1 flex flex-col min-w-0 min-h-0">
                         <Explore />
                       </main>
                     </div>
@@ -129,23 +168,36 @@ export const Home = () => {
 
               {activeTopTab === TOP_LEVEL_TABS.TCO_INPUTS && (
                 <TCOErrorBoundary>
-                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                    <div className="h-full overflow-auto">
-                      <TCOInputsPage />
-                    </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto bg-background">
+                    <TCOInputsPage />
                   </div>
                 </TCOErrorBoundary>
               )}
 
               {activeTopTab === TOP_LEVEL_TABS.MIGRATION_ASSETS && (
                 <MigrationErrorBoundary>
-                  <div className="flex-1 overflow-hidden bg-white dark:bg-background">
-                    <div className="h-full overflow-auto">
-                      <MigrationAssetsPage />
-                    </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto bg-background">
+                    <MigrationAssetsPage />
                   </div>
                 </MigrationErrorBoundary>
               )}
+            </div>
+          ) : isInitialLoading || isProcessing ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-md mx-auto px-6">
+                <div className="mx-auto w-10 h-10 mb-6">
+                  <svg className="animate-spin w-10 h-10 text-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-bold text-foreground mb-2">
+                  Loading State File
+                </h2>
+                <p className="text-muted-foreground">
+                  {isProcessing ? 'Processing uploaded state file...' : 'Loading pre-configured state file...'}
+                </p>
+              </div>
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">

@@ -8,6 +8,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type MigrateTopicsOpts struct {
@@ -34,6 +35,9 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 	outputDir := mt.opts.OutputDir
 	if outputDir == "" {
 		outputDir = "migrate_topics"
+	}
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)

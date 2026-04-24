@@ -1,6 +1,6 @@
 import { Server, Network, Code } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { Cluster, WizardType } from '@/types'
+import type { WizardType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
 import { MigrationPhaseCard } from './MigrationPhaseCard'
 
@@ -15,24 +15,24 @@ interface Phase {
 
 interface MigrationFlowProps {
   clusterKey: string
-  cluster: Cluster
-  regionName: string
+  clusterName: string
   getPhaseStatus: (clusterKey: string, wizardType: WizardType) => 'completed' | 'pending'
-  onCreateTargetInfrastructure: (cluster: Cluster, regionName: string) => void
-  onCreateMigrationInfrastructure: (cluster: Cluster, regionName: string) => void
-  onCreateMigrationScripts: (cluster: Cluster, regionName: string) => void
+  onCreateTargetInfrastructure: () => void
+  onCreateMigrationInfrastructure: () => void
+  onCreateMigrationScripts: () => void
   onViewTerraform: (clusterKey: string, wizardType: WizardType, clusterName: string) => void
+  migrationScriptsDescription?: string
 }
 
 export const MigrationFlow = ({
   clusterKey,
-  cluster,
-  regionName,
+  clusterName,
   getPhaseStatus,
   onCreateTargetInfrastructure,
   onCreateMigrationInfrastructure,
   onCreateMigrationScripts,
   onViewTerraform,
+  migrationScriptsDescription,
 }: MigrationFlowProps) => {
   const phases: Phase[] = [
     {
@@ -41,7 +41,7 @@ export const MigrationFlow = ({
       title: 'Confluent Cloud Infrastructure',
       description: 'Generate Terraform for Your Target Infrastructure',
       icon: Server,
-      handler: () => onCreateTargetInfrastructure(cluster, regionName),
+      handler: onCreateTargetInfrastructure,
     },
     {
       step: 2,
@@ -49,22 +49,22 @@ export const MigrationFlow = ({
       title: 'Migration Infrastructure',
       description: 'Generate Terraform for Your Migration Infrastructure',
       icon: Network,
-      handler: () => onCreateMigrationInfrastructure(cluster, regionName),
+      handler: onCreateMigrationInfrastructure,
     },
     {
       step: 3,
       id: WIZARD_TYPES.MIGRATION_SCRIPTS,
       title: 'Migration Assets',
-      description: 'Generate Migration Assets to Move Data from MSK to Confluent Cloud',
+      description: migrationScriptsDescription || 'Generate Migration Assets to Move Data to Confluent Cloud',
       icon: Code,
-      handler: () => onCreateMigrationScripts(cluster, regionName),
+      handler: onCreateMigrationScripts,
     },
   ]
 
   return (
     <div className="py-6 px-6">
       <div className="mb-6">
-        <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300">Migration Steps</h3>
+        <h3 className="text-lg font-semibold text-foreground">Migration Steps</h3>
       </div>
       <div className="flex items-stretch justify-between gap-4">
         {phases.map((phase, index) => {
@@ -77,7 +77,7 @@ export const MigrationFlow = ({
               phase={phase}
               isCompleted={isCompleted}
               onGenerate={phase.handler}
-              onView={() => onViewTerraform(clusterKey, phase.id, cluster.name)}
+              onView={() => onViewTerraform(clusterKey, phase.id, clusterName)}
               showConnector={index < phases.length - 1}
             />
           )

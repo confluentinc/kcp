@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 //go:embed assets
@@ -45,6 +47,9 @@ func (bh *BastionHostAssetGenerator) Run() error {
 	fmt.Printf("🚀 Generating bastion host environment assets\n")
 
 	outputDir := filepath.Join("bastion_host")
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
+		return err
+	}
 	slog.Debug("creating bastion host directory", "directory", outputDir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create bastion host directory: %w", err)
