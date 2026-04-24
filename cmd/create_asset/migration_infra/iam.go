@@ -219,9 +219,12 @@ var jumpClusterNetworkingAdditions = iampolicy.Union(
 )
 
 // type4EnterpriseAdditions — Jump Cluster (SASL/SCRAM) with Enterprise
-// target. The capture omits ec2:DescribeSecurityGroupRules,
-// ec2:RevokeSecurityGroupIngress, and the PrivateLink describes that
-// Type 4 Dedicated needs; we follow the capture verbatim.
+// target. Enterprise does not need the PrivateLink describes
+// (ec2:DescribePrefixLists, ec2:DescribeVpcEndpoints) — those are
+// Dedicated-only because only Dedicated exposes a Confluent-managed
+// VPC Endpoint Service. The capture also omits
+// ec2:DescribeSecurityGroupRules and ec2:RevokeSecurityGroupIngress;
+// we follow the capture verbatim.
 var type4EnterpriseAdditions = iampolicy.Difference(
 	iampolicy.Union(
 		jumpClusterSubnetFragment,
@@ -256,11 +259,10 @@ var type5EnterpriseAdditions = iampolicy.Union(
 )
 
 // type5DedicatedAdditions — Jump Cluster (IAM auth) with Dedicated
-// target (MSK only). Identical capture to Type 5 Enterprise.
-var type5DedicatedAdditions = iampolicy.Union(
-	jumpClusterNetworkingAdditions,
-	privateLinkConsumerFragment,
-)
+// target (MSK only). The iamlive capture is byte-identical to Type 5
+// Enterprise (see capturedType5Dedicated in iam_test.go), so both
+// variants share the same policy value.
+var type5DedicatedAdditions = type5EnterpriseAdditions
 
 // ---------------------------------------------------------------------------
 // Annotation assembly.
