@@ -21,6 +21,7 @@ type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
 	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
 	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -207,6 +208,9 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	clusterId := c.Param("clusterId")
 
+	startDate := c.QueryParam("startDate")
+	endDate := c.QueryParam("endDate")
+
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -221,22 +225,39 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 		})
 	}
 
-	cluster, err := state.GetOSKClusterByID(clusterId)
+	var startTime, endTime *time.Time
+	if startDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid start date format",
+				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
+			})
+		} else {
+			startTime = &parsed
+		}
+	}
+	if endDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Invalid end date format",
+				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
+			})
+		} else {
+			endTime = &parsed
+		}
+	}
+
+	processedState := ui.reportService.ProcessState(*state)
+
+	filteredMetrics, err := ui.reportService.FilterClusterMetrics(processedState, clusterId, "osk", startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "Cluster not found",
+			"error":   "Cluster not found or no metrics available",
 			"message": err.Error(),
 		})
 	}
 
-	if cluster.ClusterMetrics == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "No metrics available",
-			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
-		})
-	}
-
-	return c.JSON(http.StatusOK, cluster.ClusterMetrics)
+	return c.JSON(http.StatusOK, filteredMetrics)
 }
 
 func (ui *UI) handleGetCosts(c echo.Context) error {

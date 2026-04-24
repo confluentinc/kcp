@@ -108,9 +108,6 @@ export const TCOInputs = () => {
               ))}
             </div>
           )}
-          <span className="inline-block mt-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/20 text-blue-500 border border-blue-500/30 w-fit">
-            OSK
-          </span>
         </div>
       )
     }
@@ -121,11 +118,6 @@ export const TCOInputs = () => {
         <span className="text-xs text-muted-foreground font-normal">
           {cluster.regionName}
         </span>
-        {cluster.sourceType === 'msk' && (
-          <span className="inline-block mt-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-500 border border-amber-500/30 w-fit">
-            MSK
-          </span>
-        )}
       </div>
     )
   }
