@@ -9,9 +9,10 @@ import (
 
 func NewVersionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Show version information",
-		Long:  "Display version, commit, and build date information",
+		Use:     "version",
+		Short:   "Show version information",
+		Long:    "Display version, commit, and build date information",
+		Example: "  kcp version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("Version: %s\n", build_info.Version)
 			fmt.Printf("Commit:  %s\n", build_info.Commit)

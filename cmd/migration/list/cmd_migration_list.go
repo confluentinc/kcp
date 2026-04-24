@@ -15,9 +15,14 @@ var (
 
 func NewMigrationListCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "list",
-		Short:         "List all migrations from the migration state file",
-		Long:          "Display all migrations from the migration state file in a human-readable format, showing migration IDs, status, gateway configuration, and topics.",
+		Use:   "list",
+		Short: "List all migrations from the migration state file",
+		Long:  "Display all migrations from the migration state file in a human-readable format, showing migration IDs, status, gateway configuration, and topics.",
+		Example: `  # Default state file
+  kcp migration list
+
+  # Specific state file
+  kcp migration list --migration-state-file /path/to/migration-state.json`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationList,

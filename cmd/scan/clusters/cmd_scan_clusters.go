@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	jmx "github.com/confluentinc/kcp/internal/services/jmx"
 	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
 	"github.com/confluentinc/kcp/internal/sources"
@@ -34,11 +35,58 @@ var (
 	metricsRange    string
 )
 
+func scanClustersIAMAnnotation() string {
+	return iampolicy.RenderStatements(
+		"Only required for `--source-type msk`. OSK scans use credentials from the credentials file, not AWS IAM.",
+		[]iampolicy.Statement{
+			{
+				Sid: "MSKClusterKafkaAccess",
+				Actions: []string{
+					"kafka-cluster:Connect",
+					"kafka-cluster:DescribeCluster",
+					"kafka-cluster:DescribeClusterDynamicConfiguration",
+					"kafka-cluster:DescribeTopic",
+				},
+				Resources: []string{
+					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
+					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>",
+				},
+			},
+			{
+				Sid:     "MSKConnectTopicAccess",
+				Actions: []string{"kafka-cluster:ReadData"},
+				Resources: []string{
+					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-configs",
+					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-status",
+				},
+			},
+		},
+	)
+}
+
 func NewScanClustersCmd() *cobra.Command {
 	scanClustersCmd := &cobra.Command{
-		Use:           "clusters",
-		Short:         "Scan Kafka clusters using the Kafka Admin API",
-		Long:          "Scans MSK or OSK clusters to discover topics, ACLs, and other metadata via Kafka Admin API",
+		Use:   "clusters",
+		Short: "Scan Kafka clusters using the Kafka Admin API",
+		Long:  "Scans MSK or OSK clusters to discover topics, ACLs, and other metadata via Kafka Admin API",
+		Example: `  # Scan an MSK cluster (credentials from kcp discover)
+  kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
+
+  # Scan an OSK cluster (hand-authored credentials)
+  kcp scan clusters --source-type osk --state-file kcp-state.json --credentials-file osk-credentials.yaml
+
+  # OSK with live Jolokia metric collection
+  kcp scan clusters --source-type osk --state-file kcp-state.json \
+      --credentials-file osk-credentials.yaml \
+      --metrics jolokia --metrics-duration 5m --metrics-interval 10s
+
+  # OSK with historical Prometheus metrics
+  kcp scan clusters --source-type osk --state-file kcp-state.json \
+      --credentials-file osk-credentials.yaml \
+      --metrics prometheus --metrics-range 30d`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: scanClustersIAMAnnotation(),
+		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanClusters,

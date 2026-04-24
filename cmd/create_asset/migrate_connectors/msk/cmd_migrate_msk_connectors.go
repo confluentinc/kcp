@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -23,9 +24,24 @@ var (
 
 func NewMigrateMskConnectorsCmd() *cobra.Command {
 	mskConnectorsCmd := &cobra.Command{
-		Use:           "msk",
-		Short:         "Migrate MSK Connect connectors to Confluent Cloud",
-		Long:          "Migrate MSK Connect connectors to Confluent Cloud",
+		Use:   "msk",
+		Short: "Migrate MSK Connect connectors to Confluent Cloud",
+		Long:  "Generate Terraform configuration that recreates MSK Connect connectors as Confluent Cloud fully-managed connectors. Uses the Confluent translate/config API to convert connector configs.",
+		Example: `  kcp create-asset migrate-connectors msk \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --cc-environment-id env-a1bcde \
+      --cc-cluster-id lkc-xyz123 \
+      --cc-api-key ABCDEFGHIJKLMNOP \
+      --cc-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iampolicy.RenderSingle("", []string{
+				"kafkaconnect:ListConnectors",
+				"kafkaconnect:DescribeConnector",
+				"kafkaconnect:DescribeWorkerConfiguration",
+				"kafkaconnect:DescribeCustomPlugin",
+			}),
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateMskConnectors,
 		RunE:          runMigrateMskConnectors,
