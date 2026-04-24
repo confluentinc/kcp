@@ -3,14 +3,15 @@ import { Button } from '@/components/common/ui/button'
 import { Modal } from '@/components/common/ui/modal'
 import { useAppStore, useRegions } from '@/stores/store'
 import { ClusterMetrics } from '@/components/explore/clusters/ClusterMetrics'
-import { DEFAULTS } from '@/constants'
+import { DEFAULTS, SOURCE_TYPES } from '@/constants'
+import { findClusterInRegions } from '@/lib/clusterUtils'
 import { useTCOClusters } from '@/hooks/useTCOClusters'
 import { useOSKTCOClusters } from '@/hooks/useOSKTCOClusters'
 import { useTCOModal } from '@/hooks/useTCOModal'
 import { generateTCOCSV } from '@/lib/tcoUtils'
 import { TCOInputRow } from './TCOInputRow'
 
-type SourceTab = 'msk' | 'osk'
+import type { SourceType } from '@/types'
 
 export const TCOInputs = () => {
   const regions = useRegions()
@@ -22,20 +23,16 @@ export const TCOInputs = () => {
   const oskClusters = useOSKTCOClusters()
   const allClusters = useMemo(() => [...mskClusters, ...oskClusters], [mskClusters, oskClusters])
 
-  const [activeTab, setActiveTab] = useState<SourceTab>('msk')
-  const activeClusters = activeTab === 'msk' ? mskClusters : oskClusters
+  const [activeTab, setActiveTab] = useState<SourceType>(SOURCE_TYPES.MSK)
+  const activeClusters = activeTab === SOURCE_TYPES.MSK ? mskClusters : oskClusters
 
   const { modalState, openModal, closeModal } = useTCOModal(allClusters)
 
   const [copySuccess, setCopySuccess] = useState(false)
 
   useEffect(() => {
-    initializeTCOData(mskClusters)
-  }, [mskClusters, initializeTCOData])
-
-  useEffect(() => {
-    initializeTCOData(oskClusters)
-  }, [oskClusters, initializeTCOData])
+    initializeTCOData(allClusters)
+  }, [allClusters, initializeTCOData])
 
   const handleInputChange = (
     clusterKey: string,
@@ -74,13 +71,13 @@ export const TCOInputs = () => {
     }
   }
 
-  const tabs: { id: SourceTab; label: string; count: number }[] = [
-    { id: 'msk', label: 'MSK', count: mskClusters.length },
-    { id: 'osk', label: 'OSK', count: oskClusters.length },
+  const tabs: { id: SourceType; label: string; count: number }[] = [
+    { id: SOURCE_TYPES.MSK, label: 'MSK', count: mskClusters.length },
+    { id: SOURCE_TYPES.OSK, label: 'OSK', count: oskClusters.length },
   ]
 
   const renderColumnHeader = (cluster: typeof activeClusters[number]) => {
-    if (cluster.sourceType === 'osk' && cluster.metadata) {
+    if (cluster.sourceType === SOURCE_TYPES.OSK && cluster.metadata) {
       const meta = cluster.metadata
       return (
         <div className="flex flex-col">
@@ -157,7 +154,7 @@ export const TCOInputs = () => {
       {activeClusters.length === 0 ? (
         <div className="bg-warning/10 border border-warning/20 rounded-md p-4">
           <p className="text-warning">
-            No {activeTab === 'msk' ? 'MSK' : 'OSK'} clusters found. Upload a KCP state file with {activeTab === 'msk' ? 'MSK' : 'OSK'} cluster data.
+            No {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'OSK'} clusters found. Upload a KCP state file with {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'OSK'} cluster data.
           </p>
         </div>
       ) : (
@@ -271,9 +268,10 @@ export const TCOInputs = () => {
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
                     readOnly={true}
-                    readOnlyValue={(cluster, sourceType) => {
-                      if (sourceType === 'osk') return undefined
-                      return cluster?.metrics?.metadata?.follower_fetching
+                    readOnlyValue={(tcoCluster) => {
+                      if (tcoCluster.sourceType === SOURCE_TYPES.OSK) return undefined
+                      const clusterObj = findClusterInRegions(regions, tcoCluster.regionName, tcoCluster.name)
+                      return clusterObj?.metrics?.metadata?.follower_fetching
                     }}
                   />
                   <TCOInputRow
@@ -281,9 +279,10 @@ export const TCOInputs = () => {
                     clusters={activeClusters}
                     tcoWorkloadData={tcoWorkloadData}
                     readOnly={true}
-                    readOnlyValue={(cluster, sourceType) => {
-                      if (sourceType === 'osk') return undefined
-                      return cluster?.metrics?.metadata?.tiered_storage
+                    readOnlyValue={(tcoCluster) => {
+                      if (tcoCluster.sourceType === SOURCE_TYPES.OSK) return undefined
+                      const clusterObj = findClusterInRegions(regions, tcoCluster.regionName, tcoCluster.name)
+                      return clusterObj?.metrics?.metadata?.tiered_storage
                     }}
                   />
                   <TCOInputRow
@@ -339,12 +338,12 @@ export const TCOInputs = () => {
           <ClusterMetrics
             cluster={{
               ...modalState.cluster,
-              arn: modalState.cluster.sourceType === 'msk' ? modalState.cluster.key : undefined,
+              arn: modalState.cluster.sourceType === SOURCE_TYPES.MSK ? modalState.cluster.key : undefined,
             }}
             isActive={modalState.isOpen}
             inModal={true}
             sourceType={modalState.cluster.sourceType}
-            clusterId={modalState.cluster.sourceType === 'osk' ? modalState.cluster.key : undefined}
+            clusterId={modalState.cluster.sourceType === SOURCE_TYPES.OSK ? modalState.cluster.key : undefined}
             modalPreselectedMetric={modalState.preselectedMetric || undefined}
             modalWorkloadAssumption={modalState.workloadAssumption || undefined}
           />

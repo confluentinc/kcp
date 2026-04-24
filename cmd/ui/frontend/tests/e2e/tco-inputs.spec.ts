@@ -43,7 +43,7 @@ test.describe('TCO Inputs Page', () => {
     await expect(csvPreview).not.toContainText('kcp-playground')
   })
 
-  test('empty tab shows appropriate message', async ({ page }) => {
+  test('tabs with data do not show empty state message', async ({ page }) => {
     await page.locator('button:has-text("MSK")').click()
     await expect(page.locator('text=No MSK clusters found')).not.toBeVisible()
     await page.locator('button:has-text("OSK")').click()

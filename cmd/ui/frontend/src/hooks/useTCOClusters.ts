@@ -1,12 +1,13 @@
 import { useMemo } from 'react'
 import { useRegions } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
-import type { OSKClusterMetadata } from '@/types'
+import { SOURCE_TYPES } from '@/constants'
+import type { SourceType, OSKClusterMetadata } from '@/types'
 
 export interface TCOCluster {
   name: string
   key: string
-  sourceType: 'msk' | 'osk'
+  sourceType: SourceType
   regionName: string
   metadata?: OSKClusterMetadata
 }
@@ -23,7 +24,7 @@ export const useTCOClusters = (): TCOCluster[] => {
           clusters.push({
             name: cluster.name,
             key: arn,
-            sourceType: 'msk',
+            sourceType: SOURCE_TYPES.MSK,
             regionName: region.name,
           })
         }

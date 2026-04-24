@@ -1,9 +1,6 @@
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
-import { findClusterInRegions } from '@/lib/clusterUtils'
-import { useRegions } from '@/stores/store'
 import type { WorkloadData } from '@/stores/store'
-import type { Cluster } from '@/types'
 import type { TCOCluster } from '@/hooks/useTCOClusters'
 
 interface TCOInputRowProps {
@@ -12,7 +9,7 @@ interface TCOInputRowProps {
   tcoWorkloadData: WorkloadData
   field?: string
   readOnly?: boolean
-  readOnlyValue?: (cluster: Cluster | undefined, sourceType: 'msk' | 'osk') => boolean | undefined
+  readOnlyValue?: (cluster: TCOCluster) => boolean | undefined
   onInputChange?: (
     clusterKey: string,
     field:
@@ -53,7 +50,6 @@ export const TCOInputRow = ({
   buttonDisabled = false,
   buttonTitle,
 }: TCOInputRowProps) => {
-  const regions = useRegions()
   const inputClassName =
     'flex-1 px-3 py-2 border border-gray-300 dark:border-border rounded-md text-sm bg-white dark:bg-card text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
 
@@ -64,10 +60,7 @@ export const TCOInputRow = ({
           {label}
         </td>
         {clusters.map((cluster) => {
-          const clusterObj = cluster.sourceType === 'msk'
-            ? findClusterInRegions(regions, cluster.regionName, cluster.name)
-            : undefined
-          const value = readOnlyValue(clusterObj, cluster.sourceType)
+          const value = readOnlyValue(cluster)
 
           return (
             <td

@@ -1,15 +1,17 @@
 import { useState, useCallback } from 'react'
 import { useRegions } from '@/stores/store'
 import { getOSKClusterDataById } from '@/stores/store'
-import { findClusterInRegions, getClusterArn } from '@/lib/clusterUtils'
+import { findClusterInRegions } from '@/lib/clusterUtils'
+import { SOURCE_TYPES } from '@/constants'
 import { getMetricConfig } from '@/lib/tcoUtils'
+import type { SourceType } from '@/types'
 import type { TCOCluster } from './useTCOClusters'
 
 interface ModalCluster {
   name: string
   key: string
-  region: string
-  sourceType: 'msk' | 'osk'
+  region?: string
+  sourceType: SourceType
   metrics?: {
     metadata?: {
       start_date?: string
@@ -45,7 +47,7 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
 
       const metricConfig = getMetricConfig(metricType)
 
-      if (cluster.sourceType === 'osk') {
+      if (cluster.sourceType === SOURCE_TYPES.OSK) {
         const oskCluster = getOSKClusterDataById(clusterKey)
         if (!oskCluster) return
 
@@ -54,8 +56,7 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
           cluster: {
             name: oskCluster.id,
             key: oskCluster.id,
-            region: '',
-            sourceType: 'osk',
+            sourceType: SOURCE_TYPES.OSK,
             metrics: oskCluster.metrics,
           },
           preselectedMetric: metricConfig.metric,
@@ -65,16 +66,15 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
         const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
         if (!clusterObj) return
 
-        const clusterArn = cluster.key || getClusterArn(clusterObj)
-        if (!clusterArn) return
+        if (!cluster.key) return
 
         setModalState({
           isOpen: true,
           cluster: {
             name: clusterObj.name,
-            key: clusterArn,
+            key: cluster.key,
             region: cluster.regionName,
-            sourceType: 'msk',
+            sourceType: SOURCE_TYPES.MSK,
             metrics: clusterObj.metrics,
           },
           preselectedMetric: metricConfig.metric,

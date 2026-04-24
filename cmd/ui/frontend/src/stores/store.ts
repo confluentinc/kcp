@@ -195,7 +195,7 @@ export const useAppStore = create<AppState>()(
       // Actions
       getSessionId: () => get().sessionId,
 
-      setKcpState: (kcpState) => set({ kcpState }, false, 'setKcpState'),
+      setKcpState: (kcpState) => set({ kcpState, tcoWorkloadData: {} }, false, 'setKcpState'),
 
       selectSummary: () =>
         set(

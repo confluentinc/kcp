@@ -1,4 +1,4 @@
-import { DEFAULTS, METRIC_TYPE_MAP } from '@/constants'
+import { DEFAULTS, METRIC_TYPE_MAP, SOURCE_TYPES } from '@/constants'
 import { findClusterInRegions } from './clusterUtils'
 import type { Region } from '@/types'
 import type { WorkloadData } from '@/stores/store'
@@ -16,7 +16,7 @@ export const generateTCOCSV = (
   const headers = allClusters.map((cluster) => cluster.name)
 
   const getReadOnlyValue = (cluster: TCOCluster, field: 'follower_fetching' | 'tiered_storage'): string => {
-    if (cluster.sourceType === 'osk') {
+    if (cluster.sourceType === SOURCE_TYPES.OSK) {
       return 'N/A'
     }
     const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
@@ -39,9 +39,12 @@ export const generateTCOCSV = (
     allClusters.map((cluster) => tcoWorkloadData[cluster.key]?.localRetentionHours || ''),
   ]
 
-  const csvContent = [headers, ...rows].map((row) => row.join(',')).join('\n')
+  const escapeCSV = (val: string) =>
+    val.includes(',') || val.includes('"') || val.includes('\n')
+      ? `"${val.replace(/"/g, '""')}"`
+      : val
 
-  return csvContent
+  return [headers, ...rows].map((row) => row.map(escapeCSV).join(',')).join('\n')
 }
 
 export const getMetricConfig = (
