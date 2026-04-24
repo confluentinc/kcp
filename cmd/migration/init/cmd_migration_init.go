@@ -62,7 +62,9 @@ This command validates the cluster link and mirror topics on the destination clu
 fetches the current gateway CR from Kubernetes, validates consistency across the initial,
 fenced, and switchover gateway CRs, and writes the migration configuration to the state file.
 
-The state file can then be used by 'kcp migration execute' to run the migration.`,
+The state file can then be used by 'kcp migration execute' to run the migration.
+
+All flags can be provided via environment variables (uppercase, with underscores).`,
 		Example: `  # MSK source with IAM auth
   kcp migration init \
       --k8s-namespace my-namespace \
@@ -86,9 +88,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
       --cluster-link-name my-cluster-link \
       --cluster-api-key ABCDEFGHIJKLMNOP --cluster-api-secret xxxx \
       --fenced-cr-yaml gateway-fenced.yaml --switchover-cr-yaml gateway-switchover.yaml \
-      --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass
-
-All flags can be provided via environment variables (uppercase, with underscores).`,
+      --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationInit,

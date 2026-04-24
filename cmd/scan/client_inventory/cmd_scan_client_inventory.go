@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/s3"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -44,7 +45,7 @@ Prerequisites:
       --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
       --state-file kcp-state.json`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": clientInventoryIAMPermissions,
+			iampolicy.AnnotationKey: clientInventoryIAMPermissions,
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
