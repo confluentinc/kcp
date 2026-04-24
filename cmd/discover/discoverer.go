@@ -20,31 +20,34 @@ import (
 )
 
 type DiscovererOpts struct {
-	Regions     []string
-	SkipCosts   bool
-	SkipMetrics bool
-	SkipTopics  bool
-	State       *types.State
-	Credentials *types.Credentials
+	Regions               []string
+	SkipCosts             bool
+	SkipMetrics           bool
+	SkipTopics            bool
+	SkipManagedConnectors bool
+	State                 *types.State
+	Credentials           *types.Credentials
 }
 
 type Discoverer struct {
-	regions     []string
-	skipCosts   bool
-	skipMetrics bool
-	skipTopics  bool
-	state       *types.State
-	credentials *types.Credentials
+	regions               []string
+	skipCosts             bool
+	skipMetrics           bool
+	skipTopics            bool
+	skipManagedConnectors bool
+	state                 *types.State
+	credentials           *types.Credentials
 }
 
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
-		regions:     opts.Regions,
-		skipCosts:   opts.SkipCosts,
-		skipMetrics: opts.SkipMetrics,
-		skipTopics:  opts.SkipTopics,
-		state:       opts.State,
-		credentials: opts.Credentials,
+		regions:               opts.Regions,
+		skipCosts:             opts.SkipCosts,
+		skipMetrics:           opts.SkipMetrics,
+		skipTopics:            opts.SkipTopics,
+		skipManagedConnectors: opts.SkipManagedConnectors,
+		state:                 opts.State,
+		credentials:           opts.Credentials,
 	}
 }
 
@@ -114,7 +117,7 @@ func (d *Discoverer) discoverRegions() error {
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		for _, clusterArn := range discoveredRegion.ClusterArns {
-			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics)
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics, d.skipManagedConnectors)
 			if err != nil {
 				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
