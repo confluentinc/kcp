@@ -86,6 +86,14 @@ export const API_ENDPOINTS = {
 } as const
 
 /**
+ * Kafka source types
+ */
+export const SOURCE_TYPES = {
+  MSK: 'msk',
+  OSK: 'osk',
+} as const
+
+/**
  * Default values
  */
 export const DEFAULTS = {

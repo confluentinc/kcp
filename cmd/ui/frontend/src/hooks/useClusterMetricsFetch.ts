@@ -51,7 +51,10 @@ export const useClusterMetricsFetch = ({
       try {
         let data: MetricsApiResponse
         if (sourceType === 'osk' && clusterId) {
-          data = await apiClient.metrics.getOSKMetrics(clusterId, sessionId)
+          data = await apiClient.metrics.getOSKMetrics(clusterId, sessionId, {
+            startDate,
+            endDate,
+          })
         } else {
           const region = clusterRegion || 'unknown'
           data = await apiClient.metrics.getMetrics(region, clusterName, sessionId, {

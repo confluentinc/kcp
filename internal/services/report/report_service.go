@@ -200,42 +200,36 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	}, nil
 }
 
-// TODO we should ask for clusterArn instead of clusterName
-
-// filterClusterMetrics filters the processed state by region, clusterArn, and date range
+// filterClusterMetrics filters the processed state by cluster ID and date range
 // sourceType can be "msk", "osk", or "auto" (auto-detects based on identifier pattern)
-func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	// Auto-detection: if sourceType is empty or "auto", detect based on identifier pattern
+func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	if sourceType == "" || sourceType == "auto" {
-		if strings.HasPrefix(clusterArn, "arn:") {
+		if strings.HasPrefix(clusterID, "arn:") {
 			sourceType = "msk"
 		} else {
 			sourceType = "osk"
 		}
 	}
 
-	// Route to appropriate source
 	switch sourceType {
 	case "msk":
-		return rs.filterMSKClusterMetrics(processedState, clusterArn, startTime, endTime)
+		return rs.filterMSKClusterMetrics(processedState, clusterID, startTime, endTime)
 	case "osk":
-		return rs.filterOSKClusterMetrics(processedState, clusterArn, startTime, endTime)
+		return rs.filterOSKClusterMetrics(processedState, clusterID, startTime, endTime)
 	default:
 		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'osk')", sourceType)
 	}
 }
 
-// filterMSKClusterMetrics filters MSK cluster metrics by ARN
-func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedState, clusterArn string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	var regionName string
 	var targetCluster *types.ProcessedCluster
 
-	// Find the cluster in MSK sources
 	for _, source := range processedState.Sources {
 		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
 			for _, region := range source.MSKData.Regions {
 				for _, cluster := range region.Clusters {
-					if strings.EqualFold(cluster.Arn, clusterArn) {
+					if strings.EqualFold(cluster.Arn, clusterID) {
 						targetCluster = &cluster
 						regionName = region.Name
 						break
@@ -252,14 +246,13 @@ func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedS
 	}
 
 	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in MSK sources", clusterArn)
+		return nil, fmt.Errorf("cluster '%s' not found in MSK sources", clusterID)
 	}
 
-	// Handle cluster without metrics
 	if targetCluster.ClusterMetrics.Metrics == nil {
 		return &types.ProcessedClusterMetrics{
 			Region:     regionName,
-			ClusterArn: clusterArn,
+			ClusterArn: clusterID,
 			Metadata:   targetCluster.ClusterMetrics.Metadata,
 			Metrics:    nil,
 			Aggregates: nil,
@@ -267,15 +260,12 @@ func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedS
 		}, nil
 	}
 
-	// Filter metrics by date range
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
-
-	// Calculate aggregates from filtered metrics
 	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Region:     regionName,
-		ClusterArn: clusterArn,
+		ClusterArn: clusterID,
 		Metadata:   targetCluster.ClusterMetrics.Metadata,
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,

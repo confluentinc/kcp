@@ -2,6 +2,7 @@ package report
 
 import (
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -737,5 +738,127 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 		// MSK clusters should have empty OSK fields
 		assert.Equal(t, "", result.Environment)
 		assert.Equal(t, "", result.Location)
+	})
+}
+
+func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
+	rs := NewReportService()
+
+	makeTime := func(s string) *time.Time {
+		t, _ := time.Parse(time.RFC3339, s)
+		return &t
+	}
+
+	oskState := types.ProcessedState{
+		Sources: []types.ProcessedSource{
+			{
+				Type: types.SourceTypeOSK,
+				OSKData: &types.ProcessedOSKSource{
+					Clusters: []types.ProcessedOSKCluster{
+						{
+							ID:               "date-test-cluster",
+							BootstrapServers: []string{"broker1:9092"},
+							ClusterMetrics: &types.ProcessedClusterMetrics{
+								Metrics: []types.ProcessedMetric{
+									{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "BytesInPerSec", Value: ptr(100.0)},
+									{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "BytesInPerSec", Value: ptr(200.0)},
+									{Start: "2025-01-03T00:00:00Z", End: "2025-01-03T00:01:00Z", Label: "BytesInPerSec", Value: ptr(300.0)},
+									{Start: "2025-01-04T00:00:00Z", End: "2025-01-04T00:01:00Z", Label: "BytesInPerSec", Value: ptr(400.0)},
+									{Start: "2025-01-05T00:00:00Z", End: "2025-01-05T00:01:00Z", Label: "BytesInPerSec", Value: ptr(500.0)},
+									// RFC3339 with timezone offset (Jolokia/Prometheus output)
+									{Start: "2025-01-06T01:00:00+01:00", End: "2025-01-06T01:01:00+01:00", Label: "BytesInPerSec", Value: ptr(600.0)},
+									// Unparseable timestamp — should be silently skipped
+									{Start: "not-a-date", End: "not-a-date", Label: "BytesInPerSec", Value: ptr(999.0)},
+								},
+								Metadata: types.MetricMetadata{Period: 60},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("nil start and end returns all parseable metrics", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(oskState, "date-test-cluster", "osk", nil, nil)
+		require.NoError(t, err)
+		assert.Len(t, result.Metrics, 7)
+	})
+
+	t.Run("start filter excludes earlier metrics", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(oskState, "date-test-cluster", "osk", makeTime("2025-01-03T00:00:00Z"), nil)
+		require.NoError(t, err)
+		assert.Len(t, result.Metrics, 4)
+		assert.InDelta(t, 300.0, *result.Metrics[0].Value, 0.01)
+	})
+
+	t.Run("end filter excludes later metrics", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(oskState, "date-test-cluster", "osk", nil, makeTime("2025-01-03T00:00:00Z"))
+		require.NoError(t, err)
+		assert.Len(t, result.Metrics, 3)
+		assert.InDelta(t, 300.0, *result.Metrics[2].Value, 0.01)
+	})
+
+	t.Run("start and end produce a subset", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			oskState, "date-test-cluster", "osk",
+			makeTime("2025-01-02T00:00:00Z"),
+			makeTime("2025-01-04T00:00:00Z"),
+		)
+		require.NoError(t, err)
+		assert.Len(t, result.Metrics, 3)
+		assert.InDelta(t, 200.0, *result.Metrics[0].Value, 0.01)
+		assert.InDelta(t, 400.0, *result.Metrics[2].Value, 0.01)
+	})
+
+	t.Run("inclusive start boundary", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			oskState, "date-test-cluster", "osk",
+			makeTime("2025-01-03T00:00:00Z"),
+			makeTime("2025-01-03T00:00:00Z"),
+		)
+		require.NoError(t, err)
+		assert.Len(t, result.Metrics, 1)
+		assert.InDelta(t, 300.0, *result.Metrics[0].Value, 0.01)
+	})
+
+	t.Run("RFC3339 with timezone offset is parsed correctly", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			oskState, "date-test-cluster", "osk",
+			makeTime("2025-01-06T00:00:00Z"),
+			makeTime("2025-01-06T01:00:00Z"),
+		)
+		require.NoError(t, err)
+		assert.Len(t, result.Metrics, 1)
+		assert.InDelta(t, 600.0, *result.Metrics[0].Value, 0.01)
+	})
+
+	t.Run("unparseable timestamps are silently skipped", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			oskState, "date-test-cluster", "osk",
+			makeTime("2025-01-01T00:00:00Z"),
+			makeTime("2025-01-06T02:00:00Z"),
+		)
+		require.NoError(t, err)
+		// 6 valid metrics (the "not-a-date" one is skipped)
+		assert.Len(t, result.Metrics, 6)
+	})
+
+	t.Run("aggregates are recalculated from filtered subset", func(t *testing.T) {
+		result, err := rs.FilterClusterMetrics(
+			oskState, "date-test-cluster", "osk",
+			makeTime("2025-01-02T00:00:00Z"),
+			makeTime("2025-01-04T00:00:00Z"),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, result.Aggregates)
+		agg, ok := result.Aggregates["BytesInPerSec"]
+		require.True(t, ok)
+		require.NotNil(t, agg.Minimum)
+		require.NotNil(t, agg.Average)
+		require.NotNil(t, agg.Maximum)
+		assert.InDelta(t, 200.0, *agg.Minimum, 0.01)
+		assert.InDelta(t, 300.0, *agg.Average, 0.01)
+		assert.InDelta(t, 400.0, *agg.Maximum, 0.01)
 	})
 }
