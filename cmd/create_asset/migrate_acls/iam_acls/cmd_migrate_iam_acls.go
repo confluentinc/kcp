@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -25,9 +26,48 @@ var (
 
 func NewMigrateIamAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
-		Use:           "iam",
-		Short:         "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
-		Long:          "Convert IAM ACLs from IAM roles or users to Confluent Cloud IAM ACLs as individual Terraform resources.",
+		Use:   "iam",
+		Short: "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
+		Long:  "Convert IAM ACLs from IAM roles or users to Confluent Cloud IAM ACLs as individual Terraform resources.",
+		Example: `  # From an IAM role
+  kcp create-asset migrate-acls iam \
+      --role-arn arn:aws:iam::123456789012:role/MyKafkaRole \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --target-cluster-id lkc-xyz123 \
+      --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443
+
+  # From an IAM user
+  kcp create-asset migrate-acls iam \
+      --user-arn arn:aws:iam::123456789012:user/app-user \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --target-cluster-id lkc-xyz123 \
+      --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: "```json\n" +
+				`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetUser",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:GetUserPolicy",
+        "iam:ListUserPolicies",
+        "iam:ListAttachedUserPolicies",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion"
+      ],
+      "Resource": "*"
+    }
+  ]
+}` + "\n```\n",
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateIamAcls,
 		RunE:          runMigrateIamAcls,
