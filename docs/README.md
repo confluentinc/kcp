@@ -12,52 +12,17 @@ KCP (Kafka Copy) is a CLI tool for planning and executing Kafka migrations to Co
 
 ## Installation
 
-Download `kcp` from GitHub under the [releases tab](https://github.com/confluentinc/kcp/releases/latest). Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).
+Download the `kcp` binary for your platform from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest). Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).
 
-### Linux / macOS
+Extract the archive, place the `kcp` binary somewhere on your `PATH`, and run `kcp version` to verify.
 
-Set a variable for the latest release:
+### Picking the right architecture
 
-```shell
-LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-```
+If you're unsure whether to download the `amd64` or `arm64` build:
 
-Pick your platform:
-
-```shell
-PLATFORM=darwin_amd64
-# PLATFORM=darwin_arm64
-# PLATFORM=linux_amd64
-# PLATFORM=linux_arm64
-```
-
-Download, extract, and install:
-
-```shell
-curl -L -o "kcp_${LATEST_TAG}.tar.gz" "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}.tar.gz"
-tar -xzf "kcp_${LATEST_TAG}.tar.gz"
-chmod +x ./kcp/kcp
-sudo mv ./kcp/kcp /usr/local/bin/kcp
-kcp version
-```
-
-You should see output similar to:
-
-```text
-Executing kcp with build version=0.4.5 commit=a8ef9fd... date=2025-11-13T12:56:00Z
-Version: 0.4.5
-Commit:  a8ef9fd...
-Date:    2025-11-13T12:56:00Z
-```
-
-### Windows
-
-Download the latest Windows artifact from the [releases page](https://github.com/confluentinc/kcp/releases/latest):
-
-- `kcp_windows_amd64.exe` — single executable
-- `kcp_windows_amd64.zip` — packaged archive
-
-Extract (if zipped), optionally move `kcp.exe` onto your `PATH`, and run `kcp version` to verify.
+- **macOS**: run `uname -m` — `arm64` means Apple Silicon (M1/M2/M3/M4); `x86_64` means Intel (use `amd64`).
+- **Linux**: run `uname -m` — `aarch64` maps to `arm64`; `x86_64` maps to `amd64`.
+- **Windows**: open *System Information* and check *System type*, or run `echo %PROCESSOR_ARCHITECTURE%` in cmd — `ARM64` maps to `arm64`; `AMD64` maps to `amd64`. Only `amd64` is currently published for Windows.
 
 ## Authentication
 
@@ -105,8 +70,8 @@ Only certain migration topologies are possible for a given combination — see [
 
 - **Public endpoints** — you can run `kcp` commands directly from your local machine.
 - **Private endpoints** — `kcp` must run from inside the source VPC. Either:
-  1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/create-asset/bastion-host.md), or
-  2. Use an existing jump server and copy the `kcp` binary onto it.
+    1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/create-asset/bastion-host.md), or
+    2. Use an existing jump server and copy the `kcp` binary onto it.
 
 > [!NOTE]
 > For private MSK, transfer the `kcp` binary to a host inside the same VPC before continuing.
