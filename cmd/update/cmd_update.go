@@ -41,7 +41,6 @@ func NewUpdateCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	cmd.Flags().AddFlagSet(optionalFlags)
-	groups[optionalFlags] = "Optional Flags"
 
 	cmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
