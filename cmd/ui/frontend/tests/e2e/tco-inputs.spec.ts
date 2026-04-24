@@ -1,9 +1,20 @@
 import { test, expect } from '@playwright/test'
+import stateMigration from './fixtures/state-migration.json' with { type: 'json' }
 
 test.describe('TCO Inputs Page', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await page.waitForSelector('text=AWS MSK', { timeout: 10000 })
+
+    await page.click('button:has-text("Upload KCP State File")')
+    const fileInput = page.locator('input[type="file"]')
+    await fileInput.setInputFiles({
+      name: 'state-migration.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify(stateMigration)),
+    })
+    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
+
     await page.locator('button:has-text("TCO Inputs")').click()
     await page.waitForSelector('text=Workload Assumptions', { timeout: 5000 })
   })

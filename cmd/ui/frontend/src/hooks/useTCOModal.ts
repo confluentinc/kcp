@@ -66,8 +66,6 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
         const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
         if (!clusterObj) return
 
-        if (!cluster.key) return
-
         setModalState({
           isOpen: true,
           cluster: {

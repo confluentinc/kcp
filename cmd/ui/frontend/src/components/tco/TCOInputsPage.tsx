@@ -95,7 +95,7 @@ export const TCOInputs = () => {
           </div>
           {meta.labels && Object.keys(meta.labels).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
-              {Object.entries(meta.labels).map(([k, v]) => (
+              {Object.entries(meta.labels).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => (
                 <span
                   key={k}
                   className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-secondary border border-border"
@@ -126,10 +126,12 @@ export const TCOInputs = () => {
       </div>
 
       {/* Source type tabs */}
-      <div className="flex gap-0 mb-4 border-b-2 border-border">
+      <div className="flex gap-0 mb-4 border-b-2 border-border" role="tablist">
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`px-5 py-2 text-sm font-medium -mb-[2px] border-b-2 transition-colors ${
               activeTab === tab.id

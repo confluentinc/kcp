@@ -332,9 +332,8 @@ export const useAppStore = create<AppState>()(
       initializeTCOData: (clusters) =>
         set(
           (state) => {
-            const newData: WorkloadData = { ...state.tcoWorkloadData }
+            const newData: WorkloadData = {}
             clusters.forEach((cluster) => {
-              // Keep existing data if it exists, otherwise initialize with defaults
               newData[cluster.key] = state.tcoWorkloadData[cluster.key] || {
                 avgIngressThroughput: '',
                 peakIngressThroughput: '',
