@@ -1,5 +1,5 @@
 // Command gen-docs regenerates the per-command markdown reference under
-// docs/command-reference/ from the Cobra command tree. It is not a user-facing
+// docs/assets/command-reference/ from the Cobra command tree. It is not a user-facing
 // kcp subcommand — invoke via `make docs-gen`.
 //
 // Parent commands (and the root) are emitted as <path>/index.md; leaves are
@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	outDir := flag.String("out", "docs/command-reference", "output directory for generated markdown")
+	outDir := flag.String("out", "docs/assets/command-reference", "output directory for generated markdown")
 	flag.Parse()
 
 	if err := os.RemoveAll(*outDir); err != nil {

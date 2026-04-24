@@ -3,9 +3,9 @@ site_description: CLI tool for planning and executing Kafka migrations from AWS 
 site_url: https://confluentinc.github.io/kcp/
 repo_url: https://github.com/confluentinc/kcp
 repo_name: confluentinc/kcp
-edit_uri: edit/main/docs/
+edit_uri: edit/main/docs/assets/
 
-docs_dir: docs
+docs_dir: docs/assets
 
 exclude_docs: |
   brainstorms/
@@ -14,8 +14,8 @@ exclude_docs: |
 
 theme:
   name: material
-  logo: assets/confluent-logo.svg
-  favicon: assets/confluent-logo.svg
+  logo: images/confluent-logo.svg
+  favicon: images/confluent-logo.svg
   font:
     text: Inter
     code: Roboto Mono
@@ -72,6 +72,6 @@ extra:
     provider: mike
     default: latest
 
-# nav is controlled by docs/.pages (awesome-pages). The Command Reference
-# subtree is inferred from docs/command-reference/ so new CLI commands appear
-# in the sidebar automatically after `make docs-gen`.
+# nav is controlled by docs/assets/.pages (awesome-pages). The Command Reference
+# subtree is inferred from docs/assets/command-reference/ so new CLI commands
+# appear in the sidebar automatically after `make docs-gen`.
