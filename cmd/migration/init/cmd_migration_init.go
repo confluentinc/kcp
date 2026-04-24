@@ -62,7 +62,33 @@ This command validates the cluster link and mirror topics on the destination clu
 fetches the current gateway CR from Kubernetes, validates consistency across the initial,
 fenced, and switchover gateway CRs, and writes the migration configuration to the state file.
 
-The state file can then be used by 'kcp migration execute' to run the migration.`,
+The state file can then be used by 'kcp migration execute' to run the migration.
+
+All flags can be provided via environment variables (uppercase, with underscores).`,
+		Example: `  # MSK source with IAM auth
+  kcp migration init \
+      --k8s-namespace my-namespace \
+      --initial-cr-name my-gateway \
+      --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9098 \
+      --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+      --cluster-id lkc-abc123 \
+      --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+      --cluster-link-name my-cluster-link \
+      --cluster-api-key ABCDEFGHIJKLMNOP \
+      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+      --fenced-cr-yaml gateway-fenced.yaml \
+      --switchover-cr-yaml gateway-switchover.yaml \
+      --use-sasl-iam
+
+  # SASL/SCRAM source
+  kcp migration init \
+      --k8s-namespace my-namespace --initial-cr-name my-gateway \
+      --source-bootstrap broker1:9096 --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+      --cluster-id lkc-abc123 --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+      --cluster-link-name my-cluster-link \
+      --cluster-api-key ABCDEFGHIJKLMNOP --cluster-api-secret xxxx \
+      --fenced-cr-yaml gateway-fenced.yaml --switchover-cr-yaml gateway-switchover.yaml \
+      --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationInit,
@@ -169,6 +195,11 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+
+	// If any credential in a pair/trio is set, the whole set must be set.
+	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
+	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
+	migrationInitCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
 
 	return migrationInitCmd
 }
