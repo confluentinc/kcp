@@ -960,14 +960,13 @@ func TestNewStateFromFile_VersionMatch(t *testing.T) {
 	}
 }
 
-func TestNewStateFromFile_VersionMismatch(t *testing.T) {
+func TestNewStateFromFile_VersionMismatch_SucceedsWhenDeserialisable(t *testing.T) {
 	tests := []struct {
 		name    string
 		version string
 	}{
 		{"older version", "0.5.0"},
 		{"newer version", "2.0.0"},
-		{"empty version", ""},
 	}
 
 	for _, tt := range tests {
@@ -976,25 +975,19 @@ func TestNewStateFromFile_VersionMismatch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create temp file: %v", err)
 			}
-			defer os.Remove(tmpFile.Name())
+			defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 			state := &State{KcpBuildInfo: KcpBuildInfo{Version: tt.version}}
 			if err := state.WriteToFile(tmpFile.Name()); err != nil {
 				t.Fatalf("failed to write state file: %v", err)
 			}
 
-			_, err = NewStateFromFile(tmpFile.Name())
-			if err == nil {
-				t.Fatal("expected version mismatch error, got nil")
+			loaded, err := NewStateFromFile(tmpFile.Name())
+			if err != nil {
+				t.Fatalf("expected success for deseralisable state file with version mismatch, got error: %v", err)
 			}
-			if !strings.Contains(err.Error(), "state file version mismatch") {
-				t.Errorf("expected version mismatch error, got: %v", err)
-			}
-			if !strings.Contains(err.Error(), tt.version) {
-				t.Errorf("expected error to contain file version %q, got: %v", tt.version, err)
-			}
-			if !strings.Contains(err.Error(), build_info.Version) {
-				t.Errorf("expected error to contain running version %q, got: %v", build_info.Version, err)
+			if loaded.KcpBuildInfo.Version != tt.version {
+				t.Errorf("expected version %q, got %q", tt.version, loaded.KcpBuildInfo.Version)
 			}
 		})
 	}
@@ -1058,5 +1051,26 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to unmarshal state") {
 		t.Errorf("expected unmarshal error, got: %v", err)
+	}
+}
+
+func TestNewStateFromFile_EmptyVersion_ReturnsError(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	state := &State{KcpBuildInfo: KcpBuildInfo{Version: ""}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	_, err = NewStateFromFile(tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected error for missing version, got nil")
+	}
+	if !strings.Contains(err.Error(), "kcp_build_info.version is missing") {
+		t.Errorf("expected missing version error, got: %v", err)
 	}
 }

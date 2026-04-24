@@ -61,11 +61,36 @@ func TestHandleUploadState_VersionMatch(t *testing.T) {
 	}
 }
 
-func TestHandleUploadState_VersionMismatch(t *testing.T) {
+func TestHandleUploadState_VersionMismatch_Succeeds(t *testing.T) {
 	ui := newTestUI()
 	e := echo.New()
 
 	body := `{"kcp_build_info":{"version":"0.5.0"}}`
+	req := httptest.NewRequest(http.MethodPost, "/upload-state?sessionId=test-session", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleUploadState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	ui.statesMutex.RLock()
+	_, stored := ui.states["test-session"]
+	ui.statesMutex.RUnlock()
+	if !stored {
+		t.Error("expected state to be stored on version mismatch, but it was not")
+	}
+}
+
+func TestHandleUploadState_MissingVersion_ReturnsError(t *testing.T) {
+	ui := newTestUI()
+	e := echo.New()
+
+	body := `{"kcp_build_info":{"version":""}}`
 	req := httptest.NewRequest(http.MethodPost, "/upload-state?sessionId=test-session", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -82,22 +107,15 @@ func TestHandleUploadState_VersionMismatch(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to parse response body: %v", err)
 	}
-	if resp["error"] != "State file version mismatch" {
+	if resp["error"] != "Invalid state file" {
 		t.Errorf("unexpected error field: %v", resp["error"])
-	}
-	msg, _ := resp["message"].(string)
-	if !strings.Contains(msg, "0.5.0") {
-		t.Errorf("expected message to contain file version, got: %s", msg)
-	}
-	if !strings.Contains(msg, build_info.Version) {
-		t.Errorf("expected message to contain running version, got: %s", msg)
 	}
 
 	ui.statesMutex.RLock()
 	_, stored := ui.states["test-session"]
 	ui.statesMutex.RUnlock()
 	if stored {
-		t.Error("expected state NOT to be stored on version mismatch, but it was")
+		t.Error("expected state NOT to be stored on missing version, but it was")
 	}
 }
 
@@ -123,7 +141,7 @@ func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: build_info.Version}}
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
@@ -144,12 +162,12 @@ func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 	}
 }
 
-func TestNewUI_PreloadStateFile_VersionMismatch(t *testing.T) {
+func TestNewUI_PreloadStateFile_VersionMismatch_Succeeds(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
@@ -162,14 +180,11 @@ func TestNewUI_PreloadStateFile_VersionMismatch(t *testing.T) {
 	_, loaded := ui.states["default"]
 	ui.statesMutex.RUnlock()
 
-	if loaded {
-		t.Error("expected state NOT to be loaded on version mismatch")
+	if !loaded {
+		t.Error("expected state to be loaded on version mismatch — different versions are allowed when file is deseralisable")
 	}
-	if ui.preloadError == "" {
-		t.Error("expected preloadError to be set on version mismatch")
-	}
-	if !strings.Contains(ui.preloadError, "state file version mismatch") {
-		t.Errorf("expected preloadError to contain version mismatch message, got: %s", ui.preloadError)
+	if ui.preloadError != "" {
+		t.Errorf("expected no preload error on version mismatch, got: %s", ui.preloadError)
 	}
 }
 
@@ -181,12 +196,12 @@ func TestNewUI_PreloadStateFile_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestGetState_PreloadVersionMismatch_ReturnsVersionMismatchError(t *testing.T) {
+func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
@@ -203,20 +218,8 @@ func TestGetState_PreloadVersionMismatch_ReturnsVersionMismatchError(t *testing.
 	if err := ui.handleGetState(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("expected status 422, got %d", rec.Code)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to parse response body: %v", err)
-	}
-	if resp["error"] != "State file version mismatch" {
-		t.Errorf("expected error 'State file version mismatch', got: %v", resp["error"])
-	}
-	msg, _ := resp["message"].(string)
-	if !strings.Contains(msg, "0.5.0") {
-		t.Errorf("expected message to contain file version, got: %s", msg)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200 for version mismatch with valid file, got %d", rec.Code)
 	}
 }
 
