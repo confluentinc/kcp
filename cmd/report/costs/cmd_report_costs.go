@@ -5,7 +5,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
@@ -35,11 +34,6 @@ func NewReportCostsCmd() *cobra.Command {
   # Specific regions and date range (all three must be supplied together)
   kcp report costs --state-file kcp-state.json \
       --region us-east-1,eu-west-3 --start 2024-01-01 --end 2024-01-31`,
-		Annotations: map[string]string{
-			iampolicy.AnnotationKey: iampolicy.RenderSingle("", []string{
-				"ce:GetCostAndUsage",
-			}),
-		},
 		SilenceErrors: true,
 		PreRunE:       preRunReportCosts,
 		RunE:          runReportCosts,
