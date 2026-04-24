@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface MetricSelectionConfig {
   availableMetrics: string[]
@@ -15,10 +15,6 @@ interface MetricSelectionReturn {
   preselectedMetricMissing: boolean
 }
 
-/**
- * Hook to manage metric selection with support for preselected metrics.
- * Handles both modal and non-modal preselection, and resets on cluster change.
- */
 export const useMetricSelection = ({
   availableMetrics,
   inModal,
@@ -27,29 +23,36 @@ export const useMetricSelection = ({
   clusterName,
   clusterRegion,
 }: MetricSelectionConfig): MetricSelectionReturn => {
-  const [selectedMetric, setSelectedMetric] = useState<string>('')
+  const [selectedMetric, setSelectedMetricRaw] = useState<string>('')
   const [hasUsedPreselectedMetric, setHasUsedPreselectedMetric] = useState(false)
+  const userOverrodePreselection = useRef(false)
 
-  // Reset preselected metric flag when cluster changes
+  const setSelectedMetric = useCallback((metric: string) => {
+    if (inModal && modalPreselectedMetric && metric !== modalPreselectedMetric) {
+      userOverrodePreselection.current = true
+    }
+    setSelectedMetricRaw(metric)
+  }, [inModal, modalPreselectedMetric])
+
   useEffect(() => {
     setHasUsedPreselectedMetric(false)
+    userOverrodePreselection.current = false
   }, [clusterName, clusterRegion])
 
-  // Set default selected metric when data loads, prioritizing modal preselected metric
   useEffect(() => {
     if (availableMetrics.length > 0) {
-      if (inModal && modalPreselectedMetric) {
-        setSelectedMetric(modalPreselectedMetric)
+      if (inModal && modalPreselectedMetric && !userOverrodePreselection.current) {
+        setSelectedMetricRaw(modalPreselectedMetric)
       } else if (
         !inModal &&
         preselectedMetric &&
         availableMetrics.includes(preselectedMetric) &&
         !hasUsedPreselectedMetric
       ) {
-        setSelectedMetric(preselectedMetric)
+        setSelectedMetricRaw(preselectedMetric)
         setHasUsedPreselectedMetric(true)
       } else if (!selectedMetric) {
-        setSelectedMetric(availableMetrics[0])
+        setSelectedMetricRaw(availableMetrics[0])
       }
     }
   }, [
@@ -66,7 +69,7 @@ export const useMetricSelection = ({
     !!modalPreselectedMetric &&
     availableMetrics.length > 0 &&
     !availableMetrics.includes(modalPreselectedMetric) &&
-    selectedMetric === modalPreselectedMetric
+    !userOverrodePreselection.current
 
   return {
     selectedMetric,
