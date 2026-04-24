@@ -1,7 +1,9 @@
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
 import { findClusterInRegions } from '@/lib/clusterUtils'
+import { getOSKClusterDataById } from '@/stores/store'
 import type { Region, Cluster } from '@/types'
+import type { ProcessedOSKCluster } from '@/types'
 import type { TCOCluster } from '@/hooks/useTCOClusters'
 
 interface TCOWorkloadData {
@@ -24,7 +26,7 @@ interface TCOInputRowProps {
   regions: Region[]
   field?: string
   readOnly?: boolean
-  readOnlyValue?: (cluster: Cluster | undefined) => boolean | undefined
+  readOnlyValue?: (cluster: Cluster | undefined, oskCluster: ProcessedOSKCluster | null) => boolean | undefined
   onInputChange?: (
     clusterKey: string,
     field:
@@ -48,10 +50,6 @@ interface TCOInputRowProps {
   buttonTitle?: string
 }
 
-/**
- * Reusable row component for TCO input table
- * Handles both input fields and read-only display fields
- */
 export const TCOInputRow = ({
   label,
   clusters,
@@ -80,8 +78,13 @@ export const TCOInputRow = ({
           {label}
         </td>
         {clusters.map((cluster) => {
-          const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
-          const value = readOnlyValue(clusterObj)
+          const clusterObj = cluster.sourceType === 'msk'
+            ? findClusterInRegions(regions, cluster.regionName, cluster.name)
+            : undefined
+          const oskCluster = cluster.sourceType === 'osk'
+            ? getOSKClusterDataById(cluster.key)
+            : null
+          const value = readOnlyValue(clusterObj, oskCluster)
 
           return (
             <td
