@@ -3,28 +3,20 @@ import { Button } from '@/components/common/ui/button'
 import type { WorkloadData } from '@/stores/store'
 import type { TCOCluster } from '@/hooks/useTCOClusters'
 
+type WorkloadField = keyof WorkloadData[string]
+
+type MetricType = 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
+
 interface TCOInputRowProps {
   label: string
   clusters: TCOCluster[]
   tcoWorkloadData: WorkloadData
-  field?: string
+  field?: WorkloadField
   readOnly?: boolean
   readOnlyValue?: (cluster: TCOCluster) => boolean | undefined
-  onInputChange?: (
-    clusterKey: string,
-    field:
-      | 'avgIngressThroughput'
-      | 'peakIngressThroughput'
-      | 'avgEgressThroughput'
-      | 'peakEgressThroughput'
-      | 'retentionDays'
-      | 'partitions'
-      | 'replicationFactor'
-      | 'localRetentionHours',
-    value: string
-  ) => void
-  onMetricsClick?: (clusterKey: string, metricType: string) => void
-  metricType?: string
+  onInputChange?: (clusterKey: string, field: WorkloadField, value: string) => void
+  onMetricsClick?: (clusterKey: string, metricType: MetricType) => void
+  metricType?: MetricType
   inputType?: 'number'
   step?: string
   min?: string
@@ -108,26 +100,8 @@ export const TCOInputRow = ({
               type={inputType}
               step={step}
               min={min}
-              value={
-                (tcoWorkloadData[cluster.key]?.[field as keyof WorkloadData[string]] as
-                  | string
-                  | undefined) || ''
-              }
-              onChange={(e) =>
-                onInputChange(
-                  cluster.key,
-                  field as
-                    | 'avgIngressThroughput'
-                    | 'peakIngressThroughput'
-                    | 'avgEgressThroughput'
-                    | 'peakEgressThroughput'
-                    | 'retentionDays'
-                    | 'partitions'
-                    | 'replicationFactor'
-                    | 'localRetentionHours',
-                  e.target.value
-                )
-              }
+              value={tcoWorkloadData[cluster.key]?.[field] || ''}
+              onChange={(e) => onInputChange(cluster.key, field, e.target.value)}
               className={inputClassName}
               placeholder={placeholder}
             />

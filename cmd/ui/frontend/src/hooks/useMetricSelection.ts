@@ -65,7 +65,8 @@ export const useMetricSelection = ({
     inModal &&
     !!modalPreselectedMetric &&
     availableMetrics.length > 0 &&
-    !availableMetrics.includes(modalPreselectedMetric)
+    !availableMetrics.includes(modalPreselectedMetric) &&
+    selectedMetric === modalPreselectedMetric
 
   return {
     selectedMetric,

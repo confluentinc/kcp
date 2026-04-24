@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/common/ui/button'
 import { Modal } from '@/components/common/ui/modal'
-import { useAppStore, useRegions } from '@/stores/store'
+import { useAppStore, useRegions, type WorkloadData } from '@/stores/store'
 import { ClusterMetrics } from '@/components/explore/clusters/ClusterMetrics'
 import { DEFAULTS, SOURCE_TYPES } from '@/constants'
 import { findClusterInRegions } from '@/lib/clusterUtils'
@@ -36,25 +36,17 @@ export const TCOInputs = () => {
 
   const handleInputChange = (
     clusterKey: string,
-    field:
-      | 'avgIngressThroughput'
-      | 'peakIngressThroughput'
-      | 'avgEgressThroughput'
-      | 'peakEgressThroughput'
-      | 'retentionDays'
-      | 'partitions'
-      | 'replicationFactor'
-      | 'localRetentionHours',
+    field: keyof WorkloadData[string],
     value: string
   ) => {
     setTCOWorkloadValue(clusterKey, field, value)
   }
 
-  const handleOpenMetricsModal = (clusterKey: string, metricType: string) => {
-    openModal(
-      clusterKey,
-      metricType as 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
-    )
+  const handleOpenMetricsModal = (
+    clusterKey: string,
+    metricType: 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
+  ) => {
+    openModal(clusterKey, metricType)
   }
 
   const copyToClipboard = async () => {
