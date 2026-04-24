@@ -135,7 +135,7 @@ interface AppState {
     field: keyof WorkloadData[string],
     value: string
   ) => void
-  initializeTCOData: (clusters: Array<{ arn: string; key: string }>) => void
+  initializeTCOData: (clusters: Array<{ key: string }>) => void
 
   // Date filter actions (cluster-specific, using ARN)
   setClusterStartDate: (clusterArn: string, date: Date | undefined) => void
