@@ -23,6 +23,7 @@ interface ProcessedData {
 interface MetricsChartTabProps {
   selectedMetric: string
   setSelectedMetric: (metric: string) => void
+  preselectedMetricMissing?: boolean
   processedData: ProcessedData
   metricsResponse: {
     aggregates?: Record<string, { min?: number; avg?: number; max?: number }>
@@ -45,6 +46,7 @@ interface MetricsChartTabProps {
 export const MetricsChartTab = ({
   selectedMetric,
   setSelectedMetric,
+  preselectedMetricMissing = false,
   processedData,
   metricsResponse,
   inModal,
@@ -65,7 +67,33 @@ export const MetricsChartTab = ({
     <div className="space-y-4 min-w-0">
       <div className="bg-card rounded-lg border border-border min-w-0 max-w-full">
         <div className="p-6 rounded-lg">
-          {processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
+          {preselectedMetricMissing ? (
+            <div className="space-y-4 py-6">
+              <div className="text-center">
+                <p className="text-muted-foreground">
+                  No data available for <span className="font-semibold">{selectedMetric}</span>.
+                  This cluster may not have been scanned with metrics collection
+                  (<code className="text-xs bg-muted px-1 py-0.5 rounded">--metrics jolokia</code> or{' '}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">--metrics prometheus</code>).
+                </p>
+              </div>
+              {processedData.metrics.length > 0 && (
+                <div className="flex flex-col items-center gap-2">
+                  <label className="text-sm text-muted-foreground">View available metrics instead:</label>
+                  <Select value="" onValueChange={setSelectedMetric}>
+                    <SelectTrigger className="w-[300px]">
+                      <SelectValue placeholder="Choose a metric" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {processedData.metrics.map((metric) => (
+                        <SelectItem key={metric} value={metric}>{metric}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          ) : processedData.chartData.length > 0 && processedData.metrics.length > 0 ? (
             <div className="space-y-6">
               {/* Metric Selector and Summary Stats */}
               <div className="flex items-center justify-between">

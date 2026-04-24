@@ -25,7 +25,7 @@ interface RegionState extends DateFilters {
   activeCostsTab: string
 }
 
-interface WorkloadData {
+export interface WorkloadData {
   [clusterKey: string]: {
     avgIngressThroughput: string
     peakIngressThroughput: string
@@ -135,7 +135,7 @@ interface AppState {
     field: keyof WorkloadData[string],
     value: string
   ) => void
-  initializeTCOData: (clusters: Array<{ arn: string; key: string }>) => void
+  initializeTCOData: (clusters: Array<{ key: string }>) => void
 
   // Date filter actions (cluster-specific, using ARN)
   setClusterStartDate: (clusterArn: string, date: Date | undefined) => void
@@ -195,7 +195,7 @@ export const useAppStore = create<AppState>()(
       // Actions
       getSessionId: () => get().sessionId,
 
-      setKcpState: (kcpState) => set({ kcpState }, false, 'setKcpState'),
+      setKcpState: (kcpState) => set({ kcpState, tcoWorkloadData: {} }, false, 'setKcpState'),
 
       selectSummary: () =>
         set(
@@ -334,7 +334,6 @@ export const useAppStore = create<AppState>()(
           (state) => {
             const newData: WorkloadData = {}
             clusters.forEach((cluster) => {
-              // Keep existing data if it exists, otherwise initialize with defaults
               newData[cluster.key] = state.tcoWorkloadData[cluster.key] || {
                 avgIngressThroughput: '',
                 peakIngressThroughput: '',
