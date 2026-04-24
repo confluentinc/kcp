@@ -359,6 +359,7 @@ export const TCOInputs = () => {
             isActive={modalState.isOpen}
             inModal={true}
             sourceType={modalState.cluster.sourceType}
+            clusterId={modalState.cluster.clusterId}
             modalPreselectedMetric={modalState.preselectedMetric || undefined}
             modalWorkloadAssumption={modalState.workloadAssumption || undefined}
           />

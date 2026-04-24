@@ -8,7 +8,8 @@ import type { TCOCluster } from './useTCOClusters'
 interface ModalCluster {
   name: string
   region: string
-  arn: string
+  arn?: string
+  clusterId?: string
   sourceType: 'msk' | 'osk'
   metrics?: {
     metadata?: {
@@ -55,7 +56,7 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
           cluster: {
             name: oskCluster.id,
             region: '',
-            arn: oskCluster.id,
+            clusterId: oskCluster.id,
             sourceType: 'osk',
             metrics: oskCluster.metrics,
           },
