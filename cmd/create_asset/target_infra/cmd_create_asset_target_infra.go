@@ -41,11 +41,6 @@ var (
 	outputDir string
 )
 
-const targetInfraIAMPermissions = "`kcp create-asset target-infra` itself only reads local configuration. The generated Terraform provisions Confluent Cloud resources (environment, cluster, private link attachment) and — when `--needs-private-link` is set — AWS networking resources (VPC endpoint, security group rule, and optionally a Route53 hosted zone with alias records). The executor of `terraform apply` needs a policy equivalent to:\n\n" +
-	"> **TODO:** Populate from an `iamlive` capture against the generated Terraform. Enterprise (`--cluster-type enterprise`) and Dedicated (`--cluster-type dedicated`) paths use different Confluent networking primitives and may require different AWS permissions — document each variant if they diverge.\n\n" +
-	"```json\n" +
-	`{}` + "\n```\n"
-
 type TargetInfraOpts struct {
 	NeedsEnvironment       bool
 	EnvironmentName        string
@@ -84,7 +79,7 @@ func NewTargetInfraCmd() *cobra.Command {
       --env-id env-abc123 --cluster-id lkc-xyz789 --cluster-type dedicated \
       --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": targetInfraIAMPermissions,
+			"aws_iam_permissions": iamAnnotation(),
 		},
 		SilenceErrors: true,
 		PreRunE:       preRunCreateTargetInfra,
