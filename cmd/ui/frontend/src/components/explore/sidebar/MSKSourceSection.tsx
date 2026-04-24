@@ -75,7 +75,7 @@ export const MSKSourceSection = ({ regions }: MSKSourceSectionProps) => {
 
                   return (
                     <button
-                      key={cluster.name}
+                      key={clusterArn || cluster.name}
                       onClick={() => clusterArn && selectCluster(region.name, clusterArn)}
                       className={`w-full text-left flex items-center px-2.5 py-1.5 text-sm rounded-md transition-all duration-150 group ${
                         isSelected
