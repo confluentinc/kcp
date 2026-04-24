@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -61,9 +62,26 @@ type TargetInfraOpts struct {
 
 func NewTargetInfraCmd() *cobra.Command {
 	targetInfraCmd := &cobra.Command{
-		Use:           "target-infra",
-		Short:         "Create a target infrastructure asset",
-		Long:          "Create Terraform assets for Confluent Cloud target infrastructure including environment, cluster, and private link setup.",
+		Use:   "target-infra",
+		Short: "Create a target infrastructure asset",
+		Long:  "Create Terraform assets for Confluent Cloud target infrastructure including environment, cluster, and private link setup. Infrastructure provisioning is controlled by --needs-environment, --needs-cluster and --needs-private-link.",
+		Example: `  # Full provision from a kcp-state file (creates environment, cluster and private link)
+  kcp create-asset target-infra \
+      --state-file kcp-state.json \
+      --source-cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --needs-environment --env-name example-env \
+      --needs-cluster --cluster-name example-cluster --cluster-type enterprise \
+      --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16 \
+      --output-dir confluent-cloud-infrastructure
+
+  # Reuse an existing environment + cluster, only wire up private link
+  kcp create-asset target-infra \
+      --aws-region us-east-1 --vpc-id vpc-xxxxxxxx \
+      --env-id env-abc123 --cluster-id lkc-xyz789 --cluster-type dedicated \
+      --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iamAnnotation(),
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunCreateTargetInfra,
 		RunE:          runCreateTargetInfra,

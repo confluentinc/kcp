@@ -3,9 +3,9 @@ site_description: CLI tool for planning and executing Kafka migrations from AWS 
 site_url: https://confluentinc.github.io/kcp/
 repo_url: https://github.com/confluentinc/kcp
 repo_name: confluentinc/kcp
-edit_uri: edit/main/docs/
+edit_uri: edit/main/docs/assets/
 
-docs_dir: docs
+docs_dir: docs/assets
 
 exclude_docs: |
   brainstorms/
@@ -14,30 +14,31 @@ exclude_docs: |
 
 theme:
   name: material
+  logo: images/confluent-logo.svg
+  favicon: images/confluent-logo.svg
+  font:
+    text: Inter
+    code: Roboto Mono
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.indexes
     - navigation.top
     - content.code.copy
     - search.suggest
     - search.highlight
   palette:
-    - scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    scheme: default
+    primary: white
+    accent: custom
 
 plugins:
   - search
   - callouts
+  # awesome-pages expands any directory referenced in `nav:` by reading its
+  # contents, so the Command Reference subtree doesn't need to be hand-listed.
+  # Must run before mike: nav construction has to finish before versioning.
+  - awesome-pages
   # GitHub Pages rejects POSIX symlinks (mike's default on Linux), so the
   # `latest` alias must be a redirect stub instead. Without alias_type=redirect,
   # release deploys fail with "Failed to deploy site, please ensure the
@@ -63,21 +64,14 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+extra_css:
+  - stylesheets/extra.css
+
 extra:
   version:
     provider: mike
     default: latest
 
-nav:
-  - Home: README.md
-  - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
-  - Gateway Switchover:
-      - Examples: gateway-switchover-examples.md
-      - none → mTLS: switchover-none-to-mtls/README.md
-      - none → OAuth: switchover-none-to-oauth/README.md
-      - none → SASL/PLAIN: switchover-none-to-saslplain/README.md
-      - mTLS → mTLS: switchover-mtls-to-mtls/README.md
-      - mTLS → OAuth: switchover-mtls-to-oauth/README.md
-      - mTLS → SASL/PLAIN: switchover-mtls-to-sasl-plain/README.md
-      - SASL/SCRAM → OAuth: switchover-sasl-scram-to-oauth/README.md
-      - SASL/SCRAM → SASL/PLAIN: switchover-sasl-scram-to-sasl-plain/README.md
+# nav is controlled by docs/assets/.pages (awesome-pages). The Command Reference
+# subtree is inferred from docs/assets/command-reference/ so new CLI commands
+# appear in the sidebar automatically after `make docs-gen`.

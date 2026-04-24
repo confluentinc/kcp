@@ -25,9 +25,16 @@ var (
 
 func NewMigrateTopicsCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
-		Use:           "migrate-topics",
-		Short:         "Create assets for the migrate topics",
-		Long:          "Create Terraform files for setting up mirror topics used by the cluster links to migrate data to the target cluster in Confluent Cloud",
+		Use:   "migrate-topics",
+		Short: "Create assets for the migrate topics",
+		Long:  "Create Terraform files for setting up mirror topics used by the cluster links to migrate data to the target cluster in Confluent Cloud",
+		Example: `  kcp create-asset migrate-topics \
+      --state-file kcp-state.json \
+      --source-type msk \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --target-cluster-id lkc-xyz123 \
+      --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.private.confluent.cloud:443 \
+      --cluster-link-name msk-to-cc-link`,
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateTopics,
 		RunE:          runMigrateTopics,
