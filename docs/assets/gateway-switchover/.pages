@@ -1,10 +1,6 @@
+title: Gateway Switchover
 nav:
-
-- Home: README.md
-- command-reference
-- Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
-- Gateway Switchover:
-  - Examples: gateway-switchover-examples.md
+  - Examples: index.md
   - none → mTLS: switchover-none-to-mtls
   - none → OAuth: switchover-none-to-oauth
   - none → SASL/PLAIN: switchover-none-to-saslplain

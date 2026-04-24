@@ -56,7 +56,7 @@ func findCmd(t *testing.T, root *cobra.Command, path string) *cobra.Command {
 
 func TestOutputPath(t *testing.T) {
 	root := buildTree()
-	outDir := "docs/command-reference"
+	outDir := "docs/assets/command-reference"
 
 	cases := []struct {
 		name    string
@@ -92,14 +92,14 @@ func TestCobraBasename(t *testing.T) {
 
 func TestBuildLinkMapRewritesToRealPaths(t *testing.T) {
 	root := buildTree()
-	m := buildLinkMap(root, "docs/command-reference")
+	m := buildLinkMap(root, "docs/assets/command-reference")
 
 	checks := map[string]string{
-		"kcp.md":                                 filepath.Join("docs/command-reference", "index.md"),
-		"kcp_discover.md":                        filepath.Join("docs/command-reference", "discover.md"),
-		"kcp_scan.md":                            filepath.Join("docs/command-reference", "scan", "index.md"),
-		"kcp_scan_clusters.md":                   filepath.Join("docs/command-reference", "scan", "clusters.md"),
-		"kcp_create-asset_migrate-acls_kafka.md": filepath.Join("docs/command-reference", "create-asset", "migrate-acls", "kafka.md"),
+		"kcp.md":                                 filepath.Join("docs/assets/command-reference", "index.md"),
+		"kcp_discover.md":                        filepath.Join("docs/assets/command-reference", "discover.md"),
+		"kcp_scan.md":                            filepath.Join("docs/assets/command-reference", "scan", "index.md"),
+		"kcp_scan_clusters.md":                   filepath.Join("docs/assets/command-reference", "scan", "clusters.md"),
+		"kcp_create-asset_migrate-acls_kafka.md": filepath.Join("docs/assets/command-reference", "create-asset", "migrate-acls", "kafka.md"),
 	}
 	for cobraName, want := range checks {
 		if got := m[cobraName]; got != want {

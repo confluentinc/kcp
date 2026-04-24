@@ -127,8 +127,8 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 docs-install: ## Install MkDocs and plugins (pip)
 	pip install -r requirements-docs.txt
 
-docs-gen: ## Regenerate per-command docs from Cobra into docs/command-reference/
-	go run ./cmd/gen-docs --out docs/command-reference
+docs-gen: ## Regenerate per-command docs from Cobra into docs/assets/command-reference/
+	go run ./cmd/gen-docs --out docs/assets/command-reference
 
 docs-serve: docs-gen ## Serve docs locally with live reload on http://localhost:8000
 	mkdocs serve
