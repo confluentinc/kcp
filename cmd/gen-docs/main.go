@@ -156,6 +156,14 @@ func emit(c *cobra.Command, outDir string, linkMap map[string]string) error {
 // emit didn't write. Hidden subtrees and help-topic commands are skipped
 // for themselves AND for their descendants.
 func walkAndInjectIAM(c *cobra.Command, outDir string) error {
+	// Root has no parent and emit always writes it, so let the root through
+	// unconditionally; for any non-root command, mirror emit's own pruning
+	// so a future caller that hands us a hidden or help-topic subtree can't
+	// try to inject into a file emit never wrote.
+	if c.HasParent() && (!c.IsAvailableCommand() || c.IsAdditionalHelpTopicCommand()) {
+		return nil
+	}
+
 	if perms := strings.TrimSpace(c.Annotations[iampolicy.AnnotationKey]); perms != "" {
 		path := outputPath(c, outDir)
 		if err := injectIAMSection(path, perms); err != nil {
