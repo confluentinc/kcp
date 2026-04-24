@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -19,9 +20,25 @@ var (
 
 func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd := &cobra.Command{
-		Use:           "bastion-host",
-		Short:         "Create assets for the bastion host",
-		Long:          "Create Terraform assets for the deploying a bastion host in AWS within you an existing VPC.",
+		Use:   "bastion-host",
+		Short: "Create assets for the bastion host",
+		Long:  "Create Terraform assets for deploying a bastion host in AWS within an existing VPC. Use this when your MSK cluster is not reachable from the machine running kcp and you do not already have a jump server.",
+		Example: `  # Provision a new bastion in an existing VPC with an existing security group
+  kcp create-asset bastion-host \
+      --region us-east-1 \
+      --vpc-id vpc-xxxxxxxx \
+      --bastion-host-cidr 10.0.255.0/24 \
+      --security-group-ids sg-xxxxxxxxxx
+
+  # Same, but also create a new internet gateway for the VPC
+  kcp create-asset bastion-host \
+      --region us-east-1 \
+      --vpc-id vpc-xxxxxxxx \
+      --bastion-host-cidr 10.0.255.0/24 \
+      --create-igw`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: bastionHostIAMAnnotation(),
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunCreateBastionHost,
 		RunE:          runCreateBastionHost,

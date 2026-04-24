@@ -22,9 +22,18 @@ var (
 
 func NewReportCostsCmd() *cobra.Command {
 	reportCostsCmd := &cobra.Command{
-		Use:           "costs",
-		Short:         "Generate a report of costs for given region(s)",
-		Long:          "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`",
+		Use:   "costs",
+		Short: "Generate a report of costs for given region(s)",
+		Long:  "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`",
+		Example: `  # Default: all regions in the state file for the last 31 days
+  kcp report costs --state-file kcp-state.json
+
+  # Specific regions
+  kcp report costs --state-file kcp-state.json --region us-east-1 --region eu-west-3
+
+  # Specific regions and date range (all three must be supplied together)
+  kcp report costs --state-file kcp-state.json \
+      --region us-east-1,eu-west-3 --start 2024-01-01 --end 2024-01-31`,
 		SilenceErrors: true,
 		PreRunE:       preRunReportCosts,
 		RunE:          runReportCosts,

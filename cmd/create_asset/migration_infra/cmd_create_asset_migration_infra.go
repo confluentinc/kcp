@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -51,9 +52,46 @@ var (
 
 func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd := &cobra.Command{
-		Use:           "migration-infra",
-		Short:         "migration-infra",
-		Long:          "migration-infra",
+		Use:   "migration-infra",
+		Short: "Create migration infrastructure Terraform for a source cluster",
+		Long: `Generate the Terraform needed to provision the migration path between the source Kafka cluster and Confluent Cloud. The --type flag selects the migration topology and authentication method.
+
+Type options:
+
+1. Public MSK endpoints — Cluster Link (SASL/SCRAM)
+2. Private MSK endpoints — External Outbound Cluster Link (SASL/SCRAM, Enterprise only)
+3. Private MSK endpoints — External Outbound Cluster Link (Unauthenticated Plaintext, Enterprise only)
+4. Private MSK endpoints — Jump Cluster (SASL/SCRAM)
+5. Private MSK endpoints — Jump Cluster (IAM, MSK only)`,
+		Example: `  # Type 4 — Jump Cluster with SASL/SCRAM, against a private MSK
+  kcp create-asset migration-infra \
+      --state-file kcp-state.json \
+      --source-type msk \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --type 4 \
+      --existing-internet-gateway \
+      --output-dir type-4 \
+      --existing-private-link-vpce-id vpce-0abc123def456789 \
+      --jump-cluster-broker-subnet-cidr 10.0.101.0/24,10.0.102.0/24,10.0.103.0/24 \
+      --jump-cluster-setup-host-subnet-cidr 10.0.104.0/24 \
+      --cluster-link-name type-4-link \
+      --target-environment-id env-a1bcde \
+      --target-cluster-id lkc-w89xyz \
+      --target-rest-endpoint https://lkc-w89xyz.XXX.aws.private.confluent.cloud:443 \
+      --target-bootstrap-endpoint lkc-w89xyz.XXX.aws.private.confluent.cloud:9092
+
+  # Type 1 — Public MSK, simple cluster link
+  kcp create-asset migration-infra \
+      --state-file kcp-state.json \
+      --source-type msk \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --type 1 \
+      --cluster-link-name simple-link \
+      --target-cluster-id lkc-w89xyz \
+      --target-rest-endpoint https://lkc-w89xyz.us-east-1.aws.confluent.cloud:443`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iamAnnotation(),
+		},
 		SilenceErrors: true,
 		RunE:          runMigrationInfra,
 		PreRunE:       preRunMigrationInfra,
@@ -95,23 +133,12 @@ func NewMigrationInfraCmd() *cobra.Command {
 	migrationInfraCmd.Flags().AddFlagSet(baseFlags)
 	groups[baseFlags] = "Base Flags"
 
-	typeTwoFlags := pflag.NewFlagSet("type-two", pflag.ExitOnError)
-	typeTwoFlags.SortFlags = false
-	typeTwoFlags.StringVar(&extOutboundSubnetId, "subnet-id", "", "[Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default:  MSK broker #1 subnet).")
-	typeTwoFlags.StringVar(&extOutboundSecurityGroupId, "security-group-id", "", "[Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).")
-	migrationInfraCmd.Flags().AddFlagSet(typeTwoFlags)
-	groups[typeTwoFlags] = "Type Two/Three Flags"
-
-	typeThreeFlags := pflag.NewFlagSet("type-three", pflag.ExitOnError)
-	typeThreeFlags.SortFlags = false
-	typeThreeFlags.StringVar(&targetBootstrapEndpoint, "target-bootstrap-endpoint", "", "The bootstrap endpoint to use for the Confluent Cloud cluster.")
-	typeThreeFlags.StringVar(&existingPrivateLinkVpceId, "existing-private-link-vpce-id", "", "The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.")
-	typeThreeFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
-	typeThreeFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
-	typeThreeFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
-	typeThreeFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
-	migrationInfraCmd.Flags().AddFlagSet(typeThreeFlags)
-	groups[typeThreeFlags] = "Type Four Flags"
+	typeTwoThreeFlags := pflag.NewFlagSet("type-two-three", pflag.ExitOnError)
+	typeTwoThreeFlags.SortFlags = false
+	typeTwoThreeFlags.StringVar(&extOutboundSubnetId, "subnet-id", "", "[Optional] Subnet ID for the EC2 instance that provisions the cluster link. (default:  MSK broker #1 subnet).")
+	typeTwoThreeFlags.StringVar(&extOutboundSecurityGroupId, "security-group-id", "", "[Optional] Security group ID for the EC2 instance that provisions the cluster link. (default: MSK cluster security group).")
+	migrationInfraCmd.Flags().AddFlagSet(typeTwoThreeFlags)
+	groups[typeTwoThreeFlags] = "Type Two/Three Flags"
 
 	typeFourFlags := pflag.NewFlagSet("type-four", pflag.ExitOnError)
 	typeFourFlags.SortFlags = false
@@ -119,14 +146,25 @@ func NewMigrationInfraCmd() *cobra.Command {
 	typeFourFlags.StringVar(&existingPrivateLinkVpceId, "existing-private-link-vpce-id", "", "The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.")
 	typeFourFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
 	typeFourFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
-	typeFourFlags.StringVar(&jumpClusterIamAuthRoleName, "jump-cluster-iam-auth-role-name", "", " The IAM role name to authenticate the cluster link between MSK and the jump cluster.")
 	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
 	typeFourFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFourFlags)
-	groups[typeFourFlags] = "Type Five Flags"
+	groups[typeFourFlags] = "Type Four Flags"
+
+	typeFiveFlags := pflag.NewFlagSet("type-five", pflag.ExitOnError)
+	typeFiveFlags.SortFlags = false
+	typeFiveFlags.StringVar(&targetBootstrapEndpoint, "target-bootstrap-endpoint", "", "The bootstrap endpoint to use for the Confluent Cloud cluster.")
+	typeFiveFlags.StringVar(&existingPrivateLinkVpceId, "existing-private-link-vpce-id", "", "The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.")
+	typeFiveFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
+	typeFiveFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
+	typeFiveFlags.StringVar(&jumpClusterIamAuthRoleName, "jump-cluster-iam-auth-role-name", "", " The IAM role name to authenticate the cluster link between MSK and the jump cluster.")
+	typeFiveFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
+	typeFiveFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
+	migrationInfraCmd.Flags().AddFlagSet(typeFiveFlags)
+	groups[typeFiveFlags] = "Type Five Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		flagOrder := []*pflag.FlagSet{requiredFlags, oskFlags, optionalFlags, baseFlags, typeTwoFlags, typeThreeFlags, typeFourFlags}
+		flagOrder := []*pflag.FlagSet{requiredFlags, oskFlags, optionalFlags, baseFlags, typeTwoThreeFlags, typeFourFlags, typeFiveFlags}
 		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four Flags", "Type Five Flags"}
 
 		/*

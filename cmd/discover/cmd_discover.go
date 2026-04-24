@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -17,6 +18,65 @@ const (
 	reportCommandsFileName = "report-commands.txt"
 )
 
+func discoverIAMAnnotation() string {
+	return iampolicy.RenderStatements(
+		"The following policy covers a full run. If you pass `--skip-topics`, `--skip-costs`, or `--skip-metrics`, the corresponding statements can be omitted.",
+		[]iampolicy.Statement{
+			{
+				Sid: "MSKScanPermissions",
+				Actions: []string{
+					"kafka:ListClustersV2",
+					"kafka:ListReplicators",
+					"kafka:ListVpcConnections",
+					"kafka:GetCompatibleKafkaVersions",
+					"kafka:GetBootstrapBrokers",
+					"kafka:ListConfigurations",
+					"kafka:DescribeClusterV2",
+					"kafka:ListKafkaVersions",
+					"kafka:ListNodes",
+					"kafka:ListClusterOperationsV2",
+					"kafka:ListScramSecrets",
+					"kafka:ListClientVpcConnections",
+					"kafka:GetClusterPolicy",
+					"kafka:DescribeConfigurationRevision",
+					"kafka:DescribeReplicator",
+					"kafkaconnect:ListConnectors",
+					"kafkaconnect:DescribeConnector",
+				},
+			},
+			{
+				Sid: "MSKClusterConnect",
+				Actions: []string{
+					"kafka-cluster:Connect",
+					"kafka-cluster:DescribeCluster",
+				},
+			},
+			{
+				Sid: "MSKTopicActions",
+				Actions: []string{
+					"kafka:ListTopics",
+					"kafka:DescribeTopic",
+					"kafka-cluster:DescribeTopic",
+					"kafka-cluster:DescribeTopicDynamicConfiguration",
+				},
+			},
+			{
+				Sid: "CostMetricsScanPermissions",
+				Actions: []string{
+					"cloudwatch:GetMetricData",
+					"ce:GetCostAndUsage",
+					"cloudwatch:GetMetricStatistics",
+					"cloudwatch:ListMetrics",
+				},
+			},
+			{
+				Sid:     "MSKNetworkingScanPermission",
+				Actions: []string{"ec2:DescribeSubnets"},
+			},
+		},
+	)
+}
+
 var (
 	regions     []string
 	skipCosts   bool
@@ -26,9 +86,21 @@ var (
 
 func NewDiscoverCmd() *cobra.Command {
 	discoverCmd := &cobra.Command{
-		Use:           "discover",
-		Short:         "Multi-region, multi cluster discovery scan of AWS MSK",
-		Long:          "Performs a full Discovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
+		Use:   "discover",
+		Short: "Multi-region, multi cluster discovery scan of AWS MSK",
+		Long:  "Performs a full Discovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
+		Example: `  # Scan a single region
+  kcp discover --region us-east-1
+
+  # Scan multiple regions (repeated flag or comma-separated)
+  kcp discover --region us-east-1 --region eu-west-3
+  kcp discover --region us-east-1,eu-west-3
+
+  # Skip topic/cost/metric discovery for faster runs or reduced IAM scope
+  kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: discoverIAMAnnotation(),
+		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunDiscover,
