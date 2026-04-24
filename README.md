@@ -204,4 +204,5 @@ make pre-commit-install
 
 - [Kafka Migration Guide](https://www.confluent.io/resources/white-paper/migrate-from-kafka-to-confluent/)
 - [Migration Hub on Confluent Cloud](https://confluent.cloud/migration-hub)
-- [Talk to migration expert from Confluent](https://meetings.salesloft.com/confluentinc/confluent-migration-assistance)
+- [Talk to a migration expert from Confluent](https://meetings.salesloft.com/confluentinc/confluent-migration-assistance)
+
