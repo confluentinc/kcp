@@ -22,9 +22,10 @@ func NewMigrationLagCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lag-check",
 		Short: "Show mirror topic lag for the cluster link",
-		Long:  "Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal with cluster link credentials. Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.",
-		Example: `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx
-  All flags can be provided via environment variables (uppercase, with underscores).`,
+		Long: `Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal with cluster link credentials. Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.
+
+All flags can be provided via environment variables (uppercase, with underscores).`,
+		Example:       `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationLagCheck,

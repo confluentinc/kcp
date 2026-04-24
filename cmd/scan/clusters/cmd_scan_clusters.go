@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	jmx "github.com/confluentinc/kcp/internal/services/jmx"
 	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
 	"github.com/confluentinc/kcp/internal/sources"
@@ -86,7 +87,7 @@ func NewScanClustersCmd() *cobra.Command {
       --credentials-file osk-credentials.yaml \
       --metrics prometheus --metrics-range 30d`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": scanClustersIAMPermissions,
+			iampolicy.AnnotationKey: scanClustersIAMPermissions,
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

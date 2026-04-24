@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -44,7 +45,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
       --target-cluster-id lkc-xyz123 \
       --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": "```json\n" +
+			iampolicy.AnnotationKey: "```json\n" +
 				`{
   "Version": "2012-10-17",
   "Statement": [

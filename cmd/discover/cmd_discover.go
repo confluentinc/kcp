@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -105,7 +106,7 @@ func NewDiscoverCmd() *cobra.Command {
   # Skip topic/cost/metric discovery for faster runs or reduced IAM scope
   kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": discoverIAMPermissions,
+			iampolicy.AnnotationKey: discoverIAMPermissions,
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

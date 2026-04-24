@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -79,7 +80,7 @@ func NewTargetInfraCmd() *cobra.Command {
       --env-id env-abc123 --cluster-id lkc-xyz789 --cluster-type dedicated \
       --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": iamAnnotation(),
+			iampolicy.AnnotationKey: iamAnnotation(),
 		},
 		SilenceErrors: true,
 		PreRunE:       preRunCreateTargetInfra,

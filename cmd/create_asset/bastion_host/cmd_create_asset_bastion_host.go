@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -167,7 +168,7 @@ func NewBastionHostCmd() *cobra.Command {
       --bastion-host-cidr 10.0.255.0/24 \
       --create-igw`,
 		Annotations: map[string]string{
-			"aws_iam_permissions": bastionHostIAMPermissions,
+			iampolicy.AnnotationKey: bastionHostIAMPermissions,
 		},
 		SilenceErrors: true,
 		PreRunE:       preRunCreateBastionHost,

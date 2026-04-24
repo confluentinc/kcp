@@ -17,11 +17,10 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/cmd"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
-
-const iamAnnotationKey = "aws_iam_permissions"
 
 func main() {
 	outDir := flag.String("out", "docs/command-reference", "output directory for generated markdown")
@@ -133,16 +132,21 @@ func emit(c *cobra.Command, outDir string, linkMap map[string]string) error {
 	return nil
 }
 
+// walkAndInjectIAM mirrors emit's pruning rule (!IsAvailableCommand() ||
+// IsAdditionalHelpTopicCommand()) so it never tries to inject into a file
+// emit didn't write. Hidden subtrees and help-topic commands are skipped
+// for themselves AND for their descendants.
 func walkAndInjectIAM(c *cobra.Command, outDir string) error {
-	if !c.Hidden {
-		if perms := strings.TrimSpace(c.Annotations[iamAnnotationKey]); perms != "" {
-			path := outputPath(c, outDir)
-			if err := injectIAMSection(path, perms); err != nil {
-				return fmt.Errorf("inject %s: %w", path, err)
-			}
+	if perms := strings.TrimSpace(c.Annotations[iampolicy.AnnotationKey]); perms != "" {
+		path := outputPath(c, outDir)
+		if err := injectIAMSection(path, perms); err != nil {
+			return fmt.Errorf("inject %s: %w", path, err)
 		}
 	}
 	for _, sub := range c.Commands() {
+		if !sub.IsAvailableCommand() || sub.IsAdditionalHelpTopicCommand() {
+			continue
+		}
 		if err := walkAndInjectIAM(sub, outDir); err != nil {
 			return err
 		}
