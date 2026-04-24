@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
-	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -312,10 +311,10 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
-	if state.KcpBuildInfo.Version != build_info.Version {
+	if state.KcpBuildInfo.Version == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "State file version mismatch",
-			"message": fmt.Sprintf("file was created with KCP version %q but you are running version %q — please re-export the state file using the current version of KCP or upgrade/downgrade KCP to match", state.KcpBuildInfo.Version, build_info.Version),
+			"error":   "Invalid state file",
+			"message": "kcp_build_info.version is missing — this does not appear to be a valid KCP state file",
 		})
 	}
 
