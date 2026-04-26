@@ -33,15 +33,13 @@ func TestParseScanSelfManagedConnectorsOpts_MSK_Success(t *testing.T) {
 	// Set flags
 	stateFile = tmpFile.Name()
 	connectRestURL = "http://localhost:8083"
-	sourceType = "msk"
-	clusterArn = "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123"
-	clusterID = ""
+	clusterID = "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123"
 	useUnauthenticated = true
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
 	assert.NoError(t, err)
 	assert.Equal(t, "msk", opts.SourceType)
-	assert.Equal(t, clusterArn, opts.ClusterArn)
+	assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123", opts.ClusterArn)
 	assert.Equal(t, "", opts.ClusterID)
 }
 
@@ -66,8 +64,6 @@ func TestParseScanSelfManagedConnectorsOpts_OSK_Success(t *testing.T) {
 	// Set flags
 	stateFile = tmpFile.Name()
 	connectRestURL = "http://localhost:8083"
-	sourceType = "osk"
-	clusterArn = ""
 	clusterID = "production-kafka"
 	useUnauthenticated = true
 
@@ -95,9 +91,7 @@ func TestParseScanSelfManagedConnectorsOpts_MSK_ClusterNotFound(t *testing.T) {
 	// Set flags
 	stateFile = tmpFile.Name()
 	connectRestURL = "http://localhost:8083"
-	sourceType = "msk"
-	clusterArn = "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123"
-	clusterID = ""
+	clusterID = "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123"
 	useUnauthenticated = true
 
 	_, err = parseScanSelfManagedConnectorsOpts()
@@ -122,8 +116,6 @@ func TestParseScanSelfManagedConnectorsOpts_OSK_ClusterNotFound(t *testing.T) {
 	// Set flags
 	stateFile = tmpFile.Name()
 	connectRestURL = "http://localhost:8083"
-	sourceType = "osk"
-	clusterArn = ""
 	clusterID = "non-existent"
 	useUnauthenticated = true
 
@@ -132,25 +124,3 @@ func TestParseScanSelfManagedConnectorsOpts_OSK_ClusterNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "cluster not found in state file")
 }
 
-func TestParseScanSelfManagedConnectorsOpts_InvalidSourceType(t *testing.T) {
-	// Create temporary state file
-	state := &types.State{}
-	tmpFile, err := os.CreateTemp("", "state-*.json")
-	assert.NoError(t, err)
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-
-	err = state.PersistStateFile(tmpFile.Name())
-	assert.NoError(t, err)
-
-	// Set flags
-	stateFile = tmpFile.Name()
-	connectRestURL = "http://localhost:8083"
-	sourceType = "invalid"
-	clusterArn = ""
-	clusterID = ""
-	useUnauthenticated = true
-
-	_, err = parseScanSelfManagedConnectorsOpts()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid source-type")
-}

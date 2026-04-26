@@ -15,8 +15,6 @@ import (
 var (
 	stateFile      string
 	connectRestURL string
-	sourceType     string
-	clusterArn     string
 	clusterID      string
 
 	useSaslScram       bool
@@ -36,15 +34,15 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		Use:   "self-managed-connectors",
 		Short: "Scan self-managed Kafka Connect cluster for connector information",
 		Long:  "Scan a self-managed Kafka Connect cluster using its REST API to discover connector configurations and status",
-		Example: `  # Scan connectors for an MSK cluster
-  kcp scan self-managed-connectors --source-type msk \
+		Example: `  # Scan connectors for an MSK cluster (cluster-id is an ARN)
+  kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url http://connect:8083 \
-    --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
+    --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
     --use-unauthenticated
 
-  # Scan connectors for an OSK cluster with SASL/SCRAM auth
-  kcp scan self-managed-connectors --source-type osk \
+  # Scan connectors for an OSK cluster with SASL/SCRAM auth (cluster-id is a simple identifier)
+  kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url https://connect.example.com:8083 \
     --cluster-id production-kafka \
@@ -63,16 +61,9 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file to update with connector information.")
 	requiredFlags.StringVar(&connectRestURL, "connect-rest-url", "", "The Kafka Connect REST API URL (e.g., http://localhost:8083).")
-	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk' (required)")
+	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
-
-	clusterIdentifierFlags := pflag.NewFlagSet("cluster-identifier", pflag.ExitOnError)
-	clusterIdentifierFlags.SortFlags = false
-	clusterIdentifierFlags.StringVar(&clusterArn, "cluster-arn", "", "The MSK cluster ARN in the state file (required for --source-type msk).")
-	clusterIdentifierFlags.StringVar(&clusterID, "cluster-id", "", "The OSK cluster ID in the state file (required for --source-type osk).")
-	selfManagedConnectorsCmd.Flags().AddFlagSet(clusterIdentifierFlags)
-	groups[clusterIdentifierFlags] = "Cluster Identifier (source-type specific)"
 
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
 	authMethodFlags.SortFlags = false
@@ -104,8 +95,8 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 			fmt.Printf("Examples:\n%s\n\n", c.Example)
 		}
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, clusterIdentifierFlags, authMethodFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Cluster Identifier (source-type specific)", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, authMethodFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -121,7 +112,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 
 	_ = selfManagedConnectorsCmd.MarkFlagRequired("state-file")
 	_ = selfManagedConnectorsCmd.MarkFlagRequired("connect-rest-url")
-	_ = selfManagedConnectorsCmd.MarkFlagRequired("source-type")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cluster-id")
 
 	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-sasl-scram", "use-tls", "use-unauthenticated")
 	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-sasl-scram", "use-tls", "use-unauthenticated")
@@ -132,25 +123,6 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
-	}
-
-	// Validate source-type
-	if sourceType != "msk" && sourceType != "osk" {
-		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
-	}
-
-	// Validate source-type specific cluster identifier flags
-	if sourceType == "msk" {
-		_ = cmd.MarkFlagRequired("cluster-arn")
-		if clusterArn == "" {
-			return fmt.Errorf("--cluster-arn is required when --source-type is 'msk'")
-		}
-	}
-	if sourceType == "osk" {
-		_ = cmd.MarkFlagRequired("cluster-id")
-		if clusterID == "" {
-			return fmt.Errorf("--cluster-id is required when --source-type is 'osk'")
-		}
 	}
 
 	if useSaslScram {
@@ -203,7 +175,20 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 
-	// Validate cluster exists in state based on source type
+	// Auto-detect source type from cluster ID format
+	var sourceType string
+	var clusterArn string
+	var oskClusterID string
+
+	if strings.HasPrefix(clusterID, "arn:") {
+		sourceType = "msk"
+		clusterArn = clusterID
+	} else {
+		sourceType = "osk"
+		oskClusterID = clusterID
+	}
+
+	// Validate cluster exists in state based on detected source type
 	switch sourceType {
 	case "msk":
 		_, err = state.GetClusterByArn(clusterArn)
@@ -211,12 +196,10 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 			return nil, fmt.Errorf("cluster not found in state file: %v", err)
 		}
 	case "osk":
-		_, err = state.GetOSKClusterByID(clusterID)
+		_, err = state.GetOSKClusterByID(oskClusterID)
 		if err != nil {
 			return nil, fmt.Errorf("cluster not found in state file: %v", err)
 		}
-	default:
-		return nil, fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
 	}
 
 	opts := SelfManagedConnectorsScannerOpts{
@@ -225,7 +208,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		ConnectRestURL: normalizedURL,
 		SourceType:     sourceType,
 		ClusterArn:     clusterArn,
-		ClusterID:      clusterID,
+		ClusterID:      oskClusterID,
 		AuthMethod:     authMethod,
 		SaslScramAuth: types.ConnectSaslScramAuth{
 			Username: saslScramUsername,
