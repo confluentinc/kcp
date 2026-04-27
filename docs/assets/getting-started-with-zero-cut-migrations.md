@@ -32,7 +32,7 @@ There are three active components in the migration:
 
 ## 3. Licensing
 
-**KCP CLI** is Apache 2.0 and free to use. Binaries are available for Linux, macOS (amd64/arm64), and Windows via GitHub Releases at [github.com/confluentinc/kcp](https://github.com/confluentinc/kcp/releases). It can also be installed as a Confluent CLI plugin (`confluent plugin install kcp`), which lets it inherit existing Confluent CLI authentication and eliminates the need for separate API key flags.
+**KCP CLI** is Apache 2.0 and free to use. Binaries are available for Linux, macOS (amd64/arm64), and Windows via GitHub Releases at [github.com/confluentinc/kcp](https://github.com/confluentinc/kcp/releases).
 
 **CC Gateway** requires a Confluent Cloud Gateway Add-On license. This is delivered as a Confluent license key (JWT) configured on the Gateway container via `GATEWAY_LICENSES`. The license is org-scoped: one license covers all Confluent Cloud clusters in a customer's org, with no per-node or per-cluster fees.
 
@@ -69,17 +69,18 @@ This is the most operationally complex part of the migration. There are three di
 3. **Gateway → CC**: how the gateway authenticates to Confluent Cloud after cutover.
 
 The `--auth-mode` parameter in `kcp migration init` determines which direction uses passthrough vs. swap:
+
 - `dest_swap` (default): clients present their **source credentials** to the gateway. Gateway passes these through to the source; gateway swaps them for CC credentials when routing to CC.
 - `source_swap`: clients present their **CC credentials** to the gateway. Gateway passes these through to CC; gateway swaps them for source credentials when routing to the source.
 
 ### 5.1 Auth Combination Matrix
 
-| Source auth | CC SASL/PLAIN | CC mTLS | CC OAuth |
-|---|---|---|---|
-| **IAM** | 🔴 Not supported | 🔴 Not supported | 🔴 Not supported |
-| **mTLS** | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 |
-| **SASL/SCRAM** | 🟢 Supported, see §5.3 | 🔴 Not supported | 🟢 Supported, see §5.3 |
-| **Unauthenticated** | 🟢 Supported | 🟢 Supported | 🟢 Supported |
+| Source auth         | CC SASL/PLAIN          | CC mTLS                | CC OAuth               |
+| ------------------- | ---------------------- | ---------------------- | ---------------------- |
+| **IAM**             | 🔴 Not supported       | 🔴 Not supported       | 🔴 Not supported       |
+| **mTLS**            | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 |
+| **SASL/SCRAM**      | 🟢 Supported, see §5.3 | 🔴 Not supported       | 🟢 Supported, see §5.3 |
+| **Unauthenticated** | 🟢 Supported           | 🟢 Supported           | 🟢 Supported           |
 
 Note: Confluent Cloud does not support SASL/SCRAM as a target protocol. When the source uses SCRAM, the gateway's auth swap translates client credentials to CC SASL/PLAIN (API key) or OAuth. This is handled transparently and requires no client changes.
 
@@ -127,7 +128,6 @@ Cluster Linking must be configured before running any KCP migration commands. Th
 
 KCP's `kcp migration init` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
 
-
 ---
 
 ## 7. KCP Permissions Required
@@ -135,10 +135,12 @@ KCP's `kcp migration init` validates that Cluster Linking is correctly configure
 The following permissions are required specifically for the three migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`). Permissions for discovery and provisioning commands are documented in the [KCP repository](https://confluentinc.github.io/kcp/latest/command-reference/) under each command that interacts with AWS/MSK.
 
 **Confluent Cloud:**
+
 - `CloudClusterAdmin` on the destination cluster: for cluster link operations (describe, list mirror topics, promote)
 - `MetricsViewer`: for lag monitoring via the Confluent metrics API
 
 **Kubernetes (for gateway CRD patching during cutover):**
+
 - `get`, `patch`, `update` on `Gateway` resources in the gateway namespace
 - Validate with: `kubectl auth can-i patch gateways -n confluent`
 
@@ -172,6 +174,7 @@ Clients should expect a brief partial downtime window of approximately 60 second
 **Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp create-asset target-infra` with appropriate sizing gives you the CC estimate.
 
 **Rollback states**:
+
 - Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD.
 - Rollback after promotion: possible (no data loss) but the cluster link is broken. Requires recreating the cluster link and mirror topics from scratch. This is not automated.
 - Rollback after unblock (traffic flowing to CC): not supported. Manual intervention required.
@@ -237,12 +240,12 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 Performs the cutover in four automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
 
-| Phase | What KCP does | What clients see |
-|---|---|---|
-| **Pre-flight** | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it | Normal traffic |
-| **Block** | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
-| **Promote** | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally |
-| **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked | First retry succeeds; clients now on CC |
+| Phase                | What KCP does                                                                                           | What clients see                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Pre-flight**       | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                 | Normal traffic                                                          |
+| **Block**            | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
+| **Promote**          | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally                                |
+| **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                           | First retry succeeds; clients now on CC                                 |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
 
