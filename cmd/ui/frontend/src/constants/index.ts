@@ -18,8 +18,9 @@ export const TAB_IDS = {
  */
 export const TOP_LEVEL_TABS = {
   EXPLORE: 'explore',
-  TCO_INPUTS: 'tco-inputs',
+  WORKBENCH: 'workbench',
   MIGRATION_ASSETS: 'migration-assets',
+  TCO_INPUTS: 'tco-inputs',
 } as const
 
 /**
