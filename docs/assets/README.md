@@ -1,6 +1,6 @@
 # KCP CLI
 
-KCP (Kafka Copy) is a CLI tool for planning and executing Kafka migrations to Confluent Cloud.
+KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations to Confluent Cloud.
 
 > [!NOTE]
 > KCP supports migrations from two source types:

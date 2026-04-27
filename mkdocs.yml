@@ -1,4 +1,4 @@
-site_name: KCP — Kafka Copy
+site_name: KCP — Kafka Copy Paste
 site_description: CLI tool for planning and executing Kafka migrations from AWS MSK and Open Source Kafka to Confluent Cloud.
 site_url: https://confluentinc.github.io/kcp/
 repo_url: https://github.com/confluentinc/kcp
