@@ -1,22 +1,16 @@
 package bastion_host
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
-	"text/template"
 
+	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
-//go:embed assets
-var assetsFS embed.FS
-
-// struct to hold the options for the bastion host asset generator
 type BastionHostOpts struct {
 	Region           string
 	VPCId            string
@@ -26,27 +20,17 @@ type BastionHostOpts struct {
 }
 
 type BastionHostAssetGenerator struct {
-	region           string
-	vpcId            string
-	publicSubnetCidr string
-	createIGW        bool
-	securityGroupIds []string
+	opts BastionHostOpts
 }
 
 func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerator {
-	return &BastionHostAssetGenerator{
-		region:           opts.Region,
-		vpcId:            opts.VPCId,
-		publicSubnetCidr: opts.PublicSubnetCidr,
-		createIGW:        opts.CreateIGW,
-		securityGroupIds: opts.SecurityGroupIds,
-	}
+	return &BastionHostAssetGenerator{opts: opts}
 }
 
 func (bh *BastionHostAssetGenerator) Run() error {
 	fmt.Printf("🚀 Generating bastion host environment assets\n")
 
-	outputDir := filepath.Join("bastion_host")
+	outputDir := "bastion_host"
 	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
@@ -55,111 +39,69 @@ func (bh *BastionHostAssetGenerator) Run() error {
 		return fmt.Errorf("failed to create bastion host directory: %w", err)
 	}
 
-	assetsDir := "assets"
-	slog.Debug("copying assets to target directory", "from", assetsDir, "to", outputDir)
-	if err := bh.copyFiles(assetsDir, outputDir); err != nil {
-		return fmt.Errorf("failed to copy bastion host files: %w", err)
+	request := types.BastionHostRequest{
+		Region:           bh.opts.Region,
+		VPCId:            bh.opts.VPCId,
+		PublicSubnetCidr: bh.opts.PublicSubnetCidr,
+		CreateIGW:        bh.opts.CreateIGW,
+		SecurityGroupIds: bh.opts.SecurityGroupIds,
 	}
 
-	if err := bh.generateTfvarsFiles(outputDir); err != nil {
-		return fmt.Errorf("failed to generate tfvars files: %w", err)
+	hclService := hcl.NewBastionHostHCLService()
+	terraformFiles, err := hclService.GenerateBastionHostFiles(request)
+	if err != nil {
+		return fmt.Errorf("failed to generate Terraform files: %w", err)
 	}
+
+	if err := bh.writeTerraformFiles(outputDir, terraformFiles); err != nil {
+		return fmt.Errorf("failed to write Terraform files: %w", err)
+	}
+
+	userDataPath := filepath.Join(outputDir, "bastion-host-user-data.tpl")
+	if err := os.WriteFile(userDataPath, []byte(hclService.GenerateBastionHostUserDataTemplate()), 0644); err != nil {
+		return fmt.Errorf("failed to write user-data template: %w", err)
+	}
+	slog.Debug("wrote bastion-host-user-data.tpl")
 
 	fmt.Printf("✅ Bastion host environment assets generated successfully: %s\n", outputDir)
-
 	return nil
 }
 
-func (bh *BastionHostAssetGenerator) copyFiles(sourceDir, destDir string) error {
-	return fs.WalkDir(assetsFS, sourceDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+func (bh *BastionHostAssetGenerator) writeTerraformFiles(outputDir string, files types.TerraformFiles) error {
+	if files.MainTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
+			return fmt.Errorf("failed to write main.tf: %w", err)
 		}
-
-		// Skip the source directory itself
-		if path == sourceDir {
-			return nil
-		}
-
-		// exclude template files
-		if strings.HasSuffix(path, ".tmpl") {
-			return nil
-		}
-
-		// Calculate relative path from source directory
-		relPath, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
-		}
-
-		destPath := filepath.Join(destDir, relPath)
-
-		if d.IsDir() {
-			return os.MkdirAll(destPath, 0755)
-		}
-
-		// Read file content from embedded filesystem
-		content, err := assetsFS.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("failed to read embedded file %s: %w", path, err)
-		}
-
-		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", destPath, err)
-		}
-
-		return nil
-	})
-}
-
-func (bh *BastionHostAssetGenerator) generateTfvarsFiles(terraformDir string) error {
-	if err := bh.generateInputsTfvars(terraformDir); err != nil {
-		return fmt.Errorf("failed to generate inputs tfvars file: %w", err)
+		slog.Debug("wrote main.tf")
 	}
 
-	return nil
-}
-
-func (bh *BastionHostAssetGenerator) generateInputsTfvars(terraformDir string) error {
-	// Read the Go template file from embedded assets
-	templatePath := "assets/inputs.auto.tfvars.go.tmpl"
-	templateContent, err := assetsFS.ReadFile(templatePath)
-	if err != nil {
-		return fmt.Errorf("failed to read template file: %w", err)
+	if files.ProvidersTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(files.ProvidersTf), 0644); err != nil {
+			return fmt.Errorf("failed to write providers.tf: %w", err)
+		}
+		slog.Debug("wrote providers.tf")
 	}
 
-	// Parse the template
-	tmpl, err := template.New("tfvars").Parse(string(templateContent))
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
+	if files.VariablesTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(files.VariablesTf), 0644); err != nil {
+			return fmt.Errorf("failed to write variables.tf: %w", err)
+		}
+		slog.Debug("wrote variables.tf")
 	}
 
-	// Prepare template data
-	templateData := struct {
-		AWSRegion        string
-		PublicSubnetCIDR string
-		VPCID            string
-		CreateIGW        bool
-		SecurityGroupIds []string
-	}{
-		AWSRegion:        bh.region,
-		PublicSubnetCIDR: bh.publicSubnetCidr,
-		VPCID:            bh.vpcId,
-		CreateIGW:        bh.createIGW,
-		SecurityGroupIds: bh.securityGroupIds,
-	}
-	// Execute template
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, templateData); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
+	if files.OutputsTf != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "outputs.tf"), []byte(files.OutputsTf), 0644); err != nil {
+			return fmt.Errorf("failed to write outputs.tf: %w", err)
+		}
+		slog.Debug("wrote outputs.tf")
 	}
 
-	// Write the generated content to inputs.auto.tfvars
-	tfvarsPath := filepath.Join(terraformDir, "inputs.auto.tfvars")
-	if err := os.WriteFile(tfvarsPath, []byte(buf.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write tfvars file: %w", err)
+	if files.InputsAutoTfvars != "" {
+		if err := os.WriteFile(filepath.Join(outputDir, "inputs.auto.tfvars"), []byte(files.InputsAutoTfvars), 0644); err != nil {
+			return fmt.Errorf("failed to write inputs.auto.tfvars: %w", err)
+		}
+		slog.Debug("wrote inputs.auto.tfvars")
 	}
 
-	slog.Debug("generated inputs tfvars file from template", "file", tfvarsPath)
 	return nil
 }
