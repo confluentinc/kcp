@@ -17,7 +17,7 @@ Before committing or pushing any changes, always:
 
 ## Project Overview
 
-KCP (Kafka Copy) is a CLI tool for planning and executing Kafka migrations from **AWS MSK and Open Source Kafka (OSK)** to Confluent Cloud. It provides commands for discovering resources, generating reports, creating migration assets (Terraform), and managing the migration workflow.
+KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations from **AWS MSK and Open Source Kafka (OSK)** to Confluent Cloud. It provides commands for discovering resources, generating reports, creating migration assets (Terraform), and managing the migration workflow.
 
 ## Source Types
 
