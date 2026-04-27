@@ -1,6 +1,6 @@
 # Confluent Cloud Migration: KCP + Gateway Reference Guide
 
-**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp create-asset`, etc.) are covered in the [KCP repository documentation](https://github.com/confluentinc/kcp/tree/main/docs) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
+**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp create-asset`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
 
 ---
 
@@ -32,7 +32,7 @@ There are three active components in the migration:
 
 ## 3. Licensing
 
-**KCP CLI** is Apache 2.0 and free to use. Binaries are available for Linux, macOS (amd64/arm64), and Windows via GitHub Releases at [github.com/confluentinc/kcp](https://github.com/confluentinc/kcp). It can also be installed as a Confluent CLI plugin (`confluent plugin install kcp`), which lets it inherit existing Confluent CLI authentication and eliminates the need for separate API key flags.
+**KCP CLI** is Apache 2.0 and free to use. Binaries are available for Linux, macOS (amd64/arm64), and Windows via GitHub Releases at [github.com/confluentinc/kcp](https://github.com/confluentinc/kcp/releases).
 
 **CC Gateway** requires a Confluent Cloud Gateway Add-On license. This is delivered as a Confluent license key (JWT) configured on the Gateway container via `GATEWAY_LICENSES`. The license is org-scoped: one license covers all Confluent Cloud clusters in a customer's org, with no per-node or per-cluster fees.
 
@@ -69,17 +69,18 @@ This is the most operationally complex part of the migration. There are three di
 3. **Gateway → CC**: how the gateway authenticates to Confluent Cloud after cutover.
 
 The `--auth-mode` parameter in `kcp migration init` determines which direction uses passthrough vs. swap:
+
 - `dest_swap` (default): clients present their **source credentials** to the gateway. Gateway passes these through to the source; gateway swaps them for CC credentials when routing to CC.
 - `source_swap`: clients present their **CC credentials** to the gateway. Gateway passes these through to CC; gateway swaps them for source credentials when routing to the source.
 
 ### 5.1 Auth Combination Matrix
 
-| Source auth | CC SASL/PLAIN | CC mTLS | CC OAuth |
-|---|---|---|---|
-| **IAM** | 🔴 Not supported | 🔴 Not supported | 🔴 Not supported |
-| **mTLS** | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 |
-| **SASL/SCRAM** | 🟢 Supported, see §5.3 | 🔴 Not supported | 🟢 Supported, see §5.3 |
-| **Unauthenticated** | 🟢 Supported | 🟢 Supported | 🟢 Supported |
+| Source auth         | CC SASL/PLAIN          | CC mTLS                | CC OAuth               |
+| ------------------- | ---------------------- | ---------------------- | ---------------------- |
+| **IAM**             | 🔴 Not supported       | 🔴 Not supported       | 🔴 Not supported       |
+| **mTLS**            | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 | 🟢 Supported, see §5.4 |
+| **SASL/SCRAM**      | 🟢 Supported, see §5.3 | 🔴 Not supported       | 🟢 Supported, see §5.3 |
+| **Unauthenticated** | 🟢 Supported           | 🟢 Supported           | 🟢 Supported           |
 
 Note: Confluent Cloud does not support SASL/SCRAM as a target protocol. When the source uses SCRAM, the gateway's auth swap translates client credentials to CC SASL/PLAIN (API key) or OAuth. This is handled transparently and requires no client changes.
 
@@ -93,7 +94,7 @@ IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS befo
 2. Update each client's auth config from `sasl.mechanism=AWS_MSK_IAM` to `sasl.mechanism=SCRAM-SHA-512` with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).
 3. Once all clients are confirmed on SCRAM, they can onboard to the gateway.
 
-For MSK clusters, KCP provides tooling to accelerate this: `kcp scan clusters` discovers IAM principals from Kafka ACLs, and `kcp create-asset migrate-acls iam` generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the [KCP repository](https://github.com/confluentinc/kcp/tree/main/docs).
+For MSK clusters, KCP provides tooling to accelerate this: `kcp scan clusters` discovers IAM principals from Kafka ACLs, and `kcp create-asset migrate-acls iam` generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the [KCP repository](https://confluentinc.github.io/kcp/).
 
 ### 5.3 SASL/SCRAM: How the Gateway Handles It
 
@@ -127,18 +128,19 @@ Cluster Linking must be configured before running any KCP migration commands. Th
 
 KCP's `kcp migration init` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
 
-
 ---
 
 ## 7. KCP Permissions Required
 
-The following permissions are required specifically for the three migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`). Permissions for discovery and provisioning commands are documented in the [KCP repository](https://github.com/confluentinc/kcp/tree/main/docs).
+The following permissions are required specifically for the three migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`). Permissions for discovery and provisioning commands are documented in the [KCP repository](https://confluentinc.github.io/kcp/latest/command-reference/) under each command that interacts with AWS/MSK.
 
 **Confluent Cloud:**
+
 - `CloudClusterAdmin` on the destination cluster: for cluster link operations (describe, list mirror topics, promote)
 - `MetricsViewer`: for lag monitoring via the Confluent metrics API
 
 **Kubernetes (for gateway CRD patching during cutover):**
+
 - `get`, `patch`, `update` on `Gateway` resources in the gateway namespace
 - Validate with: `kubectl auth can-i patch gateways -n confluent`
 
@@ -172,6 +174,7 @@ Clients should expect a brief partial downtime window of approximately 60 second
 **Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp create-asset target-infra` with appropriate sizing gives you the CC estimate.
 
 **Rollback states**:
+
 - Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD.
 - Rollback after promotion: possible (no data loss) but the cluster link is broken. Requires recreating the cluster link and mirror topics from scratch. This is not automated.
 - Rollback after unblock (traffic flowing to CC): not supported. Manual intervention required.
@@ -200,7 +203,7 @@ Before running any `kcp migration` command, confirm the following are in place:
 
 Before init, you need three gateway CR files ready on disk. The **initial CR** is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The **fenced CR** is a modified version that blocks all traffic on the route and returns `BROKER_NOT_AVAILABLE` to clients. The **switchover CR** is another version that points the route at Confluent Cloud instead of the source cluster.
 
-KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to `kcp migration init`. Working examples for every supported auth combination are in the KCP repo at [`docs/switchover-*`](https://github.com/confluentinc/kcp/tree/main/docs).
+KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to `kcp migration init`. Working examples for every supported auth combination are in the KCP repo at under [Gateway Switchover](https://confluentinc.github.io/kcp/latest/gateway-switchover/).
 
 ![Description](images/image-20260112-174757.png)
 
@@ -212,7 +215,7 @@ Run once per migration group. Init validates the entire setup before anything is
 
 On success, KCP writes a `migration-state.json` file and prints a `migration-id`. That ID ties together all state for this group — you pass it to `lag-check` and `execute`. If KCP is installed as a Confluent CLI plugin, it inherits authentication from `confluent login` and the CC credential flags are not required.
 
-Full flag reference: [`kcp migration init --help`](https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration)
+Full flag reference: [`kcp migration init --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/init/)
 
 ---
 
@@ -229,7 +232,7 @@ demo-topic3   ACTIVE     9,503     ███████
 
 Run it until lag is consistently near zero across all topics, then Ctrl+C and proceed.
 
-Full flag reference: [`kcp migration lag-check --help`](https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration)
+Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/lag-check/)
 
 ---
 
@@ -237,12 +240,12 @@ Full flag reference: [`kcp migration lag-check --help`](https://github.com/confl
 
 Performs the cutover in four automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
 
-| Phase | What KCP does | What clients see |
-|---|---|---|
-| **Pre-flight** | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it | Normal traffic |
-| **Block** | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
-| **Promote** | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally |
-| **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked | First retry succeeds; clients now on CC |
+| Phase                | What KCP does                                                                                           | What clients see                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Pre-flight**       | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                 | Normal traffic                                                          |
+| **Block**            | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
+| **Promote**          | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally                                |
+| **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                           | First retry succeeds; clients now on CC                                 |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
 
@@ -254,4 +257,4 @@ Steps:
 ![Description](images/image-20260112-175233.png)
 ![Description](images/image-20260112-175246.png)
 
-Full flag reference: [`kcp migration execute --help`](https://github.com/confluentinc/kcp/tree/main/docs#kcp-migration)
+Full flag reference: [`kcp migration execute --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/execute/)

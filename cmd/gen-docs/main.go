@@ -22,6 +22,47 @@ import (
 	"github.com/spf13/cobra/doc"
 )
 
+// commandOrder pins the sidebar order of subcommands under a given parent in
+// the generated `.pages` files. Keys are full command paths; values are child
+// command names in display order. Children of an ordered parent that are not
+// listed here fall in at the end alphabetically (via awesome-pages' `...`
+// token), so a newly added subcommand still surfaces in the sidebar without
+// touching this map. Parents not present here keep the awesome-pages default
+// (alphabetical).
+var commandOrder = map[string][]string{
+	"kcp": {
+		"discover",
+		"scan",
+		"report",
+		"create-asset",
+		"migration",
+		"ui",
+		"docs",
+		"update",
+		"version",
+	},
+	"kcp create-asset": {
+		"bastion-host",
+		"target-infra",
+		"migration-infra",
+		"migrate-topics",
+		"migrate-schemas",
+		"migrate-acls",
+		"migrate-connectors",
+	},
+	"kcp migration": {
+		"init",
+		"execute",
+		"lag-check",
+		"list",
+	},
+	"kcp scan": {
+		"clusters",
+		"client-inventory",
+		"schema-registry",
+	},
+}
+
 func main() {
 	outDir := flag.String("out", "docs/assets/command-reference", "output directory for generated markdown")
 	flag.Parse()
@@ -46,6 +87,46 @@ func main() {
 	}
 
 	fmt.Printf("gen-docs: wrote command reference to %s\n", *outDir)
+}
+
+// buildPagesContent renders a .pages file for a parent command. If
+// commandOrder pins the parent's children, emit an explicit nav: block (with
+// awesome-pages' `...` rest-token at the end so unlisted children — e.g. a
+// newly added subcommand — still surface). Otherwise emit just the title and
+// let awesome-pages fall back to alphabetical.
+func buildPagesContent(c *cobra.Command, title string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "title: %s\n", title)
+
+	order, ok := commandOrder[c.CommandPath()]
+	if !ok {
+		return b.String()
+	}
+
+	childByName := map[string]*cobra.Command{}
+	for _, sub := range c.Commands() {
+		if !sub.IsAvailableCommand() || sub.IsAdditionalHelpTopicCommand() {
+			continue
+		}
+		childByName[sub.Name()] = sub
+	}
+
+	b.WriteString("nav:\n")
+	for _, name := range order {
+		sub, ok := childByName[name]
+		if !ok {
+			continue
+		}
+		// Parents render as <name>/index.md (a directory in the nav); leaves
+		// render as <name>.md.
+		if sub.HasAvailableSubCommands() {
+			fmt.Fprintf(&b, "  - %s\n", name)
+		} else {
+			fmt.Fprintf(&b, "  - %s.md\n", name)
+		}
+	}
+	b.WriteString("  - ...\n")
+	return b.String()
 }
 
 // outputPath returns the markdown file path for a command within outDir.
@@ -118,7 +199,7 @@ func emit(c *cobra.Command, outDir string, linkMap map[string]string) error {
 			title = "Command Reference"
 		}
 		pagesPath := filepath.Join(filepath.Dir(path), ".pages")
-		pagesContent := fmt.Sprintf("title: %s\n", title)
+		pagesContent := buildPagesContent(c, title)
 		if err := os.WriteFile(pagesPath, []byte(pagesContent), 0o644); err != nil {
 			return err
 		}
