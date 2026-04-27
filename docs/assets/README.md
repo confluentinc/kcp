@@ -22,7 +22,7 @@ If you're unsure whether to download the `amd64` or `arm64` build:
 
 - **macOS**: run `uname -m` — `arm64` means Apple Silicon (M1/M2/M3/M4); `x86_64` means Intel (use `amd64`).
 - **Linux**: run `uname -m` — `aarch64` maps to `arm64`; `x86_64` maps to `amd64`.
-- **Windows**: open *System Information* and check *System type*, or run `echo %PROCESSOR_ARCHITECTURE%` in cmd — `ARM64` maps to `arm64`; `AMD64` maps to `amd64`. Only `amd64` is currently published for Windows.
+- **Windows**: open _System Information_ and check _System type_, or run `echo %PROCESSOR_ARCHITECTURE%` in cmd — `ARM64` maps to `arm64`; `AMD64` maps to `amd64`. Only `amd64` is currently published for Windows.
 
 ## Authentication
 
@@ -50,11 +50,11 @@ Each command's per-command AWS IAM permission requirements are documented on its
 The typical migration flow:
 
 1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or OSK) to build `kcp-state.json`.
-2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis.
-3. **Generate migration assets** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
-4. **Initialize and execute** — `kcp migration init` followed by `kcp migration execute`.
+2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
+3. **Generate migration assets for data migration** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
+4. **Initialize and execute client switchover** — `kcp migration init` followed by `kcp migration execute`.
 
-The [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md) guide walks through the end-to-end migration reference, including how KCP fits with the Confluent Cloud Gateway.
+The [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md) guide walks through the end-to-end migration reference, including how KCP fits with the [Confluent Cloud Gateway](https://docs.confluent.io/cloud/current/cp-component/gateway/overview.html).
 
 ## Key infrastructure decisions
 
@@ -70,8 +70,8 @@ Only certain migration topologies are possible for a given combination — see [
 
 - **Public endpoints** — you can run `kcp` commands directly from your local machine.
 - **Private endpoints** — `kcp` must run from inside the source VPC. Either:
-    1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/create-asset/bastion-host.md), or
-    2. Use an existing jump server and copy the `kcp` binary onto it.
+  1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/create-asset/bastion-host.md), or
+  2. Use an existing jump server and copy the `kcp` binary onto it.
 
 > [!NOTE]
 > For private MSK, transfer the `kcp` binary to a host inside the same VPC before continuing.
