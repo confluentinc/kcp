@@ -107,6 +107,8 @@ services:
     image: confluentinc/cp-kafka-connect:7.6.0
     hostname: osk-kafka-connect
     container_name: kcp-test-osk-kafka-connect
+    profiles:
+      - connect
     depends_on:
       - kafka
     ports:
