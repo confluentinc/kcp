@@ -16,6 +16,7 @@ var (
 	stateFile      string
 	connectRestURL string
 	clusterID      string
+	sourceType     string
 
 	useSaslScram       bool
 	useTls             bool
@@ -34,21 +35,29 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		Use:   "self-managed-connectors",
 		Short: "Scan self-managed Kafka Connect cluster for connector information",
 		Long:  "Scan a self-managed Kafka Connect cluster using its REST API to discover connector configurations and status",
-		Example: `  # Scan connectors for an MSK cluster (cluster-id is an ARN)
+		Example: `  # Scan connectors for an MSK cluster (auto-detected from ARN format)
   kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url http://connect:8083 \
     --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
     --use-unauthenticated
 
-  # Scan connectors for an OSK cluster with SASL/SCRAM auth (cluster-id is a simple identifier)
+  # Scan connectors for an OSK cluster (auto-detected from non-ARN format)
   kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url https://connect.example.com:8083 \
     --cluster-id production-kafka \
     --use-sasl-scram \
     --sasl-scram-username admin \
-    --sasl-scram-password secret`,
+    --sasl-scram-password secret
+
+  # Explicitly specify source type (overrides auto-detection)
+  kcp scan self-managed-connectors \
+    --state-file kcp-state.json \
+    --connect-rest-url http://connect:8083 \
+    --cluster-id my-cluster \
+    --source-type osk \
+    --use-unauthenticated`,
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
@@ -64,6 +73,12 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = OSK).")
+	selfManagedConnectorsCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
 
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
 	authMethodFlags.SortFlags = false
@@ -95,8 +110,8 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 			fmt.Printf("Examples:\n%s\n\n", c.Example)
 		}
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authMethodFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -175,21 +190,35 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 
-	// Auto-detect source type from cluster ID format
-	var sourceType string
+	// Determine source type: use explicit flag if provided, otherwise auto-detect from cluster ID format
+	var detectedSourceType string
 	var clusterArn string
 	var oskClusterID string
 
-	if strings.HasPrefix(clusterID, "arn:") {
-		sourceType = "msk"
+	if sourceType != "" {
+		// Validate explicit source type
+		if sourceType != "msk" && sourceType != "osk" {
+			return nil, fmt.Errorf("invalid source-type: %s (must be 'msk' or 'osk')", sourceType)
+		}
+		detectedSourceType = sourceType
+	} else {
+		// Auto-detect from cluster ID format
+		if strings.HasPrefix(clusterID, "arn:") {
+			detectedSourceType = "msk"
+		} else {
+			detectedSourceType = "osk"
+		}
+	}
+
+	// Set cluster identifiers based on source type
+	if detectedSourceType == "msk" {
 		clusterArn = clusterID
 	} else {
-		sourceType = "osk"
 		oskClusterID = clusterID
 	}
 
 	// Validate cluster exists in state based on detected source type
-	switch sourceType {
+	switch detectedSourceType {
 	case "msk":
 		_, err = state.GetClusterByArn(clusterArn)
 		if err != nil {
@@ -206,7 +235,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		StateFile:      stateFile,
 		State:          state,
 		ConnectRestURL: normalizedURL,
-		SourceType:     sourceType,
+		SourceType:     detectedSourceType,
 		ClusterArn:     clusterArn,
 		ClusterID:      oskClusterID,
 		AuthMethod:     authMethod,
