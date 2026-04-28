@@ -55,6 +55,8 @@ export const Home = () => {
               selectOSKCluster(firstCluster.id)
             }
           }
+        } else if (response) {
+          setError('State file contains no sources. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it, then reload.')
         }
       } catch {
         // No pre-loaded state, user will upload manually
