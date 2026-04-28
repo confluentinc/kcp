@@ -11,31 +11,33 @@ import (
 )
 
 var (
-	region           string
-	vpcId            string
-	bastionHostCidr  net.IPNet
-	createIGW        bool
-	securityGroupIds []string
+	region                  string
+	vpcId                   string
+	bastionHostCidr         net.IPNet
+	existingInternetGateway bool
+	securityGroupIds        []string
+	outputDir               string
 )
 
 func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd := &cobra.Command{
 		Use:   "bastion-host",
 		Short: "Create assets for the bastion host",
-		Long:  "Create Terraform assets for deploying a bastion host in AWS within an existing VPC. Use this when your MSK cluster is not reachable from the machine running kcp and you do not already have a jump server.",
-		Example: `  # Provision a new bastion in an existing VPC with an existing security group
+		Long:  "Create Terraform assets for deploying a bastion host in AWS within an existing VPC. Use this when your source Kafka cluster (MSK or OSK) is not reachable from the machine running kcp and you do not already have a jump server.",
+		Example: `  # Provision a new bastion (and a new internet gateway) in an existing VPC
   kcp create-asset bastion-host \
       --region us-east-1 \
       --vpc-id vpc-xxxxxxxx \
       --bastion-host-cidr 10.0.255.0/24 \
-      --security-group-ids sg-xxxxxxxxxx
+      --security-group-ids sg-xxxxxxxxxx \
+      --output-dir bastion_host
 
-  # Same, but also create a new internet gateway for the VPC
+  # Same, but reuse the existing internet gateway already attached to the VPC
   kcp create-asset bastion-host \
       --region us-east-1 \
       --vpc-id vpc-xxxxxxxx \
       --bastion-host-cidr 10.0.255.0/24 \
-      --create-igw`,
+      --existing-internet-gateway`,
 		Annotations: map[string]string{
 			iampolicy.AnnotationKey: bastionHostIAMAnnotation(),
 		},
@@ -51,15 +53,16 @@ func NewBastionHostCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.IPNetVar(&bastionHostCidr, "bastion-host-cidr", net.IPNet{}, "The bastion host CIDR (e.g. 10.0.255.0/24)")
 	requiredFlags.StringVar(&region, "region", "", "AWS region the bastion host is provisioned in")
-	requiredFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID of the existing MSK cluster")
+	requiredFlags.StringVar(&vpcId, "vpc-id", "", "VPC ID where the bastion host will be provisioned (typically the source Kafka cluster's VPC)")
 	bastionHostCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	// Optional flags.
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.BoolVar(&createIGW, "create-igw", false, "When set, Terraform will create a new internet gateway in the VPC.")
+	optionalFlags.BoolVar(&existingInternetGateway, "existing-internet-gateway", false, "Whether to reuse the internet gateway already attached to the VPC. (default: false — a new internet gateway is created)")
 	optionalFlags.StringSliceVar(&securityGroupIds, "security-group-ids", []string{}, "Existing list of comma separated AWS security group ids")
+	optionalFlags.StringVar(&outputDir, "output-dir", "bastion_host", "Directory to output the generated Terraform files to")
 	bastionHostCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -114,11 +117,12 @@ func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 
 func parseBastionHostOpts() (*BastionHostOpts, error) {
 	opts := BastionHostOpts{
-		Region:           region,
-		VPCId:            vpcId,
-		PublicSubnetCidr: bastionHostCidr.String(),
-		CreateIGW:        createIGW,
-		SecurityGroupIds: securityGroupIds,
+		Region:                     region,
+		VPCId:                      vpcId,
+		PublicSubnetCidr:           bastionHostCidr.String(),
+		HasExistingInternetGateway: existingInternetGateway,
+		SecurityGroupIds:           securityGroupIds,
+		OutputDir:                  outputDir,
 	}
 
 	return &opts, nil

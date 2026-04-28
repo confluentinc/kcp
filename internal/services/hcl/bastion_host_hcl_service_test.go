@@ -10,14 +10,14 @@ func TestBastionHost(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		createIGW bool
-		sgIds     []string
+		name           string
+		hasExistingIGW bool
+		sgIds          []string
 	}{
-		{name: "create_igw_no_sg", createIGW: true, sgIds: nil},
-		{name: "create_igw_with_sg", createIGW: true, sgIds: []string{"sg-aaa", "sg-bbb"}},
-		{name: "existing_igw_no_sg", createIGW: false, sgIds: nil},
-		{name: "existing_igw_with_sg", createIGW: false, sgIds: []string{"sg-ccc"}},
+		{name: "new_igw_no_sg", hasExistingIGW: false, sgIds: nil},
+		{name: "new_igw_with_sg", hasExistingIGW: false, sgIds: []string{"sg-aaa", "sg-bbb"}},
+		{name: "existing_igw_no_sg", hasExistingIGW: true, sgIds: nil},
+		{name: "existing_igw_with_sg", hasExistingIGW: true, sgIds: []string{"sg-ccc"}},
 	}
 
 	for _, tc := range cases {
@@ -26,11 +26,11 @@ func TestBastionHost(t *testing.T) {
 
 			service := &BastionHostHCLService{DeploymentID: "testdeploy"}
 			request := types.BastionHostRequest{
-				Region:           "us-east-1",
-				VPCId:            "vpc-0123456789abcdef0",
-				PublicSubnetCidr: "10.0.30.0/24",
-				CreateIGW:        tc.createIGW,
-				SecurityGroupIds: tc.sgIds,
+				Region:                     "us-east-1",
+				VPCId:                      "vpc-0123456789abcdef0",
+				PublicSubnetCidr:           "10.0.30.0/24",
+				HasExistingInternetGateway: tc.hasExistingIGW,
+				SecurityGroupIds:           tc.sgIds,
 			}
 
 			files, err := service.GenerateBastionHostFiles(request)

@@ -2,6 +2,7 @@ package hcl
 
 import (
 	_ "embed"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
@@ -19,6 +20,10 @@ type BastionHostHCLService struct {
 	// DeploymentID overrides the random deployment identifier in AWS provider tags.
 	// When empty, a random 8-character string is generated.
 	DeploymentID string
+
+	// Now overrides the current time used to stamp the bastion host instance
+	// Name tag. When nil, time.Now is used.
+	Now func() time.Time
 }
 
 func NewBastionHostHCLService() *BastionHostHCLService {
@@ -27,7 +32,7 @@ func NewBastionHostHCLService() *BastionHostHCLService {
 
 func (s *BastionHostHCLService) GenerateBastionHostFiles(request types.BastionHostRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
-		MainTf:           s.generateMainTf(),
+		MainTf:           s.generateMainTf(request),
 		ProvidersTf:      s.generateProvidersTf(),
 		VariablesTf:      s.generateVariablesTf(),
 		OutputsTf:        s.generateOutputsTf(),
@@ -39,7 +44,7 @@ func (s *BastionHostHCLService) GenerateBastionHostUserDataTemplate() string {
 	return bastionHostUserDataTpl
 }
 
-func (s *BastionHostHCLService) generateMainTf() string {
+func (s *BastionHostHCLService) generateMainTf(request types.BastionHostRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -98,32 +103,26 @@ func (s *BastionHostHCLService) generateMainTf() string {
 	))
 	rootBody.AppendNewline()
 
-	// resource "aws_internet_gateway" "igw" { count = var.create_igw ? 1 : 0 ... }
-	igwBlock := rootBody.AppendNewBlock("resource", []string{"aws_internet_gateway", "igw"})
-	igwBlock.Body().SetAttributeRaw("count", rawExpr("var.create_igw ? 1 : 0"))
-	igwBlock.Body().AppendNewline()
-	SetVarRef(igwBlock.Body(), "vpc_id", "vpc_id")
-	igwBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
-		"Name": utils.TokensForStringTemplate("migration-jumpserver-igw"),
-	}))
+	// IGW: emit either a fresh resource (default) or a data source lookup of
+	// the IGW already attached to the VPC.
+	if request.HasExistingInternetGateway {
+		rootBody.AppendBlock(aws.GenerateInternetGatewayDataSource("internet_gateway", "vpc_id"))
+	} else {
+		igwBlock := aws.GenerateInternetGatewayResource("internet_gateway", "vpc_id")
+		igwBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
+			"Name": utils.TokensForStringTemplate("migration-jumpserver-igw"),
+		}))
+		rootBody.AppendBlock(igwBlock)
+	}
 	rootBody.AppendNewline()
 
-	// data "aws_internet_gateway" "existing_internet_gateway" { count = var.create_igw ? 0 : 1 ... }
-	existingIgwBlock := rootBody.AppendNewBlock("data", []string{"aws_internet_gateway", "existing_internet_gateway"})
-	existingIgwBlock.Body().SetAttributeRaw("count", rawExpr("var.create_igw ? 0 : 1"))
-	existingIgwBlock.Body().AppendNewline()
-	existingFilter := existingIgwBlock.Body().AppendNewBlock("filter", nil)
-	existingFilter.Body().SetAttributeValue("name", cty.StringVal("attachment.vpc-id"))
-	existingFilter.Body().SetAttributeRaw("values", utils.TokensForVarReferenceList([]string{"vpc_id"}))
-	rootBody.AppendNewline()
-
-	// resource "aws_route_table" "public_rt" with conditional gateway_id
+	// resource "aws_route_table" "public_rt" → gateway_id resolved at gen time
 	rtBlock := rootBody.AppendNewBlock("resource", []string{"aws_route_table", "public_rt"})
 	SetVarRef(rtBlock.Body(), "vpc_id", "vpc_id")
 	routeBlock := rtBlock.Body().AppendNewBlock("route", nil)
 	routeBlock.Body().SetAttributeValue("cidr_block", cty.StringVal("0.0.0.0/0"))
-	routeBlock.Body().SetAttributeRaw("gateway_id", rawExpr(
-		"var.create_igw ? aws_internet_gateway.igw[0].id : data.aws_internet_gateway.existing_internet_gateway[0].id",
+	routeBlock.Body().SetAttributeRaw("gateway_id", utils.TokensForResourceReference(
+		aws.GetInternetGatewayReference(request.HasExistingInternetGateway, "internet_gateway"),
 	))
 	rtBlock.Body().AppendNewline()
 	rtBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
@@ -210,11 +209,22 @@ func (s *BastionHostHCLService) generateMainTf() string {
 	instanceBlock.Body().AppendNewline()
 
 	instanceBlock.Body().SetAttributeRaw("tags", utils.TokensForMap(map[string]hclwrite.Tokens{
-		"Name": utils.TokensForStringTemplate("migration-bastion-host"),
+		"Name": utils.TokensForStringTemplate("kcp-bastion-host-" + s.deploymentDateStamp()),
 	}))
 	rootBody.AppendNewline()
 
 	return string(f.Bytes())
+}
+
+// deploymentDateStamp returns the YYYYMMDD UTC stamp used in the bastion host
+// instance Name tag, frozen at HCL generation time so re-applies don't recreate
+// the instance.
+func (s *BastionHostHCLService) deploymentDateStamp() string {
+	now := time.Now
+	if s.Now != nil {
+		now = s.Now
+	}
+	return now().UTC().Format("20060102")
 }
 
 func (s *BastionHostHCLService) generateProvidersTf() string {
@@ -262,12 +272,10 @@ func (s *BastionHostHCLService) generateVariablesTf() string {
 		defaultVal  *cty.Value
 	}
 
-	falseVal := cty.False
 	specs := []variableSpec{
 		{name: "vpc_id", typeRef: "string", description: "The ID of the VPC"},
 		{name: "public_subnet_cidr", typeRef: "string", description: "CIDR block for the public subnet"},
 		{name: "aws_region", typeRef: "string", description: "The AWS region"},
-		{name: "create_igw", typeRef: "bool", description: "Whether to create a new internet gateway or use the existing one in the VPC", defaultVal: &falseVal},
 		{name: "aws_security_group_ids", typeRef: "list(string)", description: "List of string of AWS Security Group Ids"},
 	}
 
@@ -296,7 +304,6 @@ func (s *BastionHostHCLService) generateInputsAutoTfvars(request types.BastionHo
 		"aws_region":             request.Region,
 		"public_subnet_cidr":     request.PublicSubnetCidr,
 		"vpc_id":                 request.VPCId,
-		"create_igw":             request.CreateIGW,
 		"aws_security_group_ids": request.SecurityGroupIds,
 	})
 }

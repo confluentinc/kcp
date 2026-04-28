@@ -12,11 +12,12 @@ import (
 )
 
 type BastionHostOpts struct {
-	Region           string
-	VPCId            string
-	PublicSubnetCidr string
-	CreateIGW        bool
-	SecurityGroupIds []string
+	Region                     string
+	VPCId                      string
+	PublicSubnetCidr           string
+	HasExistingInternetGateway bool
+	SecurityGroupIds           []string
+	OutputDir                  string
 }
 
 type BastionHostAssetGenerator struct {
@@ -30,7 +31,10 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 func (bh *BastionHostAssetGenerator) Run() error {
 	fmt.Printf("🚀 Generating bastion host environment assets\n")
 
-	outputDir := "bastion_host"
+	outputDir := bh.opts.OutputDir
+	if outputDir == "" {
+		outputDir = "bastion_host"
+	}
 	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
@@ -40,11 +44,11 @@ func (bh *BastionHostAssetGenerator) Run() error {
 	}
 
 	request := types.BastionHostRequest{
-		Region:           bh.opts.Region,
-		VPCId:            bh.opts.VPCId,
-		PublicSubnetCidr: bh.opts.PublicSubnetCidr,
-		CreateIGW:        bh.opts.CreateIGW,
-		SecurityGroupIds: bh.opts.SecurityGroupIds,
+		Region:                     bh.opts.Region,
+		VPCId:                      bh.opts.VPCId,
+		PublicSubnetCidr:           bh.opts.PublicSubnetCidr,
+		HasExistingInternetGateway: bh.opts.HasExistingInternetGateway,
+		SecurityGroupIds:           bh.opts.SecurityGroupIds,
 	}
 
 	hclService := hcl.NewBastionHostHCLService()

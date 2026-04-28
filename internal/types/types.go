@@ -251,11 +251,11 @@ type ReverseProxyRequest struct {
 }
 
 type BastionHostRequest struct {
-	Region           string   `json:"region"`
-	VPCId            string   `json:"vpc_id"`
-	PublicSubnetCidr string   `json:"public_subnet_cidr"`
-	CreateIGW        bool     `json:"create_igw"`
-	SecurityGroupIds []string `json:"security_group_ids"`
+	Region                     string   `json:"region"`
+	VPCId                      string   `json:"vpc_id"`
+	PublicSubnetCidr           string   `json:"public_subnet_cidr"`
+	HasExistingInternetGateway bool     `json:"has_existing_internet_gateway"`
+	SecurityGroupIds           []string `json:"security_group_ids"`
 }
 
 type MigrateSchemasRequest struct {
