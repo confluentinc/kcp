@@ -1055,6 +1055,29 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestNewStateFromFile_SchemaMismatch_NoVersion_SurfacesFriendlyError(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Valid JSON with no version stamp but a type mismatch that will fail deserialisation
+	brokenSchema := `{"msk_sources":["unexpected","array"]}`
+	if _, err := tmpFile.WriteString(brokenSchema); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	_, err = NewStateFromFile(tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "state file could not be loaded") {
+		t.Errorf("expected friendly error for versionless schema mismatch, got: %v", err)
+	}
+}
+
 func TestNewStateFromFile_EmptyVersion_Succeeds(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {

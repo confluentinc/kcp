@@ -122,8 +122,11 @@ func NewStateFromFile(stateFile string) (*State, error) {
 				Version string `json:"version"`
 			} `json:"kcp_build_info"`
 		}
-		if jsonErr := json.Unmarshal(file, &raw); jsonErr == nil && raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-			return nil, fmt.Errorf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please review the file for errors or consider re-exporting it)", err, raw.KcpBuildInfo.Version, build_info.Version)
+		if jsonErr := json.Unmarshal(file, &raw); jsonErr == nil {
+			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
+				return nil, fmt.Errorf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please review the file for errors or consider re-exporting it)", err, raw.KcpBuildInfo.Version, build_info.Version)
+			}
+			return nil, fmt.Errorf("state file could not be loaded: %v — please review the file for errors or consider re-exporting it", err)
 		}
 		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
 	}
