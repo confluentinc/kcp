@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ConnectAPIClient interface {
@@ -32,7 +31,9 @@ type SelfManagedConnectorsScannerOpts struct {
 	StateFile      string
 	State          *types.State
 	ConnectRestURL string
+	SourceType     string
 	ClusterArn     string
+	ClusterID      string
 	AuthMethod     types.ConnectAuthMethod
 	SaslScramAuth  types.ConnectSaslScramAuth
 	TlsAuth        types.ConnectTlsAuth
@@ -41,7 +42,9 @@ type SelfManagedConnectorsScannerOpts struct {
 type SelfManagedConnectorsScanner struct {
 	StateFile  string
 	State      *types.State
+	SourceType string
 	ClusterArn string
+	ClusterID  string
 	client     ConnectAPIClient
 }
 
@@ -61,7 +64,9 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) *Sel
 	return &SelfManagedConnectorsScanner{
 		StateFile:  opts.StateFile,
 		State:      opts.State,
+		SourceType: opts.SourceType,
 		ClusterArn: opts.ClusterArn,
+		ClusterID:  opts.ClusterID,
 		client:     connectClient,
 	}
 }
@@ -104,7 +109,8 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("connect API client not initialized")
 	}
 
-	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	clusterName := GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
+	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
@@ -114,7 +120,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	fmt.Printf("  🔍 Found %d connectors\n", len(connectorNames))
 
 	if len(connectorNames) == 0 {
-		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", clusterName)
 		return nil
 	}
 
@@ -138,7 +144,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", clusterName)
 	return nil
 }
 
@@ -262,19 +268,38 @@ func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
 }
 
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
-	if s.State.MSKSources == nil {
-		return fmt.Errorf("no MSK sources found in state file")
-	}
-	for i, region := range s.State.MSKSources.Regions {
-		for j, cluster := range region.Clusters {
-			if cluster.Arn == s.ClusterArn {
-				s.State.MSKSources.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
-				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", utils.ExtractClusterNameFromArn(s.ClusterArn)))
+	clusterName := GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
 
+	switch s.SourceType {
+	case "msk":
+		if s.State.MSKSources == nil {
+			return fmt.Errorf("no MSK sources found in state file")
+		}
+		for i, region := range s.State.MSKSources.Regions {
+			for j, cluster := range region.Clusters {
+				if cluster.Arn == s.ClusterArn {
+					s.State.MSKSources.Regions[i].Clusters[j].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
+					slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", clusterName))
+					return nil
+				}
+			}
+		}
+		return fmt.Errorf("cluster with ARN %s not found in state file", s.ClusterArn)
+
+	case "osk":
+		if s.State.OSKSources == nil {
+			return fmt.Errorf("no OSK sources found in state file")
+		}
+		for i, cluster := range s.State.OSKSources.Clusters {
+			if cluster.ID == s.ClusterID {
+				s.State.OSKSources.Clusters[i].KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
+				slog.Info(fmt.Sprintf("✅ updated cluster %s with self-managed connector information", clusterName))
 				return nil
 			}
 		}
-	}
+		return fmt.Errorf("OSK cluster with ID %s not found in state file", s.ClusterID)
 
-	return fmt.Errorf("cluster with ARN %s not found in state file", s.ClusterArn)
+	default:
+		return fmt.Errorf("unsupported source type: %s", s.SourceType)
+	}
 }
