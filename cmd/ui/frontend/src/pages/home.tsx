@@ -40,7 +40,7 @@ export const Home = () => {
         // Backend falls back to "default" session if session-specific state not found
         const response = await apiClient.state.getState(sessionId)
 
-        if (response && response.sources) {
+        if (response && response.sources && response.sources.length > 0) {
           setKcpState(response)
 
           // Auto-select summary view if we have MSK sources with regions

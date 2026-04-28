@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -140,7 +139,10 @@ func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 		t.Fatalf("failed to write state file: %v", err)
 	}
 
-	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	ui, err := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	ui.statesMutex.RLock()
 	_, loaded := ui.states["default"]
@@ -148,9 +150,6 @@ func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 
 	if !loaded {
 		t.Error("expected state to be pre-loaded into default session")
-	}
-	if ui.preloadError != "" {
-		t.Errorf("expected no preload error, got: %s", ui.preloadError)
 	}
 }
 
@@ -166,25 +165,25 @@ func TestNewUI_PreloadStateFile_VersionMismatch_Succeeds(t *testing.T) {
 		t.Fatalf("failed to write state file: %v", err)
 	}
 
-	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	ui, err := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	if err != nil {
+		t.Fatalf("unexpected error on version mismatch with deserialisable file: %v", err)
+	}
 
 	ui.statesMutex.RLock()
 	_, loaded := ui.states["default"]
 	ui.statesMutex.RUnlock()
 
 	if !loaded {
-		t.Error("expected state to be loaded on version mismatch — different versions are allowed when file is deseralisable")
-	}
-	if ui.preloadError != "" {
-		t.Errorf("expected no preload error on version mismatch, got: %s", ui.preloadError)
+		t.Error("expected state to be loaded on version mismatch — different versions are allowed when file is deserialisable")
 	}
 }
 
 func TestNewUI_PreloadStateFile_FileNotFound(t *testing.T) {
-	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: "/nonexistent/state.json"})
+	_, err := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: "/nonexistent/state.json"})
 
-	if ui.preloadError == "" {
-		t.Error("expected preloadError to be set for missing file")
+	if err == nil {
+		t.Error("expected error for missing state file, got nil")
 	}
 }
 
@@ -200,7 +199,10 @@ func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 		t.Fatalf("failed to write state file: %v", err)
 	}
 
-	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	ui, err := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	e := echo.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/state", nil)
@@ -215,8 +217,8 @@ func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 	}
 }
 
-func TestGetState_PreloadFileNotFound_ReturnsGenericLoadError(t *testing.T) {
-	ui := NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: "/nonexistent/state.json"})
+func TestGetState_NoStateLoaded_ReturnsNotFound(t *testing.T) {
+	ui := newTestUI()
 	e := echo.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/state", nil)
@@ -226,15 +228,7 @@ func TestGetState_PreloadFileNotFound_ReturnsGenericLoadError(t *testing.T) {
 	if err := ui.handleGetState(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("expected status 422, got %d", rec.Code)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to parse response body: %v", err)
-	}
-	if resp["error"] != "State file could not be loaded" {
-		t.Errorf("expected error 'State file could not be loaded', got: %v", resp["error"])
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
 	}
 }

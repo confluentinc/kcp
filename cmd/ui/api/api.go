@@ -33,14 +33,12 @@ type UI struct {
 	migrationInfraHCLService   hcl.MigrationInfraGenerator
 	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
-	port              string
-	states            map[string]*types.State // Session-based state storage (key: sessionId)
-	statesMutex       sync.RWMutex            // Protects concurrent access to states map
-	preloadError      string                  // Set when --state-file preload fails, surfaced via /state
-	preloadErrorType  string                  // Machine-readable error type for /state response
+	port        string
+	states      map[string]*types.State // Session-based state storage (key: sessionId)
+	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) (*UI, error) {
 	ui := &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
@@ -55,20 +53,16 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 	if opts.StateFile != "" {
 		state, err := types.NewStateFromFile(opts.StateFile)
 		if err != nil {
-			slog.Error("Failed to load state file", "path", opts.StateFile, "error", err)
-			ui.preloadError = err.Error()
-			if strings.Contains(err.Error(), "state file version mismatch") {
-				ui.preloadErrorType = "version_mismatch"
-			} else {
-				ui.preloadErrorType = "load_error"
-			}
-		} else {
-			ui.states["default"] = state
-			slog.Info("Pre-loaded state file", "path", opts.StateFile)
+			return nil, fmt.Errorf("failed to load state file %q: %w", opts.StateFile, err)
+		}
+		ui.states["default"] = state
+		slog.Info("Pre-loaded state file", "path", opts.StateFile)
+		if state.MSKSources == nil && state.OSKSources == nil {
+			slog.Warn("State file contains no sources — run a scan to populate it", "path", opts.StateFile)
 		}
 	}
 
-	return ui
+	return ui, nil
 }
 
 // getStateBySession extracts the sessionId from the request and retrieves the corresponding state
@@ -167,16 +161,6 @@ func (ui *UI) handleGetState(c echo.Context) error {
 	}
 	ui.statesMutex.Unlock()
 	if !exists {
-		if ui.preloadError != "" {
-			errorField := "State file could not be loaded"
-			if ui.preloadErrorType == "version_mismatch" {
-				errorField = "State file version mismatch"
-			}
-			return c.JSON(http.StatusUnprocessableEntity, map[string]any{
-				"error":   errorField,
-				"message": ui.preloadError,
-			})
-		}
 		return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
 	}
 	processedState := ui.reportService.ProcessState(*state)

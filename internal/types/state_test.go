@@ -1026,8 +1026,8 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "state file version mismatch") {
-		t.Errorf("expected version mismatch error from fallback, got: %v", err)
+	if !strings.Contains(err.Error(), "state file could not be loaded") {
+		t.Errorf("expected load error from fallback, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "0.5.0") {
 		t.Errorf("expected error to contain file version, got: %v", err)
