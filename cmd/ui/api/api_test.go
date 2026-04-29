@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,6 +112,37 @@ func TestHandleUploadState_EmptyVersion_Succeeds(t *testing.T) {
 	ui.statesMutex.RUnlock()
 	if !stored {
 		t.Error("expected versionless state to be stored, but it was not")
+	}
+}
+
+func TestHandleUploadState_SchemaMismatch_WithVersion_ReturnsVersionContext(t *testing.T) {
+	ui := newTestUI()
+	e := echo.New()
+
+	// Valid JSON with a version stamp but msk_sources as an array (type mismatch)
+	body := `{"kcp_build_info":{"version":"0.5.0"},"msk_sources":["unexpected","array"]}`
+	req := httptest.NewRequest(http.MethodPost, "/upload-state?sessionId=test-session", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleUploadState(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", rec.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response body: %v", err)
+	}
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "0.5.0") {
+		t.Errorf("expected message to contain file version, got: %s", msg)
+	}
+	if !strings.Contains(msg, build_info.Version) {
+		t.Errorf("expected message to contain running version, got: %s", msg)
 	}
 }
 

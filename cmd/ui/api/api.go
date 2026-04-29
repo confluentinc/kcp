@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -287,8 +290,28 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Failed to read request body",
+			"message": err.Error(),
+		})
+	}
+
 	var state types.State
-	if err := c.Bind(&state); err != nil {
+	if err := json.Unmarshal(body, &state); err != nil {
+		// Unmarshal failed — try to extract version from raw bytes to give a more actionable error
+		var raw struct {
+			KcpBuildInfo struct {
+				Version string `json:"version"`
+			} `json:"kcp_build_info"`
+		}
+		if jsonErr := json.Unmarshal(body, &raw); jsonErr == nil && raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "State file could not be loaded",
+				"message": fmt.Sprintf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please try loading the state file with KCP version %q or recreating the state file with KCP version %q)", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version, build_info.Version),
+			})
+		}
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
 			"message": err.Error(),
