@@ -80,7 +80,12 @@ export const Home = () => {
     reader.onload = async (e) => {
       try {
         const content = e.target?.result as string
-        const parsed = JSON.parse(content) as StateUploadRequest
+        let parsed: StateUploadRequest
+        try {
+          parsed = JSON.parse(content) as StateUploadRequest
+        } catch {
+          throw new Error('The file could not be read — it contains invalid JSON. Please recreate the state file using kcp discover or kcp scan clusters.')
+        }
 
         // Lightweight check: confirm the file is a JSON object before uploading
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
