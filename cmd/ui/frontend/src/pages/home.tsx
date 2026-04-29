@@ -40,7 +40,7 @@ export const Home = () => {
         // Backend falls back to "default" session if session-specific state not found
         const response = await apiClient.state.getState(sessionId)
 
-        if (response && response.sources) {
+        if (response && response.sources && response.sources.length > 0) {
           setKcpState(response)
 
           // Auto-select summary view if we have MSK sources with regions
@@ -55,6 +55,8 @@ export const Home = () => {
               selectOSKCluster(firstCluster.id)
             }
           }
+        } else if (response) {
+          setError('State file contains no sources. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it, then reload.')
         }
       } catch {
         // No pre-loaded state, user will upload manually
@@ -78,10 +80,15 @@ export const Home = () => {
     reader.onload = async (e) => {
       try {
         const content = e.target?.result as string
-        const parsed = JSON.parse(content) as StateUploadRequest
+        let parsed: StateUploadRequest
+        try {
+          parsed = JSON.parse(content) as StateUploadRequest
+        } catch {
+          throw new Error('The file could not be read — it contains invalid JSON. Please recreate the state file using kcp discover or kcp scan clusters.')
+        }
 
-        // Validate that we have a State object with sources (msk_sources or osk_sources)
-        if (parsed && typeof parsed === 'object' && ('msk_sources' in parsed || 'osk_sources' in parsed)) {
+        // Lightweight check: confirm the file is a JSON object before uploading
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           // Call the /upload-state endpoint to process the discovery data
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
@@ -106,7 +113,7 @@ export const Home = () => {
             throw new Error('Invalid response format from server')
           }
         } else {
-          throw new Error('Invalid file format. Expected a KCP state file with msk_sources or osk_sources.')
+          throw new Error('Invalid file format. Expected a KCP state file.')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to process file')
