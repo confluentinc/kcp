@@ -96,6 +96,10 @@ func GenerateInputsAutoTfvars(values map[string]any) string {
 		case string:
 			rootBody.SetAttributeValue(varName, cty.StringVal(v))
 		case []string:
+			if len(v) == 0 {
+				rootBody.SetAttributeValue(varName, cty.ListValEmpty(cty.String))
+				break
+			}
 			ctyValues := make([]cty.Value, len(v))
 			for i, s := range v {
 				ctyValues[i] = cty.StringVal(s)

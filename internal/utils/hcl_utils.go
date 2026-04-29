@@ -92,6 +92,26 @@ func TokensForList(items []string) hclwrite.Tokens {
 	return tokens
 }
 
+// TokensForBracketedList wraps zero or more pre-built token sequences in [ ... ],
+// comma-separated. Use when list elements are arbitrary expressions (templates,
+// references, function calls) rather than the bare identifiers / quoted strings
+// covered by TokensForList / TokensForStringList.
+func TokensForBracketedList(items ...hclwrite.Tokens) hclwrite.Tokens {
+	tokens := hclwrite.Tokens{
+		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
+	}
+
+	for i, item := range items {
+		if i > 0 {
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(", ")})
+		}
+		tokens = append(tokens, item...)
+	}
+
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
+	return tokens
+}
+
 // TokensForStringList creates tokens for a list of quoted strings (e.g., ["item1", "item2"])
 func TokensForStringList(items []string) hclwrite.Tokens {
 	values := make([]cty.Value, len(items))
