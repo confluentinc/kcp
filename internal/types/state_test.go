@@ -944,7 +944,7 @@ func TestNewStateFromFile_VersionMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	state := &State{KcpBuildInfo: KcpBuildInfo{Version: build_info.Version}}
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
@@ -1012,7 +1012,7 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Valid JSON with a readable version but msk_sources as an array (type mismatch
 	// against the current struct which expects an object)
@@ -1020,7 +1020,7 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if _, err := tmpFile.WriteString(brokenSchema); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	_, err = NewStateFromFile(tmpFile.Name())
 	if err == nil {
@@ -1039,12 +1039,12 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	if _, err := tmpFile.WriteString("not valid json {{{"); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	_, err = NewStateFromFile(tmpFile.Name())
 	if err == nil {
@@ -1060,14 +1060,14 @@ func TestNewStateFromFile_SchemaMismatch_NoVersion_SurfacesFriendlyError(t *test
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Valid JSON with no version stamp but a type mismatch that will fail deserialisation
 	brokenSchema := `{"msk_sources":["unexpected","array"]}`
 	if _, err := tmpFile.WriteString(brokenSchema); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	_, err = NewStateFromFile(tmpFile.Name())
 	if err == nil {
