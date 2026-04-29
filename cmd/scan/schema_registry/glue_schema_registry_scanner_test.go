@@ -30,7 +30,7 @@ func TestGlueSchemaRegistryScanner_Run(t *testing.T) {
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write initial state
-	_, err = tmpFile.WriteString(`{"regions":[],"schema_registries":null}`)
+	_, err = tmpFile.WriteString(`{"regions":[],"schema_registries":null,"kcp_build_info":{"version":"0.0.0-localdev","commit":"unknown","date":"unknown"}}`)
 	require.NoError(t, err)
 	require.NoError(t, tmpFile.Close())
 
@@ -86,7 +86,7 @@ func TestGlueSchemaRegistryScanner_Run_UpsertExisting(t *testing.T) {
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write state with existing Glue registry
-	_, err = tmpFile.WriteString(`{"regions":[],"schema_registries":{"aws_glue":[{"registry_name":"my-registry","region":"us-east-1","registry_arn":"old-arn","schemas":[]}]}}`)
+	_, err = tmpFile.WriteString(`{"regions":[],"schema_registries":{"aws_glue":[{"registry_name":"my-registry","region":"us-east-1","registry_arn":"old-arn","schemas":[]}]},"kcp_build_info":{"version":"0.0.0-localdev","commit":"unknown","date":"unknown"}}`)
 	require.NoError(t, err)
 	require.NoError(t, tmpFile.Close())
 
@@ -125,7 +125,7 @@ func TestGlueSchemaRegistryScanner_Run_RegistryNotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	_, err = tmpFile.WriteString(`{"regions":[]}`)
+	_, err = tmpFile.WriteString(`{"regions":[],"kcp_build_info":{"version":"0.0.0-localdev","commit":"unknown","date":"unknown"}}`)
 	require.NoError(t, err)
 	require.NoError(t, tmpFile.Close())
 
