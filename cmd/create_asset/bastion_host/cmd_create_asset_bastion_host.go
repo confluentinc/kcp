@@ -104,12 +104,12 @@ func preRunCreateBastionHost(cmd *cobra.Command, args []string) error {
 func runCreateBastionHost(cmd *cobra.Command, args []string) error {
 	opts, err := parseBastionHostOpts()
 	if err != nil {
-		return fmt.Errorf("failed to parse bastion host opts: %v", err)
+		return fmt.Errorf("failed to parse bastion host opts: %w", err)
 	}
 
 	bastionHostAssetGenerator := NewBastionHostAssetGenerator(*opts)
 	if err := bastionHostAssetGenerator.Run(); err != nil {
-		return fmt.Errorf("failed to create bastion host assets: %v", err)
+		return fmt.Errorf("failed to create bastion host assets: %w", err)
 	}
 
 	return nil

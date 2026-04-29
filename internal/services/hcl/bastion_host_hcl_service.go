@@ -8,7 +8,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -60,7 +59,7 @@ func (s *BastionHostHCLService) generateMainTf(request types.BastionHostRequest)
 
 	// locals { ec2_instance_connect_ip = [ for e in jsondecode(...) : e.ip_prefix if ... ] }
 	localsBlock := rootBody.AppendNewBlock("locals", nil)
-	localsBlock.Body().SetAttributeRaw("ec2_instance_connect_ip", rawExpr(
+	localsBlock.Body().SetAttributeRaw("ec2_instance_connect_ip", utils.TokensForResourceReference(
 		`[
     for e in jsondecode(data.http.ec2_instance_connect.response_body)["prefixes"] : e.ip_prefix if e.region == "${var.aws_region}" && e.service == "EC2_INSTANCE_CONNECT"
   ]`,
@@ -161,7 +160,7 @@ func (s *BastionHostHCLService) generateMainTf(request types.BastionHostRequest)
 
 	// resource "aws_security_group" "bastion_host_security_group"
 	sgBlock := rootBody.AppendNewBlock("resource", []string{"aws_security_group", "bastion_host_security_group"})
-	sgBlock.Body().SetAttributeRaw("count", rawExpr("length(var.aws_security_group_ids) == 0 ? 1 : 0"))
+	sgBlock.Body().SetAttributeRaw("count", utils.TokensForResourceReference("length(var.aws_security_group_ids) == 0 ? 1 : 0"))
 	SetVarRef(sgBlock.Body(), "vpc_id", "vpc_id")
 	sgBlock.Body().AppendNewline()
 
@@ -169,7 +168,7 @@ func (s *BastionHostHCLService) generateMainTf(request types.BastionHostRequest)
 	ingress.Body().SetAttributeValue("from_port", cty.NumberIntVal(0))
 	ingress.Body().SetAttributeValue("to_port", cty.NumberIntVal(22))
 	ingress.Body().SetAttributeValue("protocol", cty.StringVal("TCP"))
-	ingress.Body().SetAttributeRaw("cidr_blocks", listOfTokens(
+	ingress.Body().SetAttributeRaw("cidr_blocks", utils.TokensForBracketedList(
 		utils.TokensForStringTemplate("${local.ec2_instance_connect_ip[0]}"),
 	))
 	sgBlock.Body().AppendNewline()
@@ -191,7 +190,7 @@ func (s *BastionHostHCLService) generateMainTf(request types.BastionHostRequest)
 	SetResourceRef(instanceBlock.Body(), "ami", "data.aws_ami.amzn_linux_ami.id")
 	instanceBlock.Body().SetAttributeValue("instance_type", cty.StringVal("t2.medium"))
 	SetResourceRef(instanceBlock.Body(), "subnet_id", "aws_subnet.public_subnet.id")
-	instanceBlock.Body().SetAttributeRaw("vpc_security_group_ids", rawExpr(
+	instanceBlock.Body().SetAttributeRaw("vpc_security_group_ids", utils.TokensForResourceReference(
 		"length(var.aws_security_group_ids) == 0 ? [aws_security_group.bastion_host_security_group[0].id] : var.aws_security_group_ids",
 	))
 	SetResourceRef(instanceBlock.Body(), "key_name", "aws_key_pair.deployer.key_name")
@@ -262,35 +261,12 @@ func (s *BastionHostHCLService) generateProvidersTf() string {
 }
 
 func (s *BastionHostHCLService) generateVariablesTf() string {
-	f := hclwrite.NewEmptyFile()
-	rootBody := f.Body()
-
-	type variableSpec struct {
-		name        string
-		typeRef     string
-		description string
-		defaultVal  *cty.Value
-	}
-
-	specs := []variableSpec{
-		{name: "vpc_id", typeRef: "string", description: "The ID of the VPC"},
-		{name: "public_subnet_cidr", typeRef: "string", description: "CIDR block for the public subnet"},
-		{name: "aws_region", typeRef: "string", description: "The AWS region"},
-		{name: "aws_security_group_ids", typeRef: "list(string)", description: "List of string of AWS Security Group Ids"},
-	}
-
-	for _, spec := range specs {
-		varBlock := rootBody.AppendNewBlock("variable", []string{spec.name})
-		body := varBlock.Body()
-		body.SetAttributeValue("description", cty.StringVal(spec.description))
-		body.SetAttributeRaw("type", utils.TokensForResourceReference(spec.typeRef))
-		if spec.defaultVal != nil {
-			body.SetAttributeValue("default", *spec.defaultVal)
-		}
-		rootBody.AppendNewline()
-	}
-
-	return string(f.Bytes())
+	return GenerateVariablesTf([]types.TerraformVariable{
+		{Name: "vpc_id", Description: "The ID of the VPC", Type: "string"},
+		{Name: "public_subnet_cidr", Description: "CIDR block for the public subnet", Type: "string"},
+		{Name: "aws_region", Description: "The AWS region", Type: "string"},
+		{Name: "aws_security_group_ids", Description: "List of string of AWS Security Group Ids", Type: "list(string)"},
+	})
 }
 
 func (s *BastionHostHCLService) generateOutputsTf() string {
@@ -306,23 +282,4 @@ func (s *BastionHostHCLService) generateInputsAutoTfvars(request types.BastionHo
 		"vpc_id":                 request.VPCId,
 		"aws_security_group_ids": request.SecurityGroupIds,
 	})
-}
-
-// rawExpr emits a single TokenIdent containing the literal expression bytes.
-// Use for Terraform expressions hclwrite cannot model directly (ternaries,
-// list comprehensions, length()/jsondecode() calls, etc.).
-func rawExpr(expr string) hclwrite.Tokens {
-	return hclwrite.Tokens{
-		&hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte(expr)},
-	}
-}
-
-// listOfTokens wraps the given token sequence in [ ... ] brackets.
-func listOfTokens(inner hclwrite.Tokens) hclwrite.Tokens {
-	tokens := hclwrite.Tokens{
-		&hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
-	}
-	tokens = append(tokens, inner...)
-	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
-	return tokens
 }
