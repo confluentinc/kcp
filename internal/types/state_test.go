@@ -1050,7 +1050,7 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to unmarshal state") {
+	if !strings.Contains(err.Error(), "failed to unmarshal state file") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }

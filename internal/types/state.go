@@ -126,9 +126,9 @@ func NewStateFromFile(stateFile string) (*State, error) {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
 				return nil, fmt.Errorf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please try loading the state file with KCP version %q or recreating the state file with KCP version %q)", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version, build_info.Version)
 			}
-			return nil, fmt.Errorf("state file could not be loaded: %v — please review the file for errors or consider re-exporting it", err)
+			return nil, fmt.Errorf("state file could not be loaded: %v — please recreate the state file using kcp discover or kcp scan clusters", err)
 		}
-		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal state file: %v — please recreate the state file using kcp discover or kcp scan clusters", err)
 	}
 
 	return &state, nil
