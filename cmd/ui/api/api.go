@@ -3,14 +3,15 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -40,7 +41,7 @@ type UI struct {
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) (*UI, error) {
 	ui := &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
@@ -53,21 +54,18 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 
 	// Pre-load state file if provided
 	if opts.StateFile != "" {
-		data, err := os.ReadFile(opts.StateFile)
+		state, err := types.NewStateFromFile(opts.StateFile)
 		if err != nil {
-			slog.Error("Failed to read state file", "path", opts.StateFile, "error", err)
-		} else {
-			var state types.State
-			if err := json.Unmarshal(data, &state); err != nil {
-				slog.Error("Failed to parse state file", "path", opts.StateFile, "error", err)
-			} else {
-				ui.states["default"] = &state
-				slog.Info("Pre-loaded state file", "path", opts.StateFile)
-			}
+			return nil, fmt.Errorf("failed to load state file %q: %w", opts.StateFile, err)
+		}
+		ui.states["default"] = state
+		slog.Info("Pre-loaded state file", "path", opts.StateFile)
+		if state.MSKSources == nil && state.OSKSources == nil {
+			slog.Warn("State file contains no sources — run a scan to populate it", "path", opts.StateFile)
 		}
 	}
 
-	return ui
+	return ui, nil
 }
 
 // getStateBySession extracts the sessionId from the request and retrieves the corresponding state
@@ -105,29 +103,7 @@ func (ui *UI) Run() error {
 	})
 
 	// Get pre-loaded state endpoint
-	e.GET("/state", func(c echo.Context) error {
-		sessionId := c.QueryParam("sessionId")
-		if sessionId == "" {
-			sessionId = "default"
-		}
-		ui.statesMutex.Lock()
-		state, exists := ui.states[sessionId]
-		// Fall back to "default" session if specific session not found
-		if !exists && sessionId != "default" {
-			state, exists = ui.states["default"]
-			if exists {
-				// Copy default state to the requesting session so subsequent
-				// requests (uploads, asset generation) work with this session ID
-				ui.states[sessionId] = state
-			}
-		}
-		ui.statesMutex.Unlock()
-		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
-		}
-		processedState := ui.reportService.ProcessState(*state)
-		return c.JSON(http.StatusOK, processedState)
-	})
+	e.GET("/state", ui.handleGetState)
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
@@ -168,6 +144,30 @@ func parseDateRange(c echo.Context) (*time.Time, *time.Time, error) {
 		endTime = &parsed
 	}
 	return startTime, endTime, nil
+}
+
+func (ui *UI) handleGetState(c echo.Context) error {
+	sessionId := c.QueryParam("sessionId")
+	if sessionId == "" {
+		sessionId = "default"
+	}
+	ui.statesMutex.Lock()
+	state, exists := ui.states[sessionId]
+	// Fall back to "default" session if specific session not found
+	if !exists && sessionId != "default" {
+		state, exists = ui.states["default"]
+		if exists {
+			// Copy default state to the requesting session so subsequent
+			// requests (uploads, asset generation) work with this session ID
+			ui.states[sessionId] = state
+		}
+	}
+	ui.statesMutex.Unlock()
+	if !exists {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
+	}
+	processedState := ui.reportService.ProcessState(*state)
+	return c.JSON(http.StatusOK, processedState)
 }
 
 func (ui *UI) handleGetMetrics(c echo.Context) error {
@@ -290,8 +290,28 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Failed to read request body",
+			"message": err.Error(),
+		})
+	}
+
 	var state types.State
-	if err := c.Bind(&state); err != nil {
+	if err := json.Unmarshal(body, &state); err != nil {
+		// Unmarshal failed — try to extract version from raw bytes to give a more actionable error
+		var raw struct {
+			KcpBuildInfo struct {
+				Version string `json:"version"`
+			} `json:"kcp_build_info"`
+		}
+		if jsonErr := json.Unmarshal(body, &raw); jsonErr == nil && raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "State file could not be loaded",
+				"message": fmt.Sprintf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please try loading the state file with KCP version %q or recreating the state file with KCP version %q)", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version, build_info.Version),
+			})
+		}
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
 			"message": err.Error(),
