@@ -23,8 +23,8 @@ var (
 func NewInitCmd() *cobra.Command {
 	initCmd := &cobra.Command{
 		Use:   "init",
-		Short: "Scaffold an osk-credentials.yaml template for Open Source Kafka",
-		Long: `Scaffold an osk-credentials.yaml template for Open Source Kafka (OSK) clusters.
+		Short: "Scaffold a credentials file template for Open Source Kafka",
+		Long: `Scaffold a credentials file template for Open Source Kafka (OSK) clusters.
 
 This command writes a commented template that covers all five supported auth methods
 (SASL/SCRAM, SASL/PLAIN, mTLS, unauthenticated TLS, unauthenticated plaintext) and the
