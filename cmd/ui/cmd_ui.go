@@ -17,10 +17,28 @@ var (
 
 func NewUICmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "ui",
-		Short:         "Start the UI",
-		Long:          `Starts the kcp UI.`,
-		Example:       `kcp ui --port 8080`,
+		Use:   "ui",
+		Short: "Start the UI",
+		Long: `Starts the kcp UI — a local web app for visualising and analysing your kcp-state.json file.
+
+The UI provides:
+
+- An interactive dashboard for exploring discovered clusters, topics, ACLs and connectors.
+- State-file upload via the browser, or pre-loaded with ` + "`--state-file`" + `.
+- Cost analysis (visual reports and per-region breakdowns).
+- Metrics visualisation (interactive charts for cluster metrics).
+- A TCO calculator for total cost-of-ownership analysis.
+- A wizard for generating target-infra, migration-infra and migration scripts.
+
+Once started, the UI is available at ` + "`http://localhost:<port>`" + ` (default: ` + "`http://localhost:5556`" + `). Everything runs locally — your data is never sent to an external service.`,
+		Example: `  # Default port (5556)
+  kcp ui
+
+  # Custom port
+  kcp ui --port 8080
+
+  # Pre-load a state file on launch
+  kcp ui --state-file kcp-state.json`,
 		SilenceErrors: true,
 		PreRunE:       preRunUI,
 		RunE:          runStartUI,

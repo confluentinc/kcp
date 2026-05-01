@@ -34,7 +34,25 @@ func NewScanClientInventoryCmd() *cobra.Command {
 Prerequisites:
 
 - The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
-- Broker logs must be delivered to S3.`,
+- Broker logs must be delivered to S3.
+
+**Output:**
+
+The command writes a ` + "`discovered_clients`" + ` array to the cluster's entry in the state file. Each entry is a unique combination of ` + "`clientID + topic + role + auth + principal`" + `, e.g.:
+
+` + "```json" + `
+"discovered_clients": [
+  {
+    "composite_key": "stock-levels-producer|stock-levels|Producer|IAM|arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
+    "client_id": "stock-levels-producer",
+    "role": "Producer",
+    "topic": "stock-levels",
+    "auth": "IAM",
+    "principal": "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/gsmith@confluent.io",
+    "timestamp": "2025-08-21T13:01:28Z"
+  }
+]
+` + "```",
 		Example: `  kcp scan client-inventory \
       --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
       --state-file kcp-state.json`,

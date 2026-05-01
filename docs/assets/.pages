@@ -2,5 +2,6 @@ nav:
 
 - Home: README.md
 - command-reference
+- osk-configuration
 - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
 - gateway-switchover
