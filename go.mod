@@ -15,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.46.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/charmbracelet/bubbletea v1.2.4
-	github.com/charmbracelet/glamour v0.10.0
+	github.com/charmbracelet/glamour/v2 v2.0.0
 	github.com/confluentinc/confluent-kafka-go/v2 v2.12.0
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/fatih/color v1.18.0
