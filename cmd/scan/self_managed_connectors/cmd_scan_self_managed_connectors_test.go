@@ -38,7 +38,7 @@ func TestParseScanSelfManagedConnectorsOpts_MSK_Success(t *testing.T) {
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
 	assert.NoError(t, err)
-	assert.Equal(t, "msk", opts.SourceType)
+	assert.Equal(t, types.SourceTypeMSK, opts.SourceType)
 	assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123", opts.ClusterArn)
 	assert.Equal(t, "", opts.ClusterID)
 }
@@ -69,7 +69,7 @@ func TestParseScanSelfManagedConnectorsOpts_OSK_Success(t *testing.T) {
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
 	assert.NoError(t, err)
-	assert.Equal(t, "osk", opts.SourceType)
+	assert.Equal(t, types.SourceTypeOSK, opts.SourceType)
 	assert.Equal(t, "", opts.ClusterArn)
 	assert.Equal(t, "production-kafka", opts.ClusterID)
 }
@@ -155,7 +155,7 @@ func TestParseScanSelfManagedConnectorsOpts_ExplicitSourceType_MSK(t *testing.T)
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
 	assert.NoError(t, err)
-	assert.Equal(t, "msk", opts.SourceType)
+	assert.Equal(t, types.SourceTypeMSK, opts.SourceType)
 	assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123", opts.ClusterArn)
 	assert.Equal(t, "", opts.ClusterID)
 
@@ -190,7 +190,7 @@ func TestParseScanSelfManagedConnectorsOpts_ExplicitSourceType_OSK(t *testing.T)
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
 	assert.NoError(t, err)
-	assert.Equal(t, "osk", opts.SourceType)
+	assert.Equal(t, types.SourceTypeOSK, opts.SourceType)
 	assert.Equal(t, "", opts.ClusterArn)
 	assert.Equal(t, "my-cluster", opts.ClusterID)
 
@@ -254,7 +254,7 @@ func TestParseScanSelfManagedConnectorsOpts_ExplicitSourceType_OverridesAutoDete
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
 	assert.NoError(t, err)
-	assert.Equal(t, "osk", opts.SourceType)
+	assert.Equal(t, types.SourceTypeOSK, opts.SourceType)
 	assert.Equal(t, "", opts.ClusterArn)
 	assert.Equal(t, "arn:custom:id", opts.ClusterID)
 

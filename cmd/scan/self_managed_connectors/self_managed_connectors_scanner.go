@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ConnectAPIClient interface {
@@ -31,7 +32,7 @@ type SelfManagedConnectorsScannerOpts struct {
 	StateFile      string
 	State          *types.State
 	ConnectRestURL string
-	SourceType     string
+	SourceType     types.SourceType
 	ClusterArn     string
 	ClusterID      string
 	AuthMethod     types.ConnectAuthMethod
@@ -42,7 +43,7 @@ type SelfManagedConnectorsScannerOpts struct {
 type SelfManagedConnectorsScanner struct {
 	StateFile  string
 	State      *types.State
-	SourceType string
+	SourceType types.SourceType
 	ClusterArn string
 	ClusterID  string
 	client     ConnectAPIClient
@@ -109,7 +110,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("connect API client not initialized")
 	}
 
-	clusterName := GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
+	clusterName := utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
 	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
 
 	connectorNames, err := s.client.ListConnectors()
@@ -268,10 +269,10 @@ func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
 }
 
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
-	clusterName := GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
+	clusterName := utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
 
 	switch s.SourceType {
-	case "msk":
+	case types.SourceTypeMSK:
 		if s.State.MSKSources == nil {
 			return fmt.Errorf("no MSK sources found in state file")
 		}
@@ -286,7 +287,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 		}
 		return fmt.Errorf("cluster with ARN %s not found in state file", s.ClusterArn)
 
-	case "osk":
+	case types.SourceTypeOSK:
 		if s.State.OSKSources == nil {
 			return fmt.Errorf("no OSK sources found in state file")
 		}

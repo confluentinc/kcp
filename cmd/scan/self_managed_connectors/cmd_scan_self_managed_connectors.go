@@ -61,7 +61,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
-		Hidden:        true,
+		Hidden:        false,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -191,7 +191,7 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 	}
 
 	// Determine source type: use explicit flag if provided, otherwise auto-detect from cluster ID format
-	var detectedSourceType string
+	var detectedSourceType types.SourceType
 	var clusterArn string
 	var oskClusterID string
 
@@ -200,18 +200,18 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		if sourceType != "msk" && sourceType != "osk" {
 			return nil, fmt.Errorf("invalid source-type: %s (must be 'msk' or 'osk')", sourceType)
 		}
-		detectedSourceType = sourceType
+		detectedSourceType = types.SourceType(sourceType)
 	} else {
 		// Auto-detect from cluster ID format
 		if strings.HasPrefix(clusterID, "arn:") {
-			detectedSourceType = "msk"
+			detectedSourceType = types.SourceTypeMSK
 		} else {
-			detectedSourceType = "osk"
+			detectedSourceType = types.SourceTypeOSK
 		}
 	}
 
 	// Set cluster identifiers based on source type
-	if detectedSourceType == "msk" {
+	if detectedSourceType == types.SourceTypeMSK {
 		clusterArn = clusterID
 	} else {
 		oskClusterID = clusterID
@@ -219,12 +219,12 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 
 	// Validate cluster exists in state based on detected source type
 	switch detectedSourceType {
-	case "msk":
+	case types.SourceTypeMSK:
 		_, err = state.GetClusterByArn(clusterArn)
 		if err != nil {
 			return nil, fmt.Errorf("cluster not found in state file: %v", err)
 		}
-	case "osk":
+	case types.SourceTypeOSK:
 		_, err = state.GetOSKClusterByID(oskClusterID)
 		if err != nil {
 			return nil, fmt.Errorf("cluster not found in state file: %v", err)
