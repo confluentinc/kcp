@@ -16,7 +16,21 @@ func NewUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update the kcp binary to the latest version",
-		Long:  `Updates the kcp binary to the latest version by downloading latest release from github and installing`,
+		Long: `Updates the kcp binary to the latest version by downloading the latest release from GitHub and installing it. A backup of the current binary is created automatically and restored on failure.
+
+Behaviour:
+
+- Detects the current version and compares against the latest GitHub release.
+- With ` + "`--check-only`" + `, reports available updates without installing.
+- Prompts for confirmation unless ` + "`--force`" + ` is set.
+- Skips the update check for development builds unless ` + "`--force`" + ` is specified.
+
+**Permission requirements:** if kcp lives in a system directory (e.g. ` + "`/usr/local/bin`" + `), the command checks permissions early and exits with an error if sudo is required. Re-run with sudo, preserving any flags:
+
+` + "```bash" + `
+sudo kcp update
+sudo kcp update --force
+` + "```",
 		Example: `  # Check for updates (no install)
   kcp update --check-only
 

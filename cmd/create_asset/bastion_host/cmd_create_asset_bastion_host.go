@@ -22,7 +22,78 @@ func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd := &cobra.Command{
 		Use:   "bastion-host",
 		Short: "Create assets for the bastion host",
-		Long:  "Create Terraform assets for deploying a bastion host in AWS within an existing VPC. Use this when your MSK cluster is not reachable from the machine running kcp and you do not already have a jump server.",
+		Long: `Create Terraform assets for deploying a bastion host in AWS within an existing VPC. Use this when your MSK cluster is not reachable from the machine running kcp and you do not already have a jump server.
+
+If you already have a bastion host inside the same VPC as the MSK cluster, you can skip this command — copy the kcp binary onto your existing bastion and run subsequent commands from there.
+
+**Output:**
+
+The command creates a ` + "`bastion_host/`" + ` directory containing Terraform configurations that provision:
+
+- **EC2 instance** — t2.medium running Amazon Linux 2023, public IP, SSH on port 22, pre-configured with migration tools.
+- **Public subnet** in the specified VPC.
+- **Security group** allowing SSH access — created automatically when ` + "`--security-group-ids`" + ` is not provided.
+- **SSH key pair** for secure access.
+- **Route table** for internet connectivity.
+- **Internet gateway** — only when ` + "`--create-igw`" + ` is set.
+
+**New bastion host architecture (this command):**
+
+` + "```" + `
+┌──────────────────────────────────────────────────────────────────┐
+│                     User's Local Machine                         │
+│                                                                  │
+│  ┌─────────────────┐          ┌────────────────────┐             │
+│  │  migration CLI  │ ───────► │ Bastion Host Asset │             │
+│  └─────────────────┘          └─────────┬──────────┘             │
+└─────────────────────────────────────────┼────────────────────────┘
+                                          |
+                                          | Internet
+                                          |
+┌─────────────────────────────────────────┼────────────────────────┐
+│                           AWS VPC       |                        │
+│                                         ▼                        │
+│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────┐  │
+│  │   MSK Cluster   │    │  New Jump        │    │   Internet  │  │
+│  │                 │    │  Server          │    │   Gateway   │  │
+│  │  ┌───────────┐  │    │                  │    │             │  │
+│  │  │  Broker 1 │  │    │  ┌─────────────┐ │    │             │  │
+│  │  └───────────┘  │    │  │  Deployed   │ │    │             │  │
+│  │  ┌───────────┐  │    │  │migration CLI│ │    │             │  │
+│  │  │  Broker 2 │  │◄──►│  └─────────────┘ │    │             │  │
+│  │  └───────────┘  │    │                  │    │             │  │
+│  │  ┌───────────┐  │    │                  │    │             │  │
+│  │  │  Broker 3 │  │    │                  │    │             │  │
+│  │  └───────────┘  │    │                  │    │             │  │
+│  └─────────────────┘    └──────────────────┘    └─────────────┘  │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+` + "```" + `
+
+**Existing bastion host architecture (skip this command):**
+
+If you already have a bastion host inside the MSK VPC, copy the kcp binary onto it and run kcp commands from there. The end-state architecture looks like:
+
+` + "```" + `
+┌─────────────────────────────────────────────────────────────────────┐
+│                           AWS VPC                                   │
+│                                                                     │
+│  ┌─────────────────┐    ┌──────────────────────┐    ┌─────────────┐ │
+│  │   MSK Cluster   │    │ Existing Bastion     │    │   Internet  │ │
+│  │                 │    │ Host                 │    │   Gateway   │ │
+│  │  ┌───────────┐  │    │                      │    │             │ │
+│  │  │  Broker 1 │  │    │  ┌───────────────┐   │    │             │ │
+│  │  └───────────┘  │    │  │    Deployed   │   │    │             │ │
+│  │  ┌───────────┐  │    │  │ migration CLI │   │    │             │ │
+│  │  │  Broker 2 │  │◄──►│  └───────────────┘   │    │             │ │
+│  │  └───────────┘  │    │                      │    │             │ │
+│  │  ┌───────────┐  │    │                      │    │             │ │
+│  │  │  Broker 3 │  │    │                      │    │             │ │
+│  │  └───────────┘  │    │                      │    │             │ │
+│  └─────────────────┘    └──────────────────────┘    └─────────────┘ │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+` + "```",
 		Example: `  # Provision a new bastion in an existing VPC with an existing security group
   kcp create-asset bastion-host \
       --region us-east-1 \

@@ -14,8 +14,6 @@ KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations
 
 Download the `kcp` binary for your platform from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest). Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).
 
-Extract the archive, place the `kcp` binary somewhere on your `PATH`, and run `kcp version` to verify.
-
 ### Picking the right architecture
 
 If you're unsure whether to download the `amd64` or `arm64` build:
@@ -23,6 +21,45 @@ If you're unsure whether to download the `amd64` or `arm64` build:
 - **macOS**: run `uname -m` — `arm64` means Apple Silicon (M1/M2/M3/M4); `x86_64` means Intel (use `amd64`).
 - **Linux**: run `uname -m` — `aarch64` maps to `arm64`; `x86_64` maps to `amd64`.
 - **Windows**: open _System Information_ and check _System type_, or run `echo %PROCESSOR_ARCHITECTURE%` in cmd — `ARM64` maps to `arm64`; `AMD64` maps to `amd64`. Only `amd64` is currently published for Windows.
+
+### Linux / macOS
+
+Resolve the latest tag and pick your platform:
+
+```shell
+LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
+  | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+# Pick one:
+PLATFORM=darwin_arm64    # Apple Silicon
+# PLATFORM=darwin_amd64  # Intel Mac
+# PLATFORM=linux_amd64
+# PLATFORM=linux_arm64
+```
+
+Download, extract, and verify:
+
+```shell
+curl -L -o kcp_${LATEST_TAG}.tar.gz \
+  "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}.tar.gz"
+
+tar -xzf kcp_${LATEST_TAG}.tar.gz
+chmod +x ./kcp/kcp
+./kcp/kcp version
+```
+
+To run `kcp` from anywhere, move the binary onto your `PATH`:
+
+```shell
+sudo mv ./kcp/kcp /usr/local/bin/kcp
+kcp version
+```
+
+### Windows
+
+Download `kcp_windows_amd64.exe` (single executable) or `kcp_windows_amd64.zip` (packaged archive) from the [releases page](https://github.com/confluentinc/kcp/releases/latest). If you take the zip, extract it and run `kcp.exe`. Optionally move `kcp.exe` to a folder on your `PATH` so you can run `kcp` from any terminal.
+
+Verify with `kcp version`.
 
 ## Authentication
 
@@ -92,3 +129,5 @@ The full CLI reference is generated directly from the Cobra command definitions 
 
 - [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md)
 - [Gateway Switchover Examples](gateway-switchover/index.md)
+- [OSK Configuration → OSK credentials](osk-configuration/osk-credentials.md) — schema and worked examples for `osk-credentials.yaml`
+- [OSK Configuration → Metrics collection](osk-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for OSK metrics
