@@ -243,6 +243,49 @@ export class MigrationErrorBoundary extends Component<
 }
 
 /**
+ * Error boundary specifically for the SQL Workbench section
+ * Provides section-specific error handling and recovery
+ */
+export class WorkbenchErrorBoundary extends Component<
+  { children: ReactNode },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Workbench section error:', error, errorInfo)
+  }
+
+  resetErrorBoundary = () => {
+    this.setState({ hasError: false, error: null })
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <SectionErrorFallback
+          title="Error in SQL Workbench"
+          description="Something went wrong in the SQL Workbench. You can try resetting this section or switch to another tab."
+          icon="⚡"
+          error={this.state.error}
+          onReset={this.resetErrorBoundary}
+          resetLabel="Reset Workbench"
+        />
+      )
+    }
+
+    return this.props.children
+  }
+}
+
+/**
  * Error boundary specifically for the TCO Inputs section
  * Provides section-specific error handling and recovery
  */
