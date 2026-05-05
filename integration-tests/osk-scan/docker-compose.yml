@@ -151,14 +151,16 @@ services:
         done
 
         # Create a sample connector for testing
-        echo "Creating sample file source connector..."
+        echo "Creating sample MirrorHeartbeat connector..."
         curl -X POST http://localhost:8083/connectors -H "Content-Type: application/json" -d '{
-          "name": "test-file-source",
+          "name": "test-heartbeat",
           "config": {
-            "connector.class": "org.apache.kafka.connect.file.FileStreamSourceConnector",
+            "connector.class": "org.apache.kafka.connect.mirror.MirrorHeartbeatConnector",
             "tasks.max": "1",
-            "file": "/tmp/test-input.txt",
-            "topic": "test-connect-topic"
+            "source.cluster.alias": "source",
+            "target.cluster.alias": "target",
+            "source.cluster.bootstrap.servers": "osk-kafka:29092",
+            "target.cluster.bootstrap.servers": "osk-kafka:29092"
           }
         }' || true
 
