@@ -42,9 +42,9 @@ pre-computed fields including `OneMinuteRate`, `FiveMinuteRate` and
 EWMA samples are highly correlated, so a min/max/average over them
 under-states the true variance in traffic.
 
-Instead, `kcp` reads the `Count` field — a monotonic counter of total bytes
-(or messages) since broker start — and computes the actual rate over each
-sample interval:
+For the **Jolokia** backend, `kcp` reads the `Count` field — a monotonic
+counter of total bytes (or messages) since broker start — and computes the
+actual rate over each sample interval:
 
 ```
 rate = (Count_current - Count_previous) / elapsed_seconds
@@ -52,6 +52,10 @@ rate = (Count_current - Count_previous) / elapsed_seconds
 
 This produces independent data points with real variance, accurately reflecting
 traffic over each interval.
+
+The **Prometheus** backend achieves the same result using PromQL's `rate()`
+function, which computes per-second rates from counters stored in Prometheus
+(see [Prometheus PromQL queries](#prometheus-promql-queries) below).
 
 ## Scan duration and poll interval
 
@@ -91,6 +95,33 @@ Configured under the `jolokia:` block in `osk-credentials.yaml`:
 
 Prometheus uses the same three modes via its own `auth` and `tls` sub-blocks.
 See the [`osk-credentials.yaml` reference](osk-credentials.md) for the full schema.
+
+## Prometheus PromQL queries
+
+Your Prometheus instance must be scraping Kafka broker metrics — typically via a
+[JMX Exporter](https://github.com/prometheus/jmx_exporter) — for the queries
+below to return data. `kcp` submits one query per metric listed in
+[Metrics collected](#metrics-collected) above:
+
+| Metric                  | PromQL query                                                                  |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `BytesInPerSec`         | `sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[<window>]))`    |
+| `BytesOutPerSec`        | `sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[<window>]))`   |
+| `MessagesInPerSec`      | `sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[<window>]))` |
+| `PartitionCount`        | `sum(kafka_server_replicamanager_partitioncount)`                             |
+| `GlobalPartitionCount`  | `sum(kafka_server_replicamanager_partitioncount)`                             |
+| `ClientConnectionCount` | `sum(kafka_server_socketservermetrics_connection_count)`                      |
+| `TotalLocalStorageUsage`| `sum(kafka_log_log_size) / (1024*1024*1024)`                                 |
+
+`<window>` is a rate window automatically selected to be at least 4× the query
+step (minimum `5m`). The step itself is derived from `--metrics-range` as
+described in [Scan duration and poll interval](#scan-duration-and-poll-interval).
+
+These metric names (`kafka_server_brokertopicmetrics_*`,
+`kafka_server_replicamanager_*`, etc.) are the defaults produced by the
+Prometheus JMX Exporter with a standard Kafka configuration. If your exporter
+uses custom relabelling rules that rename these metrics, the queries will return
+empty results.
 
 ## Worked examples
 
