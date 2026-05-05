@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	jmx "github.com/confluentinc/kcp/internal/services/jmx"
@@ -68,7 +69,21 @@ func NewScanClustersCmd() *cobra.Command {
 	scanClustersCmd := &cobra.Command{
 		Use:   "clusters",
 		Short: "Scan Kafka clusters using the Kafka Admin API",
-		Long:  "Scans MSK or OSK clusters to discover topics, ACLs, and other metadata via Kafka Admin API",
+		Long: `Scan MSK or OSK clusters to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
+
+Source-specific notes:
+
+- ` + "`--source-type msk`" + ` reads cluster connection details from the ` + "`msk-credentials.yaml`" + ` file produced by ` + "`kcp discover`" + `. SCRAM is forced to SHA-512 (the only mechanism MSK supports).
+- ` + "`--source-type osk`" + ` reads from a hand-authored ` + "`osk-credentials.yaml`" + ` file. SASL/SCRAM defaults to SHA-256 — set ` + "`auth_method.sasl_scram.mechanism: SHA512`" + ` if your cluster requires SHA-512. The full schema and worked examples are documented at [OSK Configuration → OSK credentials](../../osk-configuration/osk-credentials.md).
+
+Metrics collection (OSK only):
+
+- ` + "`--metrics jolokia`" + ` polls each broker's Jolokia HTTP endpoint live for the duration set by ` + "`--metrics-duration`" + ` (interval: ` + "`--metrics-interval`" + `, default 10s).
+- ` + "`--metrics prometheus`" + ` queries a Prometheus server for historical metrics over ` + "`--metrics-range`" + ` (e.g. 7d, 30d).
+
+Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
+
+If your Connect cluster uses the default ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topic names and the credentials have read permission on them, kcp also discovers self-managed connectors and their state.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
@@ -214,6 +229,13 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	slog.Info("clusters to scan", "count", len(clusters), "source", sourceType)
 	for _, cluster := range clusters {
 		slog.Info("cluster", "name", cluster.Name, "id", cluster.UniqueID)
+	}
+
+	// OSK-specific docs pointer — link to the version of the docs that
+	// matches this binary (build_info.DocsURL() resolves to /dev/ for
+	// development builds and /<version>/ for release builds).
+	if sourceType == "osk" {
+		fmt.Printf("\nℹ️  OSK credentials file format & metrics options: %sosk-configuration/\n", build_info.DocsURL())
 	}
 
 	// Perform scan
