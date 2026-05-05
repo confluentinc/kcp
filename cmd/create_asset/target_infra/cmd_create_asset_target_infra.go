@@ -1,7 +1,6 @@
 package targetinfra
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -228,14 +227,9 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 	if stateFile != "" {
 		slog.Debug("reading state file", "file", stateFile)
 
-		file, err := os.ReadFile(stateFile)
+		state, err := types.NewStateFromFile(stateFile)
 		if err != nil {
-			return fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
-		}
-
-		var state types.State
-		if err := json.Unmarshal(file, &state); err != nil {
-			return fmt.Errorf("failed to parse statefile JSON: %w", err)
+			return err
 		}
 
 		cluster, err := state.GetClusterByArn(sourceClusterId)

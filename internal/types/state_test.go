@@ -1098,3 +1098,61 @@ func TestNewStateFromFile_EmptyVersion_Succeeds(t *testing.T) {
 		t.Errorf("expected empty version to be preserved, got: %s", loaded.KcpBuildInfo.Version)
 	}
 }
+
+func TestNewStateFromBytes_ValidJSON(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"}}`)
+	state, err := NewStateFromBytes(data)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if state.KcpBuildInfo.Version != build_info.Version {
+		t.Errorf("expected version %q, got %q", build_info.Version, state.KcpBuildInfo.Version)
+	}
+}
+
+func TestNewStateFromBytes_SchemaMismatch_WithVersion(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"0.5.0"},"msk_sources":["unexpected","array"]}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "0.5.0") {
+		t.Errorf("expected error to contain file version, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), build_info.Version) {
+		t.Errorf("expected error to contain running version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_SchemaMismatch_NoVersion(t *testing.T) {
+	data := []byte(`{"msk_sources":["unexpected","array"]}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "state file could not be loaded") {
+		t.Errorf("expected friendly error, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_InvalidJSON(t *testing.T) {
+	data := []byte(`not valid json {{{`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to unmarshal state file") {
+		t.Errorf("expected unmarshal error, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":""}}`)
+	state, err := NewStateFromBytes(data)
+	if err != nil {
+		t.Fatalf("expected success for empty version, got error: %v", err)
+	}
+	if state.KcpBuildInfo.Version != "" {
+		t.Errorf("expected empty version, got: %s", state.KcpBuildInfo.Version)
+	}
+}

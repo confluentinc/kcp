@@ -120,7 +120,7 @@ interface AppState {
 
   // Actions
   getSessionId: () => string
-  setKcpState: (state: ProcessedState) => void
+  setKcpState: (state: ProcessedState | null) => void
   selectSummary: () => void
   selectRegion: (regionName: string) => void
   selectCluster: (regionName: string, clusterArn: string, preselectedMetric?: string) => void
