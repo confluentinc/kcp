@@ -83,7 +83,7 @@ Metrics collection (OSK only):
 
 Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
 
-If your Connect cluster uses the default ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topic names and the credentials have read permission on them, kcp also discovers self-managed connectors and their state.`,
+If there is a Connect cluster and it uses the default ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topic names and the credentials have read permission on them, kcp also discovers self-managed connectors, their configs and state.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
