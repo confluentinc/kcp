@@ -24,34 +24,9 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	migrateSchemasCmd := &cobra.Command{
 		Use:   "migrate-schemas",
 		Short: "Create assets for the migrate schemas",
-		Long: `Create assets to enable the migration of schemas to Confluent Cloud. Supports both Confluent Schema Registry (` + "`--url`" + `) and AWS Glue Schema Registry (` + "`--glue-registry`" + `) sources.
+		Long: `Create assets to enable the migration of schemas to Confluent Cloud. Supports both Confluent Schema Registry (` + "`--url`" + ` — generates Schema Exporter resources) and AWS Glue Schema Registry (` + "`--glue-registry`" + ` — generates ` + "`confluent_schema`" + ` resources).
 
-**Output (Confluent Schema Registry source):**
-
-The command creates a ` + "`migrate_schemas/`" + ` directory containing:
-
-- ` + "`main.tf`" + ` — ` + "`confluent_schema_exporter`" + ` resources that continuously sync schemas from the source Schema Registry to Confluent Cloud.
-- ` + "`variables.tf`" + ` — input variable definitions for source and destination Schema Registry credentials.
-- ` + "`inputs.auto.tfvars`" + ` — auto-populated variable values from the kcp state file.
-
-By default the exporter syncs all subjects (` + "`:*:`" + `) with context type ` + "`NONE`" + `.
-
-**Output (AWS Glue Schema Registry source):**
-
-The command creates a ` + "`migrate_schemas/`" + ` directory containing:
-
-- Per-schema ` + "`.tf`" + ` files — each defines a ` + "`confluent_subject_config`" + ` (compatibility ` + "`NONE`" + `) and one ` + "`confluent_schema`" + ` per version with ` + "`depends_on`" + ` chains for ordered registration.
-- ` + "`variables.tf`" + ` — input variable definitions for Confluent Cloud Schema Registry credentials.
-- ` + "`inputs.auto.tfvars`" + ` — auto-populated variable values.
-- ` + "`schemas/`" + ` — schema definition files referenced via ` + "`file()`" + ` from the Terraform resources.
-
-**Next steps:**
-
-1. ` + "`cd migrate_schemas`" + `
-2. Review and customise the generated Terraform.
-3. ` + "`terraform init`" + `
-4. ` + "`terraform plan`" + ` to preview the changes.
-5. ` + "`terraform apply`" + ` to create the Schema Exporters or schema resources.`,
+Output is written to ` + "`migrate_schemas/`" + ` (override with ` + "`--output-dir`" + `). After review, run ` + "`terraform init && terraform plan && terraform apply`" + ` from that directory.`,
 		Example: `  # From a Confluent Schema Registry (uses schema exporter resources)
   kcp create-asset migrate-schemas \
       --state-file kcp-state.json \

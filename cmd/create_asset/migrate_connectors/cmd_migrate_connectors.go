@@ -19,7 +19,7 @@ This command translates MSK Connect and self-managed Kafka Connect connector con
 **Prerequisites:**
 
 - A provisioned Confluent Cloud environment and target cluster.
-- A Cloud API key/secret with the ` + "`Cloud Resource Management`" + ` scope. The translation step calls the ` + "`.../translate/config`" + ` Confluent Cloud API endpoint to convert each self-managed connector config to its fully-managed equivalent.`,
+- A Cloud API key/secret with the correct cluster scope. The translation step calls the ` + "`.../translate/config`" + ` Confluent Cloud API endpoint to convert each self-managed connector config to its fully-managed equivalent.`,
 		SilenceErrors: true,
 	}
 

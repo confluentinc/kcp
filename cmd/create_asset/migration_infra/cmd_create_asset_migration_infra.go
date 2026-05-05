@@ -64,17 +64,7 @@ Type options:
 4. Private MSK endpoints — Jump Cluster (SASL/SCRAM)
 5. Private MSK endpoints — Jump Cluster (IAM, MSK only)
 
-> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for Enterprise clusters. Dedicated clusters with private MSK endpoints must use Jump Clusters (Type 4 or 5). Dedicated clusters with public MSK endpoints can use Type 1.
-
-**Output:**
-
-The command creates a directory (default: ` + "`migration-infra/`" + `) containing Terraform that provisions, depending on the chosen ` + "`--type`" + `:
-
-- **Jump Cluster Setup Host** (Types 4 & 5) — EC2 instance that bootstraps the Confluent Platform jump cluster.
-- **N Jump Cluster broker nodes** (Types 4 & 5) — EC2 instances hosting the Confluent Platform jump cluster brokers, one per source broker.
-- **Networking** (Types 2-5) — NAT gateway, Elastic IPs, subnets, security groups, route tables and associations.
-- **Private Link** (Types 2-5) — VPC connectivity between the source VPC and Confluent Cloud (consumer-side endpoint or provider-side endpoint service depending on type).
-- **Confluent Cloud cluster link** (all types) — connects the source-side bridge to the Confluent Cloud target cluster.`,
+> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for Enterprise clusters. Dedicated clusters with private MSK endpoints must use Jump Clusters (Type 4 or 5). Dedicated clusters with public MSK endpoints can use Type 1.`,
 		Example: `  # Type 4 — Jump Cluster with SASL/SCRAM, against a private MSK
   kcp create-asset migration-infra \
       --state-file kcp-state.json \

@@ -19,18 +19,9 @@ func NewUICmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Start the UI",
-		Long: `Starts the kcp UI — a local web app for visualising and analysing your kcp-state.json file.
+		Long: `Starts the kcp UI — a local web app for visualising and analysing kcp-state.json (clusters, costs, metrics, TCO) and for generating migration assets via a guided wizard.
 
-The UI provides:
-
-- An interactive dashboard for exploring discovered clusters, topics, ACLs and connectors.
-- State-file upload via the browser, or pre-loaded with ` + "`--state-file`" + `.
-- Cost analysis (visual reports and per-region breakdowns).
-- Metrics visualisation (interactive charts for cluster metrics).
-- A TCO calculator for total cost-of-ownership analysis.
-- A wizard for generating target-infra, migration-infra and migration scripts.
-
-Once started, the UI is available at ` + "`http://localhost:<port>`" + ` (default: ` + "`http://localhost:5556`" + `). Everything runs locally — your data is never sent to an external service.`,
+Runs entirely locally on ` + "`http://localhost:<port>`" + ` (default ` + "`5556`" + `); no data leaves your machine.`,
 		Example: `  # Default port (5556)
   kcp ui
 
