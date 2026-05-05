@@ -88,6 +88,22 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-osk-scan
 
+  - name: 'kafka connect scan tests'
+    dependencies: ['resolve frontend dependencies']
+    run:
+      when: "change_in(['/cmd/scan/self_managed_connectors/', '/internal/types/types.go', '/internal/types/state.go', '/internal/utils/cluster_display.go', '/integration-tests/osk-scan/docker-compose.yml', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+    task:
+      prologue:
+        commands:
+          # keytool (from JDK) is required for TLS certificate generation
+          - sem-version java 17
+      jobs:
+        - name: 'kafka connect scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-kafka-connect
+
   - name: 'schema registry scan tests'
     dependencies: ['resolve frontend dependencies']
     run:

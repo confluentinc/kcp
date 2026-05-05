@@ -103,6 +103,69 @@ services:
         cub kafka-ready -b osk-kafka:29092 1 60
         kafka-console-consumer --bootstrap-server osk-kafka:29092 --topic test-topic-1 --group osk-test-consumer > /dev/null
 
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    hostname: osk-kafka-connect
+    container_name: kcp-test-osk-kafka-connect
+    profiles:
+      - connect
+    depends_on:
+      - kafka
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'osk-kafka:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: 'connect-cluster'
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for Kafka to be ready..."
+        cub kafka-ready -b osk-kafka:29092 1 120
+
+        echo "Starting Kafka Connect..."
+        /etc/confluent/docker/run &
+        CONNECT_PID=$$!
+
+        echo "Waiting for Connect to start..."
+        MAX_WAIT=60
+        WAIT_TIME=0
+        while [ $$WAIT_TIME -lt $$MAX_WAIT ]; do
+          if curl -s http://localhost:8083/ > /dev/null 2>&1; then
+            echo "Connect is ready"
+            break
+          fi
+          sleep 2
+          WAIT_TIME=$$((WAIT_TIME + 2))
+        done
+
+        # Create a sample connector for testing
+        echo "Creating sample MirrorHeartbeat connector..."
+        curl -X POST http://localhost:8083/connectors -H "Content-Type: application/json" -d '{
+          "name": "test-heartbeat",
+          "config": {
+            "connector.class": "org.apache.kafka.connect.mirror.MirrorHeartbeatConnector",
+            "tasks.max": "1",
+            "source.cluster.alias": "source",
+            "target.cluster.alias": "target",
+            "source.cluster.bootstrap.servers": "osk-kafka:29092",
+            "target.cluster.bootstrap.servers": "osk-kafka:29092"
+          }
+        }' || true
+
+        wait $$CONNECT_PID
+
   kafka-jmx-auth:
     image: confluentinc/cp-kafka:7.6.0
     hostname: osk-kafka-jmx-auth
