@@ -24,7 +24,9 @@ func NewMigrateSchemasCmd() *cobra.Command {
 	migrateSchemasCmd := &cobra.Command{
 		Use:   "migrate-schemas",
 		Short: "Create assets for the migrate schemas",
-		Long:  "Create assets to enable the migration of schemas to Confluent Cloud.\nSupports both Confluent Schema Registry (--url) and AWS Glue Schema Registry (--glue-registry) sources.",
+		Long: `Create assets to enable the migration of schemas to Confluent Cloud. Supports both Confluent Schema Registry (` + "`--url`" + ` — generates Schema Exporter resources) and AWS Glue Schema Registry (` + "`--glue-registry`" + ` — generates ` + "`confluent_schema`" + ` resources).
+
+Output is written to ` + "`migrate_schemas/`" + ` (override with ` + "`--output-dir`" + `). After review, run ` + "`terraform init && terraform plan && terraform apply`" + ` from that directory.`,
 		Example: `  # From a Confluent Schema Registry (uses schema exporter resources)
   kcp create-asset migrate-schemas \
       --state-file kcp-state.json \
