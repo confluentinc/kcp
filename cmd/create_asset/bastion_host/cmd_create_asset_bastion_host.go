@@ -22,7 +22,11 @@ func NewBastionHostCmd() *cobra.Command {
 	bastionHostCmd := &cobra.Command{
 		Use:   "bastion-host",
 		Short: "Create assets for the bastion host",
-		Long:  "Create Terraform assets for deploying a bastion host in AWS within an existing VPC. Use this when your MSK cluster is not reachable from the machine running kcp and you do not already have a jump server.",
+		Long: `Create Terraform assets for deploying a bastion host in AWS within an existing VPC with the latest kcp binary pre-installed. Use this when your MSK cluster is not reachable from the machine running kcp and you do not already have a jump server.
+
+If you already have a bastion host inside the same VPC as the MSK cluster, you can skip this command — copy the kcp binary onto your existing bastion and run subsequent commands from there.
+
+The generated Terraform provisions an Amazon Linux 2023 EC2 instance with SSH access in a public subnet of the specified VPC, plus the supporting security group, key pair, and route table. Pass ` + "`--create-igw`" + ` if the VPC does not already have an Internet Gateway.`,
 		Example: `  # Provision a new bastion in an existing VPC with an existing security group
   kcp create-asset bastion-host \
       --region us-east-1 \

@@ -12,17 +12,44 @@ KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations
 
 ## Installation
 
-Download the `kcp` binary for your platform from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest). Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).
+> [!TIP]
+> **Recommended:** download the binary for your platform directly from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest), make it executable, and place it on your `PATH`. Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64).
 
-Extract the archive, place the `kcp` binary somewhere on your `PATH`, and run `kcp version` to verify.
+Run `uname -m` if you're unsure of your architecture: `arm64` / `aarch64` → `arm64` build, `x86_64` → `amd64` build. Apple Silicon Macs are `arm64`; older Intel Macs are `amd64`.
 
-### Picking the right architecture
+The tabs below show the equivalent terminal flow for headless or scripted installs.
 
-If you're unsure whether to download the `amd64` or `arm64` build:
+=== "macOS"
 
-- **macOS**: run `uname -m` — `arm64` means Apple Silicon (M1/M2/M3/M4); `x86_64` means Intel (use `amd64`).
-- **Linux**: run `uname -m` — `aarch64` maps to `arm64`; `x86_64` maps to `amd64`.
-- **Windows**: open _System Information_ and check _System type_, or run `echo %PROCESSOR_ARCHITECTURE%` in cmd — `ARM64` maps to `arm64`; `AMD64` maps to `amd64`. Only `amd64` is currently published for Windows.
+    ```shell
+    # Apple Silicon: PLATFORM=darwin_arm64. Intel: PLATFORM=darwin_amd64.
+    PLATFORM=darwin_arm64
+    LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
+      | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+    curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
+    chmod +x kcp
+    sudo mv kcp /usr/local/bin/kcp
+    kcp version
+    ```
+
+=== "Linux"
+
+    ```shell
+    # PLATFORM=linux_amd64 or linux_arm64.
+    PLATFORM=linux_amd64
+    LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
+      | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+    curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
+    chmod +x kcp
+    sudo mv kcp /usr/local/bin/kcp
+    kcp version
+    ```
+
+=== "Windows"
+
+    Download [`kcp_windows_amd64.exe`](https://github.com/confluentinc/kcp/releases/latest) from the releases page, move it onto a folder on your `PATH`, and verify with `kcp version`.
 
 ## Authentication
 
@@ -92,3 +119,5 @@ The full CLI reference is generated directly from the Cobra command definitions 
 
 - [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md)
 - [Gateway Switchover Examples](gateway-switchover/index.md)
+- [OSK Configuration → OSK credentials](osk-configuration/osk-credentials.md) — schema and worked examples for `osk-credentials.yaml`
+- [OSK Configuration → Metrics collection](osk-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for OSK metrics
