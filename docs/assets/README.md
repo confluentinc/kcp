@@ -12,54 +12,44 @@ KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations
 
 ## Installation
 
-Download the `kcp` binary for your platform from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest). Binaries are published for Linux, macOS, and Windows (amd64 and arm64 where applicable).
+> [!TIP]
+> **Recommended:** download the binary for your platform directly from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest), make it executable, and place it on your `PATH`. Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64).
 
-### Picking the right architecture
+Run `uname -m` if you're unsure of your architecture: `arm64` / `aarch64` → `arm64` build, `x86_64` → `amd64` build. Apple Silicon Macs are `arm64`; older Intel Macs are `amd64`.
 
-If you're unsure whether to download the `amd64` or `arm64` build:
+The tabs below show the equivalent terminal flow for headless or scripted installs.
 
-- **macOS**: run `uname -m` — `arm64` means Apple Silicon (M1/M2/M3/M4); `x86_64` means Intel (use `amd64`).
-- **Linux**: run `uname -m` — `aarch64` maps to `arm64`; `x86_64` maps to `amd64`.
-- **Windows**: open _System Information_ and check _System type_, or run `echo %PROCESSOR_ARCHITECTURE%` in cmd — `ARM64` maps to `arm64`; `AMD64` maps to `amd64`. Only `amd64` is currently published for Windows.
+=== "macOS"
 
-### Linux / macOS
+    ```shell
+    # Apple Silicon: PLATFORM=darwin_arm64. Intel: PLATFORM=darwin_amd64.
+    PLATFORM=darwin_arm64
+    LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
+      | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
-Resolve the latest tag and pick your platform:
+    curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
+    chmod +x kcp
+    sudo mv kcp /usr/local/bin/kcp
+    kcp version
+    ```
 
-```shell
-LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
-  | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+=== "Linux"
 
-# Pick one:
-PLATFORM=darwin_arm64    # Apple Silicon
-# PLATFORM=darwin_amd64  # Intel Mac
-# PLATFORM=linux_amd64
-# PLATFORM=linux_arm64
-```
+    ```shell
+    # PLATFORM=linux_amd64 or linux_arm64.
+    PLATFORM=linux_amd64
+    LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
+      | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
-Download, extract, and verify:
+    curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
+    chmod +x kcp
+    sudo mv kcp /usr/local/bin/kcp
+    kcp version
+    ```
 
-```shell
-curl -L -o kcp_${LATEST_TAG}.tar.gz \
-  "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}.tar.gz"
+=== "Windows"
 
-tar -xzf kcp_${LATEST_TAG}.tar.gz
-chmod +x ./kcp/kcp
-./kcp/kcp version
-```
-
-To run `kcp` from anywhere, move the binary onto your `PATH`:
-
-```shell
-sudo mv ./kcp/kcp /usr/local/bin/kcp
-kcp version
-```
-
-### Windows
-
-Download `kcp_windows_amd64.exe` (single executable) or `kcp_windows_amd64.zip` (packaged archive) from the [releases page](https://github.com/confluentinc/kcp/releases/latest). If you take the zip, extract it and run `kcp.exe`. Optionally move `kcp.exe` to a folder on your `PATH` so you can run `kcp` from any terminal.
-
-Verify with `kcp version`.
+    Download [`kcp_windows_amd64.exe`](https://github.com/confluentinc/kcp/releases/latest) from the releases page, move it onto a folder on your `PATH`, and verify with `kcp version`.
 
 ## Authentication
 
