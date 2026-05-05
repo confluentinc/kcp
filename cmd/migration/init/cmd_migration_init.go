@@ -64,7 +64,8 @@ fenced, and switchover gateway CRs, and writes the migration configuration to th
 
 The state file can then be used by 'kcp migration execute' to run the migration.
 
-All flags can be provided via environment variables (uppercase, with underscores).`,
+All flags can be provided via environment variables using uppercase names with underscores
+(e.g. ` + "`--cluster-api-key`" + ` → ` + "`CLUSTER_API_KEY`" + `, ` + "`--source-bootstrap`" + ` → ` + "`SOURCE_BOOTSTRAP`" + `).`,
 		Example: `  # MSK source with IAM auth
   kcp migration init \
       --k8s-namespace my-namespace \

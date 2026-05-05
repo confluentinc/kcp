@@ -24,7 +24,9 @@ func NewReportCostsCmd() *cobra.Command {
 	reportCostsCmd := &cobra.Command{
 		Use:   "costs",
 		Short: "Generate a report of costs for given region(s)",
-		Long:  "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`",
+		Long: "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`.\n\n" +
+			"`--region`, `--start`, and `--end` are all optional. If none are supplied, costs for every region in the state file over the last 31 full days are reported. If you supply `--start`, you must also supply `--end`.\n\n" +
+			"**Output:** writes a `cost_report_YYYY-MM-DD_HH-MM-SS.md` file in the current working directory with cost analysis for the selected regions and time period.",
 		Example: `  # Default: all regions in the state file for the last 31 days
   kcp report costs --state-file kcp-state.json
 
