@@ -81,7 +81,9 @@ Metrics collection (OSK only):
 - ` + "`--metrics jolokia`" + ` polls each broker's Jolokia HTTP endpoint live for the duration set by ` + "`--metrics-duration`" + ` (interval: ` + "`--metrics-interval`" + `, default 10s).
 - ` + "`--metrics prometheus`" + ` queries a Prometheus server for historical metrics over ` + "`--metrics-range`" + ` (e.g. 7d, 30d).
 
-Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.`,
+Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
+
+If your Connect cluster uses the default ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topic names and the credentials have read permission on them, kcp also discovers self-managed connectors and their state.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
