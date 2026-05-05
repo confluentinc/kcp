@@ -1,9 +1,7 @@
 package migrate_topics
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -113,14 +111,9 @@ func runMigrateTopics(cmd *cobra.Command, args []string) error {
 func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 	internalTopicsToInclude := []string{"__consumer_offsets"}
 
-	file, err := os.ReadFile(stateFile)
+	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read cluster file: %v", err)
-	}
-
-	var state types.State
-	if err := json.Unmarshal(file, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+		return nil, err
 	}
 
 	var kafkaAdminInfo *types.KafkaAdminClientInformation

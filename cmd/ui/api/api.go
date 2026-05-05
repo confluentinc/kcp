@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
-	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -298,32 +296,20 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
-	var state types.State
-	if err := json.Unmarshal(body, &state); err != nil {
-		// Unmarshal failed — try to extract version from raw bytes to give a more actionable error
-		var raw struct {
-			KcpBuildInfo struct {
-				Version string `json:"version"`
-			} `json:"kcp_build_info"`
-		}
-		if jsonErr := json.Unmarshal(body, &raw); jsonErr == nil && raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "State file could not be loaded",
-				"message": fmt.Sprintf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please try loading the state file with KCP version %q or recreating the state file with KCP version %q)", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version, build_info.Version),
-			})
-		}
+	state, err := types.NewStateFromBytes(body)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid request body",
+			"error":   "State file could not be loaded",
 			"message": err.Error(),
 		})
 	}
 
 	// Store state in map using session ID as key
 	ui.statesMutex.Lock()
-	ui.states[sessionId] = &state
+	ui.states[sessionId] = state
 	ui.statesMutex.Unlock()
 
-	processedState := ui.reportService.ProcessState(state)
+	processedState := ui.reportService.ProcessState(*state)
 
 	return c.JSON(http.StatusOK, processedState)
 }

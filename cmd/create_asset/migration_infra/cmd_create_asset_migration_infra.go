@@ -1,11 +1,9 @@
 package migration_infra
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -303,14 +301,9 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	targetType, _ := types.ToMigrationType(migrationInfraType)
 
-	file, err := os.ReadFile(stateFile)
+	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
-	}
-
-	var state types.State
-	if err := json.Unmarshal(file, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+		return nil, err
 	}
 
 	cluster, err := state.GetClusterByArn(clusterId)
@@ -493,14 +486,9 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	targetType, _ := types.ToMigrationType(migrationInfraType)
 
-	file, err := os.ReadFile(stateFile)
+	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
-	}
-
-	var state types.State
-	if err := json.Unmarshal(file, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+		return nil, err
 	}
 
 	oskCluster, err := state.GetOSKClusterByID(clusterId)
