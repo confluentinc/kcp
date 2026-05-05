@@ -14,7 +14,12 @@ func NewMigrateConnectorsCmd() *cobra.Command {
 		Short: "Migrate connectors to Confluent Cloud",
 		Long: `Migrate connectors to Confluent Cloud.
 
-This command translates self-managed connector configurations to Confluent Cloud compatible formats using the Confluent Cloud API.`,
+This command translates MSK Connect and self-managed Kafka Connect connector configurations into Confluent Cloud fully-managed connector resources, using Confluent Cloud's translation API.
+
+**Prerequisites:**
+
+- A provisioned Confluent Cloud environment and target cluster.
+- A Cloud API key/secret with the correct cluster scope. The translation step calls the ` + "`.../translate/config`" + ` Confluent Cloud API endpoint to convert each self-managed connector config to its fully-managed equivalent.`,
 		SilenceErrors: true,
 	}
 

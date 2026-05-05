@@ -24,7 +24,9 @@ func NewReportMetricsCmd() *cobra.Command {
 	reportMetricsCmd := &cobra.Command{
 		Use:   "metrics",
 		Short: "Generate a report of metrics for given cluster(s)",
-		Long:  "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover` or `kcp scan clusters`",
+		Long: "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover` or `kcp scan clusters`.\n\n" +
+			"`--start` and `--end` must be provided together if specified. If neither `--cluster-id` nor `--source-type` is given, metrics for all clusters (both MSK and OSK) are included. `--cluster-id` and `--source-type` are mutually exclusive.\n\n" +
+			"**Output:** writes a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file in the current working directory with metrics analysis for the selected clusters and time period.",
 		Example: `  # All clusters (MSK and OSK) in the state file
   kcp report metrics --state-file kcp-state.json
 
