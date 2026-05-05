@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/build_info"
+
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -84,7 +86,17 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		results, err := s.client.QueryRange(ctx, query, start, end, step)
 		if err != nil {
 			slog.Warn("Prometheus query failed, skipping metric", "label", mq.Label, "error", err)
+			fmt.Printf("   ⚠️  Query failed for %s: %v\n", mq.Label, err)
 			continue
+		}
+
+		dataPoints := 0
+		for _, r := range results {
+			dataPoints += len(r.Values)
+		}
+		if dataPoints == 0 {
+			slog.Warn("Prometheus query returned no data points", "label", mq.Label, "query", query)
+			fmt.Printf("   ⚠️  No data returned for %s — metric may not be exposed by your Prometheus exporter\n", mq.Label)
 		}
 
 		for _, result := range results {
@@ -101,6 +113,11 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 				valuesByLabel[mq.Label] = append(valuesByLabel[mq.Label], v)
 			}
 		}
+	}
+
+	if len(allMetrics) == 0 {
+		fmt.Printf("\n   ⚠️  No metrics data was collected from Prometheus. Ensure your Prometheus instance is scraping Kafka broker metrics.\n")
+		fmt.Printf("   See %sosk-configuration/metrics-collection/#prometheus-promql-queries for expected metric names.\n", build_info.DocsURL())
 	}
 
 	aggregates := calculateAggregates(valuesByLabel)
