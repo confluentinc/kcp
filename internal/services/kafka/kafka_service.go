@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -159,40 +160,50 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 
 func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) ([]types.SelfManagedConnector, error) {
 	const (
-		configTopicName = "connect-configs"
-		statusTopicName = "connect-status"
-		keyPrefix       = "connector-"
+		configTopicNameSuffix = "connect-configs"
+		statusTopicNameSuffix = "connect-status"
+		keyPrefix             = "connector-"
 	)
 
-	existingTopics := make(map[string]bool)
+	var configTopics, statusTopics []string
 	for _, topic := range topics {
-		existingTopics[topic.Name] = true
+		if strings.HasSuffix(topic.Name, configTopicNameSuffix) {
+			configTopics = append(configTopics, topic.Name)
+		}
+		if strings.HasSuffix(topic.Name, statusTopicNameSuffix) {
+			statusTopics = append(statusTopics, topic.Name)
+		}
 	}
 
-	if !existingTopics[configTopicName] {
-		slog.Debug("⏭️ skipping topic (does not exist or lacking permissions)", "topic", configTopicName, "clusterArn", ks.clusterArn)
+	if len(configTopics) == 0 {
+		slog.Debug("⏭️ no topics ending with suffix found", "suffix", configTopicNameSuffix, "clusterArn", ks.clusterArn)
 		return []types.SelfManagedConnector{}, nil
 	}
 
-	slog.Info("🔍 found connect-configs topic, attempting to read all connector configurations", "topic", configTopicName, "clusterArn", ks.clusterArn)
-	connectorConfigs, err := ks.client.GetAllMessagesWithKeyFilter(configTopicName, keyPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read connector configurations: %w", err)
+	connectorConfigs := make(map[string]string)
+	for _, configTopic := range configTopics {
+		slog.Info("🔍 found connect-configs topic, attempting to read all connector configurations", "topic", configTopic, "clusterArn", ks.clusterArn)
+		configs, err := ks.client.GetAllMessagesWithKeyFilter(configTopic, keyPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read connector configurations from %s: %w", configTopic, err)
+		}
+		for k, v := range configs {
+			connectorConfigs[k] = v
+		}
 	}
 
-	var connectorStatuses map[string]string
-	if existingTopics[statusTopicName] {
-		slog.Info("🔍 found connect-status topic, attempting to read connector status information", "topic", statusTopicName, "clusterArn", ks.clusterArn)
-		connectorStatuses, err = ks.client.GetConnectorStatusMessages(statusTopicName)
+	connectorStatuses := make(map[string]string)
+	for _, statusTopic := range statusTopics {
+		slog.Info("🔍 found connect-status topic, attempting to read connector status information", "topic", statusTopic, "clusterArn", ks.clusterArn)
+		statuses, err := ks.client.GetConnectorStatusMessages(statusTopic)
 		if err != nil {
-			slog.Warn("⚠️ failed to read connector status information", "topic", statusTopicName, "error", err)
-			connectorStatuses = make(map[string]string) // Continue with empty `connectorStatuses` map to avoid nil errors.
-		} else {
-			slog.Info("✅ successfully read connector status information", "topic", statusTopicName, "count", len(connectorStatuses))
+			slog.Warn("⚠️ failed to read connector status information", "topic", statusTopic, "error", err)
+			continue
 		}
-	} else {
-		slog.Debug("⏭️ skipping topic (does not exist or lacking permissions)", "topic", statusTopicName, "clusterArn", ks.clusterArn)
-		connectorStatuses = make(map[string]string)
+		slog.Info("✅ successfully read connector status information", "topic", statusTopic, "count", len(statuses))
+		for k, v := range statuses {
+			connectorStatuses[k] = v
+		}
 	}
 
 	connectors := []types.SelfManagedConnector{}
@@ -208,7 +219,6 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 			configMap = properties
 		}
 
-		// Removes the "connector-" prefix from the message key to get the actual connector name.
 		connectorName := connectorKey
 		if len(connectorKey) > len(keyPrefix) && connectorKey[:len(keyPrefix)] == keyPrefix {
 			connectorName = connectorKey[len(keyPrefix):]
@@ -219,7 +229,6 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 			Config: configMap,
 		}
 
-		// Attempts to retrieve the connector's status from the `connectorStatuses` map.
 		if statusJSON, exists := connectorStatuses[connectorName]; exists {
 			var statusMap map[string]any
 			if err := json.Unmarshal([]byte(statusJSON), &statusMap); err != nil {
@@ -237,6 +246,6 @@ func (ks *KafkaService) scanSelfManagedConnectors(topics []types.TopicDetails) (
 		connectors = append(connectors, connector)
 	}
 
-	slog.Info("✅ successfully read connector configurations", "topic", configTopicName, "clusterArn", ks.clusterArn, "count", len(connectors))
+	slog.Info("✅ successfully read connector configurations", "configTopics", configTopics, "clusterArn", ks.clusterArn, "count", len(connectors))
 	return connectors, nil
 }
