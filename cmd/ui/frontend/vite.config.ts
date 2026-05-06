@@ -18,6 +18,9 @@ export default defineConfig({
       typescript: true,
     }),
   ],
+  optimizeDeps: {
+    exclude: ['@duckdb/duckdb-wasm'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
