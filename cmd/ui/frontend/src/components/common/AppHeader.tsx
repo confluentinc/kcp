@@ -45,63 +45,65 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null, ta
   }
 
   return (
-    <Header
-      variant="bordered"
-      sticky
-    >
-      <HeaderSection position="left">
-        <img
-          src="/images/logo-light.svg"
-          alt="KCP Logo"
-          className="h-6 w-6"
-        />
-        <HeaderTitle className={darkMode ? '' : 'text-white'}>KCP</HeaderTitle>
-        {tabs && tabs.length > 0 && (
-          <nav className="flex items-center ml-6 gap-1">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => onTabChange?.(tab.id)}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors duration-150 border-b-2 ${
-                  activeTab === tab.id
-                    ? 'text-white border-accent'
-                    : 'text-white/60 border-transparent hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        )}
-      </HeaderSection>
-      <HeaderSection position="right">
-        {error && (
-          <div className="mr-4 p-2 bg-destructive/10 border border-destructive/20 rounded-md">
-            <div className="text-sm text-destructive">
-              <strong>Error:</strong> {error}
-            </div>
-          </div>
-        )}
-        {onFileUpload && (
+    <>
+      <Header
+        variant="bordered"
+        sticky
+      >
+        <HeaderSection position="left">
+          <img
+            src="/images/logo-light.svg"
+            alt="KCP Logo"
+            className="h-6 w-6"
+          />
+          <HeaderTitle className={darkMode ? '' : 'text-white'}>KCP</HeaderTitle>
+          {tabs && tabs.length > 0 && (
+            <nav className="flex items-center ml-6 gap-1">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => onTabChange?.(tab.id)}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors duration-150 border-b-2 ${
+                    activeTab === tab.id
+                      ? 'text-white border-accent'
+                      : 'text-white/60 border-transparent hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          )}
+        </HeaderSection>
+        <HeaderSection position="right">
+          {onFileUpload && (
+            <Button
+              onClick={onFileUpload}
+              variant="outline"
+              size="sm"
+              disabled={isProcessing}
+              className={`mr-2 ${darkMode ? '' : 'border-white/30 text-white hover:bg-white/10 bg-transparent'}`}
+            >
+              {isProcessing ? 'Processing...' : 'Upload KCP State File'}
+            </Button>
+          )}
           <Button
-            onClick={onFileUpload}
-            variant="outline"
-            size="sm"
-            disabled={isProcessing}
-            className={`mr-2 ${darkMode ? '' : 'border-white/30 text-white hover:bg-white/10 bg-transparent'}`}
+            onClick={toggleDarkMode}
+            variant="ghost"
+            size="icon"
+            className={darkMode ? '' : 'text-white hover:bg-white/10'}
           >
-            {isProcessing ? 'Processing...' : 'Upload KCP State File'}
+            {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
-        )}
-        <Button
-          onClick={toggleDarkMode}
-          variant="ghost"
-          size="icon"
-          className={darkMode ? '' : 'text-white hover:bg-white/10'}
-        >
-          {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
-      </HeaderSection>
-    </Header>
+        </HeaderSection>
+      </Header>
+      {error && (
+        <div className="w-full px-4 py-2 bg-destructive/10 border-b border-destructive/20">
+          <div className="text-sm text-destructive">
+            <strong>Error:</strong> {error}
+          </div>
+        </div>
+      )}
+    </>
   )
 }

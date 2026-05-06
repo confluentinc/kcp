@@ -1,9 +1,7 @@
 package msk_connectors
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
@@ -117,18 +115,13 @@ func runMigrateMskConnectors(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
-	data, err := os.ReadFile(stateFile)
+	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
+		return nil, err
 	}
 
 	if outputDir == "" {
 		outputDir = fmt.Sprintf("%s-connectors", utils.ExtractClusterNameFromArn(clusterId))
-	}
-
-	var state types.State
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
 	cluster, err := state.GetClusterByArn(clusterId)

@@ -1,9 +1,7 @@
 package kafka_acls
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -112,14 +110,9 @@ func runConvertKafkaAcls(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
-	data, err := os.ReadFile(stateFile)
+	state, err := types.NewStateFromFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
-	}
-
-	var state types.State
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+		return nil, err
 	}
 
 	var kafkaAdminInfo *types.KafkaAdminClientInformation
