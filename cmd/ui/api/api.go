@@ -58,8 +58,16 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 		}
 		ui.states["default"] = state
 		slog.Info("Pre-loaded state file", "path", opts.StateFile)
-		if state.MSKSources == nil && state.OSKSources == nil {
-			slog.Warn("State file contains no sources — run a scan to populate it", "path", opts.StateFile)
+
+		hasSources := (state.MSKSources != nil && len(state.MSKSources.Regions) > 0) ||
+			(state.OSKSources != nil && len(state.OSKSources.Clusters) > 0)
+		hasSchemaRegistries := state.SchemaRegistries != nil &&
+			(len(state.SchemaRegistries.ConfluentSchemaRegistry) > 0 || len(state.SchemaRegistries.AWSGlue) > 0)
+
+		if !hasSources && hasSchemaRegistries {
+			slog.Warn("No cluster sources found — run kcp discover (MSK) or kcp scan clusters (OSK) to populate", "path", opts.StateFile)
+		} else if !hasSources && !hasSchemaRegistries {
+			return nil, fmt.Errorf("state file %q contains no sources or schema registries — run kcp discover (MSK) or kcp scan clusters (OSK) to populate it", opts.StateFile)
 		}
 	}
 
