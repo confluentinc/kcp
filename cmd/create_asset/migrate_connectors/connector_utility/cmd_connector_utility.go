@@ -1,7 +1,9 @@
 package connectorutility
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -94,9 +96,14 @@ func runConnectorUtility(cmd *cobra.Command, args []string) error {
 }
 
 func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
-	state, err := types.NewStateFromFile(stateFile)
+	data, err := os.ReadFile(stateFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
+	}
+
+	var state types.State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
 	clustersByArn := make(map[string]*types.DiscoveredCluster)
