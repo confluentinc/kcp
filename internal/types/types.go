@@ -250,6 +250,14 @@ type ReverseProxyRequest struct {
 	ConfluentCloudClusterBootstrapEndpoint string `json:"confluent_cloud_cluster_bootstrap_endpoint"`
 }
 
+type BastionHostRequest struct {
+	Region                     string   `json:"region"`
+	VPCId                      string   `json:"vpc_id"`
+	PublicSubnetCidr           string   `json:"public_subnet_cidr"`
+	HasExistingInternetGateway bool     `json:"has_existing_internet_gateway"`
+	SecurityGroupIds           []string `json:"security_group_ids"`
+}
+
 type MigrateSchemasRequest struct {
 	ConfluentCloudSchemaRegistryURL string                         `json:"confluent_cloud_schema_registry_url"`
 	SchemaRegistries                []SchemaRegistryExporterConfig `json:"schema_registries"`
