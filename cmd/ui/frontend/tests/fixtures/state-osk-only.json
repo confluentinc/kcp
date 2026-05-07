@@ -57,7 +57,7 @@
   },
   "schema_registries": {},
   "kcp_build_info": {
-    "version": "dev",
+    "version": "0.0.0-localdev",
     "commit": "abc123",
     "date": "2026-03-06"
   },

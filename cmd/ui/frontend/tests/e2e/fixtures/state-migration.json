@@ -307,7 +307,7 @@
   },
   "schema_registries": {},
   "kcp_build_info": {
-    "version": "0.0.0-test",
+    "version": "0.0.0-localdev",
     "commit": "0000000000000000000000000000000000000000",
     "date": "2026-03-13T00:00:00Z"
   },

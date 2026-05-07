@@ -17,10 +17,19 @@ var (
 
 func NewUICmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "ui",
-		Short:         "Start the UI",
-		Long:          `Starts the kcp UI.`,
-		Example:       `kcp ui --port 8080`,
+		Use:   "ui",
+		Short: "Start the UI",
+		Long: `Starts the kcp UI — a local web app for visualising and analysing kcp-state.json (clusters, costs, metrics, TCO) and for generating migration assets via a guided wizard.
+
+Runs entirely locally on ` + "`http://localhost:<port>`" + ` (default ` + "`5556`" + `); no data leaves your machine.`,
+		Example: `  # Default port (5556)
+  kcp ui
+
+  # Custom port
+  kcp ui --port 8080
+
+  # Pre-load a state file on launch
+  kcp ui --state-file kcp-state.json`,
 		SilenceErrors: true,
 		PreRunE:       preRunUI,
 		RunE:          runStartUI,
@@ -51,7 +60,10 @@ func runStartUI(cmd *cobra.Command, args []string) error {
 	migrationInfraHCLService := hcl.NewMigrationInfraHCLService()
 	migrationScriptsHCLService := hcl.NewMigrationScriptsHCLService()
 
-	ui := api.NewUI(reportService, targetInfraHCLService, migrationInfraHCLService, migrationScriptsHCLService, *opts)
+	ui, err := api.NewUI(reportService, targetInfraHCLService, migrationInfraHCLService, migrationScriptsHCLService, *opts)
+	if err != nil {
+		return err
+	}
 	if err := ui.Run(); err != nil {
 		return fmt.Errorf("failed to start the UI: %v", err)
 	}

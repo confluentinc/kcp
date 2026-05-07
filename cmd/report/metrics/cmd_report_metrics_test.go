@@ -34,7 +34,8 @@ func TestParseMetricReporterOpts_SourceTypeMSK(t *testing.T) {
 				{ID: "osk-cluster-1"},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -80,7 +81,8 @@ func TestParseMetricReporterOpts_SourceTypeOSK(t *testing.T) {
 				{ID: "osk-cluster-1"},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -118,7 +120,8 @@ func TestParseMetricReporterOpts_ClusterIdFlag(t *testing.T) {
 				{ID: "osk-cluster-1"},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -162,7 +165,8 @@ func TestParseMetricReporterOpts_MultipleClusterIds(t *testing.T) {
 				{ID: "osk-cluster-1"},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -201,7 +205,8 @@ func TestParseMetricReporterOpts_InvalidSourceType(t *testing.T) {
 				},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -252,7 +257,8 @@ func TestParseMetricReporterOpts_NoClustersInState_MSK(t *testing.T) {
 		OSKSources: &types.OSKSourcesState{
 			Clusters: []types.OSKDiscoveredCluster{},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -285,7 +291,8 @@ func TestParseMetricReporterOpts_NoClustersInState_Neither(t *testing.T) {
 		OSKSources: &types.OSKSourcesState{
 			Clusters: []types.OSKDiscoveredCluster{},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -383,7 +390,8 @@ func TestNewReportMetricsCmd_MutuallyExclusiveFlags(t *testing.T) {
 				},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)
@@ -423,7 +431,8 @@ func TestParseMetricReporterOpts_NeitherFlagProvided(t *testing.T) {
 				{ID: "osk-cluster-1"},
 			},
 		},
-		Timestamp: time.Now(),
+		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
+		Timestamp:    time.Now(),
 	}
 
 	err := state.PersistStateFile(stateFilePath)

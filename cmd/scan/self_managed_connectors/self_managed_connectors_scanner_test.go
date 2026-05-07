@@ -67,6 +67,7 @@ func TestSelfManagedConnectorsScanner_Run_NoSelfManagedConnectors(t *testing.T) 
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:  "/tmp/test-state.json",
 		State:      state,
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:     mockClient,
 	}
@@ -137,6 +138,7 @@ func TestSelfManagedConnectorsScanner_Run_WithSelfManagedConnectors(t *testing.T
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:  "/tmp/test-state.json",
 		State:      state,
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:     mockClient,
 	}
@@ -185,6 +187,7 @@ func TestSelfManagedConnectorsScanner_Run_ListSelfManagedConnectorsError(t *test
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:  "/tmp/test-state.json",
 		State:      state,
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:     mockClient,
 	}
@@ -202,6 +205,7 @@ func TestSelfManagedConnectorsScanner_Run_NilClient(t *testing.T) {
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:  "/tmp/test-state.json",
 		State:      &types.State{},
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:     nil,
 	}
@@ -311,6 +315,7 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_Success(t *testi
 
 	scanner := &SelfManagedConnectorsScanner{
 		State:      state,
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 	}
 
@@ -351,6 +356,7 @@ func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_ClusterNotFound(
 
 	scanner := &SelfManagedConnectorsScanner{
 		State:      state,
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/non-existent-cluster/xyz-789",
 	}
 
@@ -415,6 +421,7 @@ func TestSelfManagedConnectorsScanner_Run_PartialFailure(t *testing.T) {
 	scanner := &SelfManagedConnectorsScanner{
 		StateFile:  "/tmp/test-state.json",
 		State:      state,
+		SourceType: "msk",
 		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
 		client:     mockClient,
 	}
@@ -426,4 +433,134 @@ func TestSelfManagedConnectorsScanner_Run_PartialFailure(t *testing.T) {
 	cluster := state.MSKSources.Regions[0].Clusters[0]
 	assert.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
 	assert.Equal(t, 2, len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors))
+}
+
+func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_OSK_Success(t *testing.T) {
+	state := &types.State{
+		OSKSources: &types.OSKSourcesState{
+			Clusters: []types.OSKDiscoveredCluster{
+				{
+					ID: "production-kafka",
+					KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+						ClusterID: "cluster-xyz",
+					},
+				},
+			},
+		},
+	}
+
+	scanner := &SelfManagedConnectorsScanner{
+		State:      state,
+		SourceType: "osk",
+		ClusterID:  "production-kafka",
+	}
+
+	connectors := []types.SelfManagedConnector{
+		{
+			Name:  "connector-1",
+			State: "RUNNING",
+			Config: map[string]any{
+				"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+			},
+		},
+	}
+
+	err := scanner.updateStateWithConnectors(connectors)
+	assert.NoError(t, err)
+
+	// Verify update
+	cluster := state.OSKSources.Clusters[0]
+	assert.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
+	assert.Equal(t, 1, len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors))
+}
+
+func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_OSK_ClusterNotFound(t *testing.T) {
+	state := &types.State{
+		OSKSources: &types.OSKSourcesState{
+			Clusters: []types.OSKDiscoveredCluster{
+				{
+					ID: "production-kafka",
+				},
+			},
+		},
+	}
+
+	scanner := &SelfManagedConnectorsScanner{
+		State:      state,
+		SourceType: "osk",
+		ClusterID:  "non-existent-cluster",
+	}
+
+	connectors := []types.SelfManagedConnector{
+		{
+			Name: "connector-1",
+		},
+	}
+
+	err := scanner.updateStateWithConnectors(connectors)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found in state file")
+}
+
+func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_MSK_Success(t *testing.T) {
+	state := &types.State{
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{
+				{
+					Name: "us-east-1",
+					Clusters: []types.DiscoveredCluster{
+						{
+							Arn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								ClusterID: "cluster-id",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	scanner := &SelfManagedConnectorsScanner{
+		State:      state,
+		SourceType: "msk",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test-cluster/abc-123",
+	}
+
+	connectors := []types.SelfManagedConnector{
+		{
+			Name:  "connector-1",
+			State: "RUNNING",
+			Config: map[string]any{
+				"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+			},
+		},
+	}
+
+	err := scanner.updateStateWithConnectors(connectors)
+	assert.NoError(t, err)
+
+	// Verify update
+	cluster := state.MSKSources.Regions[0].Clusters[0]
+	assert.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
+	assert.Equal(t, 1, len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors))
+}
+
+func TestSelfManagedConnectorsScanner_UpdateStateWithConnectors_UnsupportedSourceType(t *testing.T) {
+	state := &types.State{
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{},
+		},
+	}
+
+	scanner := &SelfManagedConnectorsScanner{
+		State:      state,
+		SourceType: "invalid-type",
+		ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc",
+	}
+
+	connectors := []types.SelfManagedConnector{{Name: "test"}}
+	err := scanner.updateStateWithConnectors(connectors)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported source type")
 }
