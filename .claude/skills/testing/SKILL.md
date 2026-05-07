@@ -46,7 +46,7 @@ go test ./<pkg> -v       # single-package tests
 go test ./<pkg> -run TestName -v   # single test by name
 ```
 
-For integration tests (`make test-osk-scan`, `make test-schema-registry`, `make test-migration`), use the `osk-integration-tests` skill.
+Integration tests live under `integration-tests/` and run via dedicated targets: `make test-osk-scan`, `make test-kafka-connect`, `make test-schema-registry`, `make test-migration`. Each target sets up its own Docker Compose (or Minikube) environment.
 
 ## Go test conventions
 

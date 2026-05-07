@@ -61,7 +61,7 @@ gh pr view <number> --json reviews,comments
 | `internal/services/hcl/` | Terraform generation, golden-file tests if present |
 | `cmd/ui/frontend/` | React/TS, must rebuild before Go tests pass; visual verification expected |
 | `cmd/ui/frontend/tests/e2e/` | Playwright specs, fixture-driven |
-| `integration-tests/osk-scan/` | Docker compose env — see the `osk-integration-tests` skill |
+| `integration-tests/osk-scan/` | Docker compose env for OSK scan tests; verify any variant changes are reflected in `docker-compose.yml`, `credentials/`, `setup.sh`, and `run.sh` |
 | `integration-tests/schema-registry/` | Schema Registry compose env, separate from OSK |
 | `docs/` | User-facing docs; mkdocs builds them |
 | `Makefile`, `.github/workflows/`, `.semaphore/` | CI / build surface — confirm CI ran green |
