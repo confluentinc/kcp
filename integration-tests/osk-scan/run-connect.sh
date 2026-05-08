@@ -64,7 +64,22 @@ echo "Running: ./kcp scan self-managed-connectors --state-file $STATE --connect-
 
 echo ""
 echo "Results:"
-jq -r '.osk_sources.clusters[0].kafka_admin_client_information | "  Topics: \(.topics.details | length), ACLs: \(.acls | length), Connectors: \(if .self_managed_connectors then (.self_managed_connectors | length) else 0 end)"' "$STATE"
+TOPIC_COUNT=$(jq '.osk_sources.clusters[0].kafka_admin_client_information.topics.details | length' "$STATE")
+ACL_COUNT=$(jq '.osk_sources.clusters[0].kafka_admin_client_information.acls | length' "$STATE")
+CONNECTOR_COUNT=$(jq '.osk_sources.clusters[0].kafka_admin_client_information.self_managed_connectors.connectors | length // 0' "$STATE")
+CONNECTOR_HOST_COUNT=$(jq '[.osk_sources.clusters[0].kafka_admin_client_information.self_managed_connectors.connectors[]? | select(.connect_host != null and .connect_host != "")] | length' "$STATE")
+echo "  Topics: $TOPIC_COUNT, ACLs: $ACL_COUNT, Connectors: $CONNECTOR_COUNT (with connect_host populated: $CONNECTOR_HOST_COUNT)"
+
+# Real assertions — fail loudly if the REST scanner regresses or stops
+# populating ConnectHost (which the UI's per-host grouping depends on).
+if [ "$CONNECTOR_COUNT" -le 0 ]; then
+    echo "ERROR: expected at least one self-managed connector in state, found $CONNECTOR_COUNT"
+    exit 1
+fi
+if [ "$CONNECTOR_HOST_COUNT" -le 0 ]; then
+    echo "ERROR: connectors are present but none have connect_host populated; the UI's per-Connect-host grouping will break"
+    exit 1
+fi
 echo ""
 
 # Clean up Connect (leave base Kafka running for potential other tests)

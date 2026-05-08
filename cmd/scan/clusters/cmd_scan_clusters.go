@@ -53,14 +53,6 @@ func scanClustersIAMAnnotation() string {
 					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>",
 				},
 			},
-			{
-				Sid:     "MSKConnectTopicAccess",
-				Actions: []string{"kafka-cluster:ReadData"},
-				Resources: []string{
-					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-configs",
-					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-status",
-				},
-			},
 		},
 	)
 }
@@ -83,7 +75,7 @@ Metrics collection (OSK only):
 
 Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
 
-If there is a Connect cluster and it uses the default ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topic names and the credentials have read permission on them, kcp also discovers self-managed connectors, their configs and state.`,
+For self-managed connector discovery, run ` + "`kcp scan self-managed-connectors`" + ` after this command — it queries the Kafka Connect REST API directly for connector configs and state. ` + "`kcp scan clusters`" + ` no longer derives connectors from the ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topics; if those topics are detected during a scan you'll see a log line pointing you to the explicit command.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 

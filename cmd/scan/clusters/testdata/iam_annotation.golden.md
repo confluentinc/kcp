@@ -17,17 +17,6 @@ Only required for `--source-type msk`. OSK scans use credentials from the creden
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
       ]
-    },
-    {
-      "Sid": "MSKConnectTopicAccess",
-      "Effect": "Allow",
-      "Action": [
-        "kafka-cluster:ReadData"
-      ],
-      "Resource": [
-        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-configs",
-        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-status"
-      ]
     }
   ]
 }
