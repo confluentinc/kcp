@@ -230,7 +230,8 @@ func TestSelfManagedConnectorsScanner_GetConnectorDetails_Success(t *testing.T) 
 		GetConnectorStatusFunc: func(name string) (map[string]any, error) {
 			return map[string]any{
 				"connector": map[string]any{
-					"state": "RUNNING",
+					"state":     "RUNNING",
+					"worker_id": "connect-worker-1:8083",
 				},
 			}, nil
 		},
@@ -244,7 +245,57 @@ func TestSelfManagedConnectorsScanner_GetConnectorDetails_Success(t *testing.T) 
 	assert.NoError(t, err)
 	assert.Equal(t, "test-connector", connector.Name)
 	assert.Equal(t, "RUNNING", connector.State)
+	assert.Equal(t, "connect-worker-1:8083", connector.ConnectHost,
+		"ConnectHost must be populated from connector.worker_id so the UI's per-host grouping works (R8)")
 	assert.Equal(t, "io.confluent.kafka.connect.datagen.DatagenConnector", connector.Config["connector.class"])
+}
+
+func TestSelfManagedConnectorsScanner_GetConnectorDetails_MissingWorkerID(t *testing.T) {
+	// Status response without a worker_id field — getConnectorDetails must
+	// degrade silently, leaving ConnectHost as the empty string rather
+	// than erroring or panicking.
+	mockClient := &MockConnectClient{
+		GetConnectorConfigFunc: func(name string) (map[string]any, error) {
+			return map[string]any{"connector.class": "test.Connector"}, nil
+		},
+		GetConnectorStatusFunc: func(name string) (map[string]any, error) {
+			return map[string]any{
+				"connector": map[string]any{
+					"state": "RUNNING",
+				},
+			}, nil
+		},
+	}
+
+	scanner := &SelfManagedConnectorsScanner{client: mockClient}
+	connector, err := scanner.getConnectorDetails("test-connector")
+	assert.NoError(t, err)
+	assert.Equal(t, "RUNNING", connector.State)
+	assert.Equal(t, "", connector.ConnectHost)
+}
+
+func TestSelfManagedConnectorsScanner_GetConnectorDetails_NonStringWorkerID(t *testing.T) {
+	// A non-string worker_id (e.g., null or numeric) must be ignored without
+	// erroring. The type-assertion guard mirrors the existing pattern for
+	// `state`.
+	mockClient := &MockConnectClient{
+		GetConnectorConfigFunc: func(name string) (map[string]any, error) {
+			return map[string]any{"connector.class": "test.Connector"}, nil
+		},
+		GetConnectorStatusFunc: func(name string) (map[string]any, error) {
+			return map[string]any{
+				"connector": map[string]any{
+					"state":     "RUNNING",
+					"worker_id": nil,
+				},
+			}, nil
+		},
+	}
+
+	scanner := &SelfManagedConnectorsScanner{client: mockClient}
+	connector, err := scanner.getConnectorDetails("test-connector")
+	assert.NoError(t, err)
+	assert.Equal(t, "", connector.ConnectHost)
 }
 
 func TestSelfManagedConnectorsScanner_GetConnectorDetails_ConfigError(t *testing.T) {
