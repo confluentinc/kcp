@@ -178,6 +178,77 @@ func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	assert.False(t, result.Metadata.EndDate.IsZero())
 }
 
+func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
+	server := mockJolokiaServer(t)
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL})
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.QueryInfo)
+
+	// Should have one entry per metric: 3 counter + 1 gauge + 2 aggregate = 6
+	assert.Len(t, result.QueryInfo, 6)
+
+	for _, qi := range result.QueryInfo {
+		assert.Equal(t, "jolokia", qi.SourceType)
+		assert.NotEmpty(t, qi.MetricName)
+		assert.NotEmpty(t, qi.MBeanPath)
+		assert.NotEmpty(t, qi.JolokiaURL)
+		assert.Contains(t, qi.CurlCommand, "curl")
+		assert.Contains(t, qi.CurlCommand, server.URL)
+		assert.NotEmpty(t, qi.AggregationNote)
+	}
+
+	// Verify specific metrics are present
+	names := make(map[string]bool)
+	for _, qi := range result.QueryInfo {
+		names[qi.MetricName] = true
+	}
+	assert.True(t, names["BytesInPerSec"])
+	assert.True(t, names["BytesOutPerSec"])
+	assert.True(t, names["MessagesInPerSec"])
+	assert.True(t, names["PartitionCount"])
+	assert.True(t, names["ClientConnectionCount"])
+	assert.True(t, names["TotalLocalStorageUsage"])
+}
+
+func TestBuildJMXQueryInfo(t *testing.T) {
+	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
+	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second)
+
+	assert.Len(t, infos, 6)
+
+	// All entries should have Statistic, Period, and QueryDuration
+	for _, info := range infos {
+		assert.NotEmpty(t, info.Statistic)
+		assert.Equal(t, int32(10), info.Period)
+		assert.Equal(t, "5m", info.QueryDuration)
+	}
+
+	// Counter metrics should reference the Count attribute in aggregation note
+	for _, info := range infos[:3] {
+		assert.Contains(t, info.AggregationNote, "Count")
+		assert.Contains(t, info.AggregationNote, "2 broker(s)")
+		assert.Contains(t, info.CurlCommand, "broker1:8778")
+		assert.Contains(t, info.Statistic, "Rate")
+	}
+
+	// Gauge metric (PartitionCount) should reference the Value attribute
+	assert.Contains(t, infos[3].AggregationNote, "Value")
+	assert.Equal(t, "PartitionCount", infos[3].MetricName)
+
+	// Aggregate metrics should reference wildcard
+	assert.Contains(t, infos[4].AggregationNote, "Wildcard")
+	assert.Contains(t, infos[5].AggregationNote, "Wildcard")
+
+	// Empty brokerURLs should return nil
+	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second))
+	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second))
+}
+
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
 	svc := NewJMXService([]string{"http://localhost:1"})
 	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)

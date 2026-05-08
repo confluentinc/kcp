@@ -184,13 +184,22 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 
 	deadline := startTime.Add(duration)
 
+	brokerURLs := make([]string, len(s.clients))
+	for i, c := range s.clients {
+		brokerURLs[i] = c.BaseURL()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			return toProcessedClusterMetrics(snapshots, startTime, duration, interval), ctx.Err()
+			result := toProcessedClusterMetrics(snapshots, startTime, duration, interval)
+			result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval)
+			return result, ctx.Err()
 		case <-ticker.C:
 			if time.Now().After(deadline) {
-				return toProcessedClusterMetrics(snapshots, startTime, duration, interval), nil
+				result := toProcessedClusterMetrics(snapshots, startTime, duration, interval)
+				result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval)
+				return result, nil
 			}
 
 			currSample, err := s.collectRawSample(ctx)
@@ -270,6 +279,70 @@ func calculateAggregates(snapshots []jmxSnapshot) map[string]types.MetricAggrega
 		}
 	}
 	return aggregates
+}
+
+// buildJMXQueryInfo generates MetricQueryInfo entries for all JMX metrics,
+// including the MBean path and a curl command to reproduce the query.
+func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []types.MetricQueryInfo {
+	if len(brokerURLs) == 0 {
+		return nil
+	}
+	brokerCount := len(brokerURLs)
+	exampleURL := brokerURLs[0]
+	durationStr := types.FormatQueryDuration(duration)
+	periodSec := int32(interval.Seconds())
+
+	var infos []types.MetricQueryInfo
+
+	for _, mb := range counterMBeans {
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:    mb.Name,
+			SourceType:    "jolokia",
+			Statistic:     "Rate (delta/sec, summed across brokers)",
+			Period:        periodSec,
+			QueryDuration: durationStr,
+			MBeanPath:     mb.MBean,
+			JolokiaURL:    exampleURL,
+			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
+			AggregationNote: fmt.Sprintf(
+				"Rate computed from the monotonic Count attribute of %s. Values are summed across all %d broker(s), then the rate is derived from the delta between consecutive polls. Add -u user:pass to the curl command if authentication is configured.",
+				mb.MBean, brokerCount),
+		})
+	}
+
+	for _, mb := range gaugeMBeans {
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:    mb.Name,
+			SourceType:    "jolokia",
+			Statistic:     "Sum across brokers",
+			Period:        periodSec,
+			QueryDuration: durationStr,
+			MBeanPath:     mb.MBean,
+			JolokiaURL:    exampleURL,
+			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
+			AggregationNote: fmt.Sprintf(
+				"Gauge value read from the %s attribute of %s. Summed across all %d broker(s). Add -u user:pass to the curl command if authentication is configured.",
+				mb.ValueKey, mb.MBean, brokerCount),
+		})
+	}
+
+	for _, mb := range aggregateMBeans {
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:    mb.Name,
+			SourceType:    "jolokia",
+			Statistic:     "Sum across brokers",
+			Period:        periodSec,
+			QueryDuration: durationStr,
+			MBeanPath:     mb.MBean,
+			JolokiaURL:    exampleURL,
+			CurlCommand:   fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
+			AggregationNote: fmt.Sprintf(
+				"Wildcard MBean pattern %s; the %s attribute is summed across all matching MBeans on all %d broker(s). Add -u user:pass to the curl command if authentication is configured.",
+				mb.MBean, mb.Attribute, brokerCount),
+		})
+	}
+
+	return infos
 }
 
 func toFloat64(v any) (float64, bool) {
