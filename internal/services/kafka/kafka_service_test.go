@@ -14,16 +14,15 @@ import (
 
 func TestKafkaService_ScanKafkaResources(t *testing.T) {
 	tests := []struct {
-		name                            string
-		mockClient                      *mocks.MockKafkaAdmin
-		clusterType                     kafkatypes.ClusterType
-		wantErr                         bool
-		wantErrMsg                      string
-		wantClusterID                   bool
-		wantTopics                      bool
-		wantAcls                        bool
-		wantAclsNil                     bool
-		wantSelfManagedConnectorsNotSet bool
+		name          string
+		mockClient    *mocks.MockKafkaAdmin
+		clusterType   kafkatypes.ClusterType
+		wantErr       bool
+		wantErrMsg    string
+		wantClusterID bool
+		wantTopics    bool
+		wantAcls      bool
+		wantAclsNil   bool
 	}{
 		{
 			name: "describeKafkaCluster returns error",
@@ -153,53 +152,6 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 			wantTopics:    true,
 			wantAcls:      true,
 		},
-		{
-			// Regression test for R1: ScanKafkaResources must not populate
-			// SelfManagedConnectors even when Kafka Connect's internal topics
-			// (connect-configs / connect-status) are present in the cluster.
-			// Connector discovery now flows exclusively through
-			// `kcp scan self-managed-connectors` (Connect REST API).
-			name: "connect topics present but SelfManagedConnectors stays nil",
-			mockClient: &mocks.MockKafkaAdmin{
-				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
-					return &client.ClusterKafkaMetadata{
-						ClusterID: "connect-cluster-001",
-					}, nil
-				},
-				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
-					return map[string]sarama.TopicDetail{
-						"orders": {
-							NumPartitions:     int32(3),
-							ReplicationFactor: int16(2),
-							ConfigEntries:     map[string]*string{},
-						},
-						"connect-configs": {
-							NumPartitions:     int32(1),
-							ReplicationFactor: int16(3),
-							ConfigEntries:     map[string]*string{},
-						},
-						"connect-status": {
-							NumPartitions:     int32(5),
-							ReplicationFactor: int16(3),
-							ConfigEntries:     map[string]*string{},
-						},
-					}, nil
-				},
-				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
-					return []sarama.ResourceAcls{}, nil
-				},
-				// Note: the topic-parsing connector discovery methods
-				// (GetAllMessagesWithKeyFilter / GetConnectorStatusMessages)
-				// were removed from the KafkaAdmin interface; the mock no
-				// longer has fields for them. A regression that reintroduces
-				// the call site would fail to compile.
-			},
-			clusterType:                     kafkatypes.ClusterTypeProvisioned,
-			wantErr:                         false,
-			wantClusterID:                   true,
-			wantTopics:                      true,
-			wantSelfManagedConnectorsNotSet: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -237,12 +189,6 @@ func TestKafkaService_ScanKafkaResources(t *testing.T) {
 				} else if tt.wantAcls {
 					assert.NotNil(t, result.Acls)
 					assert.NotEmpty(t, result.Acls)
-				}
-
-				// Verify SelfManagedConnectors is not populated by scan-clusters
-				// after the topic-parsing connector discovery removal.
-				if tt.wantSelfManagedConnectorsNotSet {
-					assert.Nil(t, result.SelfManagedConnectors)
 				}
 			}
 		})

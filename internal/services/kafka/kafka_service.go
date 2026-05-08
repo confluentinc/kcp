@@ -58,7 +58,6 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 			return nil, err
 		}
 		kafkaAdminClientInformation.SetTopics(topics)
-		ks.logConnectTopicHint(topics)
 	}
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
@@ -76,29 +75,6 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 	}
 
 	return kafkaAdminClientInformation, nil
-}
-
-// logConnectTopicHint emits an info-level hint when a Kafka Connect cluster's
-// internal topics are detected, pointing operators to the explicit
-// `kcp scan self-managed-connectors` command for connector discovery.
-func (ks *KafkaService) logConnectTopicHint(topics []types.TopicDetails) {
-	hasConfigs := false
-	hasStatus := false
-	for _, t := range topics {
-		switch t.Name {
-		case "connect-configs":
-			hasConfigs = true
-		case "connect-status":
-			hasStatus = true
-		}
-	}
-	if hasConfigs || hasStatus {
-		slog.Info("ℹ️ Kafka Connect topics detected; run `kcp scan self-managed-connectors` to discover connectors via the Connect REST API",
-			"connect_configs_present", hasConfigs,
-			"connect_status_present", hasStatus,
-			"clusterArn", ks.clusterArn,
-		)
-	}
 }
 
 // scanClusterTopics scans for topics in the Kafka cluster

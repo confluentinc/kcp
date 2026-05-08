@@ -75,7 +75,7 @@ Metrics collection (OSK only):
 
 Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
 
-For self-managed connector discovery, run ` + "`kcp scan self-managed-connectors`" + ` after this command — it queries the Kafka Connect REST API directly for connector configs and state. ` + "`kcp scan clusters`" + ` no longer derives connectors from the ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topics; if those topics are detected during a scan you'll see a log line pointing you to the explicit command.`,
+For self-managed connector discovery, run ` + "`kcp scan self-managed-connectors`" + ` after this command — it queries the Kafka Connect REST API directly for connector configs and state. ` + "`kcp scan clusters`" + ` no longer derives connectors from Kafka Connect's internal topics.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
@@ -314,12 +314,19 @@ func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 		scannedByARN[c.Identifier.UniqueID] = c.KafkaAdminInfo
 	}
 
-	// Apply results into state in-place
+	// Apply results into state in-place. Merge old admin info into the new
+	// scan result before overwriting so previously-discovered data (topics,
+	// ACLs, self-managed connectors) is preserved when the new scan returns
+	// empty/nil for those fields. Mirrors the OSK merge path; required so a
+	// `kcp scan clusters` re-run after `kcp scan self-managed-connectors`
+	// does not wipe REST-discovered connectors (the new scan returns
+	// SelfManagedConnectors=nil).
 	for i := range state.MSKSources.Regions {
 		for j := range state.MSKSources.Regions[i].Clusters {
-			arn := state.MSKSources.Regions[i].Clusters[j].Arn
-			if info, ok := scannedByARN[arn]; ok {
-				state.MSKSources.Regions[i].Clusters[j].KafkaAdminClientInformation = *info
+			cluster := &state.MSKSources.Regions[i].Clusters[j]
+			if info, ok := scannedByARN[cluster.Arn]; ok {
+				info.MergeFrom(cluster.KafkaAdminClientInformation)
+				cluster.KafkaAdminClientInformation = *info
 			}
 		}
 	}
