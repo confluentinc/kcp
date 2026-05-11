@@ -45,20 +45,47 @@ blocks:
                 cache store frontend-dependencies node_modules/;
               fi
 
+  - name: 'resolve go dependencies'
+    dependencies: []
+    task:
+      jobs:
+        - name: 'go dependencies'
+          commands:
+            - cache restore go-mod-cache
+            - go mod download
+      epilogue:
+        on_pass:
+          commands:
+            - >-
+              if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ]; then
+                cache delete go-mod-cache;
+                cache store go-mod-cache "${GOPATH}/pkg/mod";
+              fi
+
   - name: 'test'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:
       jobs:
         - name: 'run tests'
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - (cd cmd/ui/frontend && npx playwright install chromium chromium-headless-shell --with-deps)
             - make test-go GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
             - make test-playwright
+      epilogue:
+        on_pass:
+          commands:
+            - >-
+              if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ]; then
+                cache delete go-build-cache;
+                cache store go-build-cache "$HOME/.cache/go-build";
+              fi
 
   - name: 'terraform validation tests'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
       when: "change_in(['/internal/services/hcl/', '/internal/types/types.go', '/cmd/create_asset/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
@@ -73,11 +100,13 @@ blocks:
         - name: 'terraform validation'
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-tf-validation GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
 
   - name: 'integration: osk scan'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
       when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/osk-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
@@ -89,11 +118,13 @@ blocks:
         - name: 'osk scan'
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-osk-scan
 
   - name: 'integration: kafka connect scan'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
       when: "change_in(['/cmd/scan/self_managed_connectors/', '/internal/types/self_managed_connect.go', '/integration-tests/osk-scan/docker-compose.yml', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
@@ -105,11 +136,13 @@ blocks:
         - name: 'kafka connect scan'
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-kafka-connect
 
   - name: 'integration: schema registry scan'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
       when: "change_in(['/cmd/scan/schema_registry/', '/internal/client/schema_registry.go', '/internal/services/schema_registry/', '/integration-tests/schema-registry/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
@@ -117,11 +150,13 @@ blocks:
         - name: 'schema registry scan'
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-schema-registry
 
   - name: 'integration: migration e2e'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
       when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/integration-tests/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
@@ -142,6 +177,8 @@ blocks:
         - name: 'migration e2e'
           commands:
             - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-migration-setup
             - make test-migration
@@ -154,7 +191,7 @@ blocks:
             - cache store minikube-cache ~/.minikube/cache/
 
   - name: 'static analysis'
-    dependencies: ['resolve frontend dependencies']
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:
       env_vars:
         - name: TRIVY_DB_REPOSITORIES
@@ -167,6 +204,8 @@ blocks:
           - export "PATH=${GOPATH}/bin:${PATH}"
           - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
           - cache restore frontend-dependencies
+          - cache restore go-mod-cache
+          - cache restore go-build-cache
           - cd cmd/ui/frontend && yarn install && yarn build && cd -
       jobs:
         - name: 'golangci-lint'
