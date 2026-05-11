@@ -409,31 +409,6 @@ func mergeAcls(newAcls, oldAcls []Acls) []Acls {
 	return merged
 }
 
-// mergeSelfManagedConnectors merges connectors, with new taking precedence for duplicates (by name)
-func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnectors) *SelfManagedConnectors {
-	if oldConnectors == nil || len(oldConnectors.Connectors) == 0 {
-		return newConnectors
-	}
-	if newConnectors == nil || len(newConnectors.Connectors) == 0 {
-		return oldConnectors
-	}
-
-	connectorsByName := make(map[string]SelfManagedConnector)
-	for _, c := range oldConnectors.Connectors {
-		connectorsByName[c.Name] = c
-	}
-	for _, c := range newConnectors.Connectors {
-		connectorsByName[c.Name] = c // new takes precedence
-	}
-
-	merged := make([]SelfManagedConnector, 0, len(connectorsByName))
-	for _, c := range connectorsByName {
-		merged = append(merged, c)
-	}
-
-	return &SelfManagedConnectors{Connectors: merged}
-}
-
 type DiscoveredCluster struct {
 	Name                        string                      `json:"name"`
 	Arn                         string                      `json:"arn"`
@@ -587,17 +562,6 @@ type ConnectorSummary struct {
 	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
 }
 
-type SelfManagedConnector struct {
-	Name        string         `json:"name"`
-	Config      map[string]any `json:"config"`
-	State       string         `json:"state,omitempty"`
-	ConnectHost string         `json:"connect_host,omitempty"`
-}
-
-type SelfManagedConnectors struct {
-	Connectors []SelfManagedConnector `json:"connectors"`
-}
-
 type KafkaAdminClientInformation struct {
 	ClusterID             string                 `json:"cluster_id"`
 	DiscoveredBrokers     []string               `json:"discovered_brokers,omitempty"`
@@ -618,12 +582,6 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 	c.Topics = &Topics{
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
-	}
-}
-
-func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
-	c.SelfManagedConnectors = &SelfManagedConnectors{
-		Connectors: connectors,
 	}
 }
 
