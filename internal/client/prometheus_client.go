@@ -74,6 +74,9 @@ func NewPrometheusClient(baseURL string, opts ...PrometheusOption) *PrometheusCl
 	return client
 }
 
+// BaseURL returns the Prometheus server base URL
+func (c *PrometheusClient) BaseURL() string { return c.baseURL }
+
 // PrometheusMetricResult holds the parsed result for a single metric from a range query
 type PrometheusMetricResult struct {
 	MetricName string
