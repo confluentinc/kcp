@@ -163,6 +163,15 @@ func TestHandleUploadState_MissingSessionId(t *testing.T) {
 	}
 }
 
+func stateWithSources(version string) *types.State {
+	return &types.State{
+		KcpBuildInfo: types.KcpBuildInfo{Version: version},
+		OSKSources: &types.OSKSourcesState{
+			Clusters: []types.OSKDiscoveredCluster{{ID: "test-cluster"}},
+		},
+	}
+}
+
 func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
@@ -170,7 +179,7 @@ func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: build_info.Version}}
+	state := stateWithSources(build_info.Version)
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
 		t.Fatalf("failed to write state file: %v", err)
 	}
@@ -196,7 +205,7 @@ func TestNewUI_PreloadStateFile_VersionMismatch_Succeeds(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
+	state := stateWithSources("0.5.0")
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
 		t.Fatalf("failed to write state file: %v", err)
 	}
@@ -223,6 +232,24 @@ func TestNewUI_PreloadStateFile_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestNewUI_PreloadStateFile_NoSourcesNoSchema_ReturnsError(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: build_info.Version}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	_, err = NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	if err == nil {
+		t.Error("expected error for state file with no sources and no schema registries, got nil")
+	}
+}
+
 func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
@@ -230,7 +257,7 @@ func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
+	state := stateWithSources("0.5.0")
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
 		t.Fatalf("failed to write state file: %v", err)
 	}

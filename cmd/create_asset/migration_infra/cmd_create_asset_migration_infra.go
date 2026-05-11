@@ -62,7 +62,9 @@ Type options:
 2. Private MSK endpoints — External Outbound Cluster Link (SASL/SCRAM, Enterprise only)
 3. Private MSK endpoints — External Outbound Cluster Link (Unauthenticated Plaintext, Enterprise only)
 4. Private MSK endpoints — Jump Cluster (SASL/SCRAM)
-5. Private MSK endpoints — Jump Cluster (IAM, MSK only)`,
+5. Private MSK endpoints — Jump Cluster (IAM, MSK only)
+
+> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for Enterprise clusters. Dedicated clusters with private MSK endpoints must use Jump Clusters (Type 4 or 5). Dedicated clusters with public MSK endpoints can use Type 1.`,
 		Example: `  # Type 4 — Jump Cluster with SASL/SCRAM, against a private MSK
   kcp create-asset migration-infra \
       --state-file kcp-state.json \

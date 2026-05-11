@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-schema-registry
+.PHONY: test-go test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
 
 test-go: build-frontend ## Run Go unit tests
 	go test $(GOTEST_FLAGS) ./...
@@ -111,6 +111,11 @@ test-migration-teardown: ## Tear down migration E2E infrastructure
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
 	@bash integration-tests/osk-scan/run.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
+	@bash integration-tests/osk-scan/teardown.sh
+
+test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
+	@bash integration-tests/osk-scan/setup.sh
+	@bash integration-tests/osk-scan/run-connect.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
 	@bash integration-tests/osk-scan/teardown.sh
 
 test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, basic auth)

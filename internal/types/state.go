@@ -107,13 +107,16 @@ func NewStateFrom(fromState *State) *State {
 }
 
 func NewStateFromFile(stateFile string) (*State, error) {
-	file, err := os.ReadFile(stateFile)
+	data, err := os.ReadFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read state file: %v", err)
+		return nil, fmt.Errorf("failed to read state file %s: %v", stateFile, err)
 	}
+	return NewStateFromBytes(data)
+}
 
+func NewStateFromBytes(data []byte) (*State, error) {
 	var state State
-	if err := json.Unmarshal(file, &state); err != nil {
+	if err := json.Unmarshal(data, &state); err != nil {
 		// Unmarshal failed — the schema may have changed between versions.
 		// Try to extract just the version from the raw bytes to give a more
 		// actionable error than a raw JSON type error.
@@ -122,13 +125,17 @@ func NewStateFromFile(stateFile string) (*State, error) {
 				Version string `json:"version"`
 			} `json:"kcp_build_info"`
 		}
-		if jsonErr := json.Unmarshal(file, &raw); jsonErr == nil {
+		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
 				return nil, fmt.Errorf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please try loading the state file with KCP version %q or recreating the state file with KCP version %q)", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version, build_info.Version)
 			}
 			return nil, fmt.Errorf("state file could not be loaded: %v — please recreate the state file using kcp discover or kcp scan clusters", err)
 		}
 		return nil, fmt.Errorf("failed to unmarshal state file: %v — please recreate the state file using kcp discover or kcp scan clusters", err)
+	}
+
+	if state.KcpBuildInfo.Version == "" {
+		slog.Warn("state file has no kcp_build_info.version — this may not be a valid KCP state file")
 	}
 
 	return &state, nil
