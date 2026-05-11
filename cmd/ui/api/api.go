@@ -622,9 +622,24 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
-	// UI wizard only supports mirror mode; the CLI gates --mode required.
+	// Default mode is mirror for back-compat with pre-mode-flag clients;
+	// the new wizard always sends Mode explicitly.
 	if req.Mode == "" {
 		req.Mode = types.MigrateTopicsModeMirror
+	}
+
+	// --mode new emits confluent_kafka_topic resources with partitions and
+	// configs preserved from source — those live in state, not in the wizard
+	// payload. Hydrate from state using the (source_type, cluster_id) the
+	// wizard sends as hidden fields and the selected_topics name list as the
+	// filter. Mirror mode doesn't need this (cluster link drives configs).
+	if req.Mode == types.MigrateTopicsModeNew {
+		if err := ui.hydrateTopicsFromState(c, &req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Failed to hydrate topic details for new mode",
+				"message": err.Error(),
+			})
+		}
 	}
 
 	project, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
@@ -642,6 +657,58 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	terraformFiles := flattenMigrateTopicsProject(project)
 
 	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+// hydrateTopicsFromState looks up the source cluster in the loaded state and
+// populates req.Topics with full TopicDetails (partitions, configurations) for
+// each name in req.SelectedTopics. New-mode HCL generation needs partition
+// counts and config maps that the wizard's name-only selection can't carry.
+func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequest) error {
+	if req.ClusterId == "" || req.SourceType == "" {
+		return fmt.Errorf("source_type and cluster_id are required for --mode new (wizard should send these as hidden fields)")
+	}
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return fmt.Errorf("session state lookup: %w", err)
+	}
+
+	var details []types.TopicDetails
+	switch req.SourceType {
+	case "msk":
+		cluster, err := state.GetClusterByArn(req.ClusterId)
+		if err != nil {
+			return fmt.Errorf("lookup MSK cluster %q: %w", req.ClusterId, err)
+		}
+		if cluster.KafkaAdminClientInformation.Topics != nil {
+			details = cluster.KafkaAdminClientInformation.Topics.Details
+		}
+	case "osk":
+		cluster, err := state.GetOSKClusterByID(req.ClusterId)
+		if err != nil {
+			return fmt.Errorf("lookup OSK cluster %q: %w", req.ClusterId, err)
+		}
+		if cluster.KafkaAdminClientInformation.Topics != nil {
+			details = cluster.KafkaAdminClientInformation.Topics.Details
+		}
+	default:
+		return fmt.Errorf("invalid source_type %q (must be 'msk' or 'osk')", req.SourceType)
+	}
+
+	byName := make(map[string]types.TopicDetails, len(details))
+	for _, d := range details {
+		byName[d.Name] = d
+	}
+
+	req.Topics = make([]types.TopicDetails, 0, len(req.SelectedTopics))
+	for _, name := range req.SelectedTopics {
+		d, ok := byName[name]
+		if !ok {
+			return fmt.Errorf("topic %q not found in state for cluster %q (state may be stale — re-run `kcp scan clusters`)", name, req.ClusterId)
+		}
+		req.Topics = append(req.Topics, d)
+	}
+	return nil
 }
 
 // flattenMigrateTopicsProject concatenates per-topic .tf files into a single

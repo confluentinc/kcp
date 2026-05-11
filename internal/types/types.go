@@ -261,6 +261,13 @@ type MirrorTopicsRequest struct {
 	Mode            string   `json:"mode"`
 	IncludePatterns []string `json:"topics_include"`
 	ExcludePatterns []string `json:"topics_exclude"`
+
+	// SourceType and ClusterId identify the source cluster in the loaded state
+	// file. The UI wizard sends these as hidden fields so the API handler can
+	// hydrate Topics from state for --mode new. The CLI populates Topics
+	// directly and leaves these empty.
+	SourceType string `json:"source_type"`
+	ClusterId  string `json:"cluster_id"`
 }
 
 type ReverseProxyRequest struct {
