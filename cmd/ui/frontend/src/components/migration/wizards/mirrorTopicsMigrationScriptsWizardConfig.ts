@@ -9,7 +9,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
 
   const topics = clusterData?.kafka_admin_client_information?.topics?.details || []
   const topicNames = topics.filter((topic: any) => !topic.name.startsWith('__')).map((topic: any) => topic.name)
-  const topicEnumValues = topicNames.length > 0 ? topicNames : ['No topics available']
+  const hasTopics = topicNames.length > 0
 
   return {
     id: 'migrate-topics-migration-scripts-wizard',
@@ -150,11 +150,13 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
               selected_topics: {
                 type: 'array',
                 title: 'Topics',
-                default: topicEnumValues,
-                description: `Select one or more topics to migrate (${topicNames.length} topics available)`,
+                default: hasTopics ? topicNames : [],
+                description: hasTopics
+                  ? `Select one or more topics to migrate (${topicNames.length} topics available)`
+                  : `No topics found in state for ${clusterData?.name}. Run \`kcp scan clusters\` to populate, then reload this wizard.`,
                 items: {
                   type: 'string',
-                  enum: topicEnumValues,
+                  enum: topicNames,
                 },
                 uniqueItems: true,
                 minItems: 1,
@@ -165,7 +167,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
           uiSchema: {
             selected_topics: {
               'ui:widget': 'checkboxes',
-              'ui:options': { enum: topicEnumValues },
+              'ui:options': { enum: topicNames },
             },
           },
         },

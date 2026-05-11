@@ -154,6 +154,21 @@ func TestSelectTopics(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("empty carve-out (new mode) drops __consumer_offsets", func(t *testing.T) {
+		t.Parallel()
+		got := selectTopics(
+			td("__consumer_offsets", "__transaction_state", "orders.a"),
+			nil,
+			nil,
+			nil,
+		)
+		gotNames := names(got)
+		want := []string{"orders.a"}
+		if !reflect.DeepEqual(gotNames, want) {
+			t.Errorf("selectTopics with empty carve-out = %v, want %v (__consumer_offsets must not survive in new mode)", gotNames, want)
+		}
+	})
 }
 
 func TestNoMatchError(t *testing.T) {

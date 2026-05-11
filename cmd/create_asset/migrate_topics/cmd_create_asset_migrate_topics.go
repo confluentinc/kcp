@@ -134,7 +134,13 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 		return nil, err
 	}
 
-	internalTopicsToInclude := []string{"__consumer_offsets"}
+	// __consumer_offsets survives the internal-topic filter in mirror mode only:
+	// a cluster link can mirror the offset topic, but `--mode new` emits a
+	// confluent_kafka_topic that CC rejects at apply time (reserved __ prefix).
+	var internalTopicsToInclude []string
+	if mode == types.MigrateTopicsModeMirror {
+		internalTopicsToInclude = []string{"__consumer_offsets"}
+	}
 
 	file, err := os.ReadFile(stateFile)
 	if err != nil {
