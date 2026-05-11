@@ -1,3 +1,5 @@
+//go:build terraform_validation
+
 package hcl
 
 import (
