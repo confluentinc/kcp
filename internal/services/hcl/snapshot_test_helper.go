@@ -160,6 +160,28 @@ func terraformFilesToMap(tf types.TerraformFiles) map[string]string {
 	return files
 }
 
+// migrateTopicsProjectToFiles flattens the single-folder migrate-topics project
+// into a flat filename → content map suitable for terraform validation. Unlike
+// schemaProjectToFiles (which prefixes per-registry folder paths), migrate-topics
+// always returns one folder rendered at the project root.
+func migrateTopicsProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
+	files := map[string]string{}
+	if len(project.Folders) == 0 {
+		return files
+	}
+	folder := project.Folders[0]
+	if folder.ProvidersTf != "" {
+		files["providers.tf"] = folder.ProvidersTf
+	}
+	if folder.VariablesTf != "" {
+		files["variables.tf"] = folder.VariablesTf
+	}
+	for name, content := range folder.AdditionalFiles {
+		files[name] = content
+	}
+	return files
+}
+
 // schemaProjectToFiles flattens a MigrationScriptsTerraformProject into a map.
 func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
 	files := map[string]string{}

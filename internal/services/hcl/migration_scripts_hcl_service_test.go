@@ -9,6 +9,319 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ============================================================================
+// Migrate Topics tests — file-per-topic layout for both --mode mirror and new.
+// ============================================================================
+
+func TestGenerateMirrorTopicsFiles_FilePerTopicLayout(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{Name: "orders"},
+			{Name: "events"},
+			{Name: "users"},
+		},
+		ClusterLinkName:           "msk-to-cc-link",
+		TargetClusterId:           "lkc-xyz789",
+		TargetClusterRestEndpoint: "https://pkc.cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeMirror,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	require.Len(t, project.Folders, 1)
+
+	folder := project.Folders[0]
+	assert.NotEmpty(t, folder.ProvidersTf, "providers.tf should be populated")
+	assert.NotEmpty(t, folder.VariablesTf, "variables.tf should be populated")
+	assert.Empty(t, folder.MainTf, "main.tf should not be emitted (per-topic layout)")
+
+	// Expect exactly 3 per-topic files, named after sanitized topic names.
+	assert.Len(t, folder.AdditionalFiles, 3)
+	for _, name := range []string{"orders.tf", "events.tf", "users.tf"} {
+		assert.Contains(t, folder.AdditionalFiles, name, "missing per-topic file %s", name)
+	}
+
+	// Each file contains exactly one mirror-topic resource block.
+	for filename, content := range folder.AdditionalFiles {
+		count := strings.Count(content, `resource "confluent_kafka_mirror_topic"`)
+		assert.Equal(t, 1, count, "%s should contain exactly one mirror-topic resource", filename)
+	}
+}
+
+func TestGenerateMirrorTopicsFiles_SanitizesFilenames(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{Name: "orders.payments"},
+			{Name: "events-stream"},
+		},
+		ClusterLinkName:           "link",
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeMirror,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	folder := project.Folders[0]
+
+	assert.Contains(t, folder.AdditionalFiles, "orders_payments.tf")
+	assert.Contains(t, folder.AdditionalFiles, "events_stream.tf")
+}
+
+func TestGenerateMirrorTopicsFiles_FilenameCollisionIsHardError(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	// These two names both sanitize to "orders_dlq.tf" via FormatHclResourceName.
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{Name: "orders.dlq"},
+			{Name: "orders_dlq"},
+		},
+		ClusterLinkName:           "link",
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeMirror,
+	}
+
+	_, err := service.GenerateMirrorTopicsFiles(request)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "filename collisions detected")
+	assert.Contains(t, err.Error(), "orders_dlq.tf")
+}
+
+func TestGenerateMirrorTopicsFiles_ZeroTopicsProducesSharedFilesOnly(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics:                    nil,
+		ClusterLinkName:           "link",
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeMirror,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	require.Len(t, project.Folders, 1)
+	folder := project.Folders[0]
+
+	assert.NotEmpty(t, folder.ProvidersTf)
+	assert.NotEmpty(t, folder.VariablesTf)
+	assert.Empty(t, folder.AdditionalFiles)
+}
+
+func TestGenerateMirrorTopicsFiles_FallsBackToSelectedTopicsWhenTopicsEmpty(t *testing.T) {
+	t.Parallel()
+
+	// Simulates the UI handler path: only SelectedTopics is populated.
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		SelectedTopics:            []string{"orders", "events"},
+		ClusterLinkName:           "link",
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeMirror,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	folder := project.Folders[0]
+	assert.Len(t, folder.AdditionalFiles, 2)
+	assert.Contains(t, folder.AdditionalFiles, "orders.tf")
+	assert.Contains(t, folder.AdditionalFiles, "events.tf")
+}
+
+func TestGenerateMirrorTopicsFiles_InvalidModeIsRejected(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{{Name: "orders"}},
+		Mode:   "bogus",
+	}
+
+	_, err := service.GenerateMirrorTopicsFiles(request)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid mode")
+}
+
+// ============================================================================
+// New-mode end-to-end coverage (U4).
+// ============================================================================
+
+func mustStrPtr(s string) *string { return &s }
+
+func TestGenerateMirrorTopicsFiles_NewMode_BasicShape(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{
+				Name:       "orders",
+				Partitions: 6,
+				Configurations: map[string]*string{
+					"cleanup.policy":                 mustStrPtr("compact"),
+					"retention.ms":                   mustStrPtr("604800000"),
+					"unclean.leader.election.enable": mustStrPtr("true"),
+					"replication.factor":             mustStrPtr("3"),
+				},
+			},
+		},
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeNew,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	require.Len(t, project.Folders, 1)
+	folder := project.Folders[0]
+	require.Len(t, folder.AdditionalFiles, 1)
+
+	content, ok := folder.AdditionalFiles["orders.tf"]
+	require.True(t, ok, "expected per-topic file orders.tf")
+
+	// Header comment is present at the top of the file.
+	assert.True(t, strings.HasPrefix(content, "# Generated by kcp create-asset migrate-topics --mode new"), "header comment missing from new-mode file")
+	assert.Contains(t, content, CCSupportedTopicConfigsDocsURL)
+
+	// Allow-listed configs preserved with source values.
+	assert.Contains(t, content, `"cleanup.policy"`)
+	assert.Contains(t, content, `"compact"`)
+	assert.Contains(t, content, `"retention.ms"`)
+	assert.Contains(t, content, `"604800000"`)
+
+	// Non-allow-listed configs and replication.factor never emitted.
+	assert.NotContains(t, content, "unclean.leader.election.enable")
+	assert.NotContains(t, content, "replication.factor")
+
+	// partitions_count preserved verbatim.
+	assert.Contains(t, content, "partitions_count")
+	assert.Contains(t, content, "6")
+
+	// Resource type is the plain topic, not the mirror topic.
+	assert.Contains(t, content, `resource "confluent_kafka_topic"`)
+	assert.NotContains(t, content, `resource "confluent_kafka_mirror_topic"`)
+}
+
+func TestGenerateMirrorTopicsFiles_NewMode_FilePerTopic(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{Name: "orders", Partitions: 6},
+			{Name: "events", Partitions: 3},
+			{Name: "users", Partitions: 1},
+		},
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeNew,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	folder := project.Folders[0]
+
+	assert.Len(t, folder.AdditionalFiles, 3)
+	for _, name := range []string{"orders.tf", "events.tf", "users.tf"} {
+		assert.Contains(t, folder.AdditionalFiles, name)
+	}
+
+	// Each new-mode file has the header comment.
+	for filename, content := range folder.AdditionalFiles {
+		assert.True(t, strings.HasPrefix(content, "# Generated by kcp create-asset migrate-topics --mode new"), "%s missing new-mode header", filename)
+	}
+}
+
+func TestGenerateMirrorTopicsFiles_NewMode_NoReplicationFactorEver(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{
+				Name:       "orders",
+				Partitions: 6,
+				Configurations: map[string]*string{
+					"replication.factor": mustStrPtr("3"),
+				},
+			},
+		},
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeNew,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	folder := project.Folders[0]
+	for _, content := range folder.AdditionalFiles {
+		assert.NotContains(t, content, "replication.factor")
+	}
+}
+
+func TestGenerateMirrorTopicsFiles_NewMode_PreservesPartitionsCount(t *testing.T) {
+	t.Parallel()
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{Name: "orders", Partitions: 12},
+		},
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeNew,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	content := project.Folders[0].AdditionalFiles["orders.tf"]
+	// hclwrite aligns `=` signs; just check both the key and the value appear in the file.
+	assert.Contains(t, content, "partitions_count")
+	assert.Contains(t, content, " = 12")
+}
+
+func TestGenerateMirrorTopicsFiles_MirrorModeUnchangedByNewModeWiring(t *testing.T) {
+	t.Parallel()
+
+	// Regression check: U4's branching does not alter mirror-mode output.
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{Name: "orders", Partitions: 6, Configurations: map[string]*string{
+				"cleanup.policy": mustStrPtr("compact"),
+			}},
+		},
+		ClusterLinkName:           "link",
+		TargetClusterId:           "lkc-xyz",
+		TargetClusterRestEndpoint: "https://cc.example.com:443",
+		Mode:                      types.MigrateTopicsModeMirror,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	require.NoError(t, err)
+	content := project.Folders[0].AdditionalFiles["orders.tf"]
+
+	// Mirror mode emits the mirror-topic resource, never partitions/configs.
+	assert.Contains(t, content, `resource "confluent_kafka_mirror_topic"`)
+	assert.NotContains(t, content, `resource "confluent_kafka_topic"`)
+	assert.NotContains(t, content, "partitions_count")
+	assert.NotContains(t, content, "cleanup.policy")
+
+	// And no new-mode header on mirror output.
+	assert.False(t, strings.HasPrefix(content, "#"), "mirror-mode output should not carry the new-mode header")
+}
+
 func TestGenerateMigrateAclsFiles_OperationMapping(t *testing.T) {
 	t.Parallel()
 
