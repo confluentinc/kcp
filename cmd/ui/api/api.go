@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -621,7 +622,12 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
+	// UI wizard only supports mirror mode; the CLI gates --mode required.
+	if req.Mode == "" {
+		req.Mode = types.MigrateTopicsModeMirror
+	}
+
+	project, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",
@@ -629,7 +635,39 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
+	// Flatten the single-folder per-topic layout back into the legacy
+	// TerraformFiles shape so the existing wizard UI (which renders main.tf /
+	// providers.tf / variables.tf) keeps working. Per-topic file output is
+	// a CLI-only capability in this iteration — UI parity is deferred.
+	terraformFiles := flattenMigrateTopicsProject(project)
+
 	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+// flattenMigrateTopicsProject concatenates per-topic .tf files into a single
+// main.tf string so the legacy UI wizard contract stays intact while the CLI
+// uses the per-file layout.
+func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject) types.TerraformFiles {
+	out := types.TerraformFiles{}
+	if len(project.Folders) == 0 {
+		return out
+	}
+	folder := project.Folders[0]
+	out.ProvidersTf = folder.ProvidersTf
+	out.VariablesTf = folder.VariablesTf
+
+	names := make([]string, 0, len(folder.AdditionalFiles))
+	for n := range folder.AdditionalFiles {
+		names = append(names, n)
+	}
+	// Deterministic ordering so UI output is stable across requests.
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		b.WriteString(folder.AdditionalFiles[n])
+	}
+	out.MainTf = b.String()
+	return out
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
