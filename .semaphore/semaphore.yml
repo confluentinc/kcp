@@ -87,14 +87,14 @@ blocks:
   - name: 'terraform validation tests'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
-      when: "change_in(['/internal/services/hcl/', '/internal/types/types.go', '/cmd/create_asset/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+      when: "change_in(['/internal/services/hcl/', '/internal/types/types.go', '/internal/types/kafka.go', '/cmd/create_asset/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       prologue:
         commands:
           # Terraform is not pre-installed on Semaphore agents
           - curl -sLO https://releases.hashicorp.com/terraform/1.9.5/terraform_1.9.5_linux_amd64.zip
           - unzip -q terraform_1.9.5_linux_amd64.zip
-          - sudo install terraform /usr/local/bin/
+          - sudo install terraform /usr/local/bin/terraform
           - terraform version
       jobs:
         - name: 'terraform validation'
