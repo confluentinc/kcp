@@ -437,7 +437,7 @@ func (ms *MetricService) buildServerlessMetricQueries(clusterName string, period
 func newSearchMetricQueryInfo(metricName, searchExpr, mathExpr, stat string, period int32, dimensions string) types.MetricQueryInfo {
 	return types.MetricQueryInfo{
 		MetricName:       metricName,
-		SourceType:       "cloudwatch",
+		SourceType:       types.MetricBackendCloudWatch,
 		Namespace:        "AWS/Kafka",
 		Dimensions:       dimensions,
 		Statistic:        stat,

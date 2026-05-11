@@ -281,8 +281,13 @@ func (r *MetricReporter) addQueryDetailsSection(md *markdown.Markdown, queryInfo
 		md.AddHeading(info.MetricName, 5)
 
 		switch info.SourceType {
-		case "jolokia":
+		case types.MetricBackendJolokia:
 			md.AddParagraph("**Source:** Jolokia (JMX)")
+			md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+			md.AddParagraph(fmt.Sprintf("**Poll Interval:** %d seconds", info.Period))
+			if info.QueryDuration != "" {
+				md.AddParagraph(fmt.Sprintf("**Query Duration:** %s", info.QueryDuration))
+			}
 			md.AddParagraph(fmt.Sprintf("**Jolokia Endpoint:** %s", info.JolokiaURL))
 			if info.MBeanPath != "" {
 				md.AddParagraph("**MBean Path:**")
@@ -293,8 +298,13 @@ func (r *MetricReporter) addQueryDetailsSection(md *markdown.Markdown, queryInfo
 				md.AddCodeBlock(info.CurlCommand, "bash")
 			}
 
-		case "prometheus":
+		case types.MetricBackendPrometheus:
 			md.AddParagraph("**Source:** Prometheus")
+			md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+			md.AddParagraph(fmt.Sprintf("**Query Step:** %d seconds", info.Period))
+			if info.QueryDuration != "" {
+				md.AddParagraph(fmt.Sprintf("**Query Duration:** %s", info.QueryDuration))
+			}
 			md.AddParagraph(fmt.Sprintf("**Prometheus URL:** %s", info.PrometheusURL))
 			if info.PrometheusMetric != "" {
 				md.AddParagraph(fmt.Sprintf("**Prometheus Metric:** `%s`", info.PrometheusMetric))
@@ -308,7 +318,7 @@ func (r *MetricReporter) addQueryDetailsSection(md *markdown.Markdown, queryInfo
 				md.AddCodeBlock(info.CurlCommand, "bash")
 			}
 
-		default: // "cloudwatch" or empty (backward compat)
+		default: // MetricBackendCloudWatch or empty (backward compat)
 			md.AddParagraph(fmt.Sprintf("**Namespace:** %s", info.Namespace))
 			md.AddParagraph(fmt.Sprintf("**Dimensions:** %s", info.Dimensions))
 			md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))

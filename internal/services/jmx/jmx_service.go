@@ -297,7 +297,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 	for _, mb := range counterMBeans {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
-			SourceType:    "jolokia",
+			SourceType:    types.MetricBackendJolokia,
 			Statistic:     "Rate (delta/sec, summed across brokers)",
 			Period:        periodSec,
 			QueryDuration: durationStr,
@@ -313,7 +313,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 	for _, mb := range gaugeMBeans {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
-			SourceType:    "jolokia",
+			SourceType:    types.MetricBackendJolokia,
 			Statistic:     "Sum across brokers",
 			Period:        periodSec,
 			QueryDuration: durationStr,
@@ -329,7 +329,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 	for _, mb := range aggregateMBeans {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
-			SourceType:    "jolokia",
+			SourceType:    types.MetricBackendJolokia,
 			Statistic:     "Sum across brokers",
 			Period:        periodSec,
 			QueryDuration: durationStr,

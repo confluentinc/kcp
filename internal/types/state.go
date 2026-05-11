@@ -666,9 +666,18 @@ type CloudWatchTimeWindow struct {
 	Period    int32
 }
 
+// MetricBackend represents the metrics collection backend
+type MetricBackend string
+
+const (
+	MetricBackendCloudWatch MetricBackend = "cloudwatch"
+	MetricBackendJolokia    MetricBackend = "jolokia"
+	MetricBackendPrometheus MetricBackend = "prometheus"
+)
+
 type MetricQueryInfo struct {
-	MetricName string `json:"metric_name"`
-	SourceType string `json:"source_type,omitempty"` // "cloudwatch", "jolokia", "prometheus"
+	MetricName string        `json:"metric_name"`
+	SourceType MetricBackend `json:"source_type,omitempty"`
 
 	// CloudWatch fields
 	Namespace         string `json:"namespace,omitempty"`

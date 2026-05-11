@@ -115,13 +115,13 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		},
 		Metrics:    allMetrics,
 		Aggregates: aggregates,
-		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange),
+		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange, start, end),
 	}, nil
 }
 
 // buildPrometheusQueryInfo generates MetricQueryInfo entries for all Prometheus metrics,
 // including the resolved PromQL query and a curl command to reproduce it.
-func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration) []types.MetricQueryInfo {
+func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration, start, end time.Time) []types.MetricQueryInfo {
 	infos := make([]types.MetricQueryInfo, 0, len(prometheusQueries))
 	periodSec := int32(step.Seconds())
 	durationStr := types.FormatQueryDuration(queryRange)
@@ -154,14 +154,14 @@ func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange t
 
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:       mq.Label,
-			SourceType:       "prometheus",
+			SourceType:       types.MetricBackendPrometheus,
 			Statistic:        statistic,
 			Period:           periodSec,
 			QueryDuration:    durationStr,
 			PromQLQuery:      resolvedQuery,
 			PrometheusURL:    promBaseURL,
 			PrometheusMetric: mq.PrometheusMetric,
-			CurlCommand:      fmt.Sprintf("curl -G '%s/api/v1/query_range' --data-urlencode 'query=%s' --data-urlencode 'start=<START_TIMESTAMP>' --data-urlencode 'end=<END_TIMESTAMP>' --data-urlencode 'step=%ds'", promBaseURL, resolvedQuery, int(step.Seconds())),
+			CurlCommand:      fmt.Sprintf("curl -G '%s/api/v1/query_range' --data-urlencode 'query=%s' --data-urlencode 'start=%s' --data-urlencode 'end=%s' --data-urlencode 'step=%ds'", promBaseURL, resolvedQuery, start.Format(time.RFC3339), end.Format(time.RFC3339), int(step.Seconds())),
 			AggregationNote:  note,
 		})
 	}

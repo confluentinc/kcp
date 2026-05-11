@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -153,7 +154,7 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 	assert.Len(t, result.QueryInfo, len(prometheusQueries))
 
 	for _, qi := range result.QueryInfo {
-		assert.Equal(t, "prometheus", qi.SourceType)
+		assert.Equal(t, types.MetricBackendPrometheus, qi.SourceType)
 		assert.NotEmpty(t, qi.MetricName)
 		assert.NotEmpty(t, qi.PromQLQuery)
 		assert.NotEmpty(t, qi.PrometheusURL)
@@ -183,7 +184,9 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 }
 
 func TestBuildPrometheusQueryInfo(t *testing.T) {
-	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour)
+	end := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
+	start := end.Add(-24 * time.Hour)
+	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour, start, end)
 
 	assert.Len(t, infos, len(prometheusQueries))
 
@@ -211,9 +214,12 @@ func TestBuildPrometheusQueryInfo(t *testing.T) {
 		assert.Equal(t, "1d", info.QueryDuration)
 	}
 
-	// All should have curl commands
+	// All should have curl commands with actual timestamps
 	for _, info := range infos {
-		assert.Contains(t, info.CurlCommand, "http://prom:9090/api/v1/query")
+		assert.Contains(t, info.CurlCommand, "http://prom:9090/api/v1/query_range")
+		assert.Contains(t, info.CurlCommand, "start=2026-05-10T12:00:00Z")
+		assert.Contains(t, info.CurlCommand, "end=2026-05-11T12:00:00Z")
+		assert.Contains(t, info.CurlCommand, "step=60s")
 	}
 }
 

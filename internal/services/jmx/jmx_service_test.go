@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -193,7 +194,7 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 	assert.Len(t, result.QueryInfo, 6)
 
 	for _, qi := range result.QueryInfo {
-		assert.Equal(t, "jolokia", qi.SourceType)
+		assert.Equal(t, types.MetricBackendJolokia, qi.SourceType)
 		assert.NotEmpty(t, qi.MetricName)
 		assert.NotEmpty(t, qi.MBeanPath)
 		assert.NotEmpty(t, qi.JolokiaURL)
