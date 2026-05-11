@@ -673,17 +673,80 @@ type CloudWatchTimeWindow struct {
 	Period    int32
 }
 
+// MetricBackend represents the metrics collection backend
+type MetricBackend string
+
+const (
+	MetricBackendCloudWatch MetricBackend = "cloudwatch"
+	MetricBackendJolokia    MetricBackend = "jolokia"
+	MetricBackendPrometheus MetricBackend = "prometheus"
+)
+
 type MetricQueryInfo struct {
-	MetricName        string `json:"metric_name"`
-	Namespace         string `json:"namespace"`
-	Dimensions        string `json:"dimensions"`
-	Statistic         string `json:"statistic"`
-	Period            int32  `json:"period"`
-	SearchExpression  string `json:"search_expression"`
-	MathExpression    string `json:"math_expression"`
-	AWSCLICommand     string `json:"aws_cli_command"`
-	ConsoleSourceJSON string `json:"console_source_json"`
-	AggregationNote   string `json:"aggregation_note"`
+	MetricName string        `json:"metric_name"`
+	SourceType MetricBackend `json:"source_type,omitempty"`
+
+	// CloudWatch fields
+	Namespace         string `json:"namespace,omitempty"`
+	Dimensions        string `json:"dimensions,omitempty"`
+	Statistic         string `json:"statistic,omitempty"`
+	Period            int32  `json:"period,omitempty"`
+	SearchExpression  string `json:"search_expression,omitempty"`
+	MathExpression    string `json:"math_expression,omitempty"`
+	AWSCLICommand     string `json:"aws_cli_command,omitempty"`
+	ConsoleSourceJSON string `json:"console_source_json,omitempty"`
+
+	// Jolokia fields
+	MBeanPath  string `json:"mbean_path,omitempty"`
+	JolokiaURL string `json:"jolokia_url,omitempty"`
+
+	// Prometheus fields
+	PromQLQuery      string `json:"promql_query,omitempty"`
+	PrometheusURL    string `json:"prometheus_url,omitempty"`
+	PrometheusMetric string `json:"prometheus_metric_name,omitempty"`
+
+	// Shared fields
+	CurlCommand     string `json:"curl_command,omitempty"` // Jolokia curl or Prometheus API curl
+	QueryDuration   string `json:"query_duration,omitempty"`
+	AggregationNote string `json:"aggregation_note"`
+}
+
+// FormatQueryDuration formats a duration for display, using days when >= 24h.
+// Examples: "5m", "2h30m", "7d2h", "30d".
+func FormatQueryDuration(d time.Duration) string {
+	if d < 24*time.Hour {
+		// Under a day: use compact h/m/s, dropping zero components
+		d = d.Round(time.Second)
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		s := int(d.Seconds()) % 60
+		switch {
+		case h > 0 && m > 0:
+			return fmt.Sprintf("%dh%dm", h, m)
+		case h > 0:
+			return fmt.Sprintf("%dh", h)
+		case m > 0 && s > 0:
+			return fmt.Sprintf("%dm%ds", m, s)
+		case m > 0:
+			return fmt.Sprintf("%dm", m)
+		default:
+			return fmt.Sprintf("%ds", s)
+		}
+	}
+	days := int(d.Hours()) / 24
+	remaining := d - time.Duration(days)*24*time.Hour
+	hours := int(remaining.Hours())
+	mins := int(remaining.Minutes()) % 60
+	switch {
+	case hours > 0 && mins > 0:
+		return fmt.Sprintf("%dd%dh%dm", days, hours, mins)
+	case hours > 0:
+		return fmt.Sprintf("%dd%dh", days, hours)
+	case mins > 0:
+		return fmt.Sprintf("%dd%dm", days, mins)
+	default:
+		return fmt.Sprintf("%dd", days)
+	}
 }
 
 // ----- costs -----
