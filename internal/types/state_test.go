@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
 )
@@ -1154,5 +1155,36 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 	if state.KcpBuildInfo.Version != "" {
 		t.Errorf("expected empty version, got: %s", state.KcpBuildInfo.Version)
+	}
+}
+
+func TestFormatQueryDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		d        time.Duration
+		expected string
+	}{
+		{"seconds only", 30 * time.Second, "30s"},
+		{"minutes only", 5 * time.Minute, "5m"},
+		{"minutes and seconds", 5*time.Minute + 30*time.Second, "5m30s"},
+		{"hours only", 2 * time.Hour, "2h"},
+		{"hours and minutes", 2*time.Hour + 30*time.Minute, "2h30m"},
+		{"exactly 24h", 24 * time.Hour, "1d"},
+		{"1 day 2 hours", 26 * time.Hour, "1d2h"},
+		{"7 days", 7 * 24 * time.Hour, "7d"},
+		{"7 days 2 hours", 7*24*time.Hour + 2*time.Hour, "7d2h"},
+		{"30 days", 30 * 24 * time.Hour, "30d"},
+		{"170 hours", 170 * time.Hour, "7d2h"},
+		{"1 day 30 minutes", 24*time.Hour + 30*time.Minute, "1d30m"},
+		{"2 days 3 hours 15 minutes", 2*24*time.Hour + 3*time.Hour + 15*time.Minute, "2d3h15m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatQueryDuration(tt.d)
+			if got != tt.expected {
+				t.Errorf("FormatQueryDuration(%v) = %q, want %q", tt.d, got, tt.expected)
+			}
+		})
 	}
 }
