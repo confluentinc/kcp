@@ -306,8 +306,8 @@ func (r *MetricReporter) addQueryDetailsSection(md *markdown.Markdown, queryInfo
 				md.AddParagraph(fmt.Sprintf("**Query Duration:** %s", info.QueryDuration))
 			}
 			md.AddParagraph(fmt.Sprintf("**Prometheus URL:** %s", info.PrometheusURL))
-			if info.PrometheusMetric != "" {
-				md.AddParagraph(fmt.Sprintf("**Prometheus Metric:** `%s`", info.PrometheusMetric))
+			if info.PrometheusMetricName != "" {
+				md.AddParagraph(fmt.Sprintf("**Prometheus Metric:** `%s`", info.PrometheusMetricName))
 			}
 			if info.PromQLQuery != "" {
 				md.AddParagraph("**PromQL Query:**")

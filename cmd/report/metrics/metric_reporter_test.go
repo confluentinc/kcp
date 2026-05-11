@@ -379,6 +379,63 @@ func TestBackwardCompatibility_MSKReport(t *testing.T) {
 	assert.NotContains(t, report, "Location:")
 }
 
+func TestBackwardCompatibility_QueryInfoWithoutSourceType(t *testing.T) {
+	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
+
+	reporter := NewMetricReporter(nil, MetricReporterOpts{
+		ClusterIds: []string{"arn:aws:kafka:us-east-1:123456789012:cluster/old-cluster/abc"},
+		State:      &types.State{},
+		StartDate:  &startTime,
+		EndDate:    &endTime,
+	})
+
+	// Simulate an old state file where SourceType was not set on QueryInfo
+	clusters := []types.ProcessedClusterMetrics{
+		{
+			ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/old-cluster/abc",
+			Region:     "us-east-1",
+			Metadata: types.MetricMetadata{
+				ClusterType:         "PROVISIONED",
+				NumberOfBrokerNodes: 3,
+				KafkaVersion:        "3.5.1",
+				Period:              300,
+			},
+			QueryInfo: []types.MetricQueryInfo{
+				{
+					MetricName:       "BytesInPerSec",
+					SourceType:       "", // Empty — old state file without source_type
+					Namespace:        "AWS/Kafka",
+					Statistic:        "Average",
+					Dimensions:       "Cluster Name, Broker ID",
+					Period:           300,
+					SearchExpression: "SEARCH('{AWS/Kafka,Cluster Name,Broker ID}', 'Average', 300)",
+					AggregationNote:  "Uses SEARCH to find BytesInPerSec across all brokers.",
+				},
+			},
+		},
+	}
+
+	md := reporter.generateReport(clusters)
+	report := md.String()
+
+	// Should render as CloudWatch via the default branch
+	assert.Contains(t, report, "Query Details")
+	assert.Contains(t, report, "Namespace")
+	assert.Contains(t, report, "AWS/Kafka")
+	assert.Contains(t, report, "Statistic")
+	assert.Contains(t, report, "Average")
+	assert.Contains(t, report, "Dimensions")
+	assert.Contains(t, report, "SEARCH Expression")
+	assert.Contains(t, report, "300 seconds")
+
+	// Should NOT contain OSK-specific fields
+	assert.NotContains(t, report, "Jolokia")
+	assert.NotContains(t, report, "MBean Path")
+	assert.NotContains(t, report, "Prometheus")
+	assert.NotContains(t, report, "PromQL")
+}
+
 func TestGenerateReport_OSKCluster_JolokiaQueryDetails(t *testing.T) {
 	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
@@ -492,28 +549,28 @@ func TestGenerateReport_OSKCluster_PrometheusQueryDetails(t *testing.T) {
 			},
 			QueryInfo: []types.MetricQueryInfo{
 				{
-					MetricName:       "BytesInPerSec",
-					SourceType:       types.MetricBackendPrometheus,
-					Statistic:        "Rate (sum of rate() over 5m window)",
-					Period:           60,
-					QueryDuration:    "1d",
-					PromQLQuery:      "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[5m]))",
-					PrometheusURL:    "http://prometheus:9090",
-					PrometheusMetric: "kafka_server_brokertopicmetrics_bytesinpersec_total",
-					CurlCommand:      "curl -G 'http://prometheus:9090/api/v1/query_range' --data-urlencode 'query=sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[5m]))' --data-urlencode 'start=2025-01-01T00:00:00Z' --data-urlencode 'end=2025-01-02T00:00:00Z' --data-urlencode 'step=60s'",
-					AggregationNote:  "Computes rate() over a 5m window, then sums across all instances.",
+					MetricName:           "BytesInPerSec",
+					SourceType:           types.MetricBackendPrometheus,
+					Statistic:            "Rate (sum of rate() over 5m window)",
+					Period:               60,
+					QueryDuration:        "1d",
+					PromQLQuery:          "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[5m]))",
+					PrometheusURL:        "http://prometheus:9090",
+					PrometheusMetricName: "kafka_server_brokertopicmetrics_bytesinpersec_total",
+					CurlCommand:          "curl -G 'http://prometheus:9090/api/v1/query_range' --data-urlencode 'query=sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[5m]))' --data-urlencode 'start=2025-01-01T00:00:00Z' --data-urlencode 'end=2025-01-02T00:00:00Z' --data-urlencode 'step=60s'",
+					AggregationNote:      "Computes rate() over a 5m window, then sums across all instances.",
 				},
 				{
-					MetricName:       "TotalLocalStorageUsage",
-					SourceType:       types.MetricBackendPrometheus,
-					Statistic:        "Sum (bytes converted to GiB)",
-					Period:           60,
-					QueryDuration:    "1d",
-					PromQLQuery:      "sum(kafka_log_log_size) / (1024*1024*1024)",
-					PrometheusURL:    "http://prometheus:9090",
-					PrometheusMetric: "kafka_log_log_size",
-					CurlCommand:      "curl -G 'http://prometheus:9090/api/v1/query_range' --data-urlencode 'query=sum(kafka_log_log_size) / (1024*1024*1024)' --data-urlencode 'start=2025-01-01T00:00:00Z' --data-urlencode 'end=2025-01-02T00:00:00Z' --data-urlencode 'step=60s'",
-					AggregationNote:  "Sums raw byte values across all instances and converts to GiB.",
+					MetricName:           "TotalLocalStorageUsage",
+					SourceType:           types.MetricBackendPrometheus,
+					Statistic:            "Sum (bytes converted to GiB)",
+					Period:               60,
+					QueryDuration:        "1d",
+					PromQLQuery:          "sum(kafka_log_log_size) / (1024*1024*1024)",
+					PrometheusURL:        "http://prometheus:9090",
+					PrometheusMetricName: "kafka_log_log_size",
+					CurlCommand:          "curl -G 'http://prometheus:9090/api/v1/query_range' --data-urlencode 'query=sum(kafka_log_log_size) / (1024*1024*1024)' --data-urlencode 'start=2025-01-01T00:00:00Z' --data-urlencode 'end=2025-01-02T00:00:00Z' --data-urlencode 'step=60s'",
+					AggregationNote:      "Sums raw byte values across all instances and converts to GiB.",
 				},
 			},
 		},

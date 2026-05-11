@@ -159,7 +159,7 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 		assert.NotEmpty(t, qi.PromQLQuery)
 		assert.NotEmpty(t, qi.PrometheusURL)
 		assert.Contains(t, qi.PrometheusURL, server.URL)
-		assert.NotEmpty(t, qi.PrometheusMetric)
+		assert.NotEmpty(t, qi.PrometheusMetricName)
 		assert.Contains(t, qi.CurlCommand, "curl")
 		assert.Contains(t, qi.CurlCommand, server.URL)
 		assert.NotEmpty(t, qi.AggregationNote)

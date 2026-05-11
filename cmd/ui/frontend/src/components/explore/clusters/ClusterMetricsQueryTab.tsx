@@ -260,12 +260,14 @@ const JolokiaSection = ({ info, index, copiedKey, onCopy }: SectionProps) => (
     </div>
 
     {/* MBean Path */}
-    <div className="mb-4">
-      <span className="text-sm font-medium text-foreground">MBean Path</span>
-      <pre className="mt-1 text-xs font-mono text-foreground overflow-auto bg-secondary p-3 rounded border">
-        {info.mbean_path}
-      </pre>
-    </div>
+    {info.mbean_path && (
+      <div className="mb-4">
+        <span className="text-sm font-medium text-foreground">MBean Path</span>
+        <pre className="mt-1 text-xs font-mono text-foreground overflow-auto bg-secondary p-3 rounded border">
+          {info.mbean_path}
+        </pre>
+      </div>
+    )}
 
     {/* Curl Command */}
     {info.curl_command && (
@@ -311,6 +313,16 @@ const PrometheusSection = ({ info, index, copiedKey, onCopy }: SectionProps) => 
       </div>
       <div>
         <span className="text-sm font-medium text-foreground">
+          Prometheus URL
+        </span>
+        <p className="text-sm text-muted-foreground">{info.prometheus_url}</p>
+      </div>
+    </div>
+
+    {/* Prometheus Metric Name */}
+    {info.prometheus_metric_name && (
+      <div className="mb-4">
+        <span className="text-sm font-medium text-foreground">
           Prometheus Metric
         </span>
         <p className="text-sm text-muted-foreground">
@@ -319,7 +331,7 @@ const PrometheusSection = ({ info, index, copiedKey, onCopy }: SectionProps) => 
           </code>
         </p>
       </div>
-    </div>
+    )}
 
     {/* PromQL Query */}
     {info.promql_query && (
@@ -340,16 +352,6 @@ const PrometheusSection = ({ info, index, copiedKey, onCopy }: SectionProps) => 
         <pre className="mt-1 text-xs font-mono text-foreground overflow-auto bg-secondary p-3 rounded border">
           {info.promql_query}
         </pre>
-      </div>
-    )}
-
-    {/* Prometheus URL */}
-    {info.prometheus_url && (
-      <div className="mb-4">
-        <span className="text-sm font-medium text-foreground">
-          Prometheus URL
-        </span>
-        <p className="text-sm text-muted-foreground">{info.prometheus_url}</p>
       </div>
     )}
 

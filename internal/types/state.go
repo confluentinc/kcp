@@ -701,9 +701,9 @@ type MetricQueryInfo struct {
 	JolokiaURL string `json:"jolokia_url,omitempty"`
 
 	// Prometheus fields
-	PromQLQuery      string `json:"promql_query,omitempty"`
-	PrometheusURL    string `json:"prometheus_url,omitempty"`
-	PrometheusMetric string `json:"prometheus_metric_name,omitempty"`
+	PromQLQuery          string `json:"promql_query,omitempty"`
+	PrometheusURL        string `json:"prometheus_url,omitempty"`
+	PrometheusMetricName string `json:"prometheus_metric_name,omitempty"`
 
 	// Shared fields
 	CurlCommand     string `json:"curl_command,omitempty"` // Jolokia curl or Prometheus API curl
