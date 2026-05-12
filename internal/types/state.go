@@ -928,6 +928,9 @@ type MetricAggregate struct {
 	Average *float64 `json:"avg"`
 	Maximum *float64 `json:"max"`
 	Minimum *float64 `json:"min"`
+	P95     *float64 `json:"p95"`
+	P99     *float64 `json:"p99"`
+	Count   int      `json:"count"`
 }
 
 type CostAggregate struct {

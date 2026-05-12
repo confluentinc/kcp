@@ -1,0 +1,135 @@
+{
+  "header": {
+    "source": "Amazon MSK",
+    "state_file_path": "./kcp-state.json",
+    "kcp_version": "0.7.2",
+    "generated_at": "2026-05-12T12:00:00Z",
+    "plan_schema_version": "1-experimental"
+  },
+  "inputs": {
+    "sla_target": "99.9",
+    "sizing_percentile": "P95",
+    "headroom_fraction": 0.3,
+    "privatelink_safety_threshold": 0.8,
+    "spiky_workload_ratio": 2
+  },
+  "source_environment": {
+    "clusters": [
+      {
+        "cluster_id": "cluster-a",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 250
+      },
+      {
+        "cluster_id": "cluster-b",
+        "region": "us-east-1",
+        "broker_count": 9,
+        "topic_count": 400
+      }
+    ],
+    "total_regions": 1
+  },
+  "sizing": [
+    {
+      "cluster_id": "cluster-a",
+      "p95_in_mbps": 12,
+      "p95_out_mbps": 18,
+      "peak_in_mbps": 18,
+      "peak_out_mbps": 27,
+      "user_partitions": 600,
+      "internal_partitions": 50,
+      "ingress_ratio": 0.2,
+      "egress_ratio": 0.1,
+      "partition_ratio": 0.2,
+      "max_ratio": 0.2,
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.3,
+      "peak_burst_out_ratio": 0.15,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        { "path": "cluster[cluster-a].metrics.aggregates.BytesInPerSec.p95",  "value": 12582912 },
+        { "path": "cluster[cluster-a].metrics.aggregates.BytesOutPerSec.p95", "value": 18874368 },
+        { "path": "cluster[cluster-a].kafka_admin_client_information.topics.summary.total_partitions", "value": 600 }
+      ]
+    },
+    {
+      "cluster_id": "cluster-b",
+      "p95_in_mbps": 90,
+      "p95_out_mbps": 900,
+      "peak_in_mbps": 140,
+      "peak_out_mbps": 1400,
+      "user_partitions": 1500,
+      "internal_partitions": 80,
+      "ingress_ratio": 1.5,
+      "egress_ratio": 5,
+      "partition_ratio": 0.5,
+      "max_ratio": 5,
+      "sized_ecku": 7,
+      "sla_floor_ecku": 1,
+      "final_ecku": 7,
+      "peak_burst_in_ratio": 2.33,
+      "peak_burst_out_ratio": 7.78,
+      "peak_burst_ecku": 8,
+      "peak_burst_pct_of_pl_cap": 80,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        { "path": "cluster[cluster-b].metrics.aggregates.BytesInPerSec.p95",  "value": 94371840 },
+        { "path": "cluster[cluster-b].metrics.aggregates.BytesOutPerSec.p95", "value": 943718400 },
+        { "path": "cluster[cluster-b].kafka_admin_client_information.topics.summary.total_partitions", "value": 1500 }
+      ]
+    }
+  ],
+  "cluster_type_decision": [
+    { "cluster_id": "cluster-a", "verdict": "Enterprise" },
+    { "cluster_id": "cluster-b", "verdict": "Enterprise" }
+  ],
+  "networking_decision": [
+    {
+      "cluster_id": "cluster-a",
+      "verdict": "PrivateLink",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "Peak burst 1 eCKU below 80% of 10 eCKU PrivateLink cap"
+    },
+    {
+      "cluster_id": "cluster-b",
+      "verdict": "PNI",
+      "peak_burst_ecku": 8,
+      "percentage_of_cap": 80,
+      "reason": "Peak burst 8 eCKU at 80% of PrivateLink cap — exceeds 80% safety threshold"
+    }
+  ],
+  "sizing_appendix": [
+    {
+      "cluster_id": "cluster-a",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 12.00 MBps / 60 = 0.2000",
+        "egress ratio  = 18.00 MBps / 180 = 0.1000",
+        "partition ratio = 600 / 3000 = 0.2000",
+        "max ratio = 0.2000",
+        "sized = CEIL(0.2000 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ]
+    },
+    {
+      "cluster_id": "cluster-b",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 90.00 MBps / 60 = 1.5000",
+        "egress ratio  = 900.00 MBps / 180 = 5.0000",
+        "partition ratio = 1500 / 3000 = 0.5000",
+        "max ratio = 5.0000",
+        "sized = CEIL(5.0000 * 1.30) = 7  (1 + 0.30 headroom)",
+        "final = max(7 sized, 1 SLA floor) = 7 eCKU"
+      ]
+    }
+  ]
+}
