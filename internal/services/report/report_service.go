@@ -675,8 +675,9 @@ func nearestRankIndex(n int, p float64) int {
 }
 
 // calculateMetricsAggregates returns avg, min, max, P95, P99, and count
-// per metric label. Percentiles use the lower-index nearest-rank method:
-// `values[int(N*p)]` after sorting.
+// per metric label. Percentiles use the nearest-rank method (R type 1):
+// after sorting, index = ceil(N*p) - 1, clamped to [0, N-1]. See
+// nearestRankIndex.
 func (rs *ReportService) calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
 	metricsByLabel := make(map[string][]float64)
 

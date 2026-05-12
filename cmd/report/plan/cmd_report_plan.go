@@ -123,7 +123,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 	}
 
 	if writeMD {
-		data, err := plan.RenderMarkdown(p)
+		data, err := plan.RenderMarkdown(p, cfg)
 		if err != nil {
 			return err
 		}

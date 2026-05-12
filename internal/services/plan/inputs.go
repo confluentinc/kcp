@@ -32,8 +32,8 @@ func LoadPlanInputs(path string) (*types.PlanInputs, error) {
 // ResolvePlanInputs merges customer-supplied PlanInputs with pinned
 // defaults from PlanConfig. Customer-set fields win; everything else
 // falls back to PlanConfig.PlanInputDefaults. Raw is preserved so
-// downstream consumers can detect which fields the customer explicitly
-// set (e.g. the hard-limit catalog reads Raw.Requires9995SingleZoneSLA).
+// downstream consumers can detect which sizing fields the customer
+// explicitly set (HeadroomFraction, SLATarget, SizingPercentile, etc.).
 func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsResolved {
 	out := types.PlanInputsResolved{
 		Raw:                        in,

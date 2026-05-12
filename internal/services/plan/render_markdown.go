@@ -12,26 +12,31 @@ import (
 // Sizing & Cluster Decisions table with full rationale, collapsed
 // Appendix A1 with the sizing math expansion. MVP scope — no auth /
 // switchover / red flag sections (each lands with its own follow-up).
-func RenderMarkdown(p *types.Plan) ([]byte, error) {
+//
+// cfg is read for product-fact numbers in the Definitions block and for
+// the partition cap rendered in the appendix; pass the same PlanConfig
+// the PlanService used to build the plan.
+func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	var b bytes.Buffer
 
 	fmt.Fprintf(&b, "# Migration Plan — %s → Confluent Cloud\n\n", p.Header.Source)
 	fmt.Fprintf(&b, "_Generated %s by KCP %s from `%s`._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, p.Header.StateFilePath)
 
-	writeDefinitions(&b)
+	writeDefinitions(&b, cfg)
 	writeSourceEnvironment(&b, p)
 	writeSizingAndDecisions(&b, p)
-	writeSizingAppendix(&b, p)
+	writeSizingAppendix(&b, p, cfg)
 
 	return b.Bytes(), nil
 }
 
-func writeDefinitions(b *bytes.Buffer) {
+func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
+	caps := cfg.EnterpriseCaps
 	b.WriteString("## Definitions\n\n")
-	b.WriteString("- **eCKU** — Elastic Confluent Kafka Unit, the throughput unit on Enterprise clusters. ~30 MB/s ingress + 90 MB/s egress per eCKU at the per-eCKU caps used below.\n")
-	b.WriteString("- **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 so a transient spike doesn't permanently inflate the recommended cluster size.\n")
-	b.WriteString("- **PrivateLink** — single-AZ private connectivity, up to 10 eCKU. The default network when the cluster fits inside it with headroom.\n")
-	b.WriteString("- **PNI** (Private Network Interface) — multi-AZ private connectivity, up to 32 eCKU. Used when PrivateLink's cap is too close to the cluster's peak burst.\n\n")
+	fmt.Fprintf(b, "- **eCKU** — Elastic Confluent Kafka Unit, the throughput unit on Enterprise clusters. %d MB/s ingress + %d MB/s egress per eCKU at the per-eCKU caps used below.\n", caps.PerECKUIngressMBps, caps.PerECKUEgressMBps)
+	b.WriteString("- **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 (override with `sizing_percentile`) so a transient spike doesn't permanently inflate the recommended cluster size.\n")
+	fmt.Fprintf(b, "- **PrivateLink** — single-AZ private connectivity, up to %d eCKU. The default network when the cluster fits inside it with headroom.\n", caps.PrivateLinkMaxECKU)
+	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — multi-AZ private connectivity, up to %d eCKU. Used when PrivateLink's cap is too close to the cluster's peak burst.\n\n", caps.PNIMaxECKU)
 }
 
 func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan) {
@@ -108,10 +113,11 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 	b.WriteString("\n")
 }
 
-func writeSizingAppendix(b *bytes.Buffer, p *types.Plan) {
+func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 	if len(p.SizingAppendix) == 0 {
 		return
 	}
+	partitionCap := cfg.EnterpriseCaps.PerECKUPartitionRate
 	b.WriteString("## Appendix A1 — Sizing Math\n")
 	b.WriteString("<details><summary>Show sizing math per cluster</summary>\n\n")
 	b.WriteString("Each cluster is sized by taking the largest of its three throughput-vs-cap ratios (ingress, egress, partitions) and scaling that by `(1 + headroom)`, so the recommended eCKU has spare capacity above the observed P95. SLA floor binds when the math comes in below the minimum eCKU for the target SLA.\n\n")
@@ -121,31 +127,15 @@ func writeSizingAppendix(b *bytes.Buffer, p *types.Plan) {
 	fmt.Fprintf(b, "Formula: `%s`\n\n", p.SizingAppendix[0].Formula)
 	b.WriteString("| Cluster | Ingress ratio | Egress ratio | Partition ratio | Max (driver) | Sized eCKU | SLA floor | Final eCKU |\n")
 	b.WriteString("|---|---:|---:|---:|---|---:|---:|---:|\n")
-	for i, s := range p.Sizing {
-		_ = i
+	for _, s := range p.Sizing {
 		if s.Degraded {
-			fmt.Fprintf(b, "| %s | _degraded_ | _degraded_ | %d / 3000 | _n/a_ | _n/a_ | %d | %d |\n",
-				s.ClusterID, s.UserPartitions, s.SLAFloorECKU, s.FinalECKU)
+			fmt.Fprintf(b, "| %s | _degraded_ | _degraded_ | %d / %d | _n/a_ | _n/a_ | %d | %d |\n",
+				s.ClusterID, s.UserPartitions, partitionCap, s.SLAFloorECKU, s.FinalECKU)
 			continue
 		}
-		driver := sizingDriver(s)
 		fmt.Fprintf(b, "| %s | %.4f | %.4f | %.4f | **%.4f** (%s) | %d | %d | %d |\n",
-			s.ClusterID, s.IngressRatio, s.EgressRatio, s.PartitionRatio, s.MaxRatio, driver, s.SizedECKU, s.SLAFloorECKU, s.FinalECKU)
+			s.ClusterID, s.IngressRatio, s.EgressRatio, s.PartitionRatio, s.MaxRatio, s.MaxRatioDriver, s.SizedECKU, s.SLAFloorECKU, s.FinalECKU)
 	}
 	b.WriteString("\nMax-ratio is multiplied by `(1 + headroom)` and rounded up to get `Sized eCKU`. `Final eCKU` is `max(Sized, SLA floor)`.\n\n")
 	b.WriteString("</details>\n\n")
-}
-
-// sizingDriver returns the label of the ratio that won max() for a cluster.
-// Used in the appendix table so the reader can see at a glance which
-// dimension (ingress, egress, or partitions) drove the eCKU number.
-func sizingDriver(s types.ClusterSizing) string {
-	switch {
-	case s.MaxRatio == s.EgressRatio:
-		return "egress"
-	case s.MaxRatio == s.IngressRatio:
-		return "ingress"
-	default:
-		return "partitions"
-	}
 }

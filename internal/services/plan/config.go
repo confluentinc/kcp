@@ -82,17 +82,33 @@ func (c *PlanConfig) Validate() error {
 	if c.SchemaVersion != ExpectedSchemaVersion {
 		return fmt.Errorf("plan-config schema_version %d does not match expected %d", c.SchemaVersion, ExpectedSchemaVersion)
 	}
-	if c.EnterpriseCaps.PerECKUIngressMBps == 0 {
-		return fmt.Errorf("plan-config enterprise_caps.per_eCKU_ingress_mbps is required")
+	caps := c.EnterpriseCaps
+	if caps.PerECKUIngressMBps <= 0 {
+		return fmt.Errorf("plan-config enterprise_caps.per_eCKU_ingress_mbps must be > 0")
 	}
-	if c.EnterpriseCaps.PerECKUEgressMBps == 0 {
-		return fmt.Errorf("plan-config enterprise_caps.per_eCKU_egress_mbps is required")
+	if caps.PerECKUEgressMBps <= 0 {
+		return fmt.Errorf("plan-config enterprise_caps.per_eCKU_egress_mbps must be > 0")
 	}
-	if c.EnterpriseCaps.PerECKUPartitionRate == 0 {
-		return fmt.Errorf("plan-config enterprise_caps.per_eCKU_partition_rate is required")
+	if caps.PerECKUPartitionRate <= 0 {
+		return fmt.Errorf("plan-config enterprise_caps.per_eCKU_partition_rate must be > 0")
 	}
-	if c.EnterpriseCaps.PrivateLinkMaxECKU == 0 {
-		return fmt.Errorf("plan-config enterprise_caps.privatelink_max_eCKU is required")
+	if caps.PrivateLinkMaxECKU <= 0 {
+		return fmt.Errorf("plan-config enterprise_caps.privatelink_max_eCKU must be > 0")
+	}
+	// pni_max_eCKU is load-bearing for the Enterprise→Dedicated rule; a 0
+	// here would force every non-zero FinalECKU to trip the cap.
+	if caps.PNIMaxECKU <= 0 {
+		return fmt.Errorf("plan-config enterprise_caps.pni_max_eCKU must be > 0")
+	}
+	defaults := c.PlanInputDefaults
+	if defaults.HeadroomFraction < 0 || defaults.HeadroomFraction > 1 {
+		return fmt.Errorf("plan-config plan_input_defaults.headroom_fraction must be in [0, 1] (got %v)", defaults.HeadroomFraction)
+	}
+	if defaults.PrivateLinkSafetyThreshold <= 0 || defaults.PrivateLinkSafetyThreshold > 1 {
+		return fmt.Errorf("plan-config plan_input_defaults.privatelink_safety_threshold must be in (0, 1] (got %v)", defaults.PrivateLinkSafetyThreshold)
+	}
+	if defaults.SpikyWorkloadRatio <= 1 {
+		return fmt.Errorf("plan-config plan_input_defaults.spiky_workload_ratio must be > 1 (got %v) — a spike must be larger than the baseline", defaults.SpikyWorkloadRatio)
 	}
 	return nil
 }

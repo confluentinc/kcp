@@ -30,8 +30,9 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 	caps := cfg.EnterpriseCaps
 	aggs := c.ClusterMetrics.Aggregates
 
-	p95InBytes, haveIn := pickPercentile(aggs, "BytesInPerSec", "P95")
-	p95OutBytes, haveOut := pickPercentile(aggs, "BytesOutPerSec", "P95")
+	pct := normalizePercentile(inputs.SizingPercentile)
+	p95InBytes, haveIn := pickPercentile(aggs, "BytesInPerSec", pct)
+	p95OutBytes, haveOut := pickPercentile(aggs, "BytesOutPerSec", pct)
 	if !haveIn || !haveOut {
 		slaFloor := slaFloorECKU(inputs.SLATarget, cfg.PlanInputDefaults.SLAFloorECKU)
 		return types.ClusterSizing{
@@ -40,10 +41,10 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 			SLAFloorECKU:   slaFloor,
 			FinalECKU:      slaFloor,
 			Degraded:       true,
-			DegradedReason: missingMetricsReason(haveIn, haveOut),
+			DegradedReason: missingMetricsReason(haveIn, haveOut, pct),
 			Citations: []types.FieldCitation{
-				{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.p95", c.Name), Value: nil},
-				{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.p95", c.Name), Value: nil},
+				{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.%s", c.Name, citationKey(pct)), Value: nil},
+				{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.%s", c.Name, citationKey(pct)), Value: nil},
 			},
 		}
 	}
@@ -65,7 +66,7 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 	ingressRatio := p95InMBps / float64(caps.PerECKUIngressMBps)
 	egressRatio := p95OutMBps / float64(caps.PerECKUEgressMBps)
 	partitionRatio := float64(userPartitions) / float64(caps.PerECKUPartitionRate)
-	maxRatio := maxOf(ingressRatio, egressRatio, partitionRatio)
+	maxRatio, maxDriver := pickMaxDriver(ingressRatio, egressRatio, partitionRatio)
 
 	sized := int(math.Ceil(maxRatio * (1.0 + inputs.HeadroomFraction)))
 	if sized < 1 {
@@ -99,6 +100,7 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 		EgressRatio:         egressRatio,
 		PartitionRatio:      partitionRatio,
 		MaxRatio:            maxRatio,
+		MaxRatioDriver:      maxDriver,
 		SizedECKU:           sized,
 		SLAFloorECKU:        slaFloor,
 		FinalECKU:           final,
@@ -109,13 +111,55 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 		SpikyIngress:        peakInMBps > spikyRatio*p95InMBps,
 		SpikyEgress:         peakOutMBps > spikyRatio*p95OutMBps,
 		Citations: []types.FieldCitation{
-			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.p95", c.Name), Value: p95InBytes},
-			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.p95", c.Name), Value: p95OutBytes},
+			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.%s", c.Name, citationKey(pct)), Value: p95InBytes},
+			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.%s", c.Name, citationKey(pct)), Value: p95OutBytes},
 			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.max", c.Name), Value: peakInBytes},
 			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.max", c.Name), Value: peakOutBytes},
 			{Path: fmt.Sprintf("cluster[%s].kafka_admin_client_information.topics.summary.total_partitions", c.Name), Value: userPartitions},
 		},
 	}
+}
+
+// normalizePercentile maps the customer's sizing_percentile input (P95 |
+// P99 | max) to the field name pickPercentile uses. Unknown values fall
+// back to "P95" so a stray input doesn't silently use the wrong column —
+// the validation hook on PlanInputs is the actual typo guard.
+func normalizePercentile(s string) string {
+	switch s {
+	case "P95", "P99", "max":
+		return s
+	default:
+		return "P95"
+	}
+}
+
+// citationKey is the lowercase token the citation path uses for the
+// chosen percentile — keeps the path string consistent with the JSON
+// field name in MetricAggregate (e.g. "p95" not "P95").
+func citationKey(pct string) string {
+	switch pct {
+	case "P99":
+		return "p99"
+	case "max":
+		return "max"
+	default:
+		return "p95"
+	}
+}
+
+// pickMaxDriver returns the largest of the three ratios and the label
+// of the dimension that produced it ("ingress" | "egress" | "partitions").
+// Ties resolve to the first ratio that touches the max, in the order
+// ingress, egress, partitions — stable and not float-equality dependent.
+func pickMaxDriver(ingress, egress, partitions float64) (float64, string) {
+	maxR, driver := ingress, "ingress"
+	if egress > maxR {
+		maxR, driver = egress, "egress"
+	}
+	if partitions > maxR {
+		maxR, driver = partitions, "partitions"
+	}
+	return maxR, driver
 }
 
 func userPartitionsOf(c types.ProcessedCluster) int {
@@ -125,14 +169,14 @@ func userPartitionsOf(c types.ProcessedCluster) int {
 	return c.KafkaAdminClientInformation.Topics.Summary.TotalPartitions
 }
 
-func missingMetricsReason(haveIn, haveOut bool) string {
+func missingMetricsReason(haveIn, haveOut bool, pct string) string {
 	switch {
 	case !haveIn && !haveOut:
-		return "no BytesInPerSec or BytesOutPerSec P95; re-run kcp scan metrics"
+		return fmt.Sprintf("no BytesInPerSec or BytesOutPerSec %s; re-run kcp scan metrics", pct)
 	case !haveIn:
-		return "no BytesInPerSec P95; re-run kcp scan metrics"
+		return fmt.Sprintf("no BytesInPerSec %s; re-run kcp scan metrics", pct)
 	default:
-		return "no BytesOutPerSec P95; re-run kcp scan metrics"
+		return fmt.Sprintf("no BytesOutPerSec %s; re-run kcp scan metrics", pct)
 	}
 }
 

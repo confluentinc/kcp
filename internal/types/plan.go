@@ -47,17 +47,21 @@ type SourceClusterSummary struct {
 // ----- sizing & decisions -----
 
 type ClusterSizing struct {
-	ClusterID           string          `json:"cluster_id"`
-	P95InMBps           float64         `json:"p95_in_mbps"`
-	P95OutMBps          float64         `json:"p95_out_mbps"`
-	PeakInMBps          float64         `json:"peak_in_mbps"`
-	PeakOutMBps         float64         `json:"peak_out_mbps"`
-	UserPartitions      int             `json:"user_partitions"`
-	InternalPartitions  int             `json:"internal_partitions"`
-	IngressRatio        float64         `json:"ingress_ratio"`
-	EgressRatio         float64         `json:"egress_ratio"`
-	PartitionRatio      float64         `json:"partition_ratio"`
-	MaxRatio            float64         `json:"max_ratio"`
+	ClusterID          string  `json:"cluster_id"`
+	P95InMBps          float64 `json:"p95_in_mbps"`
+	P95OutMBps         float64 `json:"p95_out_mbps"`
+	PeakInMBps         float64 `json:"peak_in_mbps"`
+	PeakOutMBps        float64 `json:"peak_out_mbps"`
+	UserPartitions     int     `json:"user_partitions"`
+	InternalPartitions int     `json:"internal_partitions"`
+	IngressRatio       float64 `json:"ingress_ratio"`
+	EgressRatio        float64 `json:"egress_ratio"`
+	PartitionRatio     float64 `json:"partition_ratio"`
+	MaxRatio           float64 `json:"max_ratio"`
+	// MaxRatioDriver names which of the three dimensions produced MaxRatio:
+	// "ingress", "egress", or "partitions". Tracked at compute time so the
+	// renderer never has to do a float-equality comparison to recover it.
+	MaxRatioDriver      string          `json:"max_ratio_driver,omitempty"`
 	SizedECKU           int             `json:"sized_ecku"`
 	SLAFloorECKU        int             `json:"sla_floor_ecku"`
 	FinalECKU           int             `json:"final_ecku"`
