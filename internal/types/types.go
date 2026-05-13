@@ -217,11 +217,38 @@ type MigrateAclsRequest struct {
 	AclsByPrincipal map[string][]Acls `json:"-"`
 }
 
+// MigrateTopicsMode values for MirrorTopicsRequest.Mode.
+const (
+	MigrateTopicsModeMirror = "mirror"
+	MigrateTopicsModeNew    = "new"
+)
+
+// MirrorTopicsRequest carries the inputs for `kcp create-asset migrate-topics` in
+// both --mode mirror and --mode new. The name is kept for backward compatibility
+// with the UI wire format; consider renaming to MigrateTopicsRequest in a future change.
 type MirrorTopicsRequest struct {
-	SelectedTopics            []string `json:"selected_topics"`
-	ClusterLinkName           string   `json:"cluster_link_name"`
-	TargetClusterId           string   `json:"target_cluster_id"`
-	TargetClusterRestEndpoint string   `json:"target_cluster_rest_endpoint"`
+	// SelectedTopics is the legacy name-only list sent by the UI wizard. The CLI
+	// populates Topics instead; the HCL service falls back to SelectedTopics when
+	// Topics is empty (mirror-mode UI path only — new mode requires Topics).
+	SelectedTopics []string `json:"selected_topics"`
+	// Topics carries the full topic details (partitions, configs) needed by new mode.
+	// Not part of the JSON wire format — the CLI populates this from state directly.
+	Topics                    []TopicDetails `json:"-"`
+	ClusterLinkName           string         `json:"cluster_link_name"`
+	TargetClusterId           string         `json:"target_cluster_id"`
+	TargetClusterRestEndpoint string         `json:"target_cluster_rest_endpoint"`
+	// Mode selects the generator: "mirror" emits confluent_kafka_mirror_topic
+	// resources; "new" emits confluent_kafka_topic resources with no data forward.
+	Mode            string   `json:"mode"`
+	IncludePatterns []string `json:"topics_include"`
+	ExcludePatterns []string `json:"topics_exclude"`
+
+	// SourceType and ClusterId identify the source cluster in the loaded state
+	// file. The UI wizard sends these as hidden fields so the API handler can
+	// hydrate Topics from state for --mode new. The CLI populates Topics
+	// directly and leaves these empty.
+	SourceType string `json:"source_type"`
+	ClusterId  string `json:"cluster_id"`
 }
 
 type ReverseProxyRequest struct {

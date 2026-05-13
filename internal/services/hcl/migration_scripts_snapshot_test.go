@@ -17,14 +17,53 @@ func TestMigrationScripts_MirrorTopics(t *testing.T) {
 		ClusterLinkName:           "msk-to-cc-link",
 		TargetClusterId:           "lkc-xyz789",
 		TargetClusterRestEndpoint: "https://pkc-abc123.us-east-1.aws.confluent.cloud:443",
+		Mode:                      types.MigrateTopicsModeMirror,
 	}
 
-	files, err := service.GenerateMirrorTopicsFiles(request)
+	project, err := service.GenerateMirrorTopicsFiles(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	fileMap := terraformFilesToMap(files)
+	fileMap := migrateTopicsProjectToFiles(project)
+	validateTerraformProject(t, fileMap)
+}
+
+func TestMigrationScripts_NewTopics(t *testing.T) {
+	t.Parallel()
+
+	compactPolicy := "compact"
+	retention := "604800000"
+	uncleanLeader := "true" // not allow-listed; must be filtered out
+	replication := "3"      // not allow-listed; must be filtered out
+
+	service := NewMigrationScriptsHCLService()
+	request := types.MirrorTopicsRequest{
+		Topics: []types.TopicDetails{
+			{
+				Name:       "orders",
+				Partitions: 6,
+				Configurations: map[string]*string{
+					"cleanup.policy":                 &compactPolicy,
+					"retention.ms":                   &retention,
+					"unclean.leader.election.enable": &uncleanLeader,
+					"replication.factor":             &replication,
+				},
+			},
+			{Name: "events", Partitions: 3},
+			{Name: "users", Partitions: 1},
+		},
+		TargetClusterId:           "lkc-xyz789",
+		TargetClusterRestEndpoint: "https://pkc-abc123.us-east-1.aws.confluent.cloud:443",
+		Mode:                      types.MigrateTopicsModeNew,
+	}
+
+	project, err := service.GenerateMirrorTopicsFiles(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fileMap := migrateTopicsProjectToFiles(project)
 	validateTerraformProject(t, fileMap)
 }
 
