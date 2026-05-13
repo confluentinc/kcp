@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,8 @@ func mockJolokiaServer(t *testing.T) *httptest.Server {
 			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 500)}}
 		case strings.Contains(r.URL.Path, "MessagesInPerSec"):
 			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 10)}}
+		case strings.Contains(r.URL.Path, "GlobalPartitionCount"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Value": 20.0}}
 		case strings.Contains(r.URL.Path, "PartitionCount"):
 			response = map[string]any{"status": 200, "value": map[string]any{"Value": 50.0}}
 		case strings.Contains(r.URL.Path, "socket-server-metrics"):
@@ -54,12 +57,12 @@ func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 	prev := &rawSample{
 		timestamp: time.Now(),
 		counters:  map[string]float64{"BytesInPerSec": 10000, "BytesOutPerSec": 5000, "MessagesInPerSec": 100},
-		gauges:    map[string]float64{"PartitionCount": 50, "ClientConnectionCount": 3, "TotalLocalStorageUsage": 1073741824},
+		gauges:    map[string]float64{"PartitionCount": 50, "GlobalPartitionCount": 20, "ClientConnectionCount": 3, "TotalLocalStorageUsage": 1073741824},
 	}
 	curr := &rawSample{
 		timestamp: prev.timestamp.Add(10 * time.Second),
 		counters:  map[string]float64{"BytesInPerSec": 20000, "BytesOutPerSec": 10000, "MessagesInPerSec": 200},
-		gauges:    map[string]float64{"PartitionCount": 50, "ClientConnectionCount": 5, "TotalLocalStorageUsage": 2147483648},
+		gauges:    map[string]float64{"PartitionCount": 50, "GlobalPartitionCount": 20, "ClientConnectionCount": 5, "TotalLocalStorageUsage": 2147483648},
 	}
 
 	snapshot := computeSnapshot(prev, curr)
@@ -68,7 +71,7 @@ func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 	assert.Equal(t, 500.0, snapshot.metrics["BytesOutPerSec"])
 	assert.Equal(t, 10.0, snapshot.metrics["MessagesInPerSec"])
 	assert.Equal(t, 50.0, snapshot.metrics["PartitionCount"])
-	assert.Equal(t, 50.0, snapshot.metrics["GlobalPartitionCount"])
+	assert.Equal(t, 20.0, snapshot.metrics["GlobalPartitionCount"])
 	assert.Equal(t, 5.0, snapshot.metrics["ClientConnectionCount"])
 	assert.Equal(t, 2.0, snapshot.metrics["TotalLocalStorageUsage"])
 	assert.Equal(t, prev.timestamp, snapshot.start)
@@ -176,6 +179,82 @@ func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	assert.Equal(t, int32(1), result.Metadata.Period)
 	assert.False(t, result.Metadata.StartDate.IsZero())
 	assert.False(t, result.Metadata.EndDate.IsZero())
+}
+
+func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
+	server := mockJolokiaServer(t)
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL})
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.QueryInfo)
+
+	// Should have one entry per metric: 3 counter + 2 gauge + 2 aggregate = 7
+	assert.Len(t, result.QueryInfo, 7)
+
+	for _, qi := range result.QueryInfo {
+		assert.Equal(t, types.MetricBackendJolokia, qi.SourceType)
+		assert.NotEmpty(t, qi.MetricName)
+		assert.NotEmpty(t, qi.MBeanPath)
+		assert.NotEmpty(t, qi.JolokiaURL)
+		assert.Contains(t, qi.CurlCommand, "curl")
+		assert.Contains(t, qi.CurlCommand, server.URL)
+		assert.NotEmpty(t, qi.AggregationNote)
+	}
+
+	// Verify specific metrics are present
+	names := make(map[string]bool)
+	for _, qi := range result.QueryInfo {
+		names[qi.MetricName] = true
+	}
+	assert.True(t, names["BytesInPerSec"])
+	assert.True(t, names["BytesOutPerSec"])
+	assert.True(t, names["MessagesInPerSec"])
+	assert.True(t, names["PartitionCount"])
+	assert.True(t, names["ClientConnectionCount"])
+	assert.True(t, names["TotalLocalStorageUsage"])
+}
+
+func TestBuildJMXQueryInfo(t *testing.T) {
+	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
+	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second)
+
+	assert.Len(t, infos, 7)
+
+	// All entries should have Statistic, Period, and QueryDuration
+	for _, info := range infos {
+		assert.NotEmpty(t, info.Statistic)
+		assert.Equal(t, int32(10), info.Period)
+		assert.Equal(t, "5m", info.QueryDuration)
+	}
+
+	// Counter metrics should reference the Count attribute in aggregation note
+	for _, info := range infos[:3] {
+		assert.Contains(t, info.AggregationNote, "Count")
+		assert.Contains(t, info.AggregationNote, "2 broker(s)")
+		assert.Contains(t, info.CurlCommand, "broker1:8778")
+		assert.Contains(t, info.Statistic, "Rate")
+	}
+
+	// Gauge metric (PartitionCount) should reference the Value attribute
+	assert.Contains(t, infos[3].AggregationNote, "Value")
+	assert.Equal(t, "PartitionCount", infos[3].MetricName)
+
+	// Controller metric (GlobalPartitionCount) should reference controller MBean
+	assert.Equal(t, "GlobalPartitionCount", infos[4].MetricName)
+	assert.Contains(t, infos[4].AggregationNote, "Controller")
+	assert.Contains(t, infos[4].MBeanPath, "KafkaController")
+
+	// Aggregate metrics should reference wildcard
+	assert.Contains(t, infos[5].AggregationNote, "Wildcard")
+	assert.Contains(t, infos[6].AggregationNote, "Wildcard")
+
+	// Empty brokerURLs should return nil
+	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second))
+	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second))
 }
 
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
