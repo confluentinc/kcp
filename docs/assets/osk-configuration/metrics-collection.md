@@ -81,7 +81,7 @@ state-file consumers (reports, UI) treat MSK and OSK identically.
 | `PartitionCount`          | Total partition replicas across queried brokers   | Gauge                             |
 | `GlobalPartitionCount`    | Total unique partitions in the cluster            | Gauge (controller only)           |
 | `ClientConnectionCount`   | Active client connections across all listeners    | Gauge (aggregated)                |
-| `TotalLocalStorageUsage`  | Total log storage in GB                           | Gauge (aggregated, bytes → GB)    |
+| `TotalLocalStorageUsage`  | Total log storage in GiB                          | Gauge (aggregated, bytes → GiB)   |
 
 ## Jolokia authentication modes
 

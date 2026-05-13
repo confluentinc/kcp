@@ -192,8 +192,8 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.QueryInfo)
 
-	// Should have one entry per metric: 3 counter + 2 gauge + 2 aggregate = 7
-	assert.Len(t, result.QueryInfo, 7)
+	expectedCount := len(counterMBeans) + len(gaugeMBeans) + len(controllerMBeans) + len(aggregateMBeans)
+	assert.Len(t, result.QueryInfo, expectedCount)
 
 	for _, qi := range result.QueryInfo {
 		assert.Equal(t, types.MetricBackendJolokia, qi.SourceType)
@@ -222,7 +222,8 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
 	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second)
 
-	assert.Len(t, infos, 7)
+	expectedCount := len(counterMBeans) + len(gaugeMBeans) + len(controllerMBeans) + len(aggregateMBeans)
+	assert.Len(t, infos, expectedCount)
 
 	// All entries should have Statistic, Period, and QueryDuration
 	for _, info := range infos {
@@ -255,6 +256,65 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 	// Empty brokerURLs should return nil
 	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second))
 	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second))
+}
+
+func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
+	// Mock server that rejects controller MBeans (simulates non-controller broker)
+	var callCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := callCount.Add(1)
+		var response map[string]any
+
+		switch {
+		case strings.Contains(r.URL.Path, "BytesInPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 1000)}}
+		case strings.Contains(r.URL.Path, "BytesOutPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 500)}}
+		case strings.Contains(r.URL.Path, "MessagesInPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 10)}}
+		case strings.Contains(r.URL.Path, "kafka.controller"):
+			// Controller MBean not available on this broker
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: kafka.controller:type=KafkaController,name=GlobalPartitionCount"}
+		case strings.Contains(r.URL.Path, "PartitionCount"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Value": 50.0}}
+		case strings.Contains(r.URL.Path, "socket-server-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"l1": map[string]any{"connection-count": 2.0},
+			}}
+		case strings.Contains(r.URL.Path, "kafka.log"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"p0": map[string]any{"Value": 536870912.0},
+			}}
+		default:
+			response = map[string]any{"status": 404, "error": "MBean not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL})
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Other metrics should be collected
+	assert.NotEmpty(t, result.Metrics)
+	assert.Contains(t, result.Aggregates, "BytesInPerSec")
+	assert.Contains(t, result.Aggregates, "PartitionCount")
+
+	// GlobalPartitionCount should NOT be in the aggregates (controller MBean unavailable)
+	_, hasGlobal := result.Aggregates["GlobalPartitionCount"]
+	assert.False(t, hasGlobal, "GlobalPartitionCount should be omitted when controller MBean is not available")
+
+	// But query info should still include it (shows what was attempted)
+	queryNames := make(map[string]bool)
+	for _, qi := range result.QueryInfo {
+		queryNames[qi.MetricName] = true
+	}
+	assert.True(t, queryNames["GlobalPartitionCount"], "QueryInfo should still include GlobalPartitionCount")
 }
 
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {

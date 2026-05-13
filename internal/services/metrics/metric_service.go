@@ -385,6 +385,7 @@ func (ms *MetricService) buildClusterMetricQueries(clusterName string, period in
 	queryInfos := []types.MetricQueryInfo{
 		{
 			MetricName:       metricName,
+			SourceType:       types.MetricBackendCloudWatch,
 			Namespace:        "AWS/Kafka",
 			Dimensions:       "Cluster Name",
 			Statistic:        "Maximum",
