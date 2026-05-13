@@ -56,6 +56,7 @@ terraform {
     random  = { source = "hashicorp/random" }
     time    = { source = "hashicorp/time" }
     external = { source = "hashicorp/external" }
+    http    = { source = "hashicorp/http" }
   }
 }
 `
