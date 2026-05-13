@@ -83,6 +83,9 @@ type jolokiaResponse struct {
 	Error  string         `json:"error,omitempty"`
 }
 
+// BaseURL returns the Jolokia endpoint base URL
+func (c *JolokiaClient) BaseURL() string { return c.baseURL }
+
 // ReadMBean queries a Jolokia endpoint for JMX MBean data
 // mbeanPath is the MBean ObjectName (e.g., "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")
 // Returns the "value" map from the Jolokia response

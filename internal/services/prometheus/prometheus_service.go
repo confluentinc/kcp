@@ -18,16 +18,18 @@ type metricQuery struct {
 	// Query is a format string. %s is replaced with the rate window (e.g. "5m", "4h").
 	// Queries without %s are used as-is.
 	Query string
+	// PrometheusMetric is the raw Prometheus metric name used in the query.
+	PrometheusMetric string
 }
 
 var prometheusQueries = []metricQuery{
-	{"BytesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))"},
-	{"BytesOutPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))"},
-	{"MessagesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))"},
-	{"PartitionCount", "sum(kafka_server_replicamanager_partitioncount)"},
-	{"GlobalPartitionCount", "sum(kafka_server_replicamanager_partitioncount)"},
-	{"ClientConnectionCount", "sum(kafka_server_socketservermetrics_connection_count)"},
-	{"TotalLocalStorageUsage", "sum(kafka_log_log_size) / (1024*1024*1024)"},
+	{"BytesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesinpersec_total"},
+	{"BytesOutPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
+	{"MessagesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_messagesinpersec_total"},
+	{"PartitionCount", "sum(kafka_server_replicamanager_partitioncount)", "kafka_server_replicamanager_partitioncount"},
+	{"GlobalPartitionCount", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}", "kafka_controller_kafkacontroller_value"},
+	{"ClientConnectionCount", "sum(kafka_server_socketservermetrics_connection_count)", "kafka_server_socketservermetrics_connection_count"},
+	{"TotalLocalStorageUsage", "sum(kafka_log_log_size) / (1024*1024*1024)", "kafka_log_log_size"},
 }
 
 // PrometheusService collects Kafka metrics from a Prometheus server
@@ -130,7 +132,58 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		},
 		Metrics:    allMetrics,
 		Aggregates: aggregates,
+		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange, start, end),
 	}, nil
+}
+
+// buildPrometheusQueryInfo generates MetricQueryInfo entries for all Prometheus metrics,
+// including the resolved PromQL query and a curl command to reproduce it.
+func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration, start, end time.Time) []types.MetricQueryInfo {
+	infos := make([]types.MetricQueryInfo, 0, len(prometheusQueries))
+	periodSec := int32(step.Seconds())
+	durationStr := types.FormatQueryDuration(queryRange)
+
+	for _, mq := range prometheusQueries {
+		resolvedQuery := mq.Query
+		if strings.Contains(resolvedQuery, "%s") {
+			resolvedQuery = fmt.Sprintf(resolvedQuery, rateWindow)
+		}
+
+		var statistic string
+		var note string
+		switch {
+		case strings.Contains(mq.Query, "rate("):
+			statistic = fmt.Sprintf("Rate (sum of rate() over %s window)", rateWindow)
+			note = fmt.Sprintf(
+				"Computes rate() over a %s window, then sums across all instances. Query step: %ds.",
+				rateWindow, int(step.Seconds()))
+		case strings.Contains(resolvedQuery, "/ (1024*1024*1024)"):
+			statistic = "Sum (bytes converted to GiB)"
+			note = fmt.Sprintf(
+				"Sums raw byte values across all instances and converts to GiB. Query step: %ds.",
+				int(step.Seconds()))
+		default:
+			statistic = "Sum across instances"
+			note = fmt.Sprintf(
+				"Sums the gauge value across all instances. Query step: %ds.",
+				int(step.Seconds()))
+		}
+
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:           mq.Label,
+			SourceType:           types.MetricBackendPrometheus,
+			Statistic:            statistic,
+			Period:               periodSec,
+			QueryDuration:        durationStr,
+			PromQLQuery:          resolvedQuery,
+			PrometheusURL:        promBaseURL,
+			PrometheusMetricName: mq.PrometheusMetric,
+			CurlCommand:          fmt.Sprintf("curl -G '%s/api/v1/query_range' --data-urlencode 'query=%s' --data-urlencode 'start=%s' --data-urlencode 'end=%s' --data-urlencode 'step=%ds'", promBaseURL, resolvedQuery, start.Format(time.RFC3339), end.Format(time.RFC3339), int(step.Seconds())),
+			AggregationNote:      note,
+		})
+	}
+
+	return infos
 }
 
 func calculateAggregates(valuesByLabel map[string][]float64) map[string]types.MetricAggregate {
