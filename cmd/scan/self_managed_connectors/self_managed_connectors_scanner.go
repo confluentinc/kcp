@@ -164,9 +164,12 @@ func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.S
 	if err != nil {
 		slog.Warn(fmt.Sprintf("⚠️ failed to get connector status for connector %s: %v", name, err))
 	} else {
-		if state, ok := status["connector"].(map[string]any); ok {
-			if stateStr, ok := state["state"].(string); ok {
+		if connectorStatus, ok := status["connector"].(map[string]any); ok {
+			if stateStr, ok := connectorStatus["state"].(string); ok {
 				connector.State = stateStr
+			}
+			if workerID, ok := connectorStatus["worker_id"].(string); ok {
+				connector.ConnectHost = workerID
 			}
 		}
 	}

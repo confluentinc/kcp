@@ -53,14 +53,6 @@ func scanClustersIAMAnnotation() string {
 					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>",
 				},
 			},
-			{
-				Sid:     "MSKConnectTopicAccess",
-				Actions: []string{"kafka-cluster:ReadData"},
-				Resources: []string{
-					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-configs",
-					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/connect-status",
-				},
-			},
 		},
 	)
 }
@@ -83,7 +75,7 @@ Metrics collection (OSK only):
 
 Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
 
-If there is a Connect cluster and it uses the default ` + "`connect-configs`" + ` / ` + "`connect-status`" + ` topic names and the credentials have read permission on them, kcp also discovers self-managed connectors, their configs and state.`,
+For self-managed connector discovery, run ` + "`kcp scan self-managed-connectors`" + ` after this command — it queries the Kafka Connect REST API directly for connector configs and state. ` + "`kcp scan clusters`" + ` no longer derives connectors from Kafka Connect's internal topics.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
@@ -322,12 +314,19 @@ func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 		scannedByARN[c.Identifier.UniqueID] = c.KafkaAdminInfo
 	}
 
-	// Apply results into state in-place
+	// Apply results into state in-place. Merge old admin info into the new
+	// scan result before overwriting so previously-discovered data (topics,
+	// ACLs, self-managed connectors) is preserved when the new scan returns
+	// empty/nil for those fields. Mirrors the OSK merge path; required so a
+	// `kcp scan clusters` re-run after `kcp scan self-managed-connectors`
+	// does not wipe REST-discovered connectors (the new scan returns
+	// SelfManagedConnectors=nil).
 	for i := range state.MSKSources.Regions {
 		for j := range state.MSKSources.Regions[i].Clusters {
-			arn := state.MSKSources.Regions[i].Clusters[j].Arn
-			if info, ok := scannedByARN[arn]; ok {
-				state.MSKSources.Regions[i].Clusters[j].KafkaAdminClientInformation = *info
+			cluster := &state.MSKSources.Regions[i].Clusters[j]
+			if info, ok := scannedByARN[cluster.Arn]; ok {
+				info.MergeFrom(cluster.KafkaAdminClientInformation)
+				cluster.KafkaAdminClientInformation = *info
 			}
 		}
 	}
