@@ -78,8 +78,8 @@ state-file consumers (reports, UI) treat MSK and OSK identically.
 | `BytesInPerSec`           | Bytes received by brokers per second              | Rate (from counter)               |
 | `BytesOutPerSec`          | Bytes sent to consumers per second                | Rate (from counter)               |
 | `MessagesInPerSec`        | Messages received per second                      | Rate (from counter)               |
-| `PartitionCount`          | Total partitions across queried brokers           | Gauge                             |
-| `GlobalPartitionCount`    | Same as `PartitionCount` (summed across brokers)  | Gauge                             |
+| `PartitionCount`          | Total partition replicas across queried brokers   | Gauge                             |
+| `GlobalPartitionCount`    | Total unique partitions in the cluster            | Gauge (controller only)           |
 | `ClientConnectionCount`   | Active client connections across all listeners    | Gauge (aggregated)                |
 | `TotalLocalStorageUsage`  | Total log storage in GB                           | Gauge (aggregated, bytes → GB)    |
 
@@ -109,13 +109,32 @@ below to return data. `kcp` submits one query per metric listed in
 | `BytesOutPerSec`        | `sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[<window>]))`   |
 | `MessagesInPerSec`      | `sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[<window>]))` |
 | `PartitionCount`        | `sum(kafka_server_replicamanager_partitioncount)`                             |
-| `GlobalPartitionCount`  | `sum(kafka_server_replicamanager_partitioncount)`                             |
+| `GlobalPartitionCount`  | `kafka_controller_kafkacontroller_globalpartitioncount`                        |
 | `ClientConnectionCount` | `sum(kafka_server_socketservermetrics_connection_count)`                      |
 | `TotalLocalStorageUsage`| `sum(kafka_log_log_size) / (1024*1024*1024)`                                 |
 
 `<window>` is a rate window automatically selected to be at least 4× the query
 step (minimum `5m`). The step itself is derived from `--metrics-range` as
 described in [Scan duration and poll interval](#scan-duration-and-poll-interval).
+
+**Note on `GlobalPartitionCount`:** This metric comes from the
+`kafka.controller:type=KafkaController,name=GlobalPartitionCount` MBean, which
+only exists on the active controller broker. For **Jolokia**, `kcp` queries all
+broker endpoints and uses the first successful response. For **Prometheus**, the
+JMX Exporter must be configured to scrape controller MBeans
+(`kafka.controller.*`) for this metric to be available. If
+`GlobalPartitionCount` is not found, `kcp` will log an info message and the
+metric will be omitted from results — all other metrics will still be collected.
+
+To ensure `GlobalPartitionCount` is available in Prometheus, add the following
+pattern to your JMX Exporter configuration:
+
+```yaml
+rules:
+  - pattern: kafka.controller<type=KafkaController, name=GlobalPartitionCount><>Value
+    name: kafka_controller_kafkacontroller_globalpartitioncount
+    type: GAUGE
+```
 
 These metric names (`kafka_server_brokertopicmetrics_*`,
 `kafka_server_replicamanager_*`, etc.) are the defaults produced by the
