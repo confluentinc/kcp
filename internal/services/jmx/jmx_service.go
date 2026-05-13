@@ -40,6 +40,12 @@ var gaugeMBeans = []gaugeMBeanConfig{
 	{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
 }
 
+// controllerMBeans are MBeans that only exist on the active controller broker.
+// We try all brokers and use the first successful response (no summing).
+var controllerMBeans = []gaugeMBeanConfig{
+	{"GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount", "Value"},
+}
+
 var aggregateMBeans = []aggregateMBeanConfig{
 	{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
 	{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
@@ -112,6 +118,29 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		}
 	}
 
+	// Controller MBeans only exist on the active controller broker.
+	// Try all brokers; use the first successful response.
+	for _, mb := range controllerMBeans {
+		found := false
+		for _, brokerClient := range s.clients {
+			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
+			if err != nil {
+				continue // Expected to fail on non-controller brokers
+			}
+			if v, ok := value[mb.ValueKey]; ok {
+				if f, ok := toFloat64(v); ok {
+					sample.gauges[mb.Name] = f
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			slog.Info("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
+				"mbean", mb.MBean, "metric", mb.Name)
+		}
+	}
+
 	for _, amb := range aggregateMBeans {
 		var total float64
 		for _, brokerClient := range s.clients {
@@ -150,10 +179,6 @@ func computeSnapshot(prev, curr *rawSample) *jmxSnapshot {
 
 	for name, value := range curr.gauges {
 		snapshot.metrics[name] = value
-	}
-
-	if pc, ok := snapshot.metrics["PartitionCount"]; ok {
-		snapshot.metrics["GlobalPartitionCount"] = pc
 	}
 
 	if bytes, ok := snapshot.metrics["TotalLocalStorageUsage"]; ok {
@@ -323,6 +348,22 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 			AggregationNote: fmt.Sprintf(
 				"Gauge value read from the %s attribute of %s. Summed across all %d broker(s). Add -u user:pass to the curl command if authentication is configured.",
 				mb.ValueKey, mb.MBean, brokerCount),
+		})
+	}
+
+	for _, mb := range controllerMBeans {
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:    mb.Name,
+			SourceType:    types.MetricBackendJolokia,
+			Statistic:     "Controller value (single broker)",
+			Period:        periodSec,
+			QueryDuration: durationStr,
+			MBeanPath:     mb.MBean,
+			JolokiaURL:    exampleURL,
+			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
+			AggregationNote: fmt.Sprintf(
+				"Controller-only MBean %s; queried from the active controller broker. This MBean must be exposed by the Jolokia agent. Add -u user:pass to the curl command if authentication is configured.",
+				mb.MBean),
 		})
 	}
 

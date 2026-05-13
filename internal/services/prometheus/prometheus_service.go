@@ -27,7 +27,7 @@ var prometheusQueries = []metricQuery{
 	{"BytesOutPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
 	{"MessagesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_messagesinpersec_total"},
 	{"PartitionCount", "sum(kafka_server_replicamanager_partitioncount)", "kafka_server_replicamanager_partitioncount"},
-	{"GlobalPartitionCount", "sum(kafka_server_replicamanager_partitioncount)", "kafka_server_replicamanager_partitioncount"},
+	{"GlobalPartitionCount", "kafka_controller_kafkacontroller_globalpartitioncount", "kafka_controller_kafkacontroller_globalpartitioncount"},
 	{"ClientConnectionCount", "sum(kafka_server_socketservermetrics_connection_count)", "kafka_server_socketservermetrics_connection_count"},
 	{"TotalLocalStorageUsage", "sum(kafka_log_log_size) / (1024*1024*1024)", "kafka_log_log_size"},
 }
