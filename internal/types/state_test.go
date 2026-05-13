@@ -580,6 +580,28 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 			},
 		},
 		{
+			// Regression test for the post-refactor shape. After removing the
+			// topic-parsing connector discovery from `kcp scan clusters`, a fresh
+			// `KafkaAdminClientInformation` returned from ScanKafkaResources has
+			// SelfManagedConnectors == nil (not an empty slice). The merge must
+			// preserve previously-discovered connectors written by
+			// `kcp scan self-managed-connectors`. Locks in R6.
+			name: "old connectors preserved when new is nil (post-refactor scan-clusters shape)",
+			current: KafkaAdminClientInformation{
+				SelfManagedConnectors: nil,
+			},
+			other: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{{Name: "rest-discovered-connector", State: "RUNNING"}},
+				},
+			},
+			expected: KafkaAdminClientInformation{
+				SelfManagedConnectors: &SelfManagedConnectors{
+					Connectors: []SelfManagedConnector{{Name: "rest-discovered-connector", State: "RUNNING"}},
+				},
+			},
+		},
+		{
 			name: "topics are merged - new added, old preserved, duplicates use new",
 			current: KafkaAdminClientInformation{
 				Topics: &Topics{

@@ -1,3 +1,5 @@
+//go:build terraform_validation
+
 package hcl
 
 import (
@@ -20,10 +22,6 @@ var pluginCacheDir string
 // TestMain pre-warms the Terraform plugin cache so parallel tests don't race
 // to download the same providers simultaneously.
 func TestMain(m *testing.M) {
-	if os.Getenv("SKIP_TERRAFORM_VALIDATION") == "true" {
-		os.Exit(m.Run())
-	}
-
 	pluginCacheDir = filepath.Join(os.TempDir(), "terraform-plugin-cache")
 	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
 		log.Fatalf("could not create plugin cache directory: %v", err)
@@ -58,6 +56,7 @@ terraform {
     random  = { source = "hashicorp/random" }
     time    = { source = "hashicorp/time" }
     external = { source = "hashicorp/external" }
+    http    = { source = "hashicorp/http" }
   }
 }
 `
@@ -160,6 +159,28 @@ func terraformFilesToMap(tf types.TerraformFiles) map[string]string {
 	return files
 }
 
+// migrateTopicsProjectToFiles flattens the single-folder migrate-topics project
+// into a flat filename → content map suitable for terraform validation. Unlike
+// schemaProjectToFiles (which prefixes per-registry folder paths), migrate-topics
+// always returns one folder rendered at the project root.
+func migrateTopicsProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
+	files := map[string]string{}
+	if len(project.Folders) == 0 {
+		return files
+	}
+	folder := project.Folders[0]
+	if folder.ProvidersTf != "" {
+		files["providers.tf"] = folder.ProvidersTf
+	}
+	if folder.VariablesTf != "" {
+		files["variables.tf"] = folder.VariablesTf
+	}
+	for name, content := range folder.AdditionalFiles {
+		files[name] = content
+	}
+	return files
+}
+
 // schemaProjectToFiles flattens a MigrationScriptsTerraformProject into a map.
 func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
 	files := map[string]string{}
@@ -187,12 +208,6 @@ func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[st
 // directory and running terraform init + validate. This does NOT deploy infrastructure.
 func validateTerraformProject(t *testing.T, files map[string]string) {
 	t.Helper()
-
-	// Skip if SKIP_TERRAFORM_VALIDATION env var is set (for faster local iteration)
-	if os.Getenv("SKIP_TERRAFORM_VALIDATION") == "true" {
-		t.Log("Skipping Terraform validation (SKIP_TERRAFORM_VALIDATION=true)")
-		return
-	}
 
 	// Create temp directory (auto-cleanup after test)
 	tempDir := t.TempDir()

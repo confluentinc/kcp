@@ -91,7 +91,8 @@ func TestMergeOSKResults_UpdateExistingPreservesMetricsAndClients(t *testing.T) 
 
 func TestMergeOSKResults_RescanPreservesOldTopicsOnEmpty(t *testing.T) {
 	// Simulates a re-scan where topics come back empty (e.g. transient permission failure).
-	// Old topics should be preserved via MergeFrom, matching MSK behavior.
+	// Old topics should be preserved via MergeFrom. The MSK path uses the same
+	// MergeFrom call — see TestMergeMSKResults_RescanPreservesOldDataOnEmpty.
 	state := &types.State{
 		OSKSources: &types.OSKSourcesState{
 			Clusters: []types.OSKDiscoveredCluster{
