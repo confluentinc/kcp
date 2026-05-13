@@ -124,14 +124,14 @@ Logs go to `kcp.log` via lumberjack (rotating) and stdout via a custom `slog` pr
 
 Only these six emojis are allowed in log lines. One emoji per line, at the start of the message string:
 
-| Emoji | Meaning | Use when | Levels |
-|---|---|---|---|
-| ✅ | Success / complete | Operation finished, file written, scan complete | `slog.Info` |
-| ❌ | Failure | Operation failed (NEVER in `fmt.Errorf`) | `slog.Error`, `slog.Warn` |
-| ⚠️ | Warning / caveat | Non-fatal issue, limitation, missing optional data | `slog.Warn` |
-| 🔍 | In progress / scanning | Starting a scan, search, discovery, or processing step | `slog.Info` |
-| ⏭️ | Skipped | Item or step intentionally skipped | `slog.Info`, `slog.Debug` |
-| 🚀 | Starting | Major process or command beginning (top-level entry points only) | `slog.Info` |
+| Emoji | Meaning                | Use when                                                         | Levels                    |
+| ----- | ---------------------- | ---------------------------------------------------------------- | ------------------------- |
+| ✅    | Success / complete     | Operation finished, file written, scan complete                  | `slog.Info`               |
+| ❌    | Failure                | Operation failed (NEVER in `fmt.Errorf`)                         | `slog.Error`, `slog.Warn` |
+| ⚠️    | Warning / caveat       | Non-fatal issue, limitation, missing optional data               | `slog.Warn`               |
+| 🔍    | In progress / scanning | Starting a scan, search, discovery, or processing step           | `slog.Info`               |
+| ⏭️    | Skipped                | Item or step intentionally skipped                               | `slog.Info`, `slog.Debug` |
+| 🚀    | Starting               | Major process or command beginning (top-level entry points only) | `slog.Info`               |
 
 Rules:
 
@@ -139,7 +139,3 @@ Rules:
 2. **No emojis in interactive prompts** (`fmt.Print` for user input).
 3. `slog.Debug` lines: emojis optional; if used, only ⏭️ or 🔍.
 4. Adding a new emoji is a project-wide decision — extend the table here, don't ad-hoc.
-
-## Git
-
-Push: `git push-external` (not `git push`).
