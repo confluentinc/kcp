@@ -1,0 +1,202 @@
+/* ==========================================================================
+   KCP docs — Confluent-ish restyle of MkDocs Material.
+   Keeps the Material theme; overrides CSS custom properties + small rules
+   to approximate the look of docs.confluent.io/confluent-cli.
+   ========================================================================== */
+
+:root {
+  /* Accent drives active sidebar items, link color, focus rings. */
+  --md-accent-fg-color:             #0074a2;
+  --md-accent-fg-color--transparent: rgba(0, 116, 162, 0.1);
+  --md-accent-bg-color:             #ffffff;
+  --md-accent-bg-color--light:      #f5f5f5;
+
+  --md-typeset-a-color:             #0074a2;
+
+  --md-code-bg-color:               #f5f5f5;
+  --md-code-fg-color:               #24292f;
+
+  --md-default-fg-color:            #1f2328;
+  --md-default-fg-color--light:     #4a5056;
+  --md-default-fg-color--lighter:   #6e7781;
+  --md-default-fg-color--lightest:  #9aa3ac;
+}
+
+/* --------------------------------------------------------------------------
+   Header — flat, with a subtle bottom border instead of a drop shadow.
+   -------------------------------------------------------------------------- */
+
+.md-header {
+  border-bottom: 1px solid #e1e4e8;
+  box-shadow: none;
+}
+
+.md-header__title {
+  font-weight: 600;
+}
+
+/* Tabs bar: match a quiet, neutral header strip. */
+.md-tabs {
+  background-color: #ffffff;
+  color: var(--md-default-fg-color);
+  border-bottom: 1px solid #e1e4e8;
+}
+
+.md-tabs__link {
+  color: var(--md-default-fg-color--light);
+  opacity: 1;
+}
+
+.md-tabs__link:hover,
+.md-tabs__link--active {
+  color: var(--md-accent-fg-color);
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar — light neutral panel; active item in accent blue + medium weight.
+   -------------------------------------------------------------------------- */
+
+.md-sidebar {
+  background-color: #fafbfc;
+}
+
+.md-nav__title {
+  color: var(--md-default-fg-color--light);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.md-nav__link--active,
+.md-nav__item--active > .md-nav__link {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Typography — medium-weight headings, tighter line-heights.
+   -------------------------------------------------------------------------- */
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5 {
+  color: #10141a;
+  font-weight: 600;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset h2 {
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+  margin-top: 2em;
+}
+
+/* --------------------------------------------------------------------------
+   Links — accent blue, underline on hover (closer to RTD style).
+   -------------------------------------------------------------------------- */
+
+.md-typeset a {
+  color: var(--md-typeset-a-color);
+  text-decoration: none;
+}
+
+.md-typeset a:hover {
+  color: #005a7f;
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
+   Code — light-gray backgrounds with a thin border, near-monochrome feel.
+   -------------------------------------------------------------------------- */
+
+.md-typeset code {
+  background-color: var(--md-code-bg-color);
+  border-radius: 3px;
+  padding: 0.15em 0.4em;
+  font-size: 0.88em;
+}
+
+.md-typeset pre > code {
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  padding: 0.9em 1em;
+  box-shadow: none;
+}
+
+/* Dial down pymdownx highlight saturation a touch. */
+.highlight .k,  /* keyword */
+.highlight .kd,
+.highlight .kn { color: #a71d5d; }
+.highlight .s,  /* string */
+.highlight .s1,
+.highlight .s2 { color: #183691; }
+.highlight .c,  /* comment */
+.highlight .c1,
+.highlight .cm { color: #6a737d; font-style: italic; }
+.highlight .nf, /* function name */
+.highlight .nc { color: #795da3; }
+
+/* --------------------------------------------------------------------------
+   Admonitions — thin left border, no drop shadow, lighter tint.
+   -------------------------------------------------------------------------- */
+
+.md-typeset .admonition,
+.md-typeset details {
+  border: 1px solid #e1e4e8;
+  border-left: 3px solid var(--md-accent-fg-color);
+  border-radius: 3px;
+  box-shadow: none;
+  font-size: 0.82rem;
+}
+
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-weight: 600;
+  background-color: transparent;
+}
+
+.md-typeset .admonition-title::before,
+.md-typeset summary::before {
+  background-color: var(--md-accent-fg-color);
+}
+
+/* --------------------------------------------------------------------------
+   Tables — subtle borders, header row tinted.
+   -------------------------------------------------------------------------- */
+
+.md-typeset table:not([class]) {
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: #fafbfc;
+  font-weight: 600;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset table:not([class]) td,
+.md-typeset table:not([class]) th {
+  border-color: #eaecef;
+}
+
+/* --------------------------------------------------------------------------
+   Search box — quieter frame to match the flatter header.
+   -------------------------------------------------------------------------- */
+
+.md-search__form {
+  background-color: #f5f6f8;
+  border: 1px solid #e1e4e8;
+  box-shadow: none;
+}
+
+.md-search__form:hover {
+  background-color: #eef0f2;
+}
