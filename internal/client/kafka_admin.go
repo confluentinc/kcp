@@ -239,6 +239,12 @@ type KafkaAdmin interface {
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
+	// BrokerConfig returns the broker addresses and a copy of the sarama.Config
+	// the admin was constructed with. Callers that need to build other sarama
+	// primitives (e.g. a sarama.Consumer for compacted-topic reads) can reuse
+	// the same auth/TLS/SASL configuration without re-deriving it. The config
+	// is a defensive copy — callers may mutate it freely.
+	BrokerConfig() ([]string, *sarama.Config)
 	Close() error
 }
 
@@ -415,6 +421,11 @@ func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
 	}
 
 	return result, nil
+}
+
+func (k *KafkaAdminClient) BrokerConfig() ([]string, *sarama.Config) {
+	cfg := *k.saramaConfig
+	return k.brokerAddresses, &cfg
 }
 
 func (k *KafkaAdminClient) Close() error {
