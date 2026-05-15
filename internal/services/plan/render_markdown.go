@@ -92,6 +92,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 			continue
 		}
 		var pieces []string
+		var customerDeclaredTriggers []string
 		if i < len(p.ClusterTypeDecision) {
 			ct := p.ClusterTypeDecision[i]
 			if len(ct.Triggers) == 0 {
@@ -100,6 +101,9 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 				rules := make([]string, 0, len(ct.Triggers))
 				for _, t := range ct.Triggers {
 					rules = append(rules, fmt.Sprintf("%s (%s)", t.Description, t.Evidence))
+					if t.CustomerDeclared {
+						customerDeclaredTriggers = append(customerDeclaredTriggers, t.RowID)
+					}
 				}
 				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — %s", ct.Verdict, strings.Join(rules, "; ")))
 			}
@@ -109,6 +113,12 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 			pieces = append(pieces, fmt.Sprintf("Networking **%s** — %s", n.Verdict, n.Reason))
 		}
 		fmt.Fprintf(b, "- **%s** — %s.\n", s.ClusterID, strings.Join(pieces, ". "))
+		// Cost callout: a customer-declared plan-input flipped this cluster
+		// to Dedicated. Surface the wrong-click cost (5–10× monthly) so the
+		// customer reviews before committing.
+		if len(customerDeclaredTriggers) > 0 {
+			fmt.Fprintf(b, "  - > ⚠ **Cost callout:** Dedicated was forced by customer-declared `plan-inputs.yaml` flag(s) — %s. Dedicated costs ~5–10× Enterprise per month for an equivalent footprint. If a flag was set in error, flip it to `false` and re-run; confirm with your Confluent account team if unsure.\n", strings.Join(customerDeclaredTriggers, ", "))
+		}
 	}
 	b.WriteString("\n")
 }

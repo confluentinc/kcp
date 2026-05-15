@@ -7,13 +7,49 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDecideNetworking_DedicatedAlwaysPNI(t *testing.T) {
+func TestDecideNetworking_DedicatedDefaultsToPNI(t *testing.T) {
+	// Dedicated + no `existing_vpc_connectivity` override → PNI.
 	cfg := defaultCfg(t)
 	sizing := types.ClusterSizing{ClusterID: "x", PeakBurstECKU: 1, PeakBurstPctOfPLCap: 10}
 	ct := types.ClusterTypeDecision{ClusterID: "x", Verdict: types.ClusterTypeDedicated}
 	d := DecideNetworking(sizing, ct, cfg, defaultInputs())
 	assert.Equal(t, types.NetworkingPNI, d.Verdict)
 	assert.Contains(t, d.Reason, "Dedicated")
+}
+
+func TestDecideNetworking_DedicatedTransitGateway(t *testing.T) {
+	cfg := defaultCfg(t)
+	sizing := types.ClusterSizing{ClusterID: "x", PeakBurstECKU: 1, PeakBurstPctOfPLCap: 10}
+	ct := types.ClusterTypeDecision{ClusterID: "x", Verdict: types.ClusterTypeDedicated}
+	in := defaultInputs()
+	in.ExistingVPCConnectivity = "transit_gateway"
+	d := DecideNetworking(sizing, ct, cfg, in)
+	assert.Equal(t, types.NetworkingTransitGateway, d.Verdict)
+	assert.Contains(t, d.Reason, "transit_gateway")
+}
+
+func TestDecideNetworking_DedicatedVPCPeering(t *testing.T) {
+	cfg := defaultCfg(t)
+	sizing := types.ClusterSizing{ClusterID: "x", PeakBurstECKU: 1, PeakBurstPctOfPLCap: 10}
+	ct := types.ClusterTypeDecision{ClusterID: "x", Verdict: types.ClusterTypeDedicated}
+	in := defaultInputs()
+	in.ExistingVPCConnectivity = "vpc_peering"
+	d := DecideNetworking(sizing, ct, cfg, in)
+	assert.Equal(t, types.NetworkingVPCPeering, d.Verdict)
+	assert.Contains(t, d.Reason, "vpc_peering")
+}
+
+func TestDecideNetworking_EnterpriseIgnoresVPCConnectivity(t *testing.T) {
+	// TGW / VPC Peering are Dedicated-only products. An Enterprise cluster
+	// with `existing_vpc_connectivity: transit_gateway` falls back to the
+	// PrivateLink-vs-PNI flip, not TGW.
+	cfg := defaultCfg(t)
+	sizing := types.ClusterSizing{ClusterID: "x", PeakBurstECKU: 1, PeakBurstPctOfPLCap: 10}
+	ct := types.ClusterTypeDecision{ClusterID: "x", Verdict: types.ClusterTypeEnterprise}
+	in := defaultInputs()
+	in.ExistingVPCConnectivity = "transit_gateway"
+	d := DecideNetworking(sizing, ct, cfg, in)
+	assert.Equal(t, types.NetworkingPrivateLink, d.Verdict)
 }
 
 func TestDecideNetworking_PrivateLinkBelowThreshold(t *testing.T) {

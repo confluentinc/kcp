@@ -109,19 +109,26 @@ type HardLimitTrigger struct {
 	RowID       string `json:"row_id"`
 	Description string `json:"description"`
 	Evidence    string `json:"evidence"`
+	// CustomerDeclared marks rules whose only signal is a customer-set
+	// `plan-inputs.yaml` flag. Renderer surfaces a cost callout on these
+	// so a wrong `true` doesn't quietly flip the verdict from Enterprise
+	// to Dedicated (Dedicated runs 5–10× monthly).
+	CustomerDeclared bool `json:"customer_declared,omitempty"`
 }
 
 // Networking represents the per-cluster networking verdict.
 type Networking string
 
 const (
-	NetworkingPrivateLink Networking = "PrivateLink"
-	NetworkingPNI         Networking = "PNI"
+	NetworkingPrivateLink    Networking = "PrivateLink"
+	NetworkingPNI            Networking = "PNI"
+	NetworkingTransitGateway Networking = "TransitGateway"
+	NetworkingVPCPeering     Networking = "VPCPeering"
 )
 
 func (n Networking) IsValid() bool {
 	switch n {
-	case NetworkingPrivateLink, NetworkingPNI:
+	case NetworkingPrivateLink, NetworkingPNI, NetworkingTransitGateway, NetworkingVPCPeering:
 		return true
 	default:
 		return false
@@ -162,4 +169,14 @@ type PlanInputsResolved struct {
 	HeadroomFraction           float64 `json:"headroom_fraction"`
 	PrivateLinkSafetyThreshold float64 `json:"privatelink_safety_threshold"`
 	SpikyWorkloadRatio         float64 `json:"spiky_workload_ratio"`
+
+	// Customer-declared hard requirements. Booleans (not *bool) — defaults
+	// resolve to false, which is the safe verdict (no escalation to Dedicated).
+	EnforceSchemasAtTheBroker            bool `json:"enforce_schemas_at_the_broker"`
+	RequiresHighThroughputRESTProduceAPI bool `json:"requires_high_throughput_rest_produce_api"`
+	Requires9995SLAWithinSingleZone      bool `json:"requires_99_95_sla_within_a_single_zone"`
+
+	// Target cloud + existing VPC connectivity (Dedicated-path networking).
+	TargetCloud             string `json:"target_cloud"`
+	ExistingVPCConnectivity string `json:"existing_vpc_connectivity"`
 }
