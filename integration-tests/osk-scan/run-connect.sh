@@ -96,10 +96,11 @@ echo "=========================================="
 STATE_HASH_BEFORE=$(shasum -a 256 "$STATE" | cut -d' ' -f1)
 
 CONNECT_URLS_FILE="connect-urls.txt"
-echo "Running: ./kcp scan connect clusters --source-type osk --credentials-file ... --state-file $STATE --topics connect-status"
-./kcp scan connect clusters --source-type osk \
+echo "Running: ./kcp scan connect clusters --credentials-file ... --state-file $STATE --cluster-id osk-kafka --topics connect-status"
+./kcp scan connect clusters \
     --credentials-file integration-tests/osk-scan/credentials/kafka-plaintext.yaml \
     --state-file "$STATE" \
+    --cluster-id osk-kafka \
     --topics connect-status > "$CONNECT_URLS_FILE"
 
 echo ""
