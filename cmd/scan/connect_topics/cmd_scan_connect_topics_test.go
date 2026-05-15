@@ -43,7 +43,6 @@ clusters:
 func resetGlobals() {
 	stateFile = ""
 	credentialsFile = ""
-	sourceType = ""
 	clusterID = ""
 	topics = nil
 }
@@ -95,76 +94,6 @@ func TestCommand_RequiredFlags(t *testing.T) {
 	}
 }
 
-func TestCommand_SourceTypeAutoDetect(t *testing.T) {
-	tests := []struct {
-		name       string
-		clusterID  string
-		wantSource string
-	}{
-		{name: "ARN prefix → MSK", clusterID: "arn:aws:kafka:us-east-1:123456789012:cluster/my/abc", wantSource: "msk"},
-		{name: "non-ARN → OSK", clusterID: "production-kafka", wantSource: "osk"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resetGlobals()
-			tmpDir := t.TempDir()
-			stateFilePath := writeMinimalStateFile(t, tmpDir)
-			credsPath := writeMinimalOSKCredentials(t, tmpDir)
-
-			cmd := NewScanConnectTopicsCmd()
-			// Stub RunE so we don't try to talk to Kafka.
-			cmd.RunE = func(_ *cobra.Command, _ []string) error { return nil }
-			cmd.SetArgs([]string{
-				"--credentials-file", credsPath,
-				"--state-file", stateFilePath,
-				"--cluster-id", tt.clusterID,
-				"--topics", "connect-status",
-			})
-			require.NoError(t, cmd.Execute())
-			assert.Equal(t, tt.wantSource, sourceType)
-		})
-	}
-}
-
-func TestCommand_ExplicitSourceTypeWinsOverAutoDetect(t *testing.T) {
-	resetGlobals()
-	tmpDir := t.TempDir()
-	stateFilePath := writeMinimalStateFile(t, tmpDir)
-	credsPath := writeMinimalOSKCredentials(t, tmpDir)
-
-	cmd := NewScanConnectTopicsCmd()
-	cmd.RunE = func(_ *cobra.Command, _ []string) error { return nil }
-	cmd.SetArgs([]string{
-		"--source-type", "msk",
-		"--credentials-file", credsPath,
-		"--state-file", stateFilePath,
-		// Non-ARN cluster-id would auto-detect to "osk"; explicit --source-type
-		// must override that.
-		"--cluster-id", "production-kafka",
-		"--topics", "connect-status",
-	})
-	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "msk", sourceType)
-}
-
-func TestCommand_InvalidSourceType(t *testing.T) {
-	resetGlobals()
-	tmpDir := t.TempDir()
-	stateFilePath := writeMinimalStateFile(t, tmpDir)
-	credsPath := writeMinimalOSKCredentials(t, tmpDir)
-
-	cmd := NewScanConnectTopicsCmd()
-	cmd.SetArgs([]string{
-		"--source-type", "gcp",
-		"--credentials-file", credsPath,
-		"--state-file", stateFilePath,
-		"--topics", "connect-status",
-	})
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be 'msk' or 'osk'")
-}
-
 func TestCommand_NonexistentStateFile(t *testing.T) {
 	resetGlobals()
 	tmpDir := t.TempDir()
@@ -172,9 +101,9 @@ func TestCommand_NonexistentStateFile(t *testing.T) {
 
 	cmd := NewScanConnectTopicsCmd()
 	cmd.SetArgs([]string{
-		"--source-type", "osk",
 		"--credentials-file", credsPath,
 		"--state-file", filepath.Join(tmpDir, "missing.json"),
+		"--cluster-id", "test-cluster",
 		"--topics", "connect-status",
 	})
 	err := cmd.Execute()
@@ -191,9 +120,9 @@ func TestCommand_CorruptStateFile(t *testing.T) {
 
 	cmd := NewScanConnectTopicsCmd()
 	cmd.SetArgs([]string{
-		"--source-type", "osk",
 		"--credentials-file", credsPath,
 		"--state-file", corrupt,
+		"--cluster-id", "test-cluster",
 		"--topics", "connect-status",
 	})
 	err := cmd.Execute()
@@ -234,7 +163,6 @@ func TestCommand_TopicsParsing(t *testing.T) {
 			// Stub out RunE so we don't actually try to scan Kafka.
 			cmd.RunE = func(_ *cobra.Command, _ []string) error { return nil }
 			args := append([]string{
-				"--source-type", "osk",
 				"--credentials-file", credsPath,
 				"--state-file", stateFilePath,
 				"--cluster-id", "test-cluster",

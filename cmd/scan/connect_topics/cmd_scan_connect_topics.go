@@ -22,14 +22,13 @@ import (
 var (
 	stateFile       string
 	credentialsFile string
-	sourceType      string
 	clusterID       string
 	topics          []string
 )
 
 func scanConnectTopicsIAMAnnotation() string {
 	return iampolicy.RenderStatements(
-		"Only required for `--source-type msk`. OSK scans use credentials from the credentials file, not AWS IAM. `<TOPIC NAME>` placeholders should be repeated per `--topics` value.",
+		"Only required for MSK clusters (those whose --cluster-id is an AWS ARN). OSK scans authenticate via the credentials file, not AWS IAM. `<TOPIC NAME>` placeholders should be repeated per `--topics` value.",
 		[]iampolicy.Statement{
 			{
 				Sid: "MSKConnectStatusTopicAccess",
@@ -61,7 +60,7 @@ The goal is to surface Kafka Connect clusters that may be running against a Kafk
       --cluster-id production-kafka \
       --topics connect-status
 
-  # MSK cluster (source-type auto-detected from the ARN)
+  # MSK cluster (source type resolved automatically from state)
   kcp scan connect-topics \
       --credentials-file msk-credentials.yaml \
       --state-file kcp-state.json \
@@ -85,16 +84,11 @@ The goal is to surface Kafka Connect clusters that may be running against a Kafk
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to the KCP state file (read-only in this phase; required for forward compatibility)")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to the KCP state file (used to resolve --cluster-id to MSK or OSK)")
 	requiredFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to credentials file (msk-credentials.yaml or osk-credentials.yaml)")
 	requiredFlags.StringVar(&clusterID, "cluster-id", "", "Cluster identifier from the credentials file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
 	requiredFlags.StringSliceVar(&topics, "topics", nil, "Comma-separated list (or repeated flag) of Kafka topic names that play the role of 'connect-status'")
 	cmd.Flags().AddFlagSet(requiredFlags)
-
-	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
-	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = OSK).")
-	cmd.Flags().AddFlagSet(optionalFlags)
 
 	cmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
@@ -102,7 +96,6 @@ The goal is to surface Kafka Connect clusters that may be running against a Kafk
 			fmt.Printf("Examples:\n%s\n\n", c.Example)
 		}
 		fmt.Printf("Required Flags:\n%s\n", requiredFlags.FlagUsages())
-		fmt.Printf("Optional Flags:\n%s\n", optionalFlags.FlagUsages())
 		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 		return nil
 	})
@@ -118,29 +111,6 @@ The goal is to surface Kafka Connect clusters that may be running against a Kafk
 func preRunScanConnectTopics(cmd *cobra.Command, _ []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
-	}
-
-	// Resolve source type: explicit --source-type wins; otherwise infer from
-	// the cluster-id shape (matches `kcp scan self-managed-connectors`). When
-	// both are empty, skip validation so Cobra's MarkFlagRequired for
-	// --cluster-id (which runs after PreRunE) can surface the canonical
-	// "required flag" error.
-	if sourceType == "" && clusterID != "" {
-		if strings.HasPrefix(clusterID, "arn:") {
-			sourceType = "msk"
-		} else {
-			sourceType = "osk"
-		}
-	}
-	if sourceType != "" && sourceType != "msk" && sourceType != "osk" {
-		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
-	}
-
-	if sourceType == "msk" && filepath.Base(credentialsFile) != "msk-credentials.yaml" {
-		slog.Warn("credentials file should be named 'msk-credentials.yaml' for MSK sources", "file", credentialsFile)
-	}
-	if sourceType == "osk" && filepath.Base(credentialsFile) != "osk-credentials.yaml" {
-		slog.Warn("credentials file should be named 'osk-credentials.yaml' for OSK sources", "file", credentialsFile)
 	}
 
 	// Normalise --topics: strip whitespace and drop empty entries.
@@ -179,11 +149,23 @@ func runScanConnectTopics(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to load state file: %w", err)
 	}
 
+	sourceType, err := utils.InferSourceTypeFromClusterID(state, clusterID)
+	if err != nil {
+		return err
+	}
+
+	if sourceType == types.SourceTypeMSK && filepath.Base(credentialsFile) != "msk-credentials.yaml" {
+		slog.Warn("credentials file should be named 'msk-credentials.yaml' for MSK sources", "file", credentialsFile)
+	}
+	if sourceType == types.SourceTypeOSK && filepath.Base(credentialsFile) != "osk-credentials.yaml" {
+		slog.Warn("credentials file should be named 'osk-credentials.yaml' for OSK sources", "file", credentialsFile)
+	}
+
 	var source sources.Source
 	switch sourceType {
-	case "msk":
+	case types.SourceTypeMSK:
 		source = msk.NewMSKSource()
-	case "osk":
+	case types.SourceTypeOSK:
 		source = osk.NewOSKSource()
 	default:
 		return fmt.Errorf("unsupported source type: %s", sourceType)
