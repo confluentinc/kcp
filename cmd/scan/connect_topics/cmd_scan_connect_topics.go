@@ -1,4 +1,4 @@
-package clusters
+package connect_topics
 
 import (
 	"context"
@@ -27,7 +27,7 @@ var (
 	topics          []string
 )
 
-func scanConnectClustersIAMAnnotation() string {
+func scanConnectTopicsIAMAnnotation() string {
 	return iampolicy.RenderStatements(
 		"Only required for `--source-type msk`. OSK scans use credentials from the credentials file, not AWS IAM. `<TOPIC NAME>` placeholders should be repeated per `--topics` value.",
 		[]iampolicy.Statement{
@@ -47,40 +47,40 @@ func scanConnectClustersIAMAnnotation() string {
 	)
 }
 
-func NewScanConnectClustersCmd() *cobra.Command {
+func NewScanConnectTopicsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "clusters",
+		Use:   "connect-topics",
 		Short: "Discover Kafka Connect cluster addresses by parsing the connect-status topic",
 		Long: `Read one or more Kafka topics that play the role of Kafka Connect's default ` + "`connect-status`" + ` storage topic, parse the messages for worker_id values, and print the unique Kafka Connect worker addresses to stdout.
 
 The goal is to surface Kafka Connect clusters that may be running against a Kafka cluster without the operator's knowledge — orthogonal to ` + "`kcp scan self-managed-connectors`" + `, which inventories a Connect cluster the operator already knows the REST URL of.`,
 		Example: `  # Discover Connect worker addresses for one OSK cluster
-  kcp scan connect clusters \
+  kcp scan connect-topics \
       --credentials-file osk-credentials.yaml \
       --state-file kcp-state.json \
       --cluster-id production-kafka \
       --topics connect-status
 
   # MSK cluster (source-type auto-detected from the ARN)
-  kcp scan connect clusters \
+  kcp scan connect-topics \
       --credentials-file msk-credentials.yaml \
       --state-file kcp-state.json \
       --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
       --topics connect-status
 
   # Multiple status topics (e.g. several Connect clusters sharing one Kafka cluster)
-  kcp scan connect clusters \
+  kcp scan connect-topics \
       --credentials-file osk-credentials.yaml \
       --state-file kcp-state.json \
       --cluster-id production-kafka \
       --topics connect-status-A,connect-status-B`,
 		Annotations: map[string]string{
-			iampolicy.AnnotationKey: scanConnectClustersIAMAnnotation(),
+			iampolicy.AnnotationKey: scanConnectTopicsIAMAnnotation(),
 		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunScanConnectClusters,
-		RunE:          runScanConnectClusters,
+		PreRunE:       preRunScanConnectTopics,
+		RunE:          runScanConnectTopics,
 	}
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
@@ -115,7 +115,7 @@ The goal is to surface Kafka Connect clusters that may be running against a Kafk
 	return cmd
 }
 
-func preRunScanConnectClusters(cmd *cobra.Command, _ []string) error {
+func preRunScanConnectTopics(cmd *cobra.Command, _ []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func preRunScanConnectClusters(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func runScanConnectClusters(cmd *cobra.Command, _ []string) error {
+func runScanConnectTopics(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
 	state, err := types.NewStateFromFile(stateFile)
@@ -193,7 +193,7 @@ func runScanConnectClusters(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}
 
-	scanner := NewConnectClustersScanner(ConnectClustersScannerOpts{
+	scanner := NewConnectTopicsScanner(ConnectTopicsScannerOpts{
 		Source:    source,
 		State:     state,
 		ClusterID: clusterID,

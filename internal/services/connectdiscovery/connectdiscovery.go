@@ -7,7 +7,7 @@
 // one or more status topics yields the set of Connect workers backing a given
 // Kafka cluster.
 //
-// This package is the runtime of `kcp scan connect clusters` and is the
+// This package is the runtime of `kcp scan connect-topics` and is the
 // narrower successor of the topic-parsing connector discovery removed in
 // PR #289 — it only extracts `worker_id`s, not full connector configs or
 // statuses.

@@ -1,4 +1,4 @@
-package clusters
+package connect_topics
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type ConnectClustersScannerOpts struct {
+type ConnectTopicsScannerOpts struct {
 	Source    sources.Source
 	State     *types.State
 	ClusterID string
@@ -21,8 +21,8 @@ type ConnectClustersScannerOpts struct {
 	Stderr    io.Writer
 }
 
-// ConnectClustersScanner orchestrates the per-cluster connect-status read.
-type ConnectClustersScanner struct {
+// ConnectTopicsScanner orchestrates the per-cluster connect-status read.
+type ConnectTopicsScanner struct {
 	source    sources.Source
 	state     *types.State
 	clusterID string
@@ -31,8 +31,8 @@ type ConnectClustersScanner struct {
 	stderr    io.Writer
 }
 
-func NewConnectClustersScanner(opts ConnectClustersScannerOpts) *ConnectClustersScanner {
-	return &ConnectClustersScanner{
+func NewConnectTopicsScanner(opts ConnectTopicsScannerOpts) *ConnectTopicsScanner {
+	return &ConnectTopicsScanner{
 		source:    opts.Source,
 		state:     opts.State,
 		clusterID: opts.ClusterID,
@@ -47,7 +47,7 @@ func NewConnectClustersScanner(opts ConnectClustersScannerOpts) *ConnectClusters
 // returned error is non-nil when zero addresses were discovered (so shell
 // callers can branch on the exit code) or when the underlying admin client
 // could not be built.
-func (s *ConnectClustersScanner) Run(ctx context.Context) error {
+func (s *ConnectTopicsScanner) Run(ctx context.Context) error {
 	slog.Info("scanning cluster for Connect worker addresses",
 		"cluster_id", s.clusterID,
 		"source", s.source.Type(),

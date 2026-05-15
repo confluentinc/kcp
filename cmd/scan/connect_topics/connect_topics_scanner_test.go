@@ -1,4 +1,4 @@
-package clusters
+package connect_topics
 
 import (
 	"bytes"
@@ -46,7 +46,7 @@ func TestScanner_ClusterNotInCredentials_ReturnsError(t *testing.T) {
 			"missing-cluster": errors.New(`cluster "missing-cluster" not found in OSK credentials`),
 		},
 	}
-	scanner := NewConnectClustersScanner(ConnectClustersScannerOpts{
+	scanner := NewConnectTopicsScanner(ConnectTopicsScannerOpts{
 		Source:    src,
 		ClusterID: "missing-cluster",
 		Topics:    []string{"connect-status"},
@@ -66,7 +66,7 @@ func TestScanner_AdminCreationFails_ReturnsError(t *testing.T) {
 		},
 	}
 	var stdout, stderr bytes.Buffer
-	scanner := NewConnectClustersScanner(ConnectClustersScannerOpts{
+	scanner := NewConnectTopicsScanner(ConnectTopicsScannerOpts{
 		Source:    src,
 		ClusterID: "c1",
 		Topics:    []string{"connect-status"},

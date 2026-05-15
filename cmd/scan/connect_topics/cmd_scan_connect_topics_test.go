@@ -1,4 +1,4 @@
-package clusters
+package connect_topics
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 )
 
 // writeMinimalStateFile writes a valid empty kcp state JSON so the state-file
-// validation in preRunScanConnectClusters loads cleanly. The validator only
+// validation in preRunScanConnectTopics loads cleanly. The validator only
 // checks load-ability; no fields are read.
 func writeMinimalStateFile(t *testing.T, dir string) string {
 	t.Helper()
@@ -86,7 +86,7 @@ func TestCommand_RequiredFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetGlobals()
-			cmd := NewScanConnectClustersCmd()
+			cmd := NewScanConnectTopicsCmd()
 			cmd.SetArgs(tt.args)
 			err := cmd.Execute()
 			require.Error(t, err)
@@ -111,7 +111,7 @@ func TestCommand_SourceTypeAutoDetect(t *testing.T) {
 			stateFilePath := writeMinimalStateFile(t, tmpDir)
 			credsPath := writeMinimalOSKCredentials(t, tmpDir)
 
-			cmd := NewScanConnectClustersCmd()
+			cmd := NewScanConnectTopicsCmd()
 			// Stub RunE so we don't try to talk to Kafka.
 			cmd.RunE = func(_ *cobra.Command, _ []string) error { return nil }
 			cmd.SetArgs([]string{
@@ -132,7 +132,7 @@ func TestCommand_ExplicitSourceTypeWinsOverAutoDetect(t *testing.T) {
 	stateFilePath := writeMinimalStateFile(t, tmpDir)
 	credsPath := writeMinimalOSKCredentials(t, tmpDir)
 
-	cmd := NewScanConnectClustersCmd()
+	cmd := NewScanConnectTopicsCmd()
 	cmd.RunE = func(_ *cobra.Command, _ []string) error { return nil }
 	cmd.SetArgs([]string{
 		"--source-type", "msk",
@@ -153,7 +153,7 @@ func TestCommand_InvalidSourceType(t *testing.T) {
 	stateFilePath := writeMinimalStateFile(t, tmpDir)
 	credsPath := writeMinimalOSKCredentials(t, tmpDir)
 
-	cmd := NewScanConnectClustersCmd()
+	cmd := NewScanConnectTopicsCmd()
 	cmd.SetArgs([]string{
 		"--source-type", "gcp",
 		"--credentials-file", credsPath,
@@ -170,7 +170,7 @@ func TestCommand_NonexistentStateFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	credsPath := writeMinimalOSKCredentials(t, tmpDir)
 
-	cmd := NewScanConnectClustersCmd()
+	cmd := NewScanConnectTopicsCmd()
 	cmd.SetArgs([]string{
 		"--source-type", "osk",
 		"--credentials-file", credsPath,
@@ -189,7 +189,7 @@ func TestCommand_CorruptStateFile(t *testing.T) {
 	corrupt := filepath.Join(tmpDir, "kcp-state.json")
 	require.NoError(t, os.WriteFile(corrupt, []byte("not json"), 0644))
 
-	cmd := NewScanConnectClustersCmd()
+	cmd := NewScanConnectTopicsCmd()
 	cmd.SetArgs([]string{
 		"--source-type", "osk",
 		"--credentials-file", credsPath,
@@ -230,7 +230,7 @@ func TestCommand_TopicsParsing(t *testing.T) {
 			stateFilePath := writeMinimalStateFile(t, tmpDir)
 			credsPath := writeMinimalOSKCredentials(t, tmpDir)
 
-			cmd := NewScanConnectClustersCmd()
+			cmd := NewScanConnectTopicsCmd()
 			// Stub out RunE so we don't actually try to scan Kafka.
 			cmd.RunE = func(_ *cobra.Command, _ []string) error { return nil }
 			args := append([]string{

@@ -83,21 +83,21 @@ fi
 echo ""
 
 # ----------------------------------------------------------------------------
-# kcp scan connect clusters — discover Connect worker URLs by parsing the
+# kcp scan connect-topics — discover Connect worker URLs by parsing the
 # connect-status topic. Verifies the discovery command finds the worker URL
 # the docker-compose Connect profile advertises (CONNECT_REST_ADVERTISED_HOST_NAME
 # = localhost, CONNECT_REST_PORT = 8083 → http://localhost:8083).
 # ----------------------------------------------------------------------------
 echo "=========================================="
-echo "  scan connect clusters Test"
+echo "  scan connect-topics Test"
 echo "=========================================="
 
 # Snapshot state hash to verify R8 (no state mutation).
 STATE_HASH_BEFORE=$(shasum -a 256 "$STATE" | cut -d' ' -f1)
 
 CONNECT_URLS_FILE="connect-urls.txt"
-echo "Running: ./kcp scan connect clusters --credentials-file ... --state-file $STATE --cluster-id osk-kafka --topics connect-status"
-./kcp scan connect clusters \
+echo "Running: ./kcp scan connect-topics --credentials-file ... --state-file $STATE --cluster-id osk-kafka --topics connect-status"
+./kcp scan connect-topics \
     --credentials-file integration-tests/osk-scan/credentials/kafka-plaintext.yaml \
     --state-file "$STATE" \
     --cluster-id osk-kafka \
@@ -110,7 +110,7 @@ echo ""
 
 # Verify stdout is non-empty.
 if [ ! -s "$CONNECT_URLS_FILE" ]; then
-    echo "ERROR: scan connect clusters produced no output; expected at least one worker URL"
+    echo "ERROR: scan connect-topics produced no output; expected at least one worker URL"
     exit 1
 fi
 
@@ -119,7 +119,7 @@ fi
 # in integration-tests/osk-scan/docker-compose.yml. The command emits the raw
 # worker_id without scheme inference.
 if ! grep -q '^localhost:8083$' "$CONNECT_URLS_FILE"; then
-    echo "ERROR: expected 'localhost:8083' in scan connect clusters output, got:"
+    echo "ERROR: expected 'localhost:8083' in scan connect-topics output, got:"
     cat "$CONNECT_URLS_FILE"
     exit 1
 fi
@@ -127,14 +127,14 @@ fi
 # Verify the state file was not mutated (R8 — phase-1 contract).
 STATE_HASH_AFTER=$(shasum -a 256 "$STATE" | cut -d' ' -f1)
 if [ "$STATE_HASH_BEFORE" != "$STATE_HASH_AFTER" ]; then
-    echo "ERROR: state file was modified by 'scan connect clusters'; phase-1 contract is no-write."
+    echo "ERROR: state file was modified by 'scan connect-topics'; phase-1 contract is no-write."
     echo "  before: $STATE_HASH_BEFORE"
     echo "  after:  $STATE_HASH_AFTER"
     exit 1
 fi
 
 rm -f "$CONNECT_URLS_FILE"
-echo "scan connect clusters test passed!"
+echo "scan connect-topics test passed!"
 echo ""
 
 # Clean up Connect (leave base Kafka running for potential other tests)
