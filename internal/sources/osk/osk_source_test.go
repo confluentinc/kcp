@@ -36,6 +36,37 @@ func TestOSKSource_LoadCredentials_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestOSKSource_GetKafkaAdminForCluster_BeforeLoad(t *testing.T) {
+	source := osk.NewOSKSource()
+	admin, err := source.GetKafkaAdminForCluster("any-cluster", nil)
+	assert.Error(t, err)
+	assert.Nil(t, admin)
+	assert.Contains(t, err.Error(), "credentials not loaded")
+}
+
+func TestOSKSource_GetKafkaAdminForCluster_UnknownCluster(t *testing.T) {
+	content := `
+clusters:
+  - id: known-cluster
+    bootstrap_servers:
+      - localhost:9092
+    auth_method:
+      unauthenticated_plaintext:
+        use: true
+`
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "osk-credentials.yaml")
+	require.NoError(t, os.WriteFile(credFile, []byte(content), 0644))
+
+	source := osk.NewOSKSource()
+	require.NoError(t, source.LoadCredentials(credFile))
+
+	admin, err := source.GetKafkaAdminForCluster("missing-cluster", nil)
+	assert.Error(t, err)
+	assert.Nil(t, admin)
+	assert.Contains(t, err.Error(), "missing-cluster")
+}
+
 func TestOSKSource_Scan_SkipsDisabledClusters(t *testing.T) {
 	// Create temporary credentials file with mix of enabled and disabled clusters
 	content := `
