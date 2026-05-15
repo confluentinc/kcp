@@ -75,7 +75,7 @@ func TestPrometheusService_CollectMetrics(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions())
 
 	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestPrometheusService_CollectMetrics_MissingMetric(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions())
 
 	result, err := svc.CollectMetrics(context.Background(), 7*24*time.Hour)
 	require.NoError(t, err)
@@ -143,15 +143,15 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions())
 
 	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.QueryInfo)
 
-	// Should have one entry per prometheusQueries (7)
-	assert.Len(t, result.QueryInfo, len(prometheusQueries))
+	// Should have one entry per query definition (7)
+	assert.Len(t, result.QueryInfo, len(BrokerQueryDefinitions()))
 
 	for _, qi := range result.QueryInfo {
 		assert.Equal(t, types.MetricBackendPrometheus, qi.SourceType)
@@ -186,9 +186,9 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 func TestBuildPrometheusQueryInfo(t *testing.T) {
 	end := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
 	start := end.Add(-24 * time.Hour)
-	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour, start, end)
+	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour, start, end, BrokerQueryDefinitions())
 
-	assert.Len(t, infos, len(prometheusQueries))
+	assert.Len(t, infos, len(BrokerQueryDefinitions()))
 
 	// Rate-based metrics should have rate() in the aggregation note
 	for _, info := range infos[:3] {
