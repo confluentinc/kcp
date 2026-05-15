@@ -65,7 +65,7 @@ func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 		gauges:    map[string]float64{"PartitionCount": 50, "GlobalPartitionCount": 20, "ClientConnectionCount": 5, "TotalLocalStorageUsage": 2147483648},
 	}
 
-	snapshot := computeSnapshot(prev, curr)
+	snapshot := computeSnapshot(prev, curr, BrokerMetricDefinitions().UnitConversions)
 
 	assert.Equal(t, 1000.0, snapshot.metrics["BytesInPerSec"])
 	assert.Equal(t, 500.0, snapshot.metrics["BytesOutPerSec"])
@@ -91,7 +91,7 @@ func TestComputeSnapshot_CounterResetProducesZeroNotNegative(t *testing.T) {
 		gauges:    map[string]float64{"PartitionCount": 50},
 	}
 
-	snapshot := computeSnapshot(prev, curr)
+	snapshot := computeSnapshot(prev, curr, nil)
 
 	// Counter metrics should be absent (skipped), not negative
 	_, hasBytes := snapshot.metrics["BytesInPerSec"]
@@ -153,7 +153,7 @@ func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL})
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -185,14 +185,15 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL})
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.QueryInfo)
 
-	expectedCount := len(counterMBeans) + len(gaugeMBeans) + len(controllerMBeans) + len(aggregateMBeans)
+	defs := BrokerMetricDefinitions()
+	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
 	assert.Len(t, result.QueryInfo, expectedCount)
 
 	for _, qi := range result.QueryInfo {
@@ -220,9 +221,10 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 
 func TestBuildJMXQueryInfo(t *testing.T) {
 	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
-	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second)
+	defs := BrokerMetricDefinitions()
+	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs)
 
-	expectedCount := len(counterMBeans) + len(gaugeMBeans) + len(controllerMBeans) + len(aggregateMBeans)
+	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
 	assert.Len(t, infos, expectedCount)
 
 	// All entries should have Statistic, Period, and QueryDuration
@@ -254,8 +256,8 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 	assert.Contains(t, infos[6].AggregationNote, "Wildcard")
 
 	// Empty brokerURLs should return nil
-	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second))
-	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second))
+	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second, defs))
+	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs))
 }
 
 func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
@@ -294,7 +296,7 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL})
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -318,9 +320,23 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 }
 
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
-	svc := NewJMXService([]string{"http://localhost:1"})
+	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions())
 	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be greater than")
+}
+
+func TestConnectMetricDefinitions(t *testing.T) {
+	defs := ConnectMetricDefinitions()
+
+	require.Len(t, defs.Gauges, 2)
+	assert.Equal(t, "connector-count", defs.Gauges[0].Name)
+	assert.Equal(t, "task-count", defs.Gauges[1].Name)
+
+	// Connect definitions should have no counters, controller, or aggregates
+	assert.Empty(t, defs.Counters)
+	assert.Empty(t, defs.Controller)
+	assert.Empty(t, defs.Aggregates)
+	assert.Nil(t, defs.UnitConversions)
 }
