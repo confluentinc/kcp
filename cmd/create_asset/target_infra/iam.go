@@ -54,7 +54,7 @@ var (
 		"route53:GetHostedZone",
 		"route53:ListResourceRecordSets",
 		"route53:ListTagsForResource",
-		"route53:ChangeResourceRecordSets"
+		"route53:ChangeResourceRecordSets",
 	}
 
 	// targetInfraBase — actions required regardless of --cluster-type.
