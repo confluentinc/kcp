@@ -41,6 +41,9 @@ func ConnectQueryDefinitions() []MetricQuery {
 	return []MetricQuery{
 		{"connector-count", "kafka_connect_connect_worker_metrics_connector_count", "kafka_connect_connect_worker_metrics_connector_count"},
 		{"task-count", "kafka_connect_connect_worker_metrics_task_count", "kafka_connect_connect_worker_metrics_task_count"},
+		{"incoming-byte-rate", "sum(kafka_connect_connect_metrics_incoming_byte_rate)", "kafka_connect_connect_metrics_incoming_byte_rate"},
+		{"outgoing-byte-rate", "sum(kafka_connect_connect_metrics_outgoing_byte_rate)", "kafka_connect_connect_metrics_outgoing_byte_rate"},
+		{"connection-count", "sum(kafka_connect_connect_metrics_connection_count)", "kafka_connect_connect_metrics_connection_count"},
 	}
 }
 
