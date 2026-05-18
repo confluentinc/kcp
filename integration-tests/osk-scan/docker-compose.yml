@@ -113,6 +113,7 @@ services:
       - kafka
     ports:
       - "8083:8083"
+      - "8781:8781"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: 'osk-kafka:29092'
       CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
@@ -134,7 +135,11 @@ services:
         echo "Waiting for Kafka to be ready..."
         cub kafka-ready -b osk-kafka:29092 1 120
 
-        echo "Starting Kafka Connect..."
+        echo "Downloading Jolokia agent..."
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+
+        echo "Starting Kafka Connect with Jolokia..."
+        export KAFKA_OPTS="-javaagent:/tmp/jolokia-agent.jar=port=8781,host=0.0.0.0"
         /etc/confluent/docker/run &
         CONNECT_PID=$$!
 
