@@ -113,7 +113,7 @@ else
         --metrics-interval 10s \
         --credentials-file integration-tests/osk-scan/credentials/connect-jolokia.yaml
 
-    METRICS_COUNT=$(jq '.osk_sources.clusters[0].kafka_admin_client_information.self_managed_connectors.metrics.metrics | length // 0' "$STATE")
+    METRICS_COUNT=$(jq '.osk_sources.clusters[0].kafka_admin_client_information.self_managed_connectors.metrics.results | length // 0' "$STATE")
     echo "  Connect metrics data points: $METRICS_COUNT"
     if [ "$METRICS_COUNT" -le 0 ]; then
         echo "ERROR: expected at least one Connect metrics data point, found $METRICS_COUNT"
