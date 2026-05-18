@@ -44,6 +44,7 @@ func ConnectQueryDefinitions() []MetricQuery {
 		{"incoming-byte-rate", "sum(kafka_connect_connect_metrics_incoming_byte_rate)", "kafka_connect_connect_metrics_incoming_byte_rate"},
 		{"outgoing-byte-rate", "sum(kafka_connect_connect_metrics_outgoing_byte_rate)", "kafka_connect_connect_metrics_outgoing_byte_rate"},
 		{"connection-count", "sum(kafka_connect_connect_metrics_connection_count)", "kafka_connect_connect_metrics_connection_count"},
+		{"request-rate", "sum(kafka_connect_connect_metrics_request_rate)", "kafka_connect_connect_metrics_request_rate"},
 	}
 }
 
