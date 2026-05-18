@@ -70,6 +70,11 @@ func ConnectMetricDefinitions() MetricDefinitions {
 			{"connector-count", "kafka.connect:type=connect-worker-metrics", "connector-count"},
 			{"task-count", "kafka.connect:type=connect-worker-metrics", "task-count"},
 		},
+		Aggregates: []AggregateMBeanConfig{
+			{"incoming-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "incoming-byte-rate"},
+			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
+			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
+		},
 	}
 }
 
