@@ -75,6 +75,8 @@ func ConnectMetricDefinitions() MetricDefinitions {
 			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
 			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
 			{"request-rate", "kafka.connect:client-id=*,type=connect-metrics", "request-rate"},
+			{"source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate"},
+			{"source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-poll-rate"},
 		},
 	}
 }

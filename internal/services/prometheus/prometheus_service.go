@@ -38,12 +38,18 @@ func BrokerQueryDefinitions() []MetricQuery {
 
 // ConnectQueryDefinitions returns Prometheus queries for Kafka Connect worker metrics.
 // Metric names match the JMX exporter naming convention (kafka_connect_worker_*).
+// Client-level metrics (incoming/outgoing-byte-rate, connection-count, request-rate)
+// require the JMX exporter to whitelist kafka.connect:client-id=*,type=connect-metrics.
 func ConnectQueryDefinitions() []MetricQuery {
 	return []MetricQuery{
 		{"connector-count", "kafka_connect_worker_connector_count", "kafka_connect_worker_connector_count"},
 		{"task-count", "kafka_connect_worker_task_count", "kafka_connect_worker_task_count"},
 		{"source-record-write-rate", "sum(kafka_connect_source_task_source_record_write_rate)", "kafka_connect_source_task_source_record_write_rate"},
 		{"source-record-poll-rate", "sum(kafka_connect_source_task_source_record_poll_rate)", "kafka_connect_source_task_source_record_poll_rate"},
+		{"incoming-byte-rate", "sum(kafka_connect_network_io_incoming_byte_rate)", "kafka_connect_network_io_incoming_byte_rate"},
+		{"outgoing-byte-rate", "sum(kafka_connect_network_io_outgoing_byte_rate)", "kafka_connect_network_io_outgoing_byte_rate"},
+		{"connection-count", "sum(kafka_connect_network_io_connection_count)", "kafka_connect_network_io_connection_count"},
+		{"request-rate", "sum(kafka_connect_network_io_request_rate)", "kafka_connect_network_io_request_rate"},
 	}
 }
 
