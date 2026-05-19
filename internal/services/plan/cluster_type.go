@@ -154,6 +154,9 @@ func tlsEnabled(t *kafkatypes.Tls) bool {
 // that Standard doesn't offer. The design pins Enterprise as the default;
 // hard-limit rules escalate to Dedicated when an Enterprise cap is
 // exceeded or a workload constraint can't be served on Enterprise.
+// Rule ID for the 99.95% single-zone SLA — fires Single-Zone (SZ) topology.
+const ruleIDSingleZoneSLA = "sla_99_95_single_zone"
+
 func DecideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterTypeDecision {
 	var fired []types.HardLimitTrigger
 	for _, hl := range HardLimitCatalog {
@@ -172,8 +175,30 @@ func DecideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg
 	}
 
 	verdict := types.ClusterTypeEnterprise
+	topology := types.TopologyNotApplicable
+	var finalCKU *int
 	if len(fired) > 0 {
 		verdict = types.ClusterTypeDedicated
+		// Single-Zone wins when the 99.95% SLA rule fires (rule 5);
+		// otherwise the Dedicated topology defaults to Multi-Zone.
+		topology = types.TopologyMultiZone
+		for _, t := range fired {
+			if t.RowID == ruleIDSingleZoneSLA {
+				topology = types.TopologySingleZone
+				break
+			}
+		}
+		// Dedicated tier is sized in CKU, not eCKU. Mirror the sizing
+		// number under the Dedicated unit so consumers don't have to
+		// switch on verdict to interpret the field.
+		cku := sizing.FinalECKU
+		finalCKU = &cku
 	}
-	return types.ClusterTypeDecision{ClusterID: c.Name, Verdict: verdict, Triggers: fired}
+	return types.ClusterTypeDecision{
+		ClusterID: c.Name,
+		Verdict:   verdict,
+		Triggers:  fired,
+		Topology:  topology,
+		FinalCKU:  finalCKU,
+	}
 }

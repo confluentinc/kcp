@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,6 +95,49 @@ func TestPlanServiceBuild_StableSortAcrossRegions(t *testing.T) {
 	// us-east-1 sorts before us-west-2.
 	assert.Equal(t, "us-east-1", p.SourceEnvironment.Clusters[0].Region)
 	assert.Equal(t, "us-west-2", p.SourceEnvironment.Clusters[1].Region)
+}
+
+// The Source Environment table renders BrokerCount + TopicCount per
+// cluster. Regression guard: both values must come from the populated
+// state fields (`AWSClientInformation.Nodes` length and
+// `KafkaAdminClientInformation.Topics.Summary.Topics`) rather than
+// silently defaulting to zero — a zero in the rendered plan reads as
+// "no brokers / no topics" which is a meaningfully wrong impression.
+func TestPlanServiceBuild_SourceEnvironmentBrokerAndTopicCount(t *testing.T) {
+	c := fixtureCluster("populated", 200, 10, 20, 12, 22)
+	c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+	c.KafkaAdminClientInformation.Topics.Summary.Topics = 42
+
+	state := types.ProcessedState{
+		Sources: []types.ProcessedSource{{
+			Type: types.SourceTypeMSK,
+			MSKData: &types.ProcessedMSKSource{
+				Regions: []types.ProcessedRegion{
+					{Name: "us-east-1", Clusters: []types.ProcessedCluster{c}},
+				},
+			},
+		}},
+	}
+	svc := NewPlanService(defaultCfg(t), fixedNow)
+	p, err := svc.Build(state, defaultInputs(), "x.json")
+	require.NoError(t, err)
+	require.Len(t, p.SourceEnvironment.Clusters, 1)
+	got := p.SourceEnvironment.Clusters[0]
+	assert.Equal(t, 3, got.BrokerCount, "BrokerCount must reflect len(AWSClientInformation.Nodes)")
+	assert.Equal(t, 42, got.TopicCount, "TopicCount must reflect KafkaAdminClientInformation.Topics.Summary.Topics")
+}
+
+// Unit-level coverage for the helpers — catches a bad rename / wrong
+// field path before the integration test does.
+func TestBrokerCountAndTopicCountReadFromState(t *testing.T) {
+	c := types.ProcessedCluster{Name: "ut"}
+	assert.Equal(t, 0, brokerCount(c))
+	assert.Equal(t, 0, topicCount(c))
+
+	c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 5)
+	c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 17}}
+	assert.Equal(t, 5, brokerCount(c))
+	assert.Equal(t, 17, topicCount(c))
 }
 
 func TestPlanServiceBuild_EmptyState(t *testing.T) {

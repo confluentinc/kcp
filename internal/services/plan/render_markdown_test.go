@@ -46,6 +46,91 @@ func TestRenderMarkdown_CostCalloutOnCustomerDeclaredDedicated(t *testing.T) {
 	assert.Contains(t, body, "sla_99_95_single_zone", "must name the rule that fired so the customer can find the flag")
 }
 
+// Dedicated clusters render with MZ/SZ topology suffix so the reader
+// sees at a glance whether the verdict is Multi-Zone or the
+// 99.95%-SLA-driven Single-Zone variant. The size column flips from
+// eCKU to CKU because Dedicated uses a different unit.
+func TestRenderMarkdown_DedicatedTopologyAndCKULabel(t *testing.T) {
+	cfg := defaultCfg(t)
+	cku := 4
+	p := &types.Plan{
+		Sizing: []types.ClusterSizing{
+			{ClusterID: "ent-small", FinalECKU: 2, P95InMBps: 10, P95OutMBps: 20, MaxRatioDriver: "ingress"},
+			{ClusterID: "ded-mz", FinalECKU: 4, P95InMBps: 100, P95OutMBps: 180, MaxRatioDriver: "ingress"},
+			{ClusterID: "ded-sz", FinalECKU: 4, P95InMBps: 50, P95OutMBps: 80, MaxRatioDriver: "ingress"},
+		},
+		ClusterTypeDecision: []types.ClusterTypeDecision{
+			{ClusterID: "ent-small", Verdict: types.ClusterTypeEnterprise},
+			{
+				ClusterID: "ded-mz",
+				Verdict:   types.ClusterTypeDedicated,
+				Topology:  types.TopologyMultiZone,
+				FinalCKU:  &cku,
+				Triggers:  []types.HardLimitTrigger{{RowID: "eCKU_exceeds_pni_cap", Description: "x", Evidence: "y"}},
+			},
+			{
+				ClusterID:        "ded-sz",
+				Verdict:          types.ClusterTypeDedicated,
+				Topology:         types.TopologySingleZone,
+				FinalCKU:         &cku,
+				Triggers:         []types.HardLimitTrigger{{RowID: "sla_99_95_single_zone", Description: "99.95 SZ", Evidence: "flag", CustomerDeclared: true}},
+			},
+		},
+		NetworkingDecision: []types.NetworkingDecision{
+			{ClusterID: "ent-small", Verdict: types.NetworkingPrivateLink, Reason: "fits"},
+			{ClusterID: "ded-mz", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
+			{ClusterID: "ded-sz", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
+		},
+	}
+
+	out, err := RenderMarkdown(p, cfg)
+	require.NoError(t, err)
+	body := string(out)
+
+	// Enterprise row: unit stays as eCKU, no topology suffix.
+	assert.Contains(t, body, "2 eCKU")
+	assert.Regexp(t, `ent-small.*Enterprise`, splitLine(body, "ent-small"))
+
+	// Dedicated MZ row: unit flips to CKU, label gets MZ suffix.
+	assert.Contains(t, body, "4 CKU")
+	assert.Contains(t, body, "Dedicated Multi-Zone (MZ)")
+
+	// Dedicated SZ row: same unit, SZ suffix.
+	assert.Contains(t, body, "Dedicated Single-Zone (SZ)")
+}
+
+// splitLine returns the substring of body that starts with the cluster
+// name (handy for asserting per-row content without a full HTML parser).
+func splitLine(body, clusterID string) string {
+	idx := stringIndex(body, clusterID)
+	if idx < 0 {
+		return ""
+	}
+	end := stringIndexFrom(body, "\n", idx)
+	if end < 0 {
+		end = len(body)
+	}
+	return body[idx:end]
+}
+
+func stringIndex(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func stringIndexFrom(s, sub string, start int) int {
+	for i := start; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 // State-derived Dedicated verdicts (e.g. eCKU exceeds PNI cap) reflect
 // real source-environment facts, not wrong clicks. No callout — the
 // recommendation isn't recoverable by flipping a YAML flag.

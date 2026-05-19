@@ -6,6 +6,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDecideClusterType_DefaultEnterprise(t *testing.T) {
@@ -130,6 +131,52 @@ func TestDecideClusterType_MTLSOnNonAWSTarget(t *testing.T) {
 		in.TargetCloud = "gcp"
 		d := DecideClusterType(c2, sizing, cfg, in)
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
+	})
+}
+
+func TestDecideClusterType_Topology(t *testing.T) {
+	cfg := defaultCfg(t)
+	sizing := types.ClusterSizing{ClusterID: "x", FinalECKU: 4}
+	c := types.ProcessedCluster{Name: "x"}
+
+	t.Run("Enterprise verdict has no topology", func(t *testing.T) {
+		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
+		assert.Equal(t, types.TopologyNotApplicable, d.Topology)
+		assert.Nil(t, d.FinalCKU, "Enterprise clusters are sized in eCKU only — no FinalCKU mirror")
+	})
+
+	t.Run("Dedicated via eCKU cap → Multi-Zone", func(t *testing.T) {
+		big := types.ClusterSizing{ClusterID: "big", FinalECKU: 33}
+		d := DecideClusterType(c, big, cfg, defaultInputs())
+		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
+		assert.Equal(t, types.TopologyMultiZone, d.Topology)
+		require.NotNil(t, d.FinalCKU)
+		assert.Equal(t, 33, *d.FinalCKU, "FinalCKU mirrors the sizing's FinalECKU value")
+	})
+
+	t.Run("Dedicated via 99.95 single-zone SLA → Single-Zone", func(t *testing.T) {
+		in := defaultInputs()
+		in.Requires9995SLAWithinSingleZone = true
+		d := DecideClusterType(c, sizing, cfg, in)
+		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
+		assert.Equal(t, types.TopologySingleZone, d.Topology)
+		require.NotNil(t, d.FinalCKU)
+		assert.Equal(t, 4, *d.FinalCKU)
+	})
+
+	t.Run("rule 5 wins topology when combined with other rules", func(t *testing.T) {
+		// 99.95 SLA flag + ACL-cap exceeded → both rules fire; topology
+		// must escalate to Single-Zone (more restrictive).
+		acls := make([]types.Acls, 4001)
+		c2 := types.ProcessedCluster{Name: "combo"}
+		c2.KafkaAdminClientInformation.Acls = acls
+		in := defaultInputs()
+		in.Requires9995SLAWithinSingleZone = true
+		d := DecideClusterType(c2, sizing, cfg, in)
+		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
+		assert.Equal(t, types.TopologySingleZone, d.Topology)
+		assert.GreaterOrEqual(t, len(d.Triggers), 2, "both rules should have fired")
 	})
 }
 

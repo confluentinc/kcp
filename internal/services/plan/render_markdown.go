@@ -61,24 +61,26 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 		return
 	}
 
-	b.WriteString("| Cluster | P95 in / out (MBps) | Partitions | Final eCKU | Cluster Type | Networking |\n")
+	b.WriteString("| Cluster | P95 in / out (MBps) | Partitions | Final size | Cluster Type | Networking |\n")
 	b.WriteString("|---|---|---:|---:|---|---|\n")
 	for i, s := range p.Sizing {
-		ct := types.ClusterType("")
+		var ctDecision types.ClusterTypeDecision
 		net := types.Networking("")
 		if i < len(p.ClusterTypeDecision) {
-			ct = p.ClusterTypeDecision[i].Verdict
+			ctDecision = p.ClusterTypeDecision[i]
 		}
 		if i < len(p.NetworkingDecision) {
 			net = p.NetworkingDecision[i].Verdict
 		}
+		ctLabel := clusterTypeLabel(ctDecision)
+		sizeCell := formatSizeCell(s.FinalECKU, ctDecision, s.Degraded)
 		if s.Degraded {
-			fmt.Fprintf(b, "| %s | _sizing degraded_ | %d | %d (floor) | %s | %s |\n",
-				s.ClusterID, s.UserPartitions, s.FinalECKU, ct, net)
+			fmt.Fprintf(b, "| %s | _sizing degraded_ | %d | %s | %s | %s |\n",
+				s.ClusterID, s.UserPartitions, sizeCell, ctLabel, net)
 			continue
 		}
-		fmt.Fprintf(b, "| %s | %.1f / %.1f | %d | %d | %s | %s |\n",
-			s.ClusterID, s.P95InMBps, s.P95OutMBps, s.UserPartitions, s.FinalECKU, ct, net)
+		fmt.Fprintf(b, "| %s | %.1f / %.1f | %d | %s | %s | %s |\n",
+			s.ClusterID, s.P95InMBps, s.P95OutMBps, s.UserPartitions, sizeCell, ctLabel, net)
 	}
 	b.WriteString("\n")
 
@@ -95,8 +97,9 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 		var customerDeclaredTriggers []string
 		if i < len(p.ClusterTypeDecision) {
 			ct := p.ClusterTypeDecision[i]
+			ctLabel := clusterTypeLabel(ct)
 			if len(ct.Triggers) == 0 {
-				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — no hard-limit rule fired", ct.Verdict))
+				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — no hard-limit rule fired", ctLabel))
 			} else {
 				rules := make([]string, 0, len(ct.Triggers))
 				for _, t := range ct.Triggers {
@@ -105,7 +108,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 						customerDeclaredTriggers = append(customerDeclaredTriggers, t.RowID)
 					}
 				}
-				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — %s", ct.Verdict, strings.Join(rules, "; ")))
+				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — %s", ctLabel, strings.Join(rules, "; ")))
 			}
 		}
 		if i < len(p.NetworkingDecision) {
@@ -148,4 +151,38 @@ func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 	}
 	b.WriteString("\nMax-ratio is multiplied by `(1 + headroom)` and rounded up to get `Sized eCKU`. `Final eCKU` is `max(Sized, SLA floor)`.\n\n")
 	b.WriteString("</details>\n\n")
+}
+
+// clusterTypeLabel returns the customer-facing label for a cluster-type
+// decision. Dedicated clusters carry a topology suffix (MZ vs SZ) so the
+// reader can see at a glance whether the verdict is Multi-Zone or the
+// 99.95%-SLA-driven Single-Zone variant. Enterprise renders as-is.
+func clusterTypeLabel(ct types.ClusterTypeDecision) string {
+	if ct.Verdict != types.ClusterTypeDedicated {
+		return string(ct.Verdict)
+	}
+	switch ct.Topology {
+	case types.TopologySingleZone:
+		return "Dedicated Single-Zone (SZ)"
+	case types.TopologyMultiZone:
+		return "Dedicated Multi-Zone (MZ)"
+	default:
+		return "Dedicated"
+	}
+}
+
+// formatSizeCell renders the "Final size" column. Enterprise clusters
+// are sized in eCKU; Dedicated clusters are sized in CKU (same integer,
+// different unit per the Confluent product taxonomy).
+func formatSizeCell(finalECKU int, ct types.ClusterTypeDecision, degraded bool) string {
+	suffix := "eCKU"
+	value := finalECKU
+	if ct.Verdict == types.ClusterTypeDedicated && ct.FinalCKU != nil {
+		suffix = "CKU"
+		value = *ct.FinalCKU
+	}
+	if degraded {
+		return fmt.Sprintf("%d %s (floor)", value, suffix)
+	}
+	return fmt.Sprintf("%d %s", value, suffix)
 }

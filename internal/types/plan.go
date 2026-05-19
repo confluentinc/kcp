@@ -99,10 +99,30 @@ func (c ClusterType) IsValid() bool {
 	}
 }
 
+// Topology distinguishes Multi-Zone (MZ) from Single-Zone (SZ) Dedicated
+// clusters. Only meaningful when Verdict == Dedicated; Enterprise clusters
+// have no topology dimension at this layer.
+type Topology string
+
+const (
+	TopologyNotApplicable Topology = ""
+	TopologyMultiZone     Topology = "MultiZone"
+	TopologySingleZone    Topology = "SingleZone"
+)
+
 type ClusterTypeDecision struct {
 	ClusterID string             `json:"cluster_id"`
 	Verdict   ClusterType        `json:"verdict"`
 	Triggers  []HardLimitTrigger `json:"triggers,omitempty"`
+	// Topology is populated for Dedicated verdicts (MZ default; SZ when the
+	// 99.95% single-zone SLA rule fires). Empty for Enterprise.
+	Topology Topology `json:"topology,omitempty"`
+	// FinalCKU is the same number as the sizing's FinalECKU but exposed
+	// under the Dedicated unit (Confluent Kafka Unit). Populated only when
+	// Verdict == Dedicated; nil for Enterprise. The JSON consumer should
+	// read FinalCKU for Dedicated clusters and the sizing FinalECKU for
+	// Enterprise — same value, different unit, different downstream use.
+	FinalCKU *int `json:"final_cku,omitempty"`
 }
 
 type HardLimitTrigger struct {
