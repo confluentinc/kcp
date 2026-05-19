@@ -27,7 +27,8 @@ type SelfManagedConnector struct {
 }
 
 type SelfManagedConnectors struct {
-	Connectors []SelfManagedConnector `json:"connectors"`
+	Connectors []SelfManagedConnector   `json:"connectors"`
+	Metrics    *ProcessedClusterMetrics `json:"metrics,omitempty"`
 }
 
 // mergeSelfManagedConnectors merges connectors, with new taking precedence for duplicates (by name)
