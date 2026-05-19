@@ -140,6 +140,86 @@ func TestBrokerCountAndTopicCountReadFromState(t *testing.T) {
 	assert.Equal(t, 17, topicCount(c))
 }
 
+// Each MVP open-question detector surfaces a specific state-file gap.
+// The shipping recommendation still exists for every cluster; the OQ is
+// the action that upgrades it.
+func TestDetectOpenQuestions(t *testing.T) {
+	t.Run("missing P95 metrics → missing_p95_metrics OQ", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "noMetrics"}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+		sizing := types.ClusterSizing{ClusterID: "noMetrics", Degraded: true, DegradedReason: "no BytesInPerSec p95"}
+
+		oqs := detectOpenQuestions(c, sizing)
+		assertContainsOQ(t, oqs, "missing_p95_metrics", "Re-run `kcp scan metrics`")
+	})
+
+	t.Run("nil ACLs → acls_not_scanned OQ", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "noAcls"}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
+		c.KafkaAdminClientInformation.Acls = nil
+
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noAcls", FinalECKU: 1})
+		assertContainsOQ(t, oqs, "acls_not_scanned", "admin credentials")
+	})
+
+	t.Run("zero brokers → broker_inventory_empty OQ", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "noBrokers"}
+		c.AWSClientInformation.Nodes = nil
+		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noBrokers", FinalECKU: 1})
+		assertContainsOQ(t, oqs, "broker_inventory_empty", "kcp discover")
+	})
+
+	t.Run("zero topics → topic_inventory_empty OQ", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "noTopics"}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 0}}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noTopics", FinalECKU: 1})
+		assertContainsOQ(t, oqs, "topic_inventory_empty", "kcp scan clusters")
+	})
+
+	t.Run("spiky workload → acknowledgement OQ", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "spiky"}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+		sizing := types.ClusterSizing{ClusterID: "spiky", FinalECKU: 2, SpikyIngress: true}
+
+		oqs := detectOpenQuestions(c, sizing)
+		assertContainsOQ(t, oqs, "spiky_workload_acknowledgement", "sizing_percentile")
+	})
+
+	t.Run("fully populated cluster emits no OQs", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "complete"}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "complete", FinalECKU: 2})
+		assert.Empty(t, oqs, "happy-path clusters should not surface OQs")
+	})
+}
+
+func assertContainsOQ(t *testing.T, oqs []types.OpenQuestion, id, expectedSubstring string) {
+	t.Helper()
+	for _, oq := range oqs {
+		if oq.ID == id {
+			if expectedSubstring != "" {
+				assert.Contains(t, oq.HowToClose, expectedSubstring)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected an OpenQuestion with ID %q, got: %+v", id, oqs)
+}
+
 func TestPlanServiceBuild_EmptyState(t *testing.T) {
 	svc := NewPlanService(defaultCfg(t), fixedNow)
 	p, err := svc.Build(types.ProcessedState{}, defaultInputs(), "")

@@ -75,11 +75,67 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 			TopicCount:  topicCount(c),
 			BrokerCount: brokerCount(c),
 		})
+		plan.OpenQuestions = append(plan.OpenQuestions, detectOpenQuestions(c, sizing)...)
 	}
 	plan.SourceEnvironment.TotalRegions = countRegions(state)
 	plan.SizingAppendix = buildSizingAppendix(plan.Sizing, s.cfg, inputs)
 
 	return plan, nil
+}
+
+// detectOpenQuestions surfaces state-file gaps and inferred-signal quirks
+// per cluster. The Plan still ships a recommendation in each case (the
+// SLA floor for degraded sizing, the verdict from the other rules when
+// Rule 2 is skipped, etc.) — the OQ tells the customer what action will
+// upgrade that recommendation.
+func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing) []types.OpenQuestion {
+	var oqs []types.OpenQuestion
+	if sizing.Degraded {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "missing_p95_metrics",
+			ClusterID:  c.Name,
+			Title:      "No P95 throughput metrics — sizing fell back to SLA floor",
+			Body:       sizing.DegradedReason,
+			HowToClose: "Re-run `kcp scan metrics` against this cluster.",
+		})
+	}
+	if c.KafkaAdminClientInformation.Acls == nil {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "acls_not_scanned",
+			ClusterID:  c.Name,
+			Title:      "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
+			Body:       "The `acl_count_exceeds_cap` hard-limit rule needs the ACL list to evaluate. With `acls == null` the rule is treated as inconclusive; the verdict resolves on the other rules.",
+			HowToClose: "Re-run `kcp scan clusters` with admin credentials to populate the ACL list.",
+		})
+	}
+	if brokerCount(c) == 0 {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "broker_inventory_empty",
+			ClusterID:  c.Name,
+			Title:      "Source environment shows 0 brokers — likely an incomplete scan",
+			Body:       "`AWSClientInformation.Nodes` is empty for this cluster. The Source Environment table reads as `Brokers: 0`, which is almost certainly wrong for a real MSK cluster.",
+			HowToClose: "Re-run `kcp discover` against the source account / region to populate the broker inventory.",
+		})
+	}
+	if topicCount(c) == 0 {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "topic_inventory_empty",
+			ClusterID:  c.Name,
+			Title:      "Source environment shows 0 topics — likely an incomplete scan",
+			Body:       "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero).",
+			HowToClose: "Re-run `kcp scan clusters` with admin credentials to populate the topic list.",
+		})
+	}
+	if sizing.SpikyIngress || sizing.SpikyEgress {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "spiky_workload_acknowledgement",
+			ClusterID:  c.Name,
+			Title:      "Spiky workload detected (peak materially exceeds P95)",
+			Body:       "Sized eCKU is based on P95; the observed peak is the spike threshold above. Current sizing relies on Enterprise's elastic scaling to absorb the spike — if the spike is steady-state rather than seasonal, consider `sizing_percentile: p99`.",
+			HowToClose: "Confirm with the owning team whether the spike is seasonal (current sizing is fine) or steady-state (override `sizing_percentile`).",
+		})
+	}
+	return oqs
 }
 
 func collectClusters(state types.ProcessedState) []types.ProcessedCluster {

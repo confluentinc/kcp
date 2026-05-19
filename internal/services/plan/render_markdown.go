@@ -25,9 +25,32 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	writeDefinitions(&b, cfg)
 	writeSourceEnvironment(&b, p)
 	writeSizingAndDecisions(&b, p)
+	writeOpenQuestions(&b, p)
 	writeSizingAppendix(&b, p, cfg)
 
 	return b.Bytes(), nil
+}
+
+func writeOpenQuestions(b *bytes.Buffer, p *types.Plan) {
+	if len(p.OpenQuestions) == 0 {
+		return
+	}
+	b.WriteString("## 3. Open Questions\n\n")
+	b.WriteString("Each item below is a gap the Plan flagged while building. The recommendation in §2 stands, but answering these items tightens the result.\n\n")
+	for i, oq := range p.OpenQuestions {
+		title := oq.Title
+		if oq.ClusterID != "" {
+			title = fmt.Sprintf("`%s` — %s", oq.ClusterID, title)
+		}
+		fmt.Fprintf(b, "%d. **%s**\n", i+1, title)
+		if oq.Body != "" {
+			fmt.Fprintf(b, "   - %s\n", oq.Body)
+		}
+		if oq.HowToClose != "" {
+			fmt.Fprintf(b, "   - _How to close:_ %s\n", oq.HowToClose)
+		}
+	}
+	b.WriteString("\n")
 }
 
 func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {

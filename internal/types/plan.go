@@ -15,6 +15,20 @@ type Plan struct {
 	ClusterTypeDecision []ClusterTypeDecision `json:"cluster_type_decision"`
 	NetworkingDecision  []NetworkingDecision  `json:"networking_decision"`
 	SizingAppendix      []SizingMathDetail    `json:"sizing_appendix"`
+	OpenQuestions       []OpenQuestion        `json:"open_questions,omitempty"`
+}
+
+// OpenQuestion is a per-cluster (or plan-level) gap the customer needs
+// to close before the Plan recommendation is fully reliable. State-file
+// gaps (missing metrics, missing ACLs) resolve by re-running a `kcp scan`
+// command; inferred-signal questions (spiky workload) resolve by
+// acknowledging or overriding the input.
+type OpenQuestion struct {
+	ID         string `json:"id"`
+	ClusterID  string `json:"cluster_id,omitempty"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	HowToClose string `json:"how_to_close"`
 }
 
 type PlanHeader struct {

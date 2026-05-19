@@ -55,6 +55,12 @@
         "region": "us-east-1",
         "broker_count": 3,
         "topic_count": 42
+      },
+      {
+        "cluster_id": "stale-no-metrics",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 28
       }
     ],
     "total_regions": 1
@@ -239,6 +245,40 @@
           "value": 200
         }
       ]
+    },
+    {
+      "cluster_id": "stale-no-metrics",
+      "p95_in_mbps": 0,
+      "p95_out_mbps": 0,
+      "peak_in_mbps": 0,
+      "peak_out_mbps": 0,
+      "user_partitions": 150,
+      "internal_partitions": 0,
+      "ingress_ratio": 0,
+      "egress_ratio": 0,
+      "partition_ratio": 0,
+      "max_ratio": 0,
+      "sized_ecku": 0,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0,
+      "peak_burst_out_ratio": 0,
+      "peak_burst_ecku": 0,
+      "peak_burst_pct_of_pl_cap": 0,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[stale-no-metrics].metrics.aggregates.BytesInPerSec.p95",
+          "value": null
+        },
+        {
+          "path": "cluster[stale-no-metrics].metrics.aggregates.BytesOutPerSec.p95",
+          "value": null
+        }
+      ],
+      "degraded": true,
+      "degraded_reason": "no BytesInPerSec or BytesOutPerSec p95; re-run kcp scan metrics"
     }
   ],
   "cluster_type_decision": [
@@ -275,6 +315,10 @@
     {
       "cluster_id": "small-orders",
       "verdict": "Enterprise"
+    },
+    {
+      "cluster_id": "stale-no-metrics",
+      "verdict": "Enterprise"
     }
   ],
   "networking_decision": [
@@ -305,6 +349,13 @@
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
       "reason": "Peak burst 1 eCKU below 80% of 10 eCKU PrivateLink cap"
+    },
+    {
+      "cluster_id": "stale-no-metrics",
+      "verdict": "PrivateLink",
+      "peak_burst_ecku": 0,
+      "percentage_of_cap": 0,
+      "reason": "Peak burst 0 eCKU below 80% of 10 eCKU PrivateLink cap"
     }
   ],
   "sizing_appendix": [
@@ -443,6 +494,22 @@
           "value": 200
         }
       ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "spiky_workload_acknowledgement",
+      "cluster_id": "bursty-events",
+      "title": "Spiky workload detected (peak materially exceeds P95)",
+      "body": "Sized eCKU is based on P95; the observed peak is the spike threshold above. Current sizing relies on Enterprise's elastic scaling to absorb the spike — if the spike is steady-state rather than seasonal, consider `sizing_percentile: p99`.",
+      "how_to_close": "Confirm with the owning team whether the spike is seasonal (current sizing is fine) or steady-state (override `sizing_percentile`)."
+    },
+    {
+      "id": "missing_p95_metrics",
+      "cluster_id": "stale-no-metrics",
+      "title": "No P95 throughput metrics — sizing fell back to SLA floor",
+      "body": "no BytesInPerSec or BytesOutPerSec p95; re-run kcp scan metrics",
+      "how_to_close": "Re-run `kcp scan metrics` against this cluster."
     }
   ]
 }
