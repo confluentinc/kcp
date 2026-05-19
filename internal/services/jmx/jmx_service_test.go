@@ -338,8 +338,8 @@ func TestConnectMetricDefinitions(t *testing.T) {
 	assert.Empty(t, defs.Controller)
 	assert.Nil(t, defs.UnitConversions)
 
-	// Connect definitions should have aggregate metrics for client-level byte rates
-	require.Len(t, defs.Aggregates, 4)
+	// Connect definitions should have aggregate metrics for client-level and task-level metrics
+	require.Len(t, defs.Aggregates, 6)
 	aggNames := make([]string, len(defs.Aggregates))
 	for i, a := range defs.Aggregates {
 		aggNames[i] = a.Name
@@ -348,4 +348,6 @@ func TestConnectMetricDefinitions(t *testing.T) {
 	assert.Contains(t, aggNames, "outgoing-byte-rate")
 	assert.Contains(t, aggNames, "connection-count")
 	assert.Contains(t, aggNames, "request-rate")
+	assert.Contains(t, aggNames, "source-record-write-rate")
+	assert.Contains(t, aggNames, "source-record-poll-rate")
 }
