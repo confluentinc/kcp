@@ -1,0 +1,515 @@
+{
+  "header": {
+    "source": "Amazon MSK",
+    "state_file_path": "./kcp-state.json",
+    "kcp_version": "0.7.2",
+    "generated_at": "2026-05-15T15:00:00Z",
+    "plan_schema_version": "1-experimental"
+  },
+  "inputs": {
+    "raw": {
+      "SLATarget": null,
+      "SizingPercentile": null,
+      "HeadroomFraction": null,
+      "PrivateLinkSafetyThreshold": null,
+      "SpikyWorkloadRatio": null,
+      "EnforceSchemasAtTheBroker": null,
+      "RequiresHighThroughputRESTProduceAPI": null,
+      "Requires9995SLAWithinSingleZone": null,
+      "TargetCloud": "azure",
+      "ExistingVPCConnectivity": null
+    },
+    "sla_target": "99.9",
+    "sizing_percentile": "p95",
+    "headroom_fraction": 0.3,
+    "privatelink_safety_threshold": 0.8,
+    "spiky_workload_ratio": 2,
+    "enforce_schemas_at_the_broker": false,
+    "requires_high_throughput_rest_produce_api": false,
+    "requires_99_95_sla_within_a_single_zone": false,
+    "target_cloud": "azure",
+    "existing_vpc_connectivity": "privatelink_or_pni"
+  },
+  "source_environment": {
+    "clusters": [
+      {
+        "cluster_id": "bursty-events",
+        "region": "us-east-1",
+        "broker_count": 6,
+        "topic_count": 120
+      },
+      {
+        "cluster_id": "heavy-acls",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 65
+      },
+      {
+        "cluster_id": "mtls-to-azure",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 38
+      },
+      {
+        "cluster_id": "small-orders",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 42
+      },
+      {
+        "cluster_id": "stale-no-metrics",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 28
+      }
+    ],
+    "total_regions": 1
+  },
+  "sizing": [
+    {
+      "cluster_id": "bursty-events",
+      "p95_in_mbps": 100,
+      "p95_out_mbps": 180,
+      "peak_in_mbps": 480,
+      "peak_out_mbps": 1440,
+      "user_partitions": 800,
+      "internal_partitions": 0,
+      "ingress_ratio": 1.6666666666666667,
+      "egress_ratio": 1,
+      "partition_ratio": 0.26666666666666666,
+      "max_ratio": 1.6666666666666667,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 3,
+      "sla_floor_ecku": 1,
+      "final_ecku": 3,
+      "peak_burst_in_ratio": 8,
+      "peak_burst_out_ratio": 8,
+      "peak_burst_ecku": 8,
+      "peak_burst_pct_of_pl_cap": 80,
+      "spiky_ingress": true,
+      "spiky_egress": true,
+      "citations": [
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesInPerSec.p95",
+          "value": 104857600
+        },
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 188743680
+        },
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesInPerSec.max",
+          "value": 503316480
+        },
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesOutPerSec.max",
+          "value": 1509949440
+        },
+        {
+          "path": "cluster[bursty-events].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 800
+        }
+      ]
+    },
+    {
+      "cluster_id": "heavy-acls",
+      "p95_in_mbps": 15,
+      "p95_out_mbps": 25,
+      "peak_in_mbps": 18,
+      "peak_out_mbps": 30,
+      "user_partitions": 300,
+      "internal_partitions": 0,
+      "ingress_ratio": 0.25,
+      "egress_ratio": 0.1388888888888889,
+      "partition_ratio": 0.1,
+      "max_ratio": 0.25,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.3,
+      "peak_burst_out_ratio": 0.16666666666666666,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.p95",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 26214400
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.max",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.max",
+          "value": 31457280
+        },
+        {
+          "path": "cluster[heavy-acls].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 300
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-to-azure",
+      "p95_in_mbps": 12,
+      "p95_out_mbps": 18,
+      "peak_in_mbps": 15,
+      "peak_out_mbps": 22,
+      "user_partitions": 250,
+      "internal_partitions": 0,
+      "ingress_ratio": 0.2,
+      "egress_ratio": 0.1,
+      "partition_ratio": 0.08333333333333333,
+      "max_ratio": 0.2,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.25,
+      "peak_burst_out_ratio": 0.12222222222222222,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.p95",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.max",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[mtls-to-azure].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 250
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "p95_in_mbps": 10,
+      "p95_out_mbps": 20,
+      "peak_in_mbps": 12,
+      "peak_out_mbps": 22,
+      "user_partitions": 200,
+      "internal_partitions": 0,
+      "ingress_ratio": 0.16666666666666666,
+      "egress_ratio": 0.1111111111111111,
+      "partition_ratio": 0.06666666666666667,
+      "max_ratio": 0.16666666666666666,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.2,
+      "peak_burst_out_ratio": 0.12222222222222222,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.p95",
+          "value": 10485760
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 20971520
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.max",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[small-orders].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 200
+        }
+      ]
+    },
+    {
+      "cluster_id": "stale-no-metrics",
+      "p95_in_mbps": 0,
+      "p95_out_mbps": 0,
+      "peak_in_mbps": 0,
+      "peak_out_mbps": 0,
+      "user_partitions": 150,
+      "internal_partitions": 0,
+      "ingress_ratio": 0,
+      "egress_ratio": 0,
+      "partition_ratio": 0,
+      "max_ratio": 0,
+      "sized_ecku": 0,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0,
+      "peak_burst_out_ratio": 0,
+      "peak_burst_ecku": 0,
+      "peak_burst_pct_of_pl_cap": 0,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[stale-no-metrics].metrics.aggregates.BytesInPerSec.p95",
+          "value": null
+        },
+        {
+          "path": "cluster[stale-no-metrics].metrics.aggregates.BytesOutPerSec.p95",
+          "value": null
+        }
+      ],
+      "degraded": true,
+      "degraded_reason": "no BytesInPerSec or BytesOutPerSec p95; re-run kcp scan metrics"
+    }
+  ],
+  "cluster_type_decision": [
+    {
+      "cluster_id": "bursty-events",
+      "verdict": "Enterprise"
+    },
+    {
+      "cluster_id": "heavy-acls",
+      "verdict": "Dedicated",
+      "triggers": [
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "evidence": "4001 ACLs \u003e Enterprise cap 4000"
+        }
+      ],
+      "topology": "MultiZone",
+      "final_cku": 1
+    },
+    {
+      "cluster_id": "mtls-to-azure",
+      "verdict": "Dedicated",
+      "triggers": [
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS AND target cloud is not AWS (only Dedicated has mTLS off AWS)",
+          "evidence": "source uses mTLS AND target_cloud=\"azure\" (mTLS off AWS requires Dedicated)"
+        }
+      ],
+      "topology": "MultiZone",
+      "final_cku": 1
+    },
+    {
+      "cluster_id": "small-orders",
+      "verdict": "Enterprise"
+    },
+    {
+      "cluster_id": "stale-no-metrics",
+      "verdict": "Enterprise"
+    }
+  ],
+  "networking_decision": [
+    {
+      "cluster_id": "bursty-events",
+      "verdict": "PNI",
+      "peak_burst_ecku": 8,
+      "percentage_of_cap": 80,
+      "reason": "Peak burst 8 eCKU at 80% of PrivateLink cap — exceeds 80% safety threshold"
+    },
+    {
+      "cluster_id": "heavy-acls",
+      "verdict": "PNI",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "Dedicated cluster — PNI required (no TGW / VPC Peering override)"
+    },
+    {
+      "cluster_id": "mtls-to-azure",
+      "verdict": "PNI",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "Dedicated cluster — PNI required (no TGW / VPC Peering override)"
+    },
+    {
+      "cluster_id": "small-orders",
+      "verdict": "PrivateLink",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "Peak burst 1 eCKU below 80% of 10 eCKU PrivateLink cap"
+    },
+    {
+      "cluster_id": "stale-no-metrics",
+      "verdict": "PrivateLink",
+      "peak_burst_ecku": 0,
+      "percentage_of_cap": 0,
+      "reason": "Peak burst 0 eCKU below 80% of 10 eCKU PrivateLink cap"
+    }
+  ],
+  "sizing_appendix": [
+    {
+      "cluster_id": "bursty-events",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 100.00 MBps / 60 = 1.6667",
+        "egress ratio  = 180.00 MBps / 180 = 1.0000",
+        "partition ratio = 800 / 3000 = 0.2667",
+        "max ratio = 1.6667",
+        "sized = CEIL(1.6667 * 1.30) = 3  (1 + 0.30 headroom)",
+        "final = max(3 sized, 1 SLA floor) = 3 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesInPerSec.p95",
+          "value": 104857600
+        },
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 188743680
+        },
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesInPerSec.max",
+          "value": 503316480
+        },
+        {
+          "path": "cluster[bursty-events].metrics.aggregates.BytesOutPerSec.max",
+          "value": 1509949440
+        },
+        {
+          "path": "cluster[bursty-events].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 800
+        }
+      ]
+    },
+    {
+      "cluster_id": "heavy-acls",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 15.00 MBps / 60 = 0.2500",
+        "egress ratio  = 25.00 MBps / 180 = 0.1389",
+        "partition ratio = 300 / 3000 = 0.1000",
+        "max ratio = 0.2500",
+        "sized = CEIL(0.2500 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.p95",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 26214400
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.max",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.max",
+          "value": 31457280
+        },
+        {
+          "path": "cluster[heavy-acls].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 300
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-to-azure",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 12.00 MBps / 60 = 0.2000",
+        "egress ratio  = 18.00 MBps / 180 = 0.1000",
+        "partition ratio = 250 / 3000 = 0.0833",
+        "max ratio = 0.2000",
+        "sized = CEIL(0.2000 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.p95",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.max",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[mtls-to-azure].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 250
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 10.00 MBps / 60 = 0.1667",
+        "egress ratio  = 20.00 MBps / 180 = 0.1111",
+        "partition ratio = 200 / 3000 = 0.0667",
+        "max ratio = 0.1667",
+        "sized = CEIL(0.1667 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.p95",
+          "value": 10485760
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 20971520
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.max",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[small-orders].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 200
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "spiky_workload_acknowledgement",
+      "cluster_id": "bursty-events",
+      "title": "Spiky workload detected (peak materially exceeds P95)",
+      "body": "Sized eCKU is based on P95; the observed peak is the spike threshold above. Current sizing relies on Enterprise's elastic scaling to absorb the spike — if the spike is steady-state rather than seasonal, consider `sizing_percentile: p99`.",
+      "how_to_close": "Confirm with the owning team whether the spike is seasonal (current sizing is fine) or steady-state (override `sizing_percentile`)."
+    },
+    {
+      "id": "missing_p95_metrics",
+      "cluster_id": "stale-no-metrics",
+      "title": "No P95 throughput metrics — sizing fell back to SLA floor",
+      "body": "no BytesInPerSec or BytesOutPerSec p95; re-run kcp scan metrics",
+      "how_to_close": "Re-run `kcp scan metrics` against this cluster."
+    }
+  ]
+}
