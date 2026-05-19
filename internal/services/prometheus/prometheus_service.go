@@ -37,14 +37,13 @@ func BrokerQueryDefinitions() []MetricQuery {
 }
 
 // ConnectQueryDefinitions returns Prometheus queries for Kafka Connect worker metrics.
+// Metric names match the JMX exporter naming convention (kafka_connect_worker_*).
 func ConnectQueryDefinitions() []MetricQuery {
 	return []MetricQuery{
-		{"connector-count", "kafka_connect_connect_worker_metrics_connector_count", "kafka_connect_connect_worker_metrics_connector_count"},
-		{"task-count", "kafka_connect_connect_worker_metrics_task_count", "kafka_connect_connect_worker_metrics_task_count"},
-		{"incoming-byte-rate", "sum(kafka_connect_connect_metrics_incoming_byte_rate)", "kafka_connect_connect_metrics_incoming_byte_rate"},
-		{"outgoing-byte-rate", "sum(kafka_connect_connect_metrics_outgoing_byte_rate)", "kafka_connect_connect_metrics_outgoing_byte_rate"},
-		{"connection-count", "sum(kafka_connect_connect_metrics_connection_count)", "kafka_connect_connect_metrics_connection_count"},
-		{"request-rate", "sum(kafka_connect_connect_metrics_request_rate)", "kafka_connect_connect_metrics_request_rate"},
+		{"connector-count", "kafka_connect_worker_connector_count", "kafka_connect_worker_connector_count"},
+		{"task-count", "kafka_connect_worker_task_count", "kafka_connect_worker_task_count"},
+		{"source-record-write-rate", "sum(kafka_connect_source_task_source_record_write_rate)", "kafka_connect_source_task_source_record_write_rate"},
+		{"source-record-poll-rate", "sum(kafka_connect_source_task_source_record_poll_rate)", "kafka_connect_source_task_source_record_poll_rate"},
 	}
 }
 
