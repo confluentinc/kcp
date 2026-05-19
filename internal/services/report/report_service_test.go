@@ -862,3 +862,60 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 		assert.InDelta(t, 400.0, *agg.Maximum, 0.01)
 	})
 }
+
+func TestCalculateMetricsAggregates(t *testing.T) {
+	rs := NewReportService()
+
+	makeMetrics := func(label string, values []float64) []types.ProcessedMetric {
+		out := make([]types.ProcessedMetric, len(values))
+		for i, v := range values {
+			v := v
+			out[i] = types.ProcessedMetric{Label: label, Value: &v}
+		}
+		return out
+	}
+
+	t.Run("computes P95 P99 against fixed 1..100 vector (nearest rank)", func(t *testing.T) {
+		// unsorted on input to prove sort happens
+		values := make([]float64, 100)
+		for i := 0; i < 100; i++ {
+			values[i] = float64(100 - i)
+		}
+		aggs := rs.calculateMetricsAggregates(makeMetrics("BytesInPerSec", values))
+		agg, ok := aggs["BytesInPerSec"]
+		require.True(t, ok)
+		// ceil(100*0.95)-1 = 94 -> sorted[94] = 95
+		// ceil(100*0.99)-1 = 98 -> sorted[98] = 99
+		assert.InDelta(t, 95.0, *agg.P95, 0.0001)
+		assert.InDelta(t, 99.0, *agg.P99, 0.0001)
+		assert.Equal(t, 100, agg.Count)
+	})
+
+	t.Run("P95 and P99 are distinct at N=20", func(t *testing.T) {
+		// Regression: the previous int(N*p) implementation collapsed
+		// P95 == P99 at N=20 (both indexed [19]). Nearest-rank gives
+		// ceil(20*0.95)-1=18 (=19) and ceil(20*0.99)-1=19 (=20).
+		values := make([]float64, 20)
+		for i := 0; i < 20; i++ {
+			values[i] = float64(i + 1)
+		}
+		aggs := rs.calculateMetricsAggregates(makeMetrics("M", values))
+		assert.InDelta(t, 19.0, *aggs["M"].P95, 0.0001)
+		assert.InDelta(t, 20.0, *aggs["M"].P99, 0.0001)
+	})
+
+	t.Run("missing value at the rank doesn't crash", func(t *testing.T) {
+		// 1..100 minus 95 → N=99, ceil(99*0.95)-1=94, sorted[94]=96
+		// (indexes 0..93 hold 1..94; index 94 holds 96 because 95 is absent).
+		values := []float64{}
+		for i := 1; i <= 100; i++ {
+			if i == 95 {
+				continue
+			}
+			values = append(values, float64(i))
+		}
+		aggs := rs.calculateMetricsAggregates(makeMetrics("M", values))
+		require.Equal(t, 99, aggs["M"].Count)
+		assert.InDelta(t, 96.0, *aggs["M"].P95, 0.0001)
+	})
+}

@@ -1,0 +1,51 @@
+# plan-config.yaml — Embedded defaults for `kcp report plan`.
+#
+# Single source of truth for Confluent product facts and the customer-tunable
+# sizing defaults. MVP scope: sizing + cluster-type (rules 1–6) + networking.
+#
+# Override precedence (lowest → highest):
+#   1. This file (embedded in the KCP binary at build time)
+#   2. --config <path> CLI flag (admin override)
+#   3. plan-inputs.yaml (per-customer override of plan_input_defaults only)
+#
+# Unsourced constants (no canonical public doc) carry an inline OPEN QUESTION
+# comment naming the relevant decision.
+
+schema_version: 1
+last_verified: 2026-05-15
+kcp_version_at_verification: 0.7.2
+
+enterprise_caps:
+  per_eCKU_ingress_mbps: 60
+  per_eCKU_egress_mbps: 180
+  per_eCKU_partition_rate: 3000
+  privatelink_max_eCKU: 10
+  pni_max_eCKU: 32
+  acl_count_cap: 4000  # OPEN QUESTION — no canonical public doc; re-verify with CC product team each release.
+  source: https://docs.confluent.io/cloud/current/clusters/cluster-types.html
+
+cluster_linking:
+  source_min_kafka_version: "2.4.0"  # OPEN QUESTION — pin a permalink before shipping
+  express_tier_supported: unknown    # verify per release
+  source: https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/
+
+plan_input_defaults:
+  sizing_percentile: p95           # alternatives: p99, max — lowercase to match Confluent dashboards
+  headroom_fraction: 0.30          # 0.0..1.0
+  privatelink_safety_threshold: 0.80  # OPEN QUESTION — internal heuristic; no peer-reviewed Confluent source
+  spiky_workload_ratio: 2.0        # peak / P95 ratio above which a workload is "spiky"
+  sla_floor_eCKU:
+    "99.9":  1
+    "99.95": 1
+    "99.99": 2
+
+  # Customer-declared hard requirements (all default false). A wrong `true`
+  # flips Enterprise → Dedicated (5–10× monthly); the renderer surfaces a
+  # ⚠ cost callout on the verdict when one of these is the trigger.
+  enforce_schemas_at_the_broker: false
+  requires_high_throughput_rest_produce_api: false
+  requires_99_95_sla_within_a_single_zone: false
+
+  # Target cloud + existing VPC connectivity (Dedicated-path networking).
+  target_cloud: aws                              # MSK is AWS-only; hidden on the MSK path
+  existing_vpc_connectivity: privatelink_or_pni  # privatelink_or_pni (default) | transit_gateway | vpc_peering
