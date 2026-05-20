@@ -28,7 +28,7 @@ func NewReportPlanCmd() *cobra.Command {
 		Use:   "plan",
 		Short: "Generate a deterministic Migration Plan from a kcp state file",
 		Long: "Generate a deterministic Migration Plan from a kcp-state.json produced by `kcp discover` and `kcp scan ...`. " +
-			"The same state file + same plan-inputs + same KCP version produce a byte-identical plan, so the output is auditable.\n\n" +
+			"The same state file + same plan-inputs + same KCP version produce a byte-identical plan (modulo the `generated_at` timestamp), so the output is auditable.\n\n" +
 			"**Output:** writes `plan.md` and/or `plan.json` to `--output-dir` (default `./plan-output`).",
 		Example: `  # Minimal: state file in, plan.md/plan.json out
   kcp report plan --state-file kcp-state.json
