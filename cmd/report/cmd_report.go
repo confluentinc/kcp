@@ -3,6 +3,7 @@ package report
 import (
 	"github.com/confluentinc/kcp/cmd/report/costs"
 	"github.com/confluentinc/kcp/cmd/report/metrics"
+	"github.com/confluentinc/kcp/cmd/report/plan"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,7 @@ func NewReportCmd() *cobra.Command {
 
 	reportCmd.AddCommand(costs.NewReportCostsCmd())
 	reportCmd.AddCommand(metrics.NewReportMetricsCmd())
+	reportCmd.AddCommand(plan.NewReportPlanCmd())
 
 	return reportCmd
 }
