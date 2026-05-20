@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -46,9 +48,8 @@ type PodRolloutProgress struct {
 }
 
 // GatewayReadinessProgress reports the current state of a gateway readiness wait.
-// The gate (whether the wait returns) comes from the operator-reported Ready
-// condition on the gateway CR; pod counts are listed from the cluster for
-// display only.
+// The gate (whether the wait returns) comes from the underlying apps/v1
+// Deployment's rollout status; pod counts come from Deployment.status.readyReplicas.
 type GatewayReadinessProgress struct {
 	InitialPodCount int
 	PodsReady       int
@@ -57,13 +58,9 @@ type GatewayReadinessProgress struct {
 	Ready           bool
 }
 
-// gatewayReadinessConditionType is the CFK operator's terminal "fully
-// reconciled" condition on the gateway CR's status.conditions[] slice.
-const gatewayReadinessConditionType = "Ready"
-
 // gatewayReadinessDetectionWindow is the time we wait at the start of a
 // readiness wait to distinguish a no-op patch from a rollout that has not
-// yet incremented observedGeneration. var so tests can shorten it.
+// yet begun. var so tests can shorten it.
 var gatewayReadinessDetectionWindow = 10 * time.Second
 
 // K8sService implements gateway operations using Kubernetes clients
@@ -388,65 +385,47 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// WaitForGatewayReady polls the gateway CR's operator-reported status until
-// the operator reports the gateway is reconciled and Ready, or until ctx is
-// cancelled. When timeout > 0, a hard deadline is applied via context; a
-// timeout of 0 means no deadline.
+// WaitForGatewayReady polls the underlying apps/v1 Deployment's rollout status
+// until the Deployment reports a complete rollout, or until ctx is cancelled.
+// When timeout > 0, a hard deadline is applied via context; a timeout of 0
+// means no deadline.
 //
 // The wait runs in two phases:
-//  1. Detection (up to 10s): determines whether the patch the caller just
-//     applied triggered a rollout. If the CR is already reconciled at the
-//     captured generation with Ready=True for the whole window, no pod
-//     restart was required — onProgress is invoked once with
-//     RolloutDetected=false and the wait returns nil.
-//  2. Convergence: polls until observedGeneration is at least the captured
-//     generation AND the Ready condition is True, calling onProgress on
+//  1. Detection (up to 10s): if the Deployment is already at rollout-complete
+//     state for the entire window, no pod restart was required — onProgress is
+//     invoked once with RolloutDetected=false and the wait returns nil.
+//  2. Convergence: polls until the Deployment reports rollout complete
+//     (observedGeneration >= generation, updatedReplicas == replicas,
+//     availableReplicas == replicas, replicas > 0), calling onProgress on
 //     every poll tick with monotonically increasing Elapsed.
-//
-// Pod counts in progress callbacks come from listing pods by the
-// `app=<gatewayName>` label and are display-only — only the operator-reported
-// readiness gates the return.
 func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
 	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
-	}
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
-	return waitForGatewayReady(ctx, dynamicClient, clientset, namespace, gatewayName, pollInterval, timeout, onProgress)
+	return waitForGatewayReady(ctx, clientset, namespace, gatewayName, pollInterval, timeout, onProgress)
 }
 
 // waitForGatewayReady is the inner orchestration used by WaitForGatewayReady.
-// It is split from the method so unit tests can inject fake clients.
-func waitForGatewayReady(ctx context.Context, dynamicClient dynamic.Interface, clientset kubernetes.Interface, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
+// Split from the method so unit tests can inject a fake clientset.
+func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
-
-	capturedGen, err := readGatewayGeneration(ctx, dynamicClient, gatewayGVR, namespace, gatewayName)
+	dep, err := resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
 	if err != nil {
 		return err
 	}
-	slog.Debug("captured initial gateway generation", "namespace", namespace, "gateway", gatewayName, "generation", capturedGen)
+	slog.Debug("resolved gateway deployment", "namespace", namespace, "gateway", gatewayName, "deployment", dep.Name)
 
-	initialPodCount, _, podErr := countGatewayPods(ctx, clientset, namespace, gatewayName)
-	if podErr != nil {
-		slog.Warn("failed to count gateway pods at start of readiness wait", "error", podErr)
-	}
+	initialReplicas := dep.Status.Replicas
 	start := time.Now()
 
 	// Phase 1: detection window.
@@ -458,12 +437,12 @@ func waitForGatewayReady(ctx context.Context, dynamicClient dynamic.Interface, c
 			return ctx.Err()
 		default:
 		}
-		cr, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+		dep, err = resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
 		if err != nil {
-			return fmt.Errorf("failed to read gateway CR: %w", err)
+			return err
 		}
-		if !gatewayReadinessAtOrAfter(cr, capturedGen) {
-			slog.Debug("rollout detected during detection window", "gateway", gatewayName, "generation", capturedGen)
+		if !deploymentRolloutComplete(dep) {
+			slog.Debug("rollout detected during detection window", "gateway", gatewayName)
 			rolloutDetected = true
 			break
 		}
@@ -478,8 +457,8 @@ func waitForGatewayReady(ctx context.Context, dynamicClient dynamic.Interface, c
 		slog.Debug("no rollout detected within detection window; treating patch as no-op", "gateway", gatewayName)
 		if onProgress != nil {
 			onProgress(GatewayReadinessProgress{
-				InitialPodCount: initialPodCount,
-				PodsReady:       initialPodCount,
+				InitialPodCount: int(initialReplicas),
+				PodsReady:       int(initialReplicas),
 				Elapsed:         time.Since(start),
 				RolloutDetected: false,
 				Ready:           true,
@@ -488,33 +467,29 @@ func waitForGatewayReady(ctx context.Context, dynamicClient dynamic.Interface, c
 		return nil
 	}
 
-	// Phase 2: convergence — poll until the operator reports reconciled.
+	// Phase 2: convergence — poll until Deployment rollout is complete.
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		cr, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+		dep, err = resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
 		if err != nil {
-			return fmt.Errorf("failed to read gateway CR: %w", err)
+			return err
 		}
-		ready := gatewayReadinessAtOrAfter(cr, capturedGen)
-		podsReady, _, listErr := countGatewayPods(ctx, clientset, namespace, gatewayName)
-		if listErr != nil {
-			slog.Debug("failed to count gateway pods during convergence", "error", listErr)
-		}
+		ready := deploymentRolloutComplete(dep)
 		if onProgress != nil {
 			onProgress(GatewayReadinessProgress{
-				InitialPodCount: initialPodCount,
-				PodsReady:       podsReady,
+				InitialPodCount: int(initialReplicas),
+				PodsReady:       int(dep.Status.ReadyReplicas),
 				Elapsed:         time.Since(start),
 				RolloutDetected: true,
 				Ready:           ready,
 			})
 		}
 		if ready {
-			slog.Debug("gateway reported ready", "gateway", gatewayName, "elapsed", time.Since(start))
+			slog.Debug("gateway deployment rollout complete", "gateway", gatewayName, "elapsed", time.Since(start))
 			return nil
 		}
 		select {
@@ -525,55 +500,59 @@ func waitForGatewayReady(ctx context.Context, dynamicClient dynamic.Interface, c
 	}
 }
 
-// gatewayReadinessAtOrAfter reports whether the CR's status indicates the
-// operator has reconciled at observedGeneration >= capturedGen AND a Ready
-// condition with status=True is present. When observedGeneration is absent
-// (older operators), only the Ready=True condition is checked; this fallback
-// cannot distinguish a stale Ready from a post-patch Ready.
-func gatewayReadinessAtOrAfter(cr *unstructured.Unstructured, capturedGen int64) bool {
-	if cr == nil {
-		return false
+// resolveGatewayDeployment finds the Deployment backing a Gateway CR.
+// Primary: Get by name (CFK convention: Deployment name == Gateway CR name).
+// Fallback: list Deployments in the namespace and filter by ownerReferences.
+func resolveGatewayDeployment(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string) (*appsv1.Deployment, error) {
+	dep, err := clientset.AppsV1().Deployments(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+	if err == nil {
+		return dep, nil
 	}
-	if obsGen, found, _ := unstructured.NestedInt64(cr.Object, "status", "observedGeneration"); found {
-		if obsGen < capturedGen {
-			return false
+	if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to get gateway deployment: %w", err)
+	}
+
+	// Fallback: list and filter by ownerReferences. This scans all Deployments in
+	// the namespace and is only reached when the name-based Get returns NotFound.
+	slog.Debug("deployment not found by name; falling back to ownerReferences scan", "namespace", namespace, "gateway", gatewayName)
+	list, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments for gateway fallback: %w", err)
+	}
+	var matches []appsv1.Deployment
+	for _, d := range list.Items {
+		for _, ref := range d.OwnerReferences {
+			if ref.Kind == "Gateway" && ref.Name == gatewayName {
+				matches = append(matches, d)
+				break
+			}
 		}
 	}
-	conditions, found, _ := unstructured.NestedSlice(cr.Object, "status", "conditions")
-	if !found {
-		return false
-	}
-	for _, c := range conditions {
-		cm, ok := c.(map[string]any)
-		if !ok {
-			continue
+	switch len(matches) {
+	case 1:
+		return &matches[0], nil
+	case 0:
+		return nil, fmt.Errorf("gateway deployment not found by name or ownerReferences for gateway %q", gatewayName)
+	default:
+		names := make([]string, len(matches))
+		for i, m := range matches {
+			names[i] = m.Name
 		}
-		if cm["type"] == gatewayReadinessConditionType && cm["status"] == "True" {
-			return true
-		}
+		return nil, fmt.Errorf("multiple deployments owned by gateway %q; cannot disambiguate: %v", gatewayName, names)
 	}
-	return false
 }
 
-func readGatewayGeneration(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) (int64, error) {
-	cr, err := dynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("failed to read gateway CR generation: %w", err)
+// deploymentRolloutComplete reports whether d's rollout is complete.
+// Mirrors the invariants used by kubectl rollout status deployment:
+// observedGeneration caught up, all replicas updated, all replicas available,
+// and at least one replica exists.
+func deploymentRolloutComplete(d *appsv1.Deployment) bool {
+	if d == nil {
+		return false
 	}
-	return cr.GetGeneration(), nil
-}
-
-func countGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string) (ready, total int, err error) {
-	labelSelector := fmt.Sprintf("app=%s", gatewayName)
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to list gateway pods: %w", err)
-	}
-	for _, pod := range pods.Items {
-		total++
-		if isPodReady(&pod) {
-			ready++
-		}
-	}
-	return ready, total, nil
+	s := d.Status
+	return s.ObservedGeneration >= d.Generation &&
+		s.UpdatedReplicas == s.Replicas &&
+		s.AvailableReplicas == s.Replicas &&
+		s.Replicas > 0
 }
