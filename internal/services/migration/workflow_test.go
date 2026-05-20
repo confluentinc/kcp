@@ -2,15 +2,18 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // ===========================================================================
@@ -542,6 +545,193 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
 	require.Error(t, err)
 	assert.Equal(t, "source and destination offset services are required", err.Error())
+}
+
+// ===========================================================================
+// FenceGateway / SwitchGateway tests
+// ===========================================================================
+
+func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
+	var callOrder []string
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			callOrder = append(callOrder, "apply")
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			callOrder = append(callOrder, "wait")
+			if onProgress != nil {
+				onProgress(gateway.GatewayReadinessProgress{InitialPodCount: 3, PodsReady: 3, Elapsed: 2 * time.Second, RolloutDetected: true, Ready: true})
+			}
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply must precede wait")
+}
+
+func TestWorkflow_FenceGateway_DoesNotCallUIDDiffingMethods(t *testing.T) {
+	var unwantedCall string
+	gw := &mockGatewayService{
+		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
+			unwantedCall = "GetGatewayPodUIDs"
+			return nil, nil
+		},
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+			unwantedCall = "WaitForGatewayPods"
+			return nil
+		},
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		// waitForGatewayReadyFn defaults to nil → returns nil success
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Empty(t, unwantedCall, "FenceGateway must not use UID-diffing methods, but called: %s", unwantedCall)
+}
+
+func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return fmt.Errorf("k8s 403")
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to apply fenced gateway CR")
+	assert.Contains(t, err.Error(), "k8s 403")
+}
+
+func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	wf.SetRolloutTimeout(100 * time.Millisecond)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.DeadlineExceeded), "DeadlineExceeded must propagate: %v", err)
+}
+
+func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	err := wf.FenceGateway(ctx, config)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled))
+}
+
+func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
+	var observedTimeout time.Duration
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			observedTimeout = timeout
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	wf.SetRolloutTimeout(15 * time.Minute)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, 15*time.Minute, observedTimeout)
+}
+
+func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
+	var observedTimeout time.Duration
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			observedTimeout = timeout
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), observedTimeout, "default rolloutTimeout should be 0 (no deadline)")
+}
+
+func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
+	var callOrder []string
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
+			callOrder = append(callOrder, fmt.Sprintf("apply:%s", string(yaml)))
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			callOrder = append(callOrder, "wait")
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"apply:switchover", "wait"}, callOrder, "apply (switchover YAML) must precede wait")
+}
+
+func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("kube unreachable")
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed waiting for gateway readiness")
+	assert.Contains(t, err.Error(), "kube unreachable")
 }
 
 // ===========================================================================
