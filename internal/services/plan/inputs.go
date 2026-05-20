@@ -35,13 +35,19 @@ func LoadPlanInputs(path string) (*types.PlanInputs, error) {
 // downstream consumers can detect which sizing fields the customer
 // explicitly set (HeadroomFraction, SLATarget, SizingPercentile, etc.).
 func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsResolved {
+	defaults := cfg.PlanInputDefaults
 	out := types.PlanInputsResolved{
-		Raw:                        in,
-		SizingPercentile:           cfg.PlanInputDefaults.SizingPercentile,
-		HeadroomFraction:           cfg.PlanInputDefaults.HeadroomFraction,
-		PrivateLinkSafetyThreshold: cfg.PlanInputDefaults.PrivateLinkSafetyThreshold,
-		SpikyWorkloadRatio:         cfg.PlanInputDefaults.SpikyWorkloadRatio,
-		SLATarget:                  defaultSLATarget,
+		Raw:                                  in,
+		SizingPercentile:                     defaults.SizingPercentile,
+		HeadroomFraction:                     defaults.HeadroomFraction,
+		PrivateLinkSafetyThreshold:           defaults.PrivateLinkSafetyThreshold,
+		SpikyWorkloadRatio:                   defaults.SpikyWorkloadRatio,
+		SLATarget:                            defaultSLATarget,
+		EnforceSchemasAtTheBroker:            defaults.EnforceSchemasAtTheBroker,
+		RequiresHighThroughputRESTProduceAPI: defaults.RequiresHighThroughputRESTProduceAPI,
+		Requires9995SLAWithinSingleZone:      defaults.Requires9995SLAWithinSingleZone,
+		TargetCloud:                          defaults.TargetCloud,
+		ExistingVPCConnectivity:              defaults.ExistingVPCConnectivity,
 	}
 	if in == nil {
 		return out
@@ -60,6 +66,21 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.SpikyWorkloadRatio != nil {
 		out.SpikyWorkloadRatio = *in.SpikyWorkloadRatio
+	}
+	if in.EnforceSchemasAtTheBroker != nil {
+		out.EnforceSchemasAtTheBroker = *in.EnforceSchemasAtTheBroker
+	}
+	if in.RequiresHighThroughputRESTProduceAPI != nil {
+		out.RequiresHighThroughputRESTProduceAPI = *in.RequiresHighThroughputRESTProduceAPI
+	}
+	if in.Requires9995SLAWithinSingleZone != nil {
+		out.Requires9995SLAWithinSingleZone = *in.Requires9995SLAWithinSingleZone
+	}
+	if in.TargetCloud != nil {
+		out.TargetCloud = *in.TargetCloud
+	}
+	if in.ExistingVPCConnectivity != nil {
+		out.ExistingVPCConnectivity = *in.ExistingVPCConnectivity
 	}
 	return out
 }

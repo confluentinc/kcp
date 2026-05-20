@@ -58,7 +58,7 @@ func TestResolvePlanInputsDefaults(t *testing.T) {
 	t.Run("nil inputs yields defaults from plan-config", func(t *testing.T) {
 		resolved := ResolvePlanInputs(nil, cfg)
 		assert.Nil(t, resolved.Raw)
-		assert.Equal(t, "P95", resolved.SizingPercentile)
+		assert.Equal(t, "p95", resolved.SizingPercentile)
 		assert.InDelta(t, 0.30, resolved.HeadroomFraction, 0.0001)
 		assert.InDelta(t, 0.80, resolved.PrivateLinkSafetyThreshold, 0.0001)
 		assert.InDelta(t, 2.0, resolved.SpikyWorkloadRatio, 0.0001)
@@ -73,7 +73,7 @@ func TestResolvePlanInputsDefaults(t *testing.T) {
 		assert.InDelta(t, 0.45, resolved.HeadroomFraction, 0.0001)
 		assert.Equal(t, "99.95", resolved.SLATarget)
 		// Untouched defaults persist.
-		assert.Equal(t, "P95", resolved.SizingPercentile)
+		assert.Equal(t, "p95", resolved.SizingPercentile)
 		// Raw preserves the pointer.
 		assert.Same(t, in, resolved.Raw)
 	})

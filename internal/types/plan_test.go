@@ -30,7 +30,7 @@ func TestPlanJSONRoundTrip(t *testing.T) {
 			},
 			SourceEnvironment: SourceEnvironment{TotalRegions: 1, Clusters: []SourceClusterSummary{{ClusterID: "x", Region: "us-east-1"}}},
 			Sizing: []ClusterSizing{
-				{ClusterID: "x", P95InMBps: 1.0, FinalECKU: 1, Citations: []FieldCitation{{Path: "a", Value: 1.0}}},
+				{ClusterID: "x", SizedInMBps: 1.0, FinalECKU: 1, Citations: []FieldCitation{{Path: "a", Value: 1.0}}},
 			},
 			ClusterTypeDecision: []ClusterTypeDecision{{ClusterID: "x", Verdict: ClusterTypeEnterprise}},
 			NetworkingDecision:  []NetworkingDecision{{ClusterID: "x", Verdict: NetworkingPrivateLink}},

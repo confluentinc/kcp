@@ -864,8 +864,6 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 }
 
 func TestCalculateMetricsAggregates(t *testing.T) {
-	rs := NewReportService()
-
 	makeMetrics := func(label string, values []float64) []types.ProcessedMetric {
 		out := make([]types.ProcessedMetric, len(values))
 		for i, v := range values {
@@ -881,7 +879,7 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			values[i] = float64(100 - i)
 		}
-		aggs := rs.calculateMetricsAggregates(makeMetrics("BytesInPerSec", values))
+		aggs := CalculateMetricsAggregates(makeMetrics("BytesInPerSec", values))
 		agg, ok := aggs["BytesInPerSec"]
 		require.True(t, ok)
 		// ceil(100*0.95)-1 = 94 -> sorted[94] = 95
@@ -899,7 +897,7 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 		for i := 0; i < 20; i++ {
 			values[i] = float64(i + 1)
 		}
-		aggs := rs.calculateMetricsAggregates(makeMetrics("M", values))
+		aggs := CalculateMetricsAggregates(makeMetrics("M", values))
 		assert.InDelta(t, 19.0, *aggs["M"].P95, 0.0001)
 		assert.InDelta(t, 20.0, *aggs["M"].P99, 0.0001)
 	})
@@ -914,7 +912,7 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 			}
 			values = append(values, float64(i))
 		}
-		aggs := rs.calculateMetricsAggregates(makeMetrics("M", values))
+		aggs := CalculateMetricsAggregates(makeMetrics("M", values))
 		require.Equal(t, 99, aggs["M"].Count)
 		assert.InDelta(t, 96.0, *aggs["M"].P95, 0.0001)
 	})

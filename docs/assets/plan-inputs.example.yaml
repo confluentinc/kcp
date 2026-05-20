@@ -1,20 +1,51 @@
 # plan-inputs.yaml — per-customer overrides for `kcp report plan`.
 #
 # All fields are optional. Pinned defaults live in plan-config.yaml
-# (embedded in the KCP binary). A missing field falls back to its default;
-# nothing in this file is required.
+# (embedded in the KCP binary). A missing field falls back to its default.
 #
+# MVP scope:
+#   - sizing knobs
+#   - customer-declared hard requirements that force Dedicated
+#   - existing VPC connectivity for the Dedicated networking path
+#
+# Usage:
 #   kcp report plan \
 #     --state-file kcp-state.json \
 #     --plan-inputs plan-inputs.yaml \
 #     --output-dir ./plan-output
 
 # ---------------------------------------------------------------------------
-# Sizing overrides — defaults are in plan-config.yaml; touch only for
-# explicit reasons (sizing precision, SLA target, etc.)
+# Sizing overrides
 # ---------------------------------------------------------------------------
 # sla_target: "99.9"                  # 99.9 (default) | 99.95 | 99.99
-# sizing_percentile: P95              # default P95
-# headroom_fraction: 0.30             # default 0.30
+# sizing_percentile: p95              # p95 (default) | p99 | max — lowercase per Confluent dashboards
+# headroom_fraction: 0.30             # default 0.30 — extra capacity above the chosen percentile
 # privatelink_safety_threshold: 0.80  # default 0.80 (peak burst as fraction of PrivateLink cap)
-# spiky_workload_ratio: 2.0           # default 2.0 (peak / P95)
+# spiky_workload_ratio: 2.0           # default 2.0 (peak / P95 ratio above which a workload is flagged "spiky")
+
+# ---------------------------------------------------------------------------
+# Customer-declared hard requirements (force Dedicated)
+# ---------------------------------------------------------------------------
+# Most customers say `false` for all three. Setting any to `true` flips the
+# verdict from Enterprise to Dedicated, which costs ~5–10× per month — the
+# Plan surfaces a ⚠ cost callout on the verdict when one of these fires.
+# Ask your Confluent account team if you're unsure.
+#
+# enforce_schemas_at_the_broker: false              # true → broker rejects records without a registered schema
+# requires_high_throughput_rest_produce_api: false  # true → producing over Kafka REST Produce v3 at high throughput
+# requires_99_95_sla_within_a_single_zone: false    # true → Dedicated Single-Zone 99.95% SLA (different from sla_target)
+
+# Target cloud is implicit AWS for MSK migrations. Override only when
+# consolidating to Azure / GCP — non-AWS targets require Dedicated when the
+# source uses mTLS auth.
+# target_cloud: aws                   # aws (default) | azure | gcp
+
+# ---------------------------------------------------------------------------
+# Existing VPC connectivity (Dedicated-path networking)
+# ---------------------------------------------------------------------------
+# If your apps already reach MSK via Transit Gateway or VPC Peering today,
+# the same pattern is the path of least resistance on Confluent Cloud — but
+# both options are Dedicated-only. On Enterprise the Plan picks PrivateLink
+# vs PNI based on peak burst.
+#
+# existing_vpc_connectivity: privatelink_or_pni  # privatelink_or_pni (default) | transit_gateway | vpc_peering

@@ -33,7 +33,7 @@ func fixtureCluster(name string, partitions int, p95InMBps, p95OutMBps, peakInMB
 func defaultInputs() types.PlanInputsResolved {
 	return types.PlanInputsResolved{
 		SLATarget:                  "99.9",
-		SizingPercentile:           "P95",
+		SizingPercentile:           "p95",
 		HeadroomFraction:           0.30,
 		PrivateLinkSafetyThreshold: 0.80,
 		SpikyWorkloadRatio:         2.0,
@@ -55,8 +55,8 @@ func TestComputeClusterSizing_EgressDominant(t *testing.T) {
 	s := ComputeClusterSizing(c, defaultCfg(t), defaultInputs())
 
 	assert.False(t, s.Degraded)
-	assert.InDelta(t, 88.7, s.P95InMBps, 0.1)
-	assert.InDelta(t, 994.8, s.P95OutMBps, 0.1)
+	assert.InDelta(t, 88.7, s.SizedInMBps, 0.1)
+	assert.InDelta(t, 994.8, s.SizedOutMBps, 0.1)
 	// egress ratio = 994.8 / 180 = 5.5267 dominates; CEIL(5.5267 * 1.30) = 8
 	assert.Equal(t, 8, s.SizedECKU)
 	assert.Equal(t, 8, s.FinalECKU)

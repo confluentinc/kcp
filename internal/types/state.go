@@ -930,8 +930,9 @@ type MetricAggregate struct {
 	Minimum *float64 `json:"min"`
 	P95     *float64 `json:"p95"`
 	P99     *float64 `json:"p99"`
-	// Count omits when 0 so an aggregate without sample-count data isn't
-	// indistinguishable from one that observed exactly zero samples.
+	// Count is the sample size of the aggregate. With `omitempty`,
+	// "unknown" and "exactly 0 samples" both render as absent — treat
+	// absence as "no sample data".
 	Count int `json:"count,omitempty"`
 }
 
