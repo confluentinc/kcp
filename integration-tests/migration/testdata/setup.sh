@@ -221,6 +221,11 @@ fi
 echo "Building kcp binary for Linux..."
 CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/confluentinc/kcp/internal/build_info.Version=0.0.0-localdev -X github.com/confluentinc/kcp/internal/build_info.Commit=unknown -X github.com/confluentinc/kcp/internal/build_info.Date=unknown" -o "${SCRIPT_DIR}/.kcp-linux" "${REPO_ROOT}"
 
+echo "Building e2e producer/consumer/setconfig binaries for Linux..."
+CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.producer-linux" "${REPO_ROOT}/integration-tests/migration/testdata/producer"
+CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.consumer-linux" "${REPO_ROOT}/integration-tests/migration/testdata/consumer"
+CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.setconfig-linux" "${REPO_ROOT}/integration-tests/migration/testdata/setconfig"
+
 echo "Deploying kcp runner pod..."
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/kcp-runner.yaml"
 wait_for_pods "app=kcp-runner"
@@ -230,6 +235,12 @@ KCP_POD="kcp-runner"
 echo "Copying kcp binary and fixtures into runner pod..."
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.kcp-linux" "${KCP_POD}:/workspace/kcp"
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/kcp
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.producer-linux" "${KCP_POD}:/workspace/producer"
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/producer
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.consumer-linux" "${KCP_POD}:/workspace/consumer"
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/consumer
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.setconfig-linux" "${KCP_POD}:/workspace/setconfig"
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/setconfig
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${MANIFESTS_DIR}/gateway-fenced.yaml" "${KCP_POD}:/workspace/gateway-fenced.yaml"
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${MANIFESTS_DIR}/gateway-switchover.yaml" "${KCP_POD}:/workspace/gateway-switchover.yaml"
 
@@ -258,7 +269,7 @@ users:
     token: '"'"'${TOKEN}'"'"'
 EOF'
 
-rm -f "${SCRIPT_DIR}/.kcp-linux"
+rm -f "${SCRIPT_DIR}/.kcp-linux" "${SCRIPT_DIR}/.producer-linux" "${SCRIPT_DIR}/.consumer-linux" "${SCRIPT_DIR}/.setconfig-linux"
 
 # --- Write .env file ---
 ENV_FILE="${SCRIPT_DIR}/.env"
