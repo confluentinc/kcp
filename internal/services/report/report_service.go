@@ -2,6 +2,8 @@ package report
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -261,7 +263,7 @@ func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedS
 	}
 
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
-	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Region:     regionName,
@@ -314,7 +316,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
 
 	// Calculate aggregates from filtered metrics
-	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Region:      "", // OSK clusters don't have regions
@@ -365,7 +367,7 @@ func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regi
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
 
 	// Calculate aggregates from filtered metrics
-	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Metadata:   targetCluster.ClusterMetrics.Metadata,
@@ -645,48 +647,67 @@ func (rs *ReportService) flattenMetrics(cluster types.DiscoveredCluster) types.P
 	}
 }
 
-// calculateMetricsAggregates calculates avg, max, min aggregates for each metric type
-func (rs *ReportService) calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
-	// Group metrics by label (metric type)
+// nearestRankIndex returns the index into a sorted N-element slice that
+// corresponds to the p-th percentile using the nearest-rank method
+// (R type 1 / NIST): index = ceil(N * p) - 1, clamped to [0, N-1].
+// For N=20, p=0.95 -> index 18; p=0.99 -> index 19 (distinct ranks).
+// For N<=1 the slice has only one value, returned for any percentile.
+func nearestRankIndex(n int, p float64) int {
+	if n <= 1 {
+		return 0
+	}
+	idx := int(math.Ceil(float64(n)*p)) - 1
+	if idx < 0 {
+		return 0
+	}
+	if idx >= n {
+		return n - 1
+	}
+	return idx
+}
+
+// CalculateMetricsAggregates returns avg, min, max, P95, P99, and count
+// per metric label. Percentiles use the nearest-rank method (R type 1):
+// after sorting, index = ceil(N*p) - 1, clamped to [0, N-1]. See
+// nearestRankIndex. Package-level because it doesn't read ReportService
+// state; PlanService and the internal ReportService callers all use it
+// directly without instantiating a receiver.
+func CalculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
 	metricsByLabel := make(map[string][]float64)
 
 	for _, metric := range metrics {
 		if metric.Value != nil {
-			// Remove "Cluster Aggregate - " prefix if present
 			cleanLabel := strings.TrimPrefix(metric.Label, "Cluster Aggregate - ")
 			metricsByLabel[cleanLabel] = append(metricsByLabel[cleanLabel], *metric.Value)
 		}
 	}
 
-	// Calculate aggregates for each metric type
 	aggregates := make(map[string]types.MetricAggregate)
-
 	for label, values := range metricsByLabel {
 		if len(values) == 0 {
 			continue
 		}
 
-		// Calculate min, max, sum for average
+		sort.Float64s(values)
+
 		min := values[0]
-		max := values[0]
+		max := values[len(values)-1]
 		sum := 0.0
-
-		for _, value := range values {
-			if value < min {
-				min = value
-			}
-			if value > max {
-				max = value
-			}
-			sum += value
+		for _, v := range values {
+			sum += v
 		}
-
 		avg := sum / float64(len(values))
+
+		p95 := values[nearestRankIndex(len(values), 0.95)]
+		p99 := values[nearestRankIndex(len(values), 0.99)]
 
 		aggregates[label] = types.MetricAggregate{
 			Average: &avg,
 			Maximum: &max,
 			Minimum: &min,
+			P95:     &p95,
+			P99:     &p99,
+			Count:   len(values),
 		}
 	}
 
