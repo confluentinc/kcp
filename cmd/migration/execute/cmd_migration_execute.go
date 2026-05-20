@@ -2,6 +2,7 @@ package execute
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -33,6 +34,7 @@ var (
 	tlsClientCert         string
 	tlsClientKey          string
 	insecureSkipTLSVerify bool
+	rolloutTimeout        time.Duration
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -85,6 +87,7 @@ the migration state file and must be provided each time.`,
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -255,5 +258,6 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		TlsClientCert:         tlsClientCert,
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
+		RolloutTimeout:        rolloutTimeout,
 	}
 }
