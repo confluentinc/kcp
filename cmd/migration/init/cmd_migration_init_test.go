@@ -1,8 +1,11 @@
 package init
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,4 +116,56 @@ func TestMigrationInit_WithAuthFlag_PassesValidation(t *testing.T) {
 	// Should fail later (missing YAML files), NOT on auth validation.
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "at least one of the flags")
+}
+
+func TestMigrationInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationInitCmd()
+	flag := cmd.Flags().Lookup("pause-consumer-offset-sync")
+	require.NotNil(t, flag, "--pause-consumer-offset-sync flag must be registered")
+	assert.Equal(t, "false", flag.DefValue, "default must be false (opt-in)")
+}
+
+// TestMigrationInit_PauseOffsetSync_SkipValidate_Persists verifies that
+// --pause-consumer-offset-sync + --skip-validate writes the intent to the
+// state file (validation is bypassed by design — the warning is informational).
+func TestMigrationInit_PauseOffsetSync_SkipValidate_Persists(t *testing.T) {
+	resetAuthFlags()
+	pauseConsumerOffsetSync = false
+	skipValidate = false
+
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	fencedPath := filepath.Join(dir, "fenced.yaml")
+	switchoverPath := filepath.Join(dir, "switchover.yaml")
+	require.NoError(t, os.WriteFile(fencedPath, []byte("apiVersion: v1\nkind: stub"), 0644))
+	require.NoError(t, os.WriteFile(switchoverPath, []byte("apiVersion: v1\nkind: stub"), 0644))
+
+	cmd := NewMigrationInitCmd()
+	cmd.SetArgs([]string{
+		"--source-bootstrap", "broker:9092",
+		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
+		"--k8s-namespace", "test-ns",
+		"--initial-cr-name", "test-cr",
+		"--cluster-id", "lkc-123",
+		"--cluster-rest-endpoint", "https://pkc-abc.confluent.cloud:443",
+		"--cluster-link-name", "test-link",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--fenced-cr-yaml", fencedPath,
+		"--switchover-cr-yaml", switchoverPath,
+		"--use-unauthenticated-plaintext",
+		"--migration-state-file", statePath,
+		"--skip-validate",
+		"--pause-consumer-offset-sync",
+	})
+
+	require.NoError(t, cmd.Execute())
+
+	state, err := types.NewMigrationStateFromFile(statePath)
+	require.NoError(t, err)
+	require.Len(t, state.Migrations, 1)
+	assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist even with --skip-validate")
+	assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "flipped marker must remain false at init time")
 }

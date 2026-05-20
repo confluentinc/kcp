@@ -515,6 +515,181 @@ func TestGetClusterLink_UnexpectedStatus(t *testing.T) {
 	assert.Contains(t, err.Error(), "500")
 }
 
+func TestAlterConfigs_Success_Disable(t *testing.T) {
+	clusterID := "lkc-alter"
+	linkName := "alter-link"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/kafka/v3/clusters/" + clusterID + "/links/" + linkName + "/configs/consumer.offset.sync.enable"
+		assert.Equal(t, expectedPath, r.URL.Path, "request path")
+		assert.Equal(t, http.MethodPut, r.Method, "HTTP method")
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"), "Content-Type header")
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		var reqBody struct {
+			Value string `json:"value"`
+		}
+		require.NoError(t, json.Unmarshal(body, &reqBody))
+		assert.Equal(t, "false", reqBody.Value)
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{
+		RestEndpoint: server.URL,
+		ClusterID:    clusterID,
+		LinkName:     linkName,
+		APIKey:       "key",
+		APISecret:    "secret",
+	}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "consumer.offset.sync.enable", Value: "false", Operation: OperationSet},
+	})
+	require.NoError(t, err)
+}
+
+func TestAlterConfigs_Success_Restore(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method, "restore path uses PUT")
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		var reqBody struct {
+			Value string `json:"value"`
+		}
+		require.NoError(t, json.Unmarshal(body, &reqBody))
+		assert.Equal(t, "true", reqBody.Value, "restore path sets value back to true")
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "link-1", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "consumer.offset.sync.enable", Value: "true", Operation: OperationSet},
+	})
+	require.NoError(t, err)
+}
+
+func TestAlterConfigs_Batch_IteratesPerKey(t *testing.T) {
+	// The CP REST API does not expose a batch :alter endpoint, so AlterConfigs
+	// iterates the slice and issues one PUT per alteration. This test pins the
+	// per-key call order and that all entries are sent.
+	var seenPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		seenPaths = append(seenPaths, r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "link-1", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "key-one", Value: "v1", Operation: OperationSet},
+		{Name: "key-two", Value: "v2", Operation: OperationSet},
+	})
+	require.NoError(t, err)
+	require.Len(t, seenPaths, 2)
+	assert.Contains(t, seenPaths[0], "key-one")
+	assert.Contains(t, seenPaths[1], "key-two")
+}
+
+func TestAlterConfigs_DeleteOperation_UsesHTTPDelete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method, "DELETE op must use HTTP DELETE")
+		assert.Contains(t, r.URL.Path, "/configs/some.key")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "link-1", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "some.key", Operation: OperationDelete},
+	})
+	require.NoError(t, err)
+}
+
+func TestAlterConfigs_EmptyAlterations_NoRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server should not receive any request when alterations slice is empty")
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-empty", LinkName: "link-empty", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, nil)
+	assert.NoError(t, err, "empty alterations should short-circuit without making a network call")
+
+	err = svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{})
+	assert.NoError(t, err, "empty alterations should short-circuit without making a network call")
+}
+
+func TestAlterConfigs_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("link missing"))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "missing-link", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "consumer.offset.sync.enable", Value: "false", Operation: OperationSet},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing-link")
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAlterConfigs_Unauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "link-1", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "consumer.offset.sync.enable", Value: "false", Operation: OperationSet},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "401")
+	assert.Contains(t, err.Error(), "authentication failed")
+}
+
+func TestAlterConfigs_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("alter failed: boom"))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "link-1", APIKey: "k", APISecret: "s"}
+
+	err := svc.AlterConfigs(context.Background(), cfg, []ConfigAlteration{
+		{Name: "consumer.offset.sync.enable", Value: "false", Operation: OperationSet},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "500")
+	assert.Contains(t, err.Error(), "alter failed: boom")
+}
+
 func TestListConfigs_Success(t *testing.T) {
 	clusterID := "lkc-cfg"
 	linkName := "config-link"

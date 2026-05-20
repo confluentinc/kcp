@@ -78,6 +78,18 @@ func (m *MigrationExecutor) Run() error {
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+	persist := func() error {
+		m.opts.MigrationState.UpsertMigration(config)
+		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
+	}
+
+	// Pre-execute bookend: disable consumer.offset.sync.enable if the
+	// operator opted in at init time. Idempotent and safe on resume.
+	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
+		return err
+	}
+
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		workflow,
@@ -88,6 +100,10 @@ func (m *MigrationExecutor) Run() error {
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
+
+	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
+	// so a restore error does not roll back a successful switchover.
+	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
 
 	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil

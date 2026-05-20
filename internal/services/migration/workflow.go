@@ -113,6 +113,22 @@ func (s *MigrationWorkflow) Initialize(
 		return fmt.Errorf("failed to list cluster link configs: %w", err)
 	}
 
+	// If the operator opted into pausing consumer offset sync during execute,
+	// validate the precondition: the cluster link must currently have
+	// consumer.offset.sync.enable=true. Refuse fail-fast if the key is missing
+	// or set to anything other than "true".
+	if config.PauseConsumerOffsetSync {
+		const offsetSyncKey = "consumer.offset.sync.enable"
+		observed, present := configs[offsetSyncKey]
+		switch {
+		case !present:
+			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncKey, "true")
+		case observed != "true":
+			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncKey, observed, "true")
+		}
+		fmt.Printf("   %s Cluster link %s=true (pause-on-execute intent recorded)\n", color.GreenString("✔"), offsetSyncKey)
+	}
+
 	// Update config with discovered data
 	config.ClusterLinkTopics = clusterLinkTopics
 	config.ClusterLinkConfigs = configs
