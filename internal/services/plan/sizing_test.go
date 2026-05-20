@@ -33,7 +33,7 @@ func fixtureCluster(name string, partitions int, p95InMBps, p95OutMBps, peakInMB
 func defaultInputs() types.PlanInputsResolved {
 	return types.PlanInputsResolved{
 		SLATarget:                  "99.9",
-		SizingPercentile:           "P95",
+		SizingPercentile:           "p95",
 		HeadroomFraction:           0.30,
 		PrivateLinkSafetyThreshold: 0.80,
 		SpikyWorkloadRatio:         2.0,

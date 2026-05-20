@@ -120,31 +120,28 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 	}
 }
 
-// normalizePercentile maps the customer's sizing_percentile input (P95 |
-// P99 | max) to the field name pickPercentile uses. Unknown values fall
-// back to "P95" so a stray input doesn't silently use the wrong column —
-// the validation hook on PlanInputs is the actual typo guard.
+// normalizePercentile maps the customer's sizing_percentile input
+// (p95 | p99 | max) to the canonical lowercase form. Accepts legacy
+// uppercase variants (`P95`, `P99`) for back-compat with pre-spec
+// inputs, but the canonical surface is lowercase to match Confluent
+// dashboards. Unknown values fall back to "p95".
 func normalizePercentile(s string) string {
 	switch s {
-	case "P95", "P99", "max":
-		return s
-	default:
-		return "P95"
-	}
-}
-
-// citationKey is the lowercase token the citation path uses for the
-// chosen percentile — keeps the path string consistent with the JSON
-// field name in MetricAggregate (e.g. "p95" not "P95").
-func citationKey(pct string) string {
-	switch pct {
-	case "P99":
+	case "p95", "P95":
+		return "p95"
+	case "p99", "P99":
 		return "p99"
 	case "max":
 		return "max"
 	default:
 		return "p95"
 	}
+}
+
+// citationKey is the lowercase token the citation path uses — same as
+// the percentile itself now that the input is lowercase.
+func citationKey(pct string) string {
+	return pct
 }
 
 // pickMaxDriver returns the largest of the three ratios and the label
@@ -169,14 +166,18 @@ func userPartitionsOf(c types.ProcessedCluster) int {
 	return c.KafkaAdminClientInformation.Topics.Summary.TotalPartitions
 }
 
+// missingMetricsReason returns the SYMPTOM only — what's missing from
+// the state file. The action (re-run `kcp scan metrics`) is appended by
+// callers that render the value, so it isn't duplicated when the same
+// reason flows into both the rationale line and the Open Questions section.
 func missingMetricsReason(haveIn, haveOut bool, pct string) string {
 	switch {
 	case !haveIn && !haveOut:
-		return fmt.Sprintf("no BytesInPerSec or BytesOutPerSec %s; re-run kcp scan metrics", pct)
+		return fmt.Sprintf("no BytesInPerSec or BytesOutPerSec %s in state file", pct)
 	case !haveIn:
-		return fmt.Sprintf("no BytesInPerSec %s; re-run kcp scan metrics", pct)
+		return fmt.Sprintf("no BytesInPerSec %s in state file", pct)
 	default:
-		return fmt.Sprintf("no BytesOutPerSec %s; re-run kcp scan metrics", pct)
+		return fmt.Sprintf("no BytesOutPerSec %s in state file", pct)
 	}
 }
 
@@ -187,9 +188,9 @@ func pickPercentile(aggs map[string]types.MetricAggregate, label, field string) 
 	}
 	var ptr *float64
 	switch field {
-	case "P95":
+	case "p95":
 		ptr = a.P95
-	case "P99":
+	case "p99":
 		ptr = a.P99
 	case "max":
 		ptr = a.Maximum
