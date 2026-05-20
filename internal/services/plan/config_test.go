@@ -19,7 +19,7 @@ func TestLoadPlanConfigEmbedded(t *testing.T) {
 	assert.Equal(t, 3000, cfg.EnterpriseCaps.PerECKUPartitionRate)
 	assert.Equal(t, 10, cfg.EnterpriseCaps.PrivateLinkMaxECKU)
 	assert.Equal(t, 32, cfg.EnterpriseCaps.PNIMaxECKU)
-	assert.Equal(t, "P95", cfg.PlanInputDefaults.SizingPercentile)
+	assert.Equal(t, "p95", cfg.PlanInputDefaults.SizingPercentile)
 	assert.InDelta(t, 0.30, cfg.PlanInputDefaults.HeadroomFraction, 0.0001)
 	assert.InDelta(t, 0.80, cfg.PlanInputDefaults.PrivateLinkSafetyThreshold, 0.0001)
 }
@@ -36,7 +36,7 @@ plan_input_defaults:
 	require.NoError(t, err)
 	assert.InDelta(t, 0.45, cfg.PlanInputDefaults.HeadroomFraction, 0.0001)
 	// Untouched defaults keep embedded values.
-	assert.Equal(t, "P95", cfg.PlanInputDefaults.SizingPercentile)
+	assert.Equal(t, "p95", cfg.PlanInputDefaults.SizingPercentile)
 	assert.Equal(t, 60, cfg.EnterpriseCaps.PerECKUIngressMBps)
 }
 

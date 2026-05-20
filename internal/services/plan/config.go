@@ -51,6 +51,15 @@ type PlanInputDefaults struct {
 	PrivateLinkSafetyThreshold float64        `yaml:"privatelink_safety_threshold"`
 	SpikyWorkloadRatio         float64        `yaml:"spiky_workload_ratio"`
 	SLAFloorECKU               map[string]int `yaml:"sla_floor_eCKU"`
+
+	// Customer-declared hard requirements (all default false).
+	EnforceSchemasAtTheBroker            bool `yaml:"enforce_schemas_at_the_broker"`
+	RequiresHighThroughputRESTProduceAPI bool `yaml:"requires_high_throughput_rest_produce_api"`
+	Requires9995SLAWithinSingleZone      bool `yaml:"requires_99_95_sla_within_a_single_zone"`
+
+	// Target cloud + existing VPC connectivity (Dedicated-path networking).
+	TargetCloud             string `yaml:"target_cloud"`
+	ExistingVPCConnectivity string `yaml:"existing_vpc_connectivity"`
 }
 
 // LoadPlanConfig returns the embedded plan-config.yaml, optionally
