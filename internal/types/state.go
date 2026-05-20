@@ -949,6 +949,12 @@ type MetricAggregate struct {
 	Average *float64 `json:"avg"`
 	Maximum *float64 `json:"max"`
 	Minimum *float64 `json:"min"`
+	P95     *float64 `json:"p95"`
+	P99     *float64 `json:"p99"`
+	// Count is the sample size of the aggregate. With `omitempty`,
+	// "unknown" and "exactly 0 samples" both render as absent — treat
+	// absence as "no sample data".
+	Count int `json:"count,omitempty"`
 }
 
 type CostAggregate struct {
