@@ -263,7 +263,7 @@ func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedS
 	}
 
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
-	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Region:     regionName,
@@ -316,7 +316,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
 
 	// Calculate aggregates from filtered metrics
-	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Region:      "", // OSK clusters don't have regions
@@ -367,7 +367,7 @@ func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regi
 	filteredMetrics := rs.filterMetricsByDateRange(targetCluster.ClusterMetrics.Metrics, startTime, endTime)
 
 	// Calculate aggregates from filtered metrics
-	aggregates := rs.calculateMetricsAggregates(filteredMetrics)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
 		Metadata:   targetCluster.ClusterMetrics.Metadata,
@@ -647,14 +647,6 @@ func (rs *ReportService) flattenMetrics(cluster types.DiscoveredCluster) types.P
 	}
 }
 
-// CalculateMetricsAggregates is the exported entry point for callers outside
-// the report service (e.g. PlanService) that need percentile/aggregate
-// computations on flattened ProcessedMetric data.
-func CalculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
-	rs := NewReportService()
-	return rs.calculateMetricsAggregates(metrics)
-}
-
 // nearestRankIndex returns the index into a sorted N-element slice that
 // corresponds to the p-th percentile using the nearest-rank method
 // (R type 1 / NIST): index = ceil(N * p) - 1, clamped to [0, N-1].
@@ -674,11 +666,13 @@ func nearestRankIndex(n int, p float64) int {
 	return idx
 }
 
-// calculateMetricsAggregates returns avg, min, max, P95, P99, and count
+// CalculateMetricsAggregates returns avg, min, max, P95, P99, and count
 // per metric label. Percentiles use the nearest-rank method (R type 1):
 // after sorting, index = ceil(N*p) - 1, clamped to [0, N-1]. See
-// nearestRankIndex.
-func (rs *ReportService) calculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
+// nearestRankIndex. Package-level because it doesn't read ReportService
+// state; PlanService and the internal ReportService callers all use it
+// directly without instantiating a receiver.
+func CalculateMetricsAggregates(metrics []types.ProcessedMetric) map[string]types.MetricAggregate {
 	metricsByLabel := make(map[string][]float64)
 
 	for _, metric := range metrics {
