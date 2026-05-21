@@ -175,10 +175,11 @@ type migrationState struct {
 }
 
 type migrationConfig struct {
-	MigrationID                    string `json:"migration_id"`
-	CurrentState                   string `json:"current_state"`
-	PauseConsumerOffsetSync        bool   `json:"pause_consumer_offset_sync"`
-	PauseConsumerOffsetSyncFlipped bool   `json:"pause_consumer_offset_sync_flipped"`
+	MigrationID                    string            `json:"migration_id"`
+	CurrentState                   string            `json:"current_state"`
+	PauseConsumerOffsetSync        bool              `json:"pause_consumer_offset_sync"`
+	PauseConsumerOffsetSyncFlipped bool              `json:"pause_consumer_offset_sync_flipped"`
+	ClusterLinkConfigs             map[string]string `json:"cluster_link_configs"`
 }
 
 // runInPodBackground starts a command inside the runner pod and returns
@@ -271,9 +272,7 @@ func envIsFreshForMigration(t *testing.T, cfg envConfig) bool {
 // the key is missing). Used by tests to observe transitions during execute.
 func getClusterLinkOffsetSyncEnable(t *testing.T, cfg envConfig) string {
 	t.Helper()
-	v, err := getClusterLinkOffsetSyncEnableSoft(cfg)
-	require.NoError(t, err)
-	return v
+	return getClusterLinkConfig(t, cfg, "consumer.offset.sync.enable")
 }
 
 // getClusterLinkOffsetSyncEnableSoft is the goroutine-safe variant: it
@@ -281,6 +280,22 @@ func getClusterLinkOffsetSyncEnable(t *testing.T, cfg envConfig) string {
 // this inside background goroutines — Go's testing package documents
 // FailNow/require as unsafe outside the test goroutine.
 func getClusterLinkOffsetSyncEnableSoft(cfg envConfig) (string, error) {
+	return getClusterLinkConfigSoft(cfg, "consumer.offset.sync.enable")
+}
+
+// getClusterLinkConfig is the generic variant: returns the value for any
+// config key on the cluster link, or "" if missing.
+func getClusterLinkConfig(t *testing.T, cfg envConfig, name string) string {
+	t.Helper()
+	v, err := getClusterLinkConfigSoft(cfg, name)
+	require.NoError(t, err)
+	return v
+}
+
+// getClusterLinkConfigSoft is the goroutine-safe generic variant. Returns
+// (value, error) so callers can use it inside background goroutines without
+// tripping the testing package's FailNow-from-goroutine rule.
+func getClusterLinkConfigSoft(cfg envConfig, name string) (string, error) {
 	configURL := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/configs", cfg.RestProxyEndpoint, cfg.DestClusterID, cfg.ClusterLinkName)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -306,7 +321,7 @@ func getClusterLinkOffsetSyncEnableSoft(cfg envConfig) (string, error) {
 		return "", fmt.Errorf("unmarshalling configs response: %s: %w", out, err)
 	}
 	for _, c := range resp.Data {
-		if c.Name == "consumer.offset.sync.enable" {
+		if c.Name == name {
 			return c.Value, nil
 		}
 	}
@@ -776,4 +791,121 @@ func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
 	combined := stdout + stderr
 	assert.Contains(t, combined, cfg.ClusterLinkName, "error must name the cluster link")
 	assert.Contains(t, combined, "consumer.offset.sync.enable", "error must name the config key")
+}
+
+// TestMigrationE2E_PauseOffsetSync_RestoresFilters verifies that a
+// consumer.offset.group.filters value configured on the cluster link before
+// init is preserved across the --pause-consumer-offset-sync round-trip.
+//
+// The bookend exists because setting consumer.offset.sync.enable=false on a
+// cluster link clears consumer.offset.group.filters as a side effect on both
+// Confluent Cloud and Confluent Platform. The disable bookend triggers that
+// clearing; the restore bookend re-applies filters from the init-time
+// snapshot. This test exercises that round-trip end-to-end.
+//
+// Single-shot env: the cluster link is one-time, so this test t.Skips when
+// envIsFreshForMigration is false. Re-run setup.sh and target this test
+// directly with:
+//
+//	go test -tags=e2e -run TestMigrationE2E_PauseOffsetSync_RestoresFilters$ ./integration-tests/migration/...
+func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
+	cfg := loadEnvConfig(t)
+
+	if !envIsFreshForMigration(t, cfg) {
+		t.Skip("env is not fresh — cluster link has no ACTIVE mirror topics (a prior migration already ran). Re-run setup.sh and use -run to target this test directly.")
+	}
+
+	stateFile := "/workspace/migration-state-filters.json"
+	stopProducer(t, cfg)
+
+	const filtersKey = "consumer.offset.group.filters"
+	const filtersValue = `{"groupFilters":[{"name":"e2e-*","patternType":"PREFIXED","filterType":"INCLUDE"}]}`
+
+	// Pre-populate filters on the cluster link before init so the snapshot
+	// captures the value. setClusterLinkConfig fails the test if the CP REST
+	// API rejects the PUT (e.g. malformed JSON or unsupported key on this CP
+	// version) — a clear signal that the fixture or CP version needs
+	// adjustment.
+	setClusterLinkConfig(t, cfg, filtersKey, filtersValue)
+
+	// Sanity checks: fixture matches expectations before init runs.
+	require.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg), "fixture must start with consumer.offset.sync.enable=true")
+	require.Equal(t, filtersValue, getClusterLinkConfig(t, cfg, filtersKey), "fixture must have filters set before init")
+
+	// --- Step 1: init with the flag ---
+	t.Run("init_captures_filters_snapshot", func(t *testing.T) {
+		initArgs := []string{
+			"migration", "init",
+			"--source-bootstrap", cfg.SourceBootstrap,
+			"--cluster-bootstrap", cfg.DestBootstrap,
+			"--cluster-id", cfg.DestClusterID,
+			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
+			"--cluster-link-name", cfg.ClusterLinkName,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--k8s-namespace", cfg.Namespace,
+			"--initial-cr-name", cfg.GatewayName,
+			"--fenced-cr-yaml", cfg.FencedCR,
+			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"--migration-state-file", stateFile,
+			"--use-unauthenticated-plaintext",
+			"--kube-path", cfg.KubePath,
+			"--insecure-skip-tls-verify",
+			"--pause-consumer-offset-sync",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, initArgs...)
+		t.Logf("init stdout:\n%s", stdout)
+		t.Logf("init stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration init failed")
+
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist")
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must NOT be flipped at init time")
+		assert.Equal(t, filtersValue, state.Migrations[0].ClusterLinkConfigs[filtersKey],
+			"init must capture filters value in the ClusterLinkConfigs snapshot — restore reads from this")
+	})
+
+	// --- Step 2: producer running during execute ---
+	t.Run("start_producer", func(t *testing.T) {
+		startProducerOnSource(t, cfg, 5*time.Minute)
+		time.Sleep(2 * time.Second)
+	})
+	t.Cleanup(func() { stopProducer(t, cfg) })
+
+	// --- Step 3: execute ---
+	t.Run("execute_with_flag", func(t *testing.T) {
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		migrationID := state.Migrations[0].MigrationID
+
+		executeArgs := []string{
+			"migration", "execute",
+			"--migration-id", migrationID,
+			"--migration-state-file", stateFile,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--lag-threshold", "0",
+			"--use-unauthenticated-plaintext",
+			"--insecure-skip-tls-verify",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		t.Logf("execute stdout:\n%s", stdout)
+		t.Logf("execute stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration execute failed")
+
+		state = readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must clear after successful restore")
+	})
+
+	// --- Step 4: post-migration parity ---
+	t.Run("filters_match_init_snapshot", func(t *testing.T) {
+		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg), "toggle must be restored to true")
+		assert.Equal(t, filtersValue, getClusterLinkConfig(t, cfg, filtersKey),
+			"%s must match the value set before init — this is the restore bookend's primary contract", filtersKey)
+	})
 }
