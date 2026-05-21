@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -34,6 +36,7 @@ type Service interface {
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
+	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
 }
 
 // PodRolloutProgress reports the current state of a pod rollout
@@ -43,6 +46,22 @@ type PodRolloutProgress struct {
 	OldPodsRemaining int
 	RolloutDetected  bool
 }
+
+// GatewayReadinessProgress reports the current state of a gateway readiness wait.
+// The gate (whether the wait returns) comes from the underlying apps/v1
+// Deployment's rollout status; pod counts come from Deployment.status.readyReplicas.
+type GatewayReadinessProgress struct {
+	InitialPodCount int
+	PodsReady       int
+	Elapsed         time.Duration
+	RolloutDetected bool
+	Ready           bool
+}
+
+// gatewayReadinessDetectionWindow is the time we wait at the start of a
+// readiness wait to distinguish a no-op patch from a rollout that has not
+// yet begun. var so tests can shorten it.
+var gatewayReadinessDetectionWindow = 10 * time.Second
 
 // K8sService implements gateway operations using Kubernetes clients
 type K8sService struct {
@@ -364,4 +383,176 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// WaitForGatewayReady polls the underlying apps/v1 Deployment's rollout status
+// until the Deployment reports a complete rollout, or until ctx is cancelled.
+// When timeout > 0, a hard deadline is applied via context; a timeout of 0
+// means no deadline.
+//
+// The wait runs in two phases:
+//  1. Detection (up to 10s): if the Deployment is already at rollout-complete
+//     state for the entire window, no pod restart was required — onProgress is
+//     invoked once with RolloutDetected=false and the wait returns nil.
+//  2. Convergence: polls until the Deployment reports rollout complete
+//     (observedGeneration >= generation, updatedReplicas == replicas,
+//     availableReplicas == replicas, replicas > 0), calling onProgress on
+//     every poll tick with monotonically increasing Elapsed.
+func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build config: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+	return waitForGatewayReady(ctx, clientset, namespace, gatewayName, pollInterval, timeout, onProgress)
+}
+
+// waitForGatewayReady is the inner orchestration used by WaitForGatewayReady.
+// Split from the method so unit tests can inject a fake clientset.
+func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	dep, err := resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
+	if err != nil {
+		return err
+	}
+	slog.Debug("resolved gateway deployment", "namespace", namespace, "gateway", gatewayName, "deployment", dep.Name)
+
+	initialReplicas := dep.Status.Replicas
+	start := time.Now()
+
+	// Phase 1: detection window.
+	detectionDeadline := time.Now().Add(gatewayReadinessDetectionWindow)
+	rolloutDetected := false
+	for time.Now().Before(detectionDeadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		dep, err = resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
+		if err != nil {
+			return err
+		}
+		if !deploymentRolloutComplete(dep) {
+			slog.Debug("rollout detected during detection window", "gateway", gatewayName)
+			rolloutDetected = true
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+
+	if !rolloutDetected {
+		slog.Debug("no rollout detected within detection window; treating patch as no-op", "gateway", gatewayName)
+		if onProgress != nil {
+			onProgress(GatewayReadinessProgress{
+				InitialPodCount: int(initialReplicas),
+				PodsReady:       int(initialReplicas),
+				Elapsed:         time.Since(start),
+				RolloutDetected: false,
+				Ready:           true,
+			})
+		}
+		return nil
+	}
+
+	// Phase 2: convergence — poll until Deployment rollout is complete.
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		dep, err = resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
+		if err != nil {
+			return err
+		}
+		ready := deploymentRolloutComplete(dep)
+		if onProgress != nil {
+			onProgress(GatewayReadinessProgress{
+				InitialPodCount: int(initialReplicas),
+				PodsReady:       int(dep.Status.ReadyReplicas),
+				Elapsed:         time.Since(start),
+				RolloutDetected: true,
+				Ready:           ready,
+			})
+		}
+		if ready {
+			slog.Debug("gateway deployment rollout complete", "gateway", gatewayName, "elapsed", time.Since(start))
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+// resolveGatewayDeployment finds the Deployment backing a Gateway CR.
+// Primary: Get by name (CFK convention: Deployment name == Gateway CR name).
+// Fallback: list Deployments in the namespace and filter by ownerReferences.
+func resolveGatewayDeployment(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string) (*appsv1.Deployment, error) {
+	dep, err := clientset.AppsV1().Deployments(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+	if err == nil {
+		return dep, nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to get gateway deployment: %w", err)
+	}
+
+	// Fallback: list and filter by ownerReferences. This scans all Deployments in
+	// the namespace and is only reached when the name-based Get returns NotFound.
+	slog.Debug("deployment not found by name; falling back to ownerReferences scan", "namespace", namespace, "gateway", gatewayName)
+	list, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments for gateway fallback: %w", err)
+	}
+	var matches []appsv1.Deployment
+	for _, d := range list.Items {
+		for _, ref := range d.OwnerReferences {
+			if ref.Kind == "Gateway" && ref.Name == gatewayName {
+				matches = append(matches, d)
+				break
+			}
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return &matches[0], nil
+	case 0:
+		return nil, fmt.Errorf("gateway deployment not found by name or ownerReferences for gateway %q", gatewayName)
+	default:
+		names := make([]string, len(matches))
+		for i, m := range matches {
+			names[i] = m.Name
+		}
+		return nil, fmt.Errorf("multiple deployments owned by gateway %q; cannot disambiguate: %v", gatewayName, names)
+	}
+}
+
+// deploymentRolloutComplete reports whether d's rollout is complete.
+// Mirrors the invariants used by kubectl rollout status deployment:
+// observedGeneration caught up, all replicas updated, all replicas available,
+// and at least one replica exists.
+func deploymentRolloutComplete(d *appsv1.Deployment) bool {
+	if d == nil {
+		return false
+	}
+	s := d.Status
+	return s.ObservedGeneration >= d.Generation &&
+		s.UpdatedReplicas == s.Replicas &&
+		s.AvailableReplicas == s.Replicas &&
+		s.Replicas > 0
 }

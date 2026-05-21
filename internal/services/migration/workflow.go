@@ -22,6 +22,10 @@ type MigrationWorkflow struct {
 	destinationOffset   offset.Provider
 	lagPollInterval     time.Duration
 	promotePollInterval time.Duration
+	// rolloutTimeout is the deadline applied to gateway-readiness waits in
+	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
+	// wait runs until the operator reports ready or the user cancels.
+	rolloutTimeout time.Duration
 }
 
 func NewMigrationWorkflow(
@@ -50,6 +54,12 @@ func NewMigrationWorkflowWithOffsets(
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
 	}
+}
+
+// SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
+// A value of 0 means no deadline.
+func (s *MigrationWorkflow) SetRolloutTimeout(d time.Duration) {
+	s.rolloutTimeout = d
 }
 
 func (s *MigrationWorkflow) Initialize(
@@ -248,39 +258,29 @@ func formatLag64(n int64) string {
 	return string(result)
 }
 
-// FenceGateway applies the fenced gateway CR YAML to block traffic
+// FenceGateway applies the fenced gateway CR YAML to block traffic and waits
+// for the Confluent operator to report the gateway as Ready at the new spec
+// generation. The wait runs without a deadline by default — the operator
+// drives convergence and the user can Ctrl-C if a rollout wedges. An optional
+// per-workflow rolloutTimeout caps the wait when set (via SetRolloutTimeout).
 func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
-	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
-	}
-
-	// Step 2: Apply the fenced CR YAML
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
 	fmt.Printf("   %s Fenced gateway CR applied\n", color.GreenString("✔"))
 
-	// Step 3: Wait for gateway pods to be recycled with new configuration
-	const (
-		pollInterval = 5 * time.Second
-		timeout      = 5 * time.Minute
-	)
+	fmt.Printf("   ↳ Waiting for gateway readiness...\n")
+	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
 
-	initialPodCount := len(initialGatewayPodUIDs)
-	fmt.Printf("   ↳ Waiting for pod rollout (0/%d pods replaced)...\n", initialPodCount)
-	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
-
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway pods: %w", err)
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, printGatewayReadinessProgress); err != nil {
+		return fmt.Errorf("failed waiting for gateway readiness: %w", err)
 	}
 
 	slog.Debug("gateway fenced and ready")
-	fmt.Printf("   %s All %d pods rolled out\n", color.GreenString("✔"), initialPodCount)
+	fmt.Printf("   %s Gateway fenced and ready\n", color.GreenString("✔"))
 	return nil
 }
 
@@ -403,52 +403,51 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 	}
 }
 
-// SwitchGateway applies the switchover gateway CR YAML to point to Confluent Cloud
+// SwitchGateway applies the switchover gateway CR YAML to point to Confluent
+// Cloud and waits for the operator to report the gateway as Ready. The wait
+// uses the same no-deadline-by-default behavior as FenceGateway.
 func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	// Step 1: Capture initial pod state (BEFORE any gateway modifications)
-	initialGatewayPodUIDs, err := s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		return fmt.Errorf("failed to capture initial gateway pod state: %w", err)
-	}
-
-	// Step 2: Apply the switchover CR YAML
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")
 	fmt.Printf("   %s Switchover gateway CR applied\n", color.GreenString("✔"))
 
-	// Step 3: Wait for gateway pods to be recycled with new configuration
-	const (
-		pollInterval = 5 * time.Second
-		timeout      = 5 * time.Minute
-	)
+	fmt.Printf("   ↳ Waiting for gateway readiness...\n")
+	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
 
-	initialPodCount := len(initialGatewayPodUIDs)
-	fmt.Printf("   ↳ Waiting for pod rollout (0/%d pods replaced)...\n", initialPodCount)
-	slog.Debug("waiting for gateway pod rollout", "timeout", timeout)
-
-	if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, initialGatewayPodUIDs, pollInterval, timeout, printPodRolloutProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway pods: %w", err)
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, printGatewayReadinessProgress); err != nil {
+		return fmt.Errorf("failed waiting for gateway readiness: %w", err)
 	}
 
 	slog.Debug("gateway switchover complete")
-	fmt.Printf("   %s All %d pods rolled out\n", color.GreenString("✔"), initialPodCount)
+	fmt.Printf("   %s Gateway switchover complete\n", color.GreenString("✔"))
 	return nil
 }
 
-func printPodRolloutProgress(p gateway.PodRolloutProgress) {
+// printGatewayReadinessProgress renders one line per poll tick combining the
+// operator-reported readiness with elapsed time and a pod-readiness snapshot.
+// A no-op signal (RolloutDetected=false) is preserved from the previous
+// implementation so users see "no pod restart required" when an apply did not
+// trigger a rollout.
+func printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
 	if !p.RolloutDetected {
 		fmt.Printf("   %s No pod restart required\n", color.GreenString("✔"))
 		return
 	}
-	if p.NewPodsReady == p.InitialPodCount && p.OldPodsRemaining > 0 {
-		fmt.Printf("   ↳ %d/%d new pods ready, waiting for existing pods to terminate...\n",
-			p.NewPodsReady, p.InitialPodCount)
+	if p.InitialPodCount > 0 {
+		fmt.Printf("   ↳ %d/%d pods ready (elapsed %s)\n",
+			p.PodsReady, p.InitialPodCount, formatElapsed(p.Elapsed))
 	} else {
-		fmt.Printf("   ↳ %d/%d new pods ready...\n",
-			p.NewPodsReady, p.InitialPodCount)
+		fmt.Printf("   ↳ gateway reconciling (elapsed %s)\n", formatElapsed(p.Elapsed))
 	}
+}
+
+// formatElapsed rounds the elapsed duration to whole seconds so the progress
+// line is stable across poll ticks (sub-second jitter would churn the
+// rendered string each tick).
+func formatElapsed(d time.Duration) string {
+	return d.Round(time.Second).String()
 }

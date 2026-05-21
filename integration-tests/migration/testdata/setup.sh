@@ -163,50 +163,106 @@ wait_for_pods "app=destination-kafka" &
 pid2=$!
 wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup"; exit 1; }
 
-# --- Gateway ---
-echo "Deploying Gateway..."
-kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/gateway-initial.yaml"
-echo "Waiting for Gateway..."
-wait_for_pods "app=migration-gateway"
+# --- Scenarios ---
+# Each test case gets its own dedicated source topic, cluster link, and
+# gateway CR so tests are fully isolated and do not depend on run order.
+# Naming convention:
+#   topic    : e2e-test-topic-<scenario>
+#   link     : e2e-link-<scenario>
+#   gateway  : migration-gateway-<scenario>
+SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters")
+TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
+RENDERED_DIR="${SCRIPT_DIR}/.rendered"
+rm -rf "${RENDERED_DIR}"
+mkdir -p "${RENDERED_DIR}"
 
-# --- Test Topic ---
-echo "Creating test topic on source..."
-kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/test-topic.yaml"
+render_scenario() {
+  local template="$1"
+  local scenario="$2"
+  local gateway="migration-gateway-${scenario}"
+  local link="e2e-link-${scenario}"
+  local topic="e2e-test-topic-${scenario}"
+  local out="${RENDERED_DIR}/$(basename "${template}" .yaml)-${scenario}.yaml"
+  sed -e "s/__GATEWAY_NAME__/${gateway}/g" \
+      -e "s/__CLUSTER_LINK_NAME__/${link}/g" \
+      -e "s/__TOPIC_NAME__/${topic}/g" \
+      "${template}" > "${out}"
+  printf '%s\n' "${out}"
+}
 
-# Wait for topic to be created
-echo "Waiting for topic to be ready..."
-for i in $(seq 1 60); do
-  if kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafkatopic e2e-test-topic -o jsonpath='{.status.state}' 2>/dev/null | grep -q "CREATED"; then
-    echo "Topic is ready."
-    break
-  fi
-  if [ "$i" -eq 60 ]; then
-    echo "FATAL: Topic did not reach CREATED state within timeout"
-    exit 1
-  fi
-  sleep 5
+# --- Gateways (one per scenario) ---
+echo "Deploying gateways..."
+for scenario in "${SCENARIOS[@]}"; do
+  rendered=$(render_scenario "${TEMPLATES_DIR}/gateway-initial.yaml" "${scenario}")
+  kubectl --context "${PROFILE}" apply -f "${rendered}"
 done
 
-# --- Kafka REST Class ---
+echo "Waiting for gateway pods..."
+gateway_pids=()
+for scenario in "${SCENARIOS[@]}"; do
+  wait_for_pods "app=migration-gateway-${scenario}" &
+  gateway_pids+=("$!")
+done
+for pid in "${gateway_pids[@]}"; do
+  wait "${pid}" || { echo "FATAL: gateway pods failed to become Ready"; exit 1; }
+done
+
+# --- Source topics (one per scenario) ---
+echo "Creating source topics..."
+for scenario in "${SCENARIOS[@]}"; do
+  rendered=$(render_scenario "${TEMPLATES_DIR}/test-topic.yaml" "${scenario}")
+  kubectl --context "${PROFILE}" apply -f "${rendered}"
+done
+
+echo "Waiting for source topics to be CREATED..."
+for scenario in "${SCENARIOS[@]}"; do
+  topic="e2e-test-topic-${scenario}"
+  for i in $(seq 1 60); do
+    if kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafkatopic "${topic}" -o jsonpath='{.status.state}' 2>/dev/null | grep -q "CREATED"; then
+      echo "  Topic ${topic} is ready."
+      break
+    fi
+    if [ "$i" -eq 60 ]; then
+      echo "FATAL: Topic ${topic} did not reach CREATED state within timeout"
+      exit 1
+    fi
+    sleep 5
+  done
+done
+
+# --- Kafka REST Class (shared) ---
 echo "Creating KafkaRestClass for destination..."
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/kafka-rest-class.yaml"
 
-# --- Cluster Link ---
-echo "Creating cluster link..."
-kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/cluster-link.yaml"
+# --- Cluster Links (one per scenario) ---
+echo "Creating cluster links..."
+for scenario in "${SCENARIOS[@]}"; do
+  rendered=$(render_scenario "${TEMPLATES_DIR}/cluster-link.yaml" "${scenario}")
+  kubectl --context "${PROFILE}" apply -f "${rendered}"
+done
 
-# Wait for mirror topic to appear
-echo "Waiting for cluster link to sync..."
-for i in $(seq 1 60); do
-  if kubectl --context "${PROFILE}" -n "${NAMESPACE}" get clusterlink e2e-link -o jsonpath='{.status.state}' 2>/dev/null | grep -q "CREATED"; then
-    echo "Cluster link is ready."
-    break
-  fi
-  if [ "$i" -eq 60 ]; then
-    echo "FATAL: Cluster link did not reach CREATED state within timeout"
-    exit 1
-  fi
-  sleep 5
+echo "Waiting for cluster links to be CREATED..."
+for scenario in "${SCENARIOS[@]}"; do
+  link="e2e-link-${scenario}"
+  for i in $(seq 1 60); do
+    if kubectl --context "${PROFILE}" -n "${NAMESPACE}" get clusterlink "${link}" -o jsonpath='{.status.state}' 2>/dev/null | grep -q "CREATED"; then
+      echo "  Cluster link ${link} is ready."
+      break
+    fi
+    if [ "$i" -eq 60 ]; then
+      echo "FATAL: Cluster link ${link} did not reach CREATED state within timeout"
+      exit 1
+    fi
+    sleep 5
+  done
+done
+
+# --- Render fenced/switchover CRs for runner-pod copy ---
+# Not applied to the cluster — kcp migration init/execute apply them as part
+# of the FSM. We just need rendered copies on disk to ship into the pod.
+for scenario in "${SCENARIOS[@]}"; do
+  render_scenario "${TEMPLATES_DIR}/gateway-fenced.yaml" "${scenario}" >/dev/null
+  render_scenario "${TEMPLATES_DIR}/gateway-switchover.yaml" "${scenario}" >/dev/null
 done
 
 # --- Get connection details ---
@@ -241,8 +297,14 @@ kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.consumer-lin
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/consumer
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.setconfig-linux" "${KCP_POD}:/workspace/setconfig"
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/setconfig
-kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${MANIFESTS_DIR}/gateway-fenced.yaml" "${KCP_POD}:/workspace/gateway-fenced.yaml"
-kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${MANIFESTS_DIR}/gateway-switchover.yaml" "${KCP_POD}:/workspace/gateway-switchover.yaml"
+for scenario in "${SCENARIOS[@]}"; do
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp \
+    "${RENDERED_DIR}/gateway-fenced-${scenario}.yaml" \
+    "${KCP_POD}:/workspace/gateway-fenced-${scenario}.yaml"
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp \
+    "${RENDERED_DIR}/gateway-switchover-${scenario}.yaml" \
+    "${KCP_POD}:/workspace/gateway-switchover-${scenario}.yaml"
+done
 
 # Generate kubeconfig from service account token (kcp requires --kube-path)
 echo "Generating in-cluster kubeconfig..."
@@ -273,24 +335,30 @@ rm -f "${SCRIPT_DIR}/.kcp-linux" "${SCRIPT_DIR}/.producer-linux" "${SCRIPT_DIR}/
 
 # --- Write .env file ---
 ENV_FILE="${SCRIPT_DIR}/.env"
-cat > "${ENV_FILE}" <<EOF
-# Generated by setup.sh - do not edit
-KCP_E2E_KUBECONFIG=${KUBECONFIG_PATH}
-KCP_E2E_KUBE_CONTEXT=${PROFILE}
-KCP_E2E_NAMESPACE=${NAMESPACE}
-KCP_E2E_SOURCE_BOOTSTRAP=source-kafka.confluent.svc.cluster.local:9071
-KCP_E2E_DEST_BOOTSTRAP=destination-kafka.confluent.svc.cluster.local:9071
-KCP_E2E_REST_PROXY_ENDPOINT=http://destination-kafka.confluent.svc.cluster.local:8090
-KCP_E2E_DEST_CLUSTER_ID=${DEST_CLUSTER_ID}
-KCP_E2E_CLUSTER_LINK_NAME=e2e-link
-KCP_E2E_CLUSTER_API_KEY=testuser
-KCP_E2E_CLUSTER_API_SECRET=testpassword
-KCP_E2E_GATEWAY_NAME=migration-gateway
-KCP_E2E_KCP_POD=${KCP_POD}
-KCP_E2E_KUBE_PATH=/workspace/kubeconfig
-KCP_E2E_FENCED_CR=/workspace/gateway-fenced.yaml
-KCP_E2E_SWITCHOVER_CR=/workspace/gateway-switchover.yaml
-EOF
+{
+  echo "# Generated by setup.sh - do not edit"
+  echo "KCP_E2E_KUBECONFIG=${KUBECONFIG_PATH}"
+  echo "KCP_E2E_KUBE_CONTEXT=${PROFILE}"
+  echo "KCP_E2E_NAMESPACE=${NAMESPACE}"
+  echo "KCP_E2E_SOURCE_BOOTSTRAP=source-kafka.confluent.svc.cluster.local:9071"
+  echo "KCP_E2E_DEST_BOOTSTRAP=destination-kafka.confluent.svc.cluster.local:9071"
+  echo "KCP_E2E_REST_PROXY_ENDPOINT=http://destination-kafka.confluent.svc.cluster.local:8090"
+  echo "KCP_E2E_DEST_CLUSTER_ID=${DEST_CLUSTER_ID}"
+  echo "KCP_E2E_CLUSTER_API_KEY=testuser"
+  echo "KCP_E2E_CLUSTER_API_SECRET=testpassword"
+  echo "KCP_E2E_KCP_POD=${KCP_POD}"
+  echo "KCP_E2E_KUBE_PATH=/workspace/kubeconfig"
+  # Per-scenario resource names. Tests pick a scenario via loadEnvConfig.
+  echo "KCP_E2E_SCENARIOS=$(IFS=,; printf '%s' "${SCENARIOS[*]}")"
+  for scenario in "${SCENARIOS[@]}"; do
+    upper=$(printf '%s' "${scenario}" | tr '[:lower:]-' '[:upper:]_')
+    echo "KCP_E2E_${upper}_CLUSTER_LINK_NAME=e2e-link-${scenario}"
+    echo "KCP_E2E_${upper}_TOPIC_NAME=e2e-test-topic-${scenario}"
+    echo "KCP_E2E_${upper}_GATEWAY_NAME=migration-gateway-${scenario}"
+    echo "KCP_E2E_${upper}_FENCED_CR=/workspace/gateway-fenced-${scenario}.yaml"
+    echo "KCP_E2E_${upper}_SWITCHOVER_CR=/workspace/gateway-switchover-${scenario}.yaml"
+  done
+} > "${ENV_FILE}"
 
 echo ""
 echo "=== Setup Complete ==="
