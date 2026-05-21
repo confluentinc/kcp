@@ -54,13 +54,14 @@ var hardLimitCatalog = []hardLimit{
 			if aclCap <= 0 {
 				return false, ""
 			}
-			acls := cluster.KafkaAdminClientInformation.Acls
-			// `null` (admin scan didn't run) is distinct from `0 ACLs` — skip
-			// rather than emit a wrong verdict.
-			if acls == nil {
+			// kcp initializes Acls as a nil slice and appends, so a
+			// successful scan with 0 ACLs looks identical to "scan
+			// didn't run". aclScanRan disambiguates via topics +
+			// MSK cluster type.
+			if !aclScanRan(cluster) {
 				return false, ""
 			}
-			if count := len(acls); count > aclCap {
+			if count := len(cluster.KafkaAdminClientInformation.Acls); count > aclCap {
 				return true, fmt.Sprintf("%d ACLs > Enterprise cap %d", count, aclCap)
 			}
 			return false, ""
