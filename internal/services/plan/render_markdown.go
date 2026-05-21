@@ -37,20 +37,58 @@ func writeOpenQuestions(b *bytes.Buffer, p *types.Plan) {
 	}
 	b.WriteString("## 3. Actions Needed\n\n")
 	b.WriteString("Each item below is a concrete action that tightens the recommendation in **Sizing & Cluster Decisions**. The current recommendation stands; doing these closes a state-file or scan gap.\n\n")
-	for i, oq := range p.OpenQuestions {
-		title := oq.Title
+
+	// Group per-cluster OQs by ID so identical Body / HowToClose text
+	// renders once, with an `Affects:` line listing the cluster IDs.
+	// Plan-level OQs (no ClusterID) render as their own group with no
+	// affects line. Group order follows the first-seen position in
+	// p.OpenQuestions, which is already priority-sorted.
+	type group struct {
+		oq       types.OpenQuestion
+		clusters []string
+	}
+	groups := make([]*group, 0, len(p.OpenQuestions))
+	byKey := make(map[string]*group, len(p.OpenQuestions))
+	for _, oq := range p.OpenQuestions {
+		key := oq.ID
+		if key == "" {
+			// No ID → can't safely group; key on title + cluster instead.
+			key = oq.Title + "\x00" + oq.ClusterID
+		}
+		g, ok := byKey[key]
+		if !ok {
+			g = &group{oq: oq}
+			byKey[key] = g
+			groups = append(groups, g)
+		}
 		if oq.ClusterID != "" {
-			title = fmt.Sprintf("`%s` — %s", oq.ClusterID, title)
+			g.clusters = append(g.clusters, oq.ClusterID)
 		}
-		fmt.Fprintf(b, "%d. **%s**\n", i+1, title)
-		if oq.Body != "" {
-			fmt.Fprintf(b, "   - %s\n", oq.Body)
+	}
+
+	for i, g := range groups {
+		fmt.Fprintf(b, "%d. **%s**\n", i+1, g.oq.Title)
+		if len(g.clusters) > 0 {
+			fmt.Fprintf(b, "   - _Affects:_ %s\n", formatClusterList(g.clusters))
 		}
-		if oq.HowToClose != "" {
-			fmt.Fprintf(b, "   - _How to close:_ %s\n", oq.HowToClose)
+		if g.oq.Body != "" {
+			fmt.Fprintf(b, "   - %s\n", g.oq.Body)
+		}
+		if g.oq.HowToClose != "" {
+			fmt.Fprintf(b, "   - _How to close:_ %s\n", g.oq.HowToClose)
 		}
 	}
 	b.WriteString("\n")
+}
+
+// formatClusterList renders a list of cluster IDs as `` `a` ``, `` `b` ``,
+// `` `c` `` for inline display.
+func formatClusterList(ids []string) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = "`" + id + "`"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {

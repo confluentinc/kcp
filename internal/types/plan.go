@@ -198,11 +198,10 @@ type SizingMathDetail struct {
 type PlanInputsResolved struct {
 	Raw *PlanInputs `json:"raw,omitempty"`
 
-	SLATarget                  string  `json:"sla_target"`
-	SizingPercentile           string  `json:"sizing_percentile"`
-	HeadroomFraction           float64 `json:"headroom_fraction"`
-	PrivateLinkSafetyThreshold float64 `json:"privatelink_safety_threshold"`
-	SpikyWorkloadRatio         float64 `json:"spiky_workload_ratio"`
+	SLATarget          string  `json:"sla_target"`
+	SizingPercentile   string  `json:"sizing_percentile"`
+	HeadroomFraction   float64 `json:"headroom_fraction"`
+	SpikyWorkloadRatio float64 `json:"spiky_workload_ratio"`
 
 	// Customer-declared hard requirements. Booleans (not *bool) — defaults
 	// resolve to false, which is the safe verdict (no escalation to Dedicated).
@@ -213,4 +212,10 @@ type PlanInputsResolved struct {
 	// Target cloud + existing VPC connectivity (Dedicated-path networking).
 	TargetCloud             string `json:"target_cloud"`
 	ExistingVPCConnectivity string `json:"existing_vpc_connectivity"`
+
+	// Networking triggers that flip the AWS-Enterprise default from PNI
+	// to PrivateLink. CCEgressRequired and ProjectedPNIGatewayCount are
+	// workload properties, not state-derived.
+	CCEgressRequired         bool `json:"cc_egress_required"`
+	ProjectedPNIGatewayCount int  `json:"projected_pni_gateway_count"`
 }
