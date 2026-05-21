@@ -7,34 +7,32 @@
 #   1. This file (embedded in the KCP binary at build time)
 #   2. --config <path> CLI flag (admin override)
 #   3. plan-inputs.yaml (per-customer override of plan_input_defaults only)
-#
-# Unsourced constants (no canonical public doc) carry an inline TODO(verify):
-# comment naming the relevant rule for maintainers to re-check each release.
 
 schema_version: 1
-last_verified: 2026-05-15
-kcp_version_at_verification: 0.7.2
+last_verified: 2026-05-20
+kcp_version_at_verification: 0.8.0
 
 enterprise_caps:
-  per_eCKU_ingress_mbps: 60
-  per_eCKU_egress_mbps: 180
-  per_eCKU_partition_rate: 3000
-  privatelink_max_eCKU: 10
-  pni_max_eCKU: 32
-  acl_count_cap: 4000  # TODO(verify): — no canonical public doc; re-verify with CC product team each release.
+  # All values below are published in the Confluent Cloud cluster-types
+  # "Fixed limits and recommended guidelines" table (see `source` URL).
+  per_eCKU_ingress_mbps: 60        # cluster-types: Ingress (MBps) row, Enterprise column
+  per_eCKU_egress_mbps: 180        # cluster-types: Egress (MBps) row, Enterprise column
+  per_eCKU_partition_rate: 3000    # cluster-types: Partitions (pre-replication) row, Enterprise column = 3,000
+  privatelink_max_eCKU: 10         # cluster-types: "Enterprise clusters that use PrivateLink networking on AWS are limited to a maximum of 10 eCKU"
+  pni_max_eCKU: 32                 # cluster-types: "Enterprise clusters with a maximum of 32 eCKU on AWS... must use Private Network Interface (PNI)"
+  acl_count_cap: 4000              # cluster-types: ACLs row — Basic 1k / Standard 1k / Enterprise 4k / Dedicated 10k / Freight 10k
   source: https://docs.confluent.io/cloud/current/clusters/cluster-types.html
 
 cluster_linking:
-  source_min_kafka_version: "2.4.0"  # TODO(verify): — pin a permalink before shipping
+  source_min_kafka_version: "2.4.0"  # "Kafka 2.4.0 or later" — migration use cases footnote
   express_tier_supported: unknown    # verify per release
   source: https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/
 
 plan_input_defaults:
   sizing_percentile: p95           # alternatives: p99, max — lowercase to match Confluent dashboards
-  headroom_fraction: 0.30          # 0.0..1.0
-  privatelink_safety_threshold: 0.80  # TODO(verify): — internal heuristic; no peer-reviewed Confluent source
-  spiky_workload_ratio: 2.0        # peak / P95 ratio above which a workload is "spiky"
-  sla_floor_eCKU:
+  headroom_fraction: 0.30          # 0.0..1.0 — safety margin above the chosen percentile; overrideable via plan-inputs
+  spiky_workload_ratio: 2.0        # peak / P95 ratio above which a workload is flagged "spiky" (FYI-only signal)
+  sla_floor_eCKU:                  # Source: cluster-types.html SLA table — "Enterprise 1 (99.9% SLA), 2 (99.99% SLA)"; Dedicated SZ supports 99.95%
     "99.9":  1
     "99.95": 1
     "99.99": 2
@@ -49,3 +47,9 @@ plan_input_defaults:
   # Target cloud + existing VPC connectivity (Dedicated-path networking).
   target_cloud: aws                              # MSK is AWS-only; hidden on the MSK path
   existing_vpc_connectivity: privatelink_or_pni  # privatelink_or_pni (default) | transit_gateway | vpc_peering
+
+  # Networking triggers (PNI→PrivateLink). PNI is the AWS-Enterprise default;
+  # PrivateLink fires when one of these triggers is set, or when
+  # `target_cloud != aws`.
+  cc_egress_required: false        # CC→customer VPC egress not natively supported by PNI
+  projected_pni_gateway_count: 1   # ≥2 → flip to PrivateLink
