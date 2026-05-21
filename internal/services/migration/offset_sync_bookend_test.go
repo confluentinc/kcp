@@ -3,6 +3,9 @@ package migration
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -209,20 +212,298 @@ func TestRestoreOffsetSync_NotFlipped_NoOp(t *testing.T) {
 	assert.Equal(t, 0, rec.persist)
 }
 
+// newDiffMock builds a mock that returns a caller-supplied current state from
+// ListConfigs. Used by the diff-mode RestoreOffsetSync tests where the
+// existing newRecordingMock helper (single-value listValue) is too narrow.
+func newDiffMock(currentConfigs map[string]string, listErr, alterErr error) (*mockClusterLinkService, *callRecorder) {
+	rec := &callRecorder{}
+	mock := &mockClusterLinkService{
+		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+			rec.listConfigs++
+			if listErr != nil {
+				return nil, listErr
+			}
+			out := make(map[string]string, len(currentConfigs))
+			for k, v := range currentConfigs {
+				out[k] = v
+			}
+			return out, nil
+		},
+		alterConfigsFn: func(_ context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			rec.alterConfigs = append(rec.alterConfigs, alts...)
+			return alterErr
+		},
+	}
+	return mock, rec
+}
+
+// captureStderr swaps os.Stderr for a pipe while fn runs, returning everything
+// that fn wrote to stderr. Used by the soft-fail remediation-message tests so
+// we can assert which key names appear in the operator-facing output.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
+
+	done := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+	require.NoError(t, w.Close())
+	return <-done
+}
+
+// TestRestoreOffsetSync_HappyPath_ClearsMarker (AE1): snapshot has the toggle
+// and filters; the disable bookend set the toggle to "false" and CC's
+// side-effect cleared the filters. Restore re-applies both, in sorted order.
 func TestRestoreOffsetSync_HappyPath_ClearsMarker(t *testing.T) {
-	mock, rec := newRecordingMock(t, "", nil, nil)
+	mock, rec := newDiffMock(
+		map[string]string{"consumer.offset.sync.enable": "false"},
+		nil, nil,
+	)
+	snapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
 	cfg := &types.MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSync:        true,
 		PauseConsumerOffsetSyncFlipped: true,
 		CurrentState:                   types.StateSwitched,
+		ClusterLinkConfigs:             snapshot,
 	}
 
 	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
-	require.Len(t, rec.alterConfigs, 1)
-	assert.Equal(t, "true", rec.alterConfigs[0].Value, "restore writes value=true")
+	assert.Equal(t, 1, rec.listConfigs, "ListConfigs must run when snapshot is non-empty")
+	require.Len(t, rec.alterConfigs, 2, "must restore both filters and enable toggle")
+	// Sorted by name: consumer.offset.group.filters < consumer.offset.sync.enable
+	assert.Equal(t, "consumer.offset.group.filters", rec.alterConfigs[0].Name)
+	assert.Equal(t, `{"groups":["app-*"]}`, rec.alterConfigs[0].Value)
+	assert.Equal(t, clusterlink.OperationSet, rec.alterConfigs[0].Operation)
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[1].Name)
+	assert.Equal(t, "true", rec.alterConfigs[1].Value)
 	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped, "marker must clear after successful restore")
 	assert.Equal(t, 1, rec.persist)
+}
+
+func TestRestoreOffsetSync_HappyPath_MultipleSyncKeysRestoredSorted(t *testing.T) {
+	mock, rec := newDiffMock(
+		map[string]string{"consumer.offset.sync.enable": "false"},
+		nil, nil,
+	)
+	snapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.sync.ms":       "1000",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             snapshot,
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	require.Len(t, rec.alterConfigs, 3)
+	assert.Equal(t, "consumer.offset.group.filters", rec.alterConfigs[0].Name)
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[1].Name)
+	assert.Equal(t, "consumer.offset.sync.ms", rec.alterConfigs[2].Name)
+	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped)
+}
+
+// TestRestoreOffsetSync_PrefixScope (AE2): snapshot also carries non-prefix
+// keys (e.g. bootstrap.servers); restore must never touch them.
+func TestRestoreOffsetSync_PrefixScope_OnlyConsumerOffsetKeys(t *testing.T) {
+	mock, rec := newDiffMock(
+		map[string]string{"bootstrap.servers": "broker:9092"},
+		nil, nil,
+	)
+	snapshot := map[string]string{
+		"bootstrap.servers":           "broker:9092",
+		"consumer.offset.sync.enable": "true",
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             snapshot,
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	require.Len(t, rec.alterConfigs, 1, "only the consumer.offset.* key is restored")
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[0].Name)
+	for _, a := range rec.alterConfigs {
+		assert.NotEqual(t, "bootstrap.servers", a.Name, "non-prefix key must never appear")
+	}
+}
+
+func TestRestoreOffsetSync_EmptyDiff_NoAlterCall_ClearsMarker(t *testing.T) {
+	// Current state already matches snapshot — nothing to restore. Marker
+	// still clears (cleanup) and persist still runs.
+	mock, rec := newDiffMock(
+		map[string]string{
+			"consumer.offset.sync.enable":   "true",
+			"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+		},
+		nil, nil,
+	)
+	snapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             snapshot,
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	assert.Equal(t, 1, rec.listConfigs)
+	assert.Len(t, rec.alterConfigs, 0, "no AlterConfigs call when snapshot equals current")
+	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped, "marker still clears on empty diff")
+	assert.Equal(t, 1, rec.persist)
+}
+
+func TestRestoreOffsetSync_OperatorChangedPostDisable_Preserved(t *testing.T) {
+	// Operator deliberately set filters to a new value AFTER disable. Current
+	// has a non-empty, non-"false" value different from snapshot — treat it
+	// as a deliberate operator change and leave it alone.
+	mock, rec := newDiffMock(
+		map[string]string{
+			"consumer.offset.sync.enable":   "false",
+			"consumer.offset.group.filters": `{"groups":["operator-override-*"]}`,
+		},
+		nil, nil,
+	)
+	snapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             snapshot,
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	require.Len(t, rec.alterConfigs, 1, "only the toggle is restored; operator's filters value is preserved")
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[0].Name)
+	for _, a := range rec.alterConfigs {
+		assert.NotEqual(t, "consumer.offset.group.filters", a.Name, "operator's post-disable value must not be overwritten")
+	}
+}
+
+func TestRestoreOffsetSync_OperatorChangedPreDisable_Overwritten(t *testing.T) {
+	// Operator changed filters BEFORE disable. Snapshot has init-time value.
+	// Post-disable, filters are missing (cleared by CC side-effect). Restore
+	// re-applies the init snapshot — the operator's interim pre-disable
+	// change is intentionally overwritten. (AE4.)
+	mock, rec := newDiffMock(
+		map[string]string{"consumer.offset.sync.enable": "false"},
+		nil, nil,
+	)
+	snapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             snapshot,
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	require.Len(t, rec.alterConfigs, 2)
+	assert.Equal(t, "consumer.offset.group.filters", rec.alterConfigs[0].Name)
+	assert.Equal(t, `{"groups":["app-*"]}`, rec.alterConfigs[0].Value)
+}
+
+func TestRestoreOffsetSync_LegacyFallback_NilClusterLinkConfigs(t *testing.T) {
+	// AE3: ClusterLinkConfigs is nil → single SET, no ListConfigs.
+	mock, rec := newRecordingMock(t, "", nil, nil)
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	assert.Equal(t, 0, rec.listConfigs, "legacy fallback must not call ListConfigs")
+	require.Len(t, rec.alterConfigs, 1)
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[0].Name)
+	assert.Equal(t, "true", rec.alterConfigs[0].Value)
+	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped)
+}
+
+func TestRestoreOffsetSync_LegacyFallback_EmptyClusterLinkConfigs(t *testing.T) {
+	// Empty (non-nil) map behaves the same as nil.
+	mock, rec := newRecordingMock(t, "", nil, nil)
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             map[string]string{},
+	}
+
+	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	assert.Equal(t, 0, rec.listConfigs)
+	require.Len(t, rec.alterConfigs, 1)
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[0].Name)
+	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped)
+}
+
+func TestRestoreOffsetSync_ListConfigsFails_SoftFailKeepsMarker(t *testing.T) {
+	mock, rec := newDiffMock(nil, fmt.Errorf("network error"), nil)
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             map[string]string{"consumer.offset.sync.enable": "true"},
+	}
+
+	out := captureStderr(t, func() {
+		RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	})
+
+	assert.Equal(t, 1, rec.listConfigs, "ListConfigs was attempted")
+	assert.Len(t, rec.alterConfigs, 0, "AlterConfigs must not run when ListConfigs failed")
+	assert.True(t, cfg.PauseConsumerOffsetSyncFlipped, "marker stays true on soft-fail")
+	assert.Equal(t, 0, rec.persist, "no persist call when restore failed")
+	assert.Contains(t, out, "link-1", "remediation message names the cluster link")
+}
+
+func TestRestoreOffsetSync_AlterFailsMultiKey_RemediationNamesAllKeys(t *testing.T) {
+	// AE5 + R9: AlterConfigs returns 503 mid-batch. Remediation message lists
+	// every key the bookend attempted to restore (the implementation can't
+	// know which entries the server accepted, see clusterlink.AlterConfigs
+	// non-atomic note).
+	mock, rec := newDiffMock(
+		map[string]string{},
+		nil,
+		fmt.Errorf("503 unavailable"),
+	)
+	snapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-soft",
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             snapshot,
+	}
+
+	out := captureStderr(t, func() {
+		RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	})
+
+	require.Len(t, rec.alterConfigs, 2, "AlterConfigs attempt batched both keys")
+	assert.True(t, cfg.PauseConsumerOffsetSyncFlipped, "marker MUST stay true on soft-fail so state file knows restore is owed")
+	assert.Equal(t, 0, rec.persist)
+	assert.Contains(t, out, "consumer.offset.sync.enable", "remediation message names the toggle")
+	assert.Contains(t, out, "consumer.offset.group.filters", "remediation message names the filters key")
+	assert.Contains(t, out, "link-soft", "remediation message names the cluster link")
 }
 
 func TestRestoreOffsetSync_AlterFails_SoftFailKeepsMarker(t *testing.T) {
