@@ -1,7 +1,7 @@
 apiVersion: platform.confluent.io/v1beta1
 kind: KafkaTopic
 metadata:
-  name: e2e-test-topic
+  name: __TOPIC_NAME__
   namespace: confluent
 spec:
   replicas: 1

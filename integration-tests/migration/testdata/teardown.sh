@@ -17,5 +17,6 @@ fi
 # Clean up generated files
 rm -f "${SCRIPT_DIR}/.env"
 rm -rf "${SCRIPT_DIR}/.certs"
+rm -rf "${SCRIPT_DIR}/.rendered"
 
 echo "=== Teardown Complete ==="
