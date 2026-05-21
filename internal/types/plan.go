@@ -56,6 +56,11 @@ type SourceClusterSummary struct {
 	BrokerCount  int    `json:"broker_count"`
 	TopicCount   int    `json:"topic_count"`
 	KafkaVersion string `json:"kafka_version,omitempty"`
+	// IsServerless flags MSK Serverless source clusters. Set to true
+	// when MskClusterConfig.ClusterType == "SERVERLESS"; the renderer
+	// uses it to suppress Provisioned-only framing (broker counts,
+	// "incomplete scan" guidance) that doesn't apply to Serverless.
+	IsServerless bool `json:"is_serverless,omitempty"`
 }
 
 // ----- sizing & decisions -----
@@ -95,6 +100,14 @@ type ClusterSizing struct {
 	// the gap rather than silently asserting a sized eCKU.
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
+
+	// InputsMissing names load-bearing scan signals that weren't
+	// available when sizing was computed (e.g. `"topics"`, `"acls"`,
+	// `"brokers"`). The verdict from downstream decisions may still be
+	// solid if driven by customer-declared flags; the renderer reads
+	// this list to mark sizing as provisional rather than blanket-
+	// deferring the cluster.
+	InputsMissing []string `json:"inputs_missing,omitempty"`
 }
 
 // ClusterType represents the Confluent Cloud cluster verdict.
@@ -137,6 +150,49 @@ type ClusterTypeDecision struct {
 	// FinalCKU mirrors the sizing's FinalECKU under the Dedicated unit
 	// (Confluent Kafka Unit). Set only when Verdict == Dedicated.
 	FinalCKU *int `json:"final_cku,omitempty"`
+	// InputsMissing names load-bearing scan / plan-input signals that
+	// weren't available when this decision was computed (e.g. `"topics"`,
+	// `"acls"`). **Observational only** — set post-hoc in
+	// `PlanService.Build` after `DecideClusterType` has already run; the
+	// Verdict itself was computed against whatever inputs WERE present.
+	// Markdown reads this to flag the sizing column as provisional;
+	// JSON consumers can branch on the list.
+	InputsMissing []string `json:"inputs_missing,omitempty"`
+	// EvaluatedRules is the full audit trail for the hard-limit catalog
+	// against this cluster — every rule's outcome (fired / not_fired /
+	// skipped) with evidence. Read-only audit shape; the renderer
+	// surfaces it as a collapsed appendix.
+	EvaluatedRules []RuleEvaluation `json:"evaluated_rules,omitempty"`
+}
+
+// RuleOutcome enumerates the possible outcomes of evaluating one
+// hard-limit rule against a cluster. Persisted in the audit trail so a
+// reviewer can replay "what would the rules engine have said given
+// this state" without re-running the tool.
+//
+// The string values below ("fired" / "not_fired" / "skipped") are
+// **stable** and intended for downstream consumers to match on by
+// equality. Don't rename without a coordinated migration of consumers
+// + a plan_schema_version bump.
+type RuleOutcome string
+
+const (
+	RuleFired    RuleOutcome = "fired"     // rule fired — its evidence is recorded
+	RuleNotFired RuleOutcome = "not_fired" // rule evaluated and explicitly didn't fire
+	RuleSkipped  RuleOutcome = "skipped"   // rule was not evaluated (missing inputs)
+)
+
+// RuleEvaluation is one row of the per-cluster hard-limit audit trail.
+// Triggers (above) carries only the fired rules — this carries every
+// evaluation including not-fired and skipped, so the rendered appendix
+// can show negative evidence ("ACL cap not exceeded: 47 < 4000") and
+// skip rationales ("AclsScanned == false; rule inconclusive").
+type RuleEvaluation struct {
+	RowID       string      `json:"row_id"`
+	Description string      `json:"description"`
+	Outcome     RuleOutcome `json:"outcome"`
+	Evidence    string      `json:"evidence,omitempty"`
+	SkipReason  string      `json:"skip_reason,omitempty"`
 }
 
 type HardLimitTrigger struct {
@@ -146,7 +202,7 @@ type HardLimitTrigger struct {
 	// CustomerDeclared marks rules whose only signal is a customer-set
 	// `plan-inputs.yaml` flag. Renderer surfaces a cost callout on these
 	// so a wrong `true` doesn't quietly flip the verdict from Enterprise
-	// to Dedicated (Dedicated runs 5–10× monthly).
+	// to Dedicated (Dedicated has a higher monthly cost).
 	CustomerDeclared bool `json:"customer_declared,omitempty"`
 }
 
@@ -175,6 +231,13 @@ type NetworkingDecision struct {
 	PeakBurstECKU   int        `json:"peak_burst_ecku"`
 	PercentageOfCap float64    `json:"percentage_of_cap"`
 	Reason          string     `json:"reason"`
+	// InputsMissing — see ClusterTypeDecision.InputsMissing. Populated
+	// in lockstep so JSON consumers see the same gating signal on both
+	// decisions for an affected cluster. **JSON-consumer-only**: the
+	// markdown renderer reads the sister field on `ClusterTypeDecision`
+	// (and the same list on `ClusterSizing`) — this copy is here so
+	// downstream JSON branching doesn't need a cross-reference lookup.
+	InputsMissing []string `json:"inputs_missing,omitempty"`
 }
 
 // ----- citations & appendix -----
@@ -196,13 +259,18 @@ type SizingMathDetail struct {
 // input (nil pointers for fields they didn't set); the flat fields below
 // are the merged values PlanService computes against.
 type PlanInputsResolved struct {
+	// Raw preserves the original customer-supplied `PlanInputs`. **Note:**
+	// the flat fields below carry the *global* resolved view; per-cluster
+	// overrides (`Raw.Clusters[<name>]`) are layered on top per cluster
+	// inside `PlanService.Build` via `ResolvePlanInputsForCluster` — they
+	// are NOT applied to the values stored here. JSON consumers wanting
+	// the per-cluster view should re-run the resolver against `Raw`.
 	Raw *PlanInputs `json:"raw,omitempty"`
 
-	SLATarget                  string  `json:"sla_target"`
-	SizingPercentile           string  `json:"sizing_percentile"`
-	HeadroomFraction           float64 `json:"headroom_fraction"`
-	PrivateLinkSafetyThreshold float64 `json:"privatelink_safety_threshold"`
-	SpikyWorkloadRatio         float64 `json:"spiky_workload_ratio"`
+	SLATarget          string  `json:"sla_target"`
+	SizingPercentile   string  `json:"sizing_percentile"`
+	HeadroomFraction   float64 `json:"headroom_fraction"`
+	SpikyWorkloadRatio float64 `json:"spiky_workload_ratio"`
 
 	// Customer-declared hard requirements. Booleans (not *bool) — defaults
 	// resolve to false, which is the safe verdict (no escalation to Dedicated).
@@ -213,4 +281,10 @@ type PlanInputsResolved struct {
 	// Target cloud + existing VPC connectivity (Dedicated-path networking).
 	TargetCloud             string `json:"target_cloud"`
 	ExistingVPCConnectivity string `json:"existing_vpc_connectivity"`
+
+	// Networking triggers that flip the AWS-Enterprise default from PNI
+	// to PrivateLink. CCEgressRequired and ProjectedPNIGatewayCount are
+	// workload properties, not state-derived.
+	CCEgressRequired         bool `json:"cc_egress_required"`
+	ProjectedPNIGatewayCount int  `json:"projected_pni_gateway_count"`
 }

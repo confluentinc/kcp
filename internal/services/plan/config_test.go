@@ -21,7 +21,8 @@ func TestLoadPlanConfigEmbedded(t *testing.T) {
 	assert.Equal(t, 32, cfg.EnterpriseCaps.PNIMaxECKU)
 	assert.Equal(t, "p95", cfg.PlanInputDefaults.SizingPercentile)
 	assert.InDelta(t, 0.30, cfg.PlanInputDefaults.HeadroomFraction, 0.0001)
-	assert.InDelta(t, 0.80, cfg.PlanInputDefaults.PrivateLinkSafetyThreshold, 0.0001)
+	assert.False(t, cfg.PlanInputDefaults.CCEgressRequired)
+	assert.Equal(t, 1, cfg.PlanInputDefaults.ProjectedPNIGatewayCount)
 }
 
 func TestLoadPlanConfigOverride(t *testing.T) {
