@@ -42,8 +42,8 @@ func BrokerQueryDefinitions() []MetricQuery {
 // require the JMX exporter to whitelist kafka.connect:client-id=*,type=connect-metrics.
 func ConnectQueryDefinitions() []MetricQuery {
 	return []MetricQuery{
-		{"connector-count", "kafka_connect_worker_connector_count", "kafka_connect_worker_connector_count"},
-		{"task-count", "kafka_connect_worker_task_count", "kafka_connect_worker_task_count"},
+		{"connector-count", "sum(kafka_connect_worker_connector_count)", "kafka_connect_worker_connector_count"},
+		{"task-count", "sum(kafka_connect_worker_task_count)", "kafka_connect_worker_task_count"},
 		{"source-record-write-rate", "sum(kafka_connect_source_task_source_record_write_rate)", "kafka_connect_source_task_source_record_write_rate"},
 		{"source-record-poll-rate", "sum(kafka_connect_source_task_source_record_poll_rate)", "kafka_connect_source_task_source_record_poll_rate"},
 		{"incoming-byte-rate", "sum(kafka_connect_network_io_incoming_byte_rate)", "kafka_connect_network_io_incoming_byte_rate"},
@@ -138,8 +138,8 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 	}
 
 	if len(allMetrics) == 0 {
-		fmt.Printf("\n   ⚠️  No metrics data was collected from Prometheus. Ensure your Prometheus instance is scraping Kafka broker metrics.\n")
-		fmt.Printf("   See %sosk-configuration/metrics-collection/#prometheus-promql-queries for expected metric names.\n", build_info.DocsURL())
+		slog.Warn("No metrics data was collected from Prometheus. Ensure your Prometheus instance is scraping the expected metrics.",
+			"docs", build_info.DocsURL()+"osk-configuration/metrics-collection/#prometheus-promql-queries")
 	}
 
 	aggregates := calculateAggregates(valuesByLabel)

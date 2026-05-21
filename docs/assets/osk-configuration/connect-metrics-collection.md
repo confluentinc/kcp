@@ -67,8 +67,8 @@ JVM — no additional configuration is required beyond the Jolokia agent.
 
 | Metric                    | PromQL query                                                  |
 | ------------------------- | ------------------------------------------------------------- |
-| `connector-count`         | `kafka_connect_worker_connector_count`                        |
-| `task-count`              | `kafka_connect_worker_task_count`                             |
+| `connector-count`         | `sum(kafka_connect_worker_connector_count)`                   |
+| `task-count`              | `sum(kafka_connect_worker_task_count)`                        |
 | `source-record-write-rate`| `sum(kafka_connect_source_task_source_record_write_rate)`     |
 | `source-record-poll-rate` | `sum(kafka_connect_source_task_source_record_poll_rate)`      |
 | `incoming-byte-rate`      | `sum(kafka_connect_network_io_incoming_byte_rate)`            |
