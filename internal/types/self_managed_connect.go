@@ -53,11 +53,26 @@ func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnect
 		merged = append(merged, c)
 	}
 
-	return &SelfManagedConnectors{Connectors: merged}
+	result := &SelfManagedConnectors{Connectors: merged}
+
+	// Preserve metrics: prefer new, fall back to old
+	if newConnectors.Metrics != nil {
+		result.Metrics = newConnectors.Metrics
+	} else if oldConnectors.Metrics != nil {
+		result.Metrics = oldConnectors.Metrics
+	}
+
+	return result
 }
 
 func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
+	// Preserve existing metrics when updating connectors
+	var existingMetrics *ProcessedClusterMetrics
+	if c.SelfManagedConnectors != nil {
+		existingMetrics = c.SelfManagedConnectors.Metrics
+	}
 	c.SelfManagedConnectors = &SelfManagedConnectors{
 		Connectors: connectors,
+		Metrics:    existingMetrics,
 	}
 }
