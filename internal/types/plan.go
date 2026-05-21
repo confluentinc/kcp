@@ -56,6 +56,11 @@ type SourceClusterSummary struct {
 	BrokerCount  int    `json:"broker_count"`
 	TopicCount   int    `json:"topic_count"`
 	KafkaVersion string `json:"kafka_version,omitempty"`
+	// IsServerless flags MSK Serverless source clusters. Set to true
+	// when MskClusterConfig.ClusterType == "SERVERLESS"; the renderer
+	// uses it to suppress Provisioned-only framing (broker counts,
+	// "incomplete scan" guidance) that doesn't apply to Serverless.
+	IsServerless bool `json:"is_serverless,omitempty"`
 }
 
 // ----- sizing & decisions -----
@@ -95,6 +100,14 @@ type ClusterSizing struct {
 	// the gap rather than silently asserting a sized eCKU.
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
+
+	// ScanIncomplete is true when the source admin scan didn't populate
+	// the signals downstream decisions depend on (topics, ACLs) on a
+	// PROVISIONED cluster. The plan still emits a deterministic
+	// ClusterTypeDecision + NetworkingDecision (JSON consumers see the
+	// values), but the rendered markdown shows "deferred" instead of a
+	// confident verdict — closing the scan gap is the next action.
+	ScanIncomplete bool `json:"scan_incomplete,omitempty"`
 }
 
 // ClusterType represents the Confluent Cloud cluster verdict.
@@ -198,11 +211,10 @@ type SizingMathDetail struct {
 type PlanInputsResolved struct {
 	Raw *PlanInputs `json:"raw,omitempty"`
 
-	SLATarget                  string  `json:"sla_target"`
-	SizingPercentile           string  `json:"sizing_percentile"`
-	HeadroomFraction           float64 `json:"headroom_fraction"`
-	PrivateLinkSafetyThreshold float64 `json:"privatelink_safety_threshold"`
-	SpikyWorkloadRatio         float64 `json:"spiky_workload_ratio"`
+	SLATarget          string  `json:"sla_target"`
+	SizingPercentile   string  `json:"sizing_percentile"`
+	HeadroomFraction   float64 `json:"headroom_fraction"`
+	SpikyWorkloadRatio float64 `json:"spiky_workload_ratio"`
 
 	// Customer-declared hard requirements. Booleans (not *bool) — defaults
 	// resolve to false, which is the safe verdict (no escalation to Dedicated).
@@ -213,4 +225,10 @@ type PlanInputsResolved struct {
 	// Target cloud + existing VPC connectivity (Dedicated-path networking).
 	TargetCloud             string `json:"target_cloud"`
 	ExistingVPCConnectivity string `json:"existing_vpc_connectivity"`
+
+	// Networking triggers that flip the AWS-Enterprise default from PNI
+	// to PrivateLink. CCEgressRequired and ProjectedPNIGatewayCount are
+	// workload properties, not state-derived.
+	CCEgressRequired         bool `json:"cc_egress_required"`
+	ProjectedPNIGatewayCount int  `json:"projected_pni_gateway_count"`
 }

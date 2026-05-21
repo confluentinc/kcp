@@ -46,11 +46,10 @@ type ClusterLinking struct {
 }
 
 type PlanInputDefaults struct {
-	SizingPercentile           string         `yaml:"sizing_percentile"`
-	HeadroomFraction           float64        `yaml:"headroom_fraction"`
-	PrivateLinkSafetyThreshold float64        `yaml:"privatelink_safety_threshold"`
-	SpikyWorkloadRatio         float64        `yaml:"spiky_workload_ratio"`
-	SLAFloorECKU               map[string]int `yaml:"sla_floor_eCKU"`
+	SizingPercentile   string         `yaml:"sizing_percentile"`
+	HeadroomFraction   float64        `yaml:"headroom_fraction"`
+	SpikyWorkloadRatio float64        `yaml:"spiky_workload_ratio"`
+	SLAFloorECKU       map[string]int `yaml:"sla_floor_eCKU"`
 
 	// Customer-declared hard requirements (all default false).
 	EnforceSchemasAtTheBroker            bool `yaml:"enforce_schemas_at_the_broker"`
@@ -60,6 +59,10 @@ type PlanInputDefaults struct {
 	// Target cloud + existing VPC connectivity (Dedicated-path networking).
 	TargetCloud             string `yaml:"target_cloud"`
 	ExistingVPCConnectivity string `yaml:"existing_vpc_connectivity"`
+
+	// Networking triggers (PNI→PrivateLink) — see PlanInputsResolved.
+	CCEgressRequired         bool `yaml:"cc_egress_required"`
+	ProjectedPNIGatewayCount int  `yaml:"projected_pni_gateway_count"`
 }
 
 // LoadPlanConfig returns the embedded plan-config.yaml, optionally
@@ -113,11 +116,11 @@ func (c *PlanConfig) Validate() error {
 	if defaults.HeadroomFraction < 0 || defaults.HeadroomFraction > 1 {
 		return fmt.Errorf("plan-config plan_input_defaults.headroom_fraction must be in [0, 1] (got %v)", defaults.HeadroomFraction)
 	}
-	if defaults.PrivateLinkSafetyThreshold <= 0 || defaults.PrivateLinkSafetyThreshold > 1 {
-		return fmt.Errorf("plan-config plan_input_defaults.privatelink_safety_threshold must be in (0, 1] (got %v)", defaults.PrivateLinkSafetyThreshold)
-	}
 	if defaults.SpikyWorkloadRatio <= 1 {
 		return fmt.Errorf("plan-config plan_input_defaults.spiky_workload_ratio must be > 1 (got %v) — a spike must be larger than the baseline", defaults.SpikyWorkloadRatio)
+	}
+	if defaults.ProjectedPNIGatewayCount < 1 {
+		return fmt.Errorf("plan-config plan_input_defaults.projected_pni_gateway_count must be >= 1 (got %v)", defaults.ProjectedPNIGatewayCount)
 	}
 	return nil
 }

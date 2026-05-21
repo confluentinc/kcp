@@ -40,7 +40,6 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		Raw:                                  in,
 		SizingPercentile:                     defaults.SizingPercentile,
 		HeadroomFraction:                     defaults.HeadroomFraction,
-		PrivateLinkSafetyThreshold:           defaults.PrivateLinkSafetyThreshold,
 		SpikyWorkloadRatio:                   defaults.SpikyWorkloadRatio,
 		SLATarget:                            defaultSLATarget,
 		EnforceSchemasAtTheBroker:            defaults.EnforceSchemasAtTheBroker,
@@ -48,6 +47,8 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		Requires9995SLAWithinSingleZone:      defaults.Requires9995SLAWithinSingleZone,
 		TargetCloud:                          defaults.TargetCloud,
 		ExistingVPCConnectivity:              defaults.ExistingVPCConnectivity,
+		CCEgressRequired:                     defaults.CCEgressRequired,
+		ProjectedPNIGatewayCount:             defaults.ProjectedPNIGatewayCount,
 	}
 	if in == nil {
 		return out
@@ -60,9 +61,6 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.HeadroomFraction != nil {
 		out.HeadroomFraction = *in.HeadroomFraction
-	}
-	if in.PrivateLinkSafetyThreshold != nil {
-		out.PrivateLinkSafetyThreshold = *in.PrivateLinkSafetyThreshold
 	}
 	if in.SpikyWorkloadRatio != nil {
 		out.SpikyWorkloadRatio = *in.SpikyWorkloadRatio
@@ -81,6 +79,12 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.ExistingVPCConnectivity != nil {
 		out.ExistingVPCConnectivity = *in.ExistingVPCConnectivity
+	}
+	if in.CCEgressRequired != nil {
+		out.CCEgressRequired = *in.CCEgressRequired
+	}
+	if in.ProjectedPNIGatewayCount != nil {
+		out.ProjectedPNIGatewayCount = *in.ProjectedPNIGatewayCount
 	}
 	return out
 }
