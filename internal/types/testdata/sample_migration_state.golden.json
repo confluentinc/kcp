@@ -1,0 +1,57 @@
+{
+  "migrations": [
+    {
+      "migration_id": "mig-001",
+      "current_state": "initialized",
+      "kube_config_path": "/home/kcp/.kube/config",
+      "source_bootstrap": "source-broker:9092",
+      "cluster_bootstrap": "dest-broker:9092",
+      "cluster_id": "lkc-abc123",
+      "cluster_rest_endpoint": "https://pkc.cloud:443",
+      "cluster_link_name": "link-001",
+      "topics": [
+        "orders",
+        "payments"
+      ],
+      "cluster_link_topics": [
+        "orders",
+        "payments"
+      ],
+      "cluster_link_configs": {
+        "acl.sync.enable": "true",
+        "consumer.offset.sync.enable": "true"
+      },
+      "initial_cr_name": "gw-cr-001",
+      "k8s_namespace": "confluent",
+      "initial_cr_yaml": "YXBpVmVyc2lvbjogdjEKa2luZDogR2F0ZXdheQ==",
+      "fenced_cr_yaml": "YXBpVmVyc2lvbjogdjEKZmVuY2VkOiB0cnVl",
+      "switchover_cr_yaml": "YXBpVmVyc2lvbjogdjEKc3dpdGNob3ZlcjogdHJ1ZQ=="
+    },
+    {
+      "migration_id": "mig-002",
+      "current_state": "fenced",
+      "kube_config_path": "",
+      "source_bootstrap": "source-2:9092",
+      "cluster_bootstrap": "dest-2:9092",
+      "cluster_id": "lkc-def456",
+      "cluster_rest_endpoint": "",
+      "cluster_link_name": "link-002",
+      "topics": [
+        "events"
+      ],
+      "cluster_link_topics": null,
+      "cluster_link_configs": null,
+      "initial_cr_name": "",
+      "k8s_namespace": "",
+      "initial_cr_yaml": null,
+      "fenced_cr_yaml": null,
+      "switchover_cr_yaml": null
+    }
+  ],
+  "kcp_build_info": {
+    "version": "test-0.0.0",
+    "commit": "deadbeef",
+    "date": "2025-01-15"
+  },
+  "timestamp": "2025-01-15T12:00:00Z"
+}
