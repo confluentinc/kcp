@@ -113,9 +113,41 @@ func (s *MigrationWorkflow) Initialize(
 		return fmt.Errorf("failed to list cluster link configs: %w", err)
 	}
 
+	// If the operator opted into pausing consumer offset sync during execute,
+	// validate the precondition: the cluster link must currently have
+	// consumer.offset.sync.enable=true. Refuse fail-fast if the key is missing
+	// or set to anything other than "true".
+	//
+	// Skip the check when PauseConsumerOffsetSyncFlipped is already true: kcp
+	// itself set the value to "false" via DisableOffsetSync, so seeing "false"
+	// here is the expected mid-flight state, not drift. This matters when init
+	// ran with --skip-validate (no init-time precondition) and the first
+	// execute reaches Initialize via the FSM after the bookend has already run.
+	if config.PauseConsumerOffsetSync && !config.PauseConsumerOffsetSyncFlipped {
+		observed, present := configs[offsetSyncEnableKey]
+		switch {
+		case !present:
+			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
+		case observed != "true":
+			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
+		}
+		fmt.Printf("   %s Cluster link %s=true (pause-on-execute intent recorded)\n", color.GreenString("✔"), offsetSyncEnableKey)
+	}
+
 	// Update config with discovered data
 	config.ClusterLinkTopics = clusterLinkTopics
-	config.ClusterLinkConfigs = configs
+
+	// Defensive guard: never overwrite the pre-disable snapshot once the
+	// bookend has flipped consumer.offset.sync.enable=false. If Initialize
+	// were ever called after DisableOffsetSync ran (today blocked at the CLI
+	// by --skip-validate / --pause-consumer-offset-sync mutual exclusion in
+	// cmd/migration/init), `configs` would reflect the post-disable live
+	// state and clobber the snapshot RestoreOffsetSync needs to diff against
+	// — silently leaving the cluster link disabled. Keep the existing
+	// snapshot in that case.
+	if !config.PauseConsumerOffsetSyncFlipped {
+		config.ClusterLinkConfigs = configs
+	}
 
 	slog.Debug("migration initialized successfully")
 	return nil

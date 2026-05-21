@@ -175,8 +175,157 @@ type migrationState struct {
 }
 
 type migrationConfig struct {
-	MigrationID  string `json:"migration_id"`
-	CurrentState string `json:"current_state"`
+	MigrationID                    string            `json:"migration_id"`
+	CurrentState                   string            `json:"current_state"`
+	PauseConsumerOffsetSync        bool              `json:"pause_consumer_offset_sync"`
+	PauseConsumerOffsetSyncFlipped bool              `json:"pause_consumer_offset_sync_flipped"`
+	ClusterLinkConfigs             map[string]string `json:"cluster_link_configs"`
+}
+
+// runInPodBackground starts a command inside the runner pod and returns
+// immediately. The caller is responsible for terminating it via killInPod or
+// waiting for the configured duration to elapse. Output is captured into
+// /workspace/<basename>.log inside the pod for post-mortem inspection.
+func runInPodBackground(t *testing.T, cfg envConfig, logName string, command ...string) {
+	t.Helper()
+
+	cmdline := strings.Join(command, " ")
+	bgScript := fmt.Sprintf("(%s >/workspace/%s.log 2>&1 &)", cmdline, logName)
+
+	out, err := runInPod(t, cfg, 30*time.Second, "sh", "-c", bgScript)
+	if err != nil {
+		t.Fatalf("failed to start background command %q: %v\n%s", cmdline, err, out)
+	}
+}
+
+// killInPod terminates a process by name inside the runner pod. Ignored if the
+// process is not running (the test may have already let it exit naturally).
+func killInPod(t *testing.T, cfg envConfig, processName string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "kubectl",
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"exec", cfg.KCPPod, "--",
+		"pkill", "-f", processName,
+	).Run()
+}
+
+// runInPod executes a command synchronously inside the runner pod and returns
+// combined stdout/stderr plus any error.
+func runInPod(t *testing.T, cfg envConfig, timeout time.Duration, command ...string) (string, error) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	args := []string{
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"exec", cfg.KCPPod, "--",
+	}
+	args = append(args, command...)
+
+	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	return string(out), err
+}
+
+// setClusterLinkConfig calls the in-pod setconfig helper to PUT a config
+// value on the cluster link. Used by InitRefuses to flip the offset-sync
+// setting without depending on curl (busybox wget cannot do PUT).
+func setClusterLinkConfig(t *testing.T, cfg envConfig, name, value string) {
+	t.Helper()
+	out, err := runInPod(t, cfg, 30*time.Second,
+		"/workspace/setconfig",
+		"--url", cfg.RestProxyEndpoint,
+		"--cluster", cfg.DestClusterID,
+		"--link", cfg.ClusterLinkName,
+		"--name", name,
+		"--value", value,
+		"--op", "SET",
+	)
+	require.NoError(t, err, "setconfig %s=%s failed:\n%s", name, value, out)
+}
+
+// envIsFreshForMigration returns true if the cluster link still has ACTIVE
+// mirror topics — i.e., no prior migration has promoted them. The migration
+// e2e env is single-shot: setup.sh creates one fresh cluster link, and after
+// a successful execute the topics are PROMOTED/STOPPED. Tests that perform
+// a full migration call this and t.Skip on false to give a clear error to
+// the next reader.
+func envIsFreshForMigration(t *testing.T, cfg envConfig) bool {
+	t.Helper()
+	mirrorsURL := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/mirrors",
+		cfg.RestProxyEndpoint, cfg.DestClusterID, cfg.ClusterLinkName)
+	out, err := runInPod(t, cfg, 30*time.Second, "wget", "-qO-", mirrorsURL)
+	if err != nil {
+		t.Logf("envIsFreshForMigration: failed to list mirrors (%v) — treating as not fresh", err)
+		return false
+	}
+	return strings.Contains(out, `"mirror_status":"ACTIVE"`)
+}
+
+// getClusterLinkOffsetSyncEnable fetches the cluster link's
+// consumer.offset.sync.enable value via the Kafka REST proxy reachable from
+// inside the cluster. Returns the literal string ("true", "false", or "" if
+// the key is missing). Used by tests to observe transitions during execute.
+func getClusterLinkOffsetSyncEnable(t *testing.T, cfg envConfig) string {
+	t.Helper()
+	return getClusterLinkConfig(t, cfg, "consumer.offset.sync.enable")
+}
+
+// getClusterLinkOffsetSyncEnableSoft is the goroutine-safe variant: it
+// returns (value, error) instead of calling require on a *testing.T. Use
+// this inside background goroutines — Go's testing package documents
+// FailNow/require as unsafe outside the test goroutine.
+func getClusterLinkOffsetSyncEnableSoft(cfg envConfig) (string, error) {
+	return getClusterLinkConfigSoft(cfg, "consumer.offset.sync.enable")
+}
+
+// getClusterLinkConfig is the generic variant: returns the value for any
+// config key on the cluster link, or "" if missing.
+func getClusterLinkConfig(t *testing.T, cfg envConfig, name string) string {
+	t.Helper()
+	v, err := getClusterLinkConfigSoft(cfg, name)
+	require.NoError(t, err)
+	return v
+}
+
+// getClusterLinkConfigSoft is the goroutine-safe generic variant. Returns
+// (value, error) so callers can use it inside background goroutines without
+// tripping the testing package's FailNow-from-goroutine rule.
+func getClusterLinkConfigSoft(cfg envConfig, name string) (string, error) {
+	configURL := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/configs", cfg.RestProxyEndpoint, cfg.DestClusterID, cfg.ClusterLinkName)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	args := []string{
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"exec", cfg.KCPPod, "--",
+		"wget", "-qO-", configURL,
+	}
+	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("wget cluster link configs: %s: %w", out, err)
+	}
+
+	var resp struct {
+		Data []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", fmt.Errorf("unmarshalling configs response: %s: %w", out, err)
+	}
+	for _, c := range resp.Data {
+		if c.Name == name {
+			return c.Value, nil
+		}
+	}
+	return "", nil
 }
 
 func readMigrationState(t *testing.T, cfg envConfig, podPath string) migrationState {
@@ -188,6 +337,51 @@ func readMigrationState(t *testing.T, cfg envConfig, podPath string) migrationSt
 	require.NoError(t, json.Unmarshal(data, &state))
 
 	return state
+}
+
+// Constants used by the producer/consumer subtests.
+const (
+	e2eProducerLog    = "producer"
+	e2eConsumerLog    = "consumer"
+	e2eTestTopic      = "e2e-test-topic"
+	e2eConsumerGroup  = "kcp-e2e-consumer-group"
+	e2eProducerBinary = "/workspace/producer"
+	e2eConsumerBinary = "/workspace/consumer"
+)
+
+// startConsumerOnSource runs the consumer binary inside the pod to drain a
+// few messages from the source cluster and commit offsets. Blocks until the
+// consumer exits.
+func startConsumerOnSource(t *testing.T, cfg envConfig, maxMessages int) {
+	t.Helper()
+	out, err := runInPod(t, cfg, 2*time.Minute,
+		e2eConsumerBinary,
+		"--bootstrap", cfg.SourceBootstrap,
+		"--topic", e2eTestTopic,
+		"--group", e2eConsumerGroup,
+		"--max-messages", fmt.Sprintf("%d", maxMessages),
+		"--timeout", "90s",
+	)
+	require.NoError(t, err, "consumer run failed:\n%s", out)
+	t.Logf("consumer output:\n%s", out)
+}
+
+// startProducerOnSource starts the producer in the background. Caller must
+// invoke stopProducer to terminate it.
+func startProducerOnSource(t *testing.T, cfg envConfig, duration time.Duration) {
+	t.Helper()
+	runInPodBackground(t, cfg, e2eProducerLog,
+		e2eProducerBinary,
+		"--bootstrap", cfg.SourceBootstrap,
+		"--topic", e2eTestTopic,
+		"--duration", duration.String(),
+		"--rate", "10",
+	)
+}
+
+func stopProducer(t *testing.T, cfg envConfig) {
+	t.Helper()
+	killInPod(t, cfg, e2eProducerBinary)
 }
 
 func TestMigrationE2E(t *testing.T) {
@@ -212,6 +406,25 @@ func TestMigrationE2E(t *testing.T) {
 	// Record Gateway pod UIDs before migration
 	podUIDsBefore := getGatewayPodUIDs(t, clientset, cfg.Namespace, cfg.GatewayName)
 	t.Logf("Gateway pods before migration: %d pods", len(podUIDsBefore))
+
+	// --- Step 0: prime source with baseline producer + consumer offsets ---
+	// The consumer commits offsets on the source pre-migration. With the
+	// default migration flow (no --pause-consumer-offset-sync flag), the
+	// cluster link will mirror these committed offsets to the destination.
+	t.Run("seed_baseline_producer", func(t *testing.T) {
+		// 10 quick records to give the consumer something to commit on.
+		startProducerOnSource(t, cfg, 10*time.Second)
+		// Let the producer get ahead of the consumer.
+		time.Sleep(2 * time.Second)
+	})
+
+	t.Run("baseline_consumer_commits_offsets", func(t *testing.T) {
+		startConsumerOnSource(t, cfg, 20)
+	})
+
+	t.Run("stop_baseline_producer", func(t *testing.T) {
+		stopProducer(t, cfg)
+	})
 
 	// --- Step 1: kcp migration init ---
 	t.Run("init", func(t *testing.T) {
@@ -250,7 +463,16 @@ func TestMigrationE2E(t *testing.T) {
 		t.FailNow()
 	}
 
-	// --- Step 2: kcp migration execute ---
+	// --- Step 2: producer keeps writing during execute ---
+	t.Run("start_producer_during_execute", func(t *testing.T) {
+		startProducerOnSource(t, cfg, 5*time.Minute)
+		// Give producer a moment to push records before kcp inspects lags.
+		time.Sleep(2 * time.Second)
+	})
+
+	t.Cleanup(func() { stopProducer(t, cfg) })
+
+	// --- Step 3: kcp migration execute ---
 	t.Run("execute", func(t *testing.T) {
 		// Get migration ID from state file
 		state := readMigrationState(t, cfg, stateFile)
@@ -333,5 +555,362 @@ func TestMigrationE2E(t *testing.T) {
 			}
 		}
 		assert.False(t, allSame, "expected Gateway pods to have rolled out (new UIDs)")
+	})
+
+	// --- Step 5: Regression for R18 — without the flag, kcp must not have
+	// touched the cluster link's consumer.offset.sync.enable config.
+	t.Run("offset_sync_unchanged", func(t *testing.T) {
+		value := getClusterLinkOffsetSyncEnable(t, cfg)
+		assert.Equal(t, "true", value, "without --pause-consumer-offset-sync, the cluster link config must remain true throughout the migration")
+	})
+}
+
+// TestMigrationE2E_PauseOffsetSync_HappyPath exercises the full
+// --pause-consumer-offset-sync flow: init records intent, execute disables
+// the config before the FSM, runs the migration, then restores the config
+// after switchover. Asserts the true → false → true transition is
+// observable via ListConfigs polling.
+//
+// Note on env constraints: a full migration can only run once per
+// setup.sh/teardown.sh cycle (mirror topics get promoted and the gateway
+// switches). If TestMigrationE2E ran first in the same `make test-migration`
+// invocation, this test will skip cleanly. Run standalone after a fresh
+// setup with:
+//
+//	go test -tags=e2e -run TestMigrationE2E_PauseOffsetSync_HappyPath$ ./integration-tests/migration/...
+func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
+	cfg := loadEnvConfig(t)
+
+	if !envIsFreshForMigration(t, cfg) {
+		t.Skip("env is not fresh — cluster link has no ACTIVE mirror topics (a prior migration already ran). Re-run setup.sh and use -run to target this test directly.")
+	}
+
+	stateFile := "/workspace/migration-state-pause.json"
+
+	// Make sure no leftover producer is running from a prior test.
+	stopProducer(t, cfg)
+
+	// Sanity check: cluster link starts with enable=true.
+	startValue := getClusterLinkOffsetSyncEnable(t, cfg)
+	require.Equal(t, "true", startValue, "fixture must start with consumer.offset.sync.enable=true")
+
+	// Pre-existing consumer commits on the source so we have a non-zero
+	// committed offset that would, in the default flow, be mirrored to dest.
+	t.Run("seed_baseline", func(t *testing.T) {
+		startProducerOnSource(t, cfg, 10*time.Second)
+		time.Sleep(2 * time.Second)
+		startConsumerOnSource(t, cfg, 20)
+		stopProducer(t, cfg)
+	})
+
+	// --- Step 1: init with the flag ---
+	t.Run("init_with_flag", func(t *testing.T) {
+		initArgs := []string{
+			"migration", "init",
+			"--source-bootstrap", cfg.SourceBootstrap,
+			"--cluster-bootstrap", cfg.DestBootstrap,
+			"--cluster-id", cfg.DestClusterID,
+			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
+			"--cluster-link-name", cfg.ClusterLinkName,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--k8s-namespace", cfg.Namespace,
+			"--initial-cr-name", cfg.GatewayName,
+			"--fenced-cr-yaml", cfg.FencedCR,
+			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"--migration-state-file", stateFile,
+			"--use-unauthenticated-plaintext",
+			"--kube-path", cfg.KubePath,
+			"--insecure-skip-tls-verify",
+			"--pause-consumer-offset-sync",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, initArgs...)
+		t.Logf("init stdout:\n%s", stdout)
+		t.Logf("init stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration init failed")
+
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist")
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must NOT be flipped at init time")
+	})
+
+	// After init the config should STILL be true — init only records intent.
+	t.Run("config_still_true_after_init", func(t *testing.T) {
+		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg))
+	})
+
+	// --- Step 2: producer running during execute ---
+	t.Run("start_producer", func(t *testing.T) {
+		startProducerOnSource(t, cfg, 5*time.Minute)
+		time.Sleep(2 * time.Second)
+	})
+	t.Cleanup(func() { stopProducer(t, cfg) })
+
+	// Best-effort polling of the live cluster-link config alongside execute.
+	// This is purely advisory: it produces a log line showing the observed
+	// true→false→true sequence when timing permits, but a fast FSM run may
+	// not catch the disabled window. The deterministic check is on the
+	// bookend's stdout lines (asserted below). The goroutine uses the Soft
+	// variant because require.NoError on the parent *testing.T is unsafe
+	// from a non-test goroutine — transient wget/JSON errors are swallowed
+	// locally instead of crashing the test.
+	configObservations := make(chan string, 100)
+	pollCtx, cancelPoll := context.WithCancel(context.Background())
+	pollDone := make(chan struct{})
+	go func() {
+		defer close(pollDone)
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pollCtx.Done():
+				return
+			case <-ticker.C:
+				v, err := getClusterLinkOffsetSyncEnableSoft(cfg)
+				if err != nil {
+					continue
+				}
+				select {
+				case configObservations <- v:
+				default:
+				}
+			}
+		}
+	}()
+
+	var executeStdout string
+	t.Run("execute_with_flag", func(t *testing.T) {
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		migrationID := state.Migrations[0].MigrationID
+
+		executeArgs := []string{
+			"migration", "execute",
+			"--migration-id", migrationID,
+			"--migration-state-file", stateFile,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--lag-threshold", "0",
+			"--use-unauthenticated-plaintext",
+			"--insecure-skip-tls-verify",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		executeStdout = stdout
+		t.Logf("execute stdout:\n%s", stdout)
+		t.Logf("execute stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration execute failed")
+
+		state = readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must clear after successful restore")
+	})
+
+	cancelPoll()
+	<-pollDone
+
+	// Log the observed sequence (advisory only — see comment on the poller).
+	close(configObservations)
+	seen := []string{}
+	for v := range configObservations {
+		if len(seen) == 0 || seen[len(seen)-1] != v {
+			seen = append(seen, v)
+		}
+	}
+	t.Logf("observed cluster-link config sequence during execute (advisory): %v", seen)
+
+	// --- Step 3: deterministic assertions ---
+	t.Run("bookend_ran_and_final_state_restored", func(t *testing.T) {
+		// The bookend prints these lines unconditionally when it runs. They
+		// are durable evidence that the disable→restore cycle executed,
+		// without depending on poll timing landing inside the FSM window.
+		assert.Contains(t, executeStdout, "Pausing consumer.offset.sync",
+			"execute stdout must show the disable bookend ran")
+		assert.Contains(t, executeStdout, "Restoring consumer.offset.sync",
+			"execute stdout must show the restore bookend ran")
+
+		// And the live cluster link must be back to enable=true.
+		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
+			"final state must be restored to true")
+	})
+}
+
+// TestMigrationE2E_PauseOffsetSync_InitRefuses verifies that when the
+// cluster link's consumer.offset.sync.enable is NOT "true", init with the
+// flag exits non-zero with a useful message.
+//
+// The cluster link config is flipped to "false" before the test runs and
+// restored in cleanup so subsequent tests are not affected. Init's
+// mirror-topic validation requires ACTIVE mirrors, so this test also
+// skips if a prior migration already ran in the same setup cycle.
+func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
+	cfg := loadEnvConfig(t)
+
+	if !envIsFreshForMigration(t, cfg) {
+		t.Skip("env is not fresh — cluster link has no ACTIVE mirror topics. Re-run setup.sh and use -run to target this test directly.")
+	}
+
+	setClusterLinkConfig(t, cfg, "consumer.offset.sync.enable", "false")
+	t.Cleanup(func() {
+		setClusterLinkConfig(t, cfg, "consumer.offset.sync.enable", "true")
+	})
+
+	// Best-effort wait for the config to propagate.
+	for i := 0; i < 10; i++ {
+		if getClusterLinkOffsetSyncEnable(t, cfg) == "false" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	require.Equal(t, "false", getClusterLinkOffsetSyncEnable(t, cfg), "fixture must be flipped to false before this test runs")
+
+	stateFile := "/workspace/migration-state-refuse.json"
+
+	initArgs := []string{
+		"migration", "init",
+		"--source-bootstrap", cfg.SourceBootstrap,
+		"--cluster-bootstrap", cfg.DestBootstrap,
+		"--cluster-id", cfg.DestClusterID,
+		"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
+		"--cluster-link-name", cfg.ClusterLinkName,
+		"--cluster-api-key", cfg.ClusterAPIKey,
+		"--cluster-api-secret", cfg.ClusterAPISecret,
+		"--k8s-namespace", cfg.Namespace,
+		"--initial-cr-name", cfg.GatewayName,
+		"--fenced-cr-yaml", cfg.FencedCR,
+		"--switchover-cr-yaml", cfg.SwitchoverCR,
+		"--migration-state-file", stateFile,
+		"--use-unauthenticated-plaintext",
+		"--kube-path", cfg.KubePath,
+		"--insecure-skip-tls-verify",
+		"--pause-consumer-offset-sync",
+	}
+
+	stdout, stderr, err := runKCP(t, cfg, initArgs...)
+	t.Logf("init stdout:\n%s", stdout)
+	t.Logf("init stderr:\n%s", stderr)
+	require.Error(t, err, "init must fail when cluster link offset sync is not true")
+	combined := stdout + stderr
+	assert.Contains(t, combined, cfg.ClusterLinkName, "error must name the cluster link")
+	assert.Contains(t, combined, "consumer.offset.sync.enable", "error must name the config key")
+}
+
+// TestMigrationE2E_PauseOffsetSync_RestoresFilters verifies that a
+// consumer.offset.group.filters value configured on the cluster link before
+// init is preserved across the --pause-consumer-offset-sync round-trip.
+//
+// The bookend exists because setting consumer.offset.sync.enable=false on a
+// cluster link clears consumer.offset.group.filters as a side effect on both
+// Confluent Cloud and Confluent Platform. The disable bookend triggers that
+// clearing; the restore bookend re-applies filters from the init-time
+// snapshot. This test exercises that round-trip end-to-end.
+//
+// Single-shot env: the cluster link is one-time, so this test t.Skips when
+// envIsFreshForMigration is false. Re-run setup.sh and target this test
+// directly with:
+//
+//	go test -tags=e2e -run TestMigrationE2E_PauseOffsetSync_RestoresFilters$ ./integration-tests/migration/...
+func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
+	cfg := loadEnvConfig(t)
+
+	if !envIsFreshForMigration(t, cfg) {
+		t.Skip("env is not fresh — cluster link has no ACTIVE mirror topics (a prior migration already ran). Re-run setup.sh and use -run to target this test directly.")
+	}
+
+	stateFile := "/workspace/migration-state-filters.json"
+	stopProducer(t, cfg)
+
+	const filtersKey = "consumer.offset.group.filters"
+	const filtersValue = `{"groupFilters":[{"name":"e2e-*","patternType":"PREFIXED","filterType":"INCLUDE"}]}`
+
+	// Pre-populate filters on the cluster link before init so the snapshot
+	// captures the value. setClusterLinkConfig fails the test if the CP REST
+	// API rejects the PUT (e.g. malformed JSON or unsupported key on this CP
+	// version) — a clear signal that the fixture or CP version needs
+	// adjustment.
+	setClusterLinkConfig(t, cfg, filtersKey, filtersValue)
+
+	// Sanity checks: fixture matches expectations before init runs.
+	require.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg), "fixture must start with consumer.offset.sync.enable=true")
+	require.Equal(t, filtersValue, getClusterLinkConfig(t, cfg, filtersKey), "fixture must have filters set before init")
+
+	// --- Step 1: init with the flag ---
+	t.Run("init_captures_filters_snapshot", func(t *testing.T) {
+		initArgs := []string{
+			"migration", "init",
+			"--source-bootstrap", cfg.SourceBootstrap,
+			"--cluster-bootstrap", cfg.DestBootstrap,
+			"--cluster-id", cfg.DestClusterID,
+			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
+			"--cluster-link-name", cfg.ClusterLinkName,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--k8s-namespace", cfg.Namespace,
+			"--initial-cr-name", cfg.GatewayName,
+			"--fenced-cr-yaml", cfg.FencedCR,
+			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"--migration-state-file", stateFile,
+			"--use-unauthenticated-plaintext",
+			"--kube-path", cfg.KubePath,
+			"--insecure-skip-tls-verify",
+			"--pause-consumer-offset-sync",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, initArgs...)
+		t.Logf("init stdout:\n%s", stdout)
+		t.Logf("init stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration init failed")
+
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist")
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must NOT be flipped at init time")
+		assert.Equal(t, filtersValue, state.Migrations[0].ClusterLinkConfigs[filtersKey],
+			"init must capture filters value in the ClusterLinkConfigs snapshot — restore reads from this")
+	})
+
+	// --- Step 2: producer running during execute ---
+	t.Run("start_producer", func(t *testing.T) {
+		startProducerOnSource(t, cfg, 5*time.Minute)
+		time.Sleep(2 * time.Second)
+	})
+	t.Cleanup(func() { stopProducer(t, cfg) })
+
+	// --- Step 3: execute ---
+	t.Run("execute_with_flag", func(t *testing.T) {
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		migrationID := state.Migrations[0].MigrationID
+
+		executeArgs := []string{
+			"migration", "execute",
+			"--migration-id", migrationID,
+			"--migration-state-file", stateFile,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--lag-threshold", "0",
+			"--use-unauthenticated-plaintext",
+			"--insecure-skip-tls-verify",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		t.Logf("execute stdout:\n%s", stdout)
+		t.Logf("execute stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration execute failed")
+
+		state = readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must clear after successful restore")
+	})
+
+	// --- Step 4: post-migration parity ---
+	t.Run("filters_match_init_snapshot", func(t *testing.T) {
+		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg), "toggle must be restored to true")
+		assert.Equal(t, filtersValue, getClusterLinkConfig(t, cfg, filtersKey),
+			"%s must match the value set before init — this is the restore bookend's primary contract", filtersKey)
 	})
 }

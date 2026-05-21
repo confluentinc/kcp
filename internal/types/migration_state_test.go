@@ -178,3 +178,94 @@ func TestNewMigrationStateFromFile_FileNotFound(t *testing.T) {
 	require.Error(t, err, "expected error for non-existent file")
 	assert.Nil(t, result, "expected nil result for non-existent file")
 }
+
+// TestMigrationConfig_PauseConsumerOffsetSync_RoundTrip verifies that both new
+// fields persist through Write+Read with their explicit values preserved.
+func TestMigrationConfig_PauseConsumerOffsetSync_RoundTrip(t *testing.T) {
+	state := NewMigrationState()
+	state.Migrations = []MigrationConfig{
+		{
+			MigrationId:                    "mig-pause-001",
+			CurrentState:                   "initialized",
+			ClusterLinkConfigs:             map[string]string{"consumer.offset.sync.enable": "true"},
+			PauseConsumerOffsetSync:        true,
+			PauseConsumerOffsetSyncFlipped: false,
+		},
+	}
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "migration-state.json")
+
+	require.NoError(t, state.WriteToFile(filePath), "WriteToFile failed")
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err, "NewMigrationStateFromFile failed")
+	require.Len(t, loaded.Migrations, 1)
+
+	assert.True(t, loaded.Migrations[0].PauseConsumerOffsetSync, "PauseConsumerOffsetSync should round-trip as true")
+	assert.False(t, loaded.Migrations[0].PauseConsumerOffsetSyncFlipped, "PauseConsumerOffsetSyncFlipped should round-trip as false")
+}
+
+// TestMigrationConfig_PauseConsumerOffsetSync_BackwardCompat verifies that
+// migration-state files written before this feature land deserialize cleanly
+// with both new fields defaulting to false (the no-op behavior).
+func TestMigrationConfig_PauseConsumerOffsetSync_BackwardCompat(t *testing.T) {
+	// JSON shaped exactly like a pre-feature state file: no pause_* keys at all.
+	legacyJSON := `{
+  "migrations": [
+    {
+      "migration_id": "mig-legacy-001",
+      "current_state": "initialized",
+      "kube_config_path": "/home/user/.kube/config",
+      "source_bootstrap": "source-broker:9092",
+      "cluster_bootstrap": "dest-broker:9092",
+      "cluster_id": "lkc-legacy",
+      "cluster_rest_endpoint": "https://pkc.us-east-1.aws.confluent.cloud:443",
+      "cluster_link_name": "legacy-link",
+      "topics": ["orders"],
+      "cluster_link_topics": ["orders"],
+      "cluster_link_configs": {"consumer.offset.sync.enable": "true"},
+      "initial_cr_name": "gw-cr",
+      "k8s_namespace": "confluent"
+    }
+  ],
+  "kcp_build_info": {"version": "", "commit": "", "date": ""},
+  "timestamp": "2026-01-01T00:00:00Z"
+}`
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "legacy-state.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(legacyJSON), 0644))
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err, "loading pre-feature state file must succeed")
+	require.Len(t, loaded.Migrations, 1)
+
+	assert.False(t, loaded.Migrations[0].PauseConsumerOffsetSync, "PauseConsumerOffsetSync should default to false for legacy state files")
+	assert.False(t, loaded.Migrations[0].PauseConsumerOffsetSyncFlipped, "PauseConsumerOffsetSyncFlipped should default to false for legacy state files")
+}
+
+// TestMigrationConfig_PauseConsumerOffsetSync_ForwardCompat verifies that the
+// false (no-op) state serializes with both fields present — no `omitempty`
+// hiding the explicit choice.
+func TestMigrationConfig_PauseConsumerOffsetSync_ForwardCompat(t *testing.T) {
+	state := NewMigrationState()
+	state.Migrations = []MigrationConfig{
+		{
+			MigrationId:                    "mig-explicit-false",
+			PauseConsumerOffsetSync:        false,
+			PauseConsumerOffsetSyncFlipped: false,
+		},
+	}
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "migration-state.json")
+	require.NoError(t, state.WriteToFile(filePath))
+
+	data, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	contents := string(data)
+
+	assert.Contains(t, contents, `"pause_consumer_offset_sync"`, "field should be present in JSON even when false")
+	assert.Contains(t, contents, `"pause_consumer_offset_sync_flipped"`, "flipped field should be present in JSON even when false")
+}

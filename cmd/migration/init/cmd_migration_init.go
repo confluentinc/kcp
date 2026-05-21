@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	migrationStateFile string
-	skipValidate       bool
+	migrationStateFile      string
+	skipValidate            bool
+	pauseConsumerOffsetSync bool
 
 	k8sNamespace   string
 	initialCrName  string
@@ -119,6 +120,7 @@ All flags can be provided via environment variables using uppercase names with u
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
 	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
+	optionalFlags.BoolVar(&pauseConsumerOffsetSync, "pause-consumer-offset-sync", false, "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.")
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
@@ -197,6 +199,12 @@ All flags can be provided via environment variables using uppercase names with u
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
+	// --pause-consumer-offset-sync requires the init-time snapshot captured by
+	// the validation path, so it cannot be combined with --skip-validate.
+	// Without the snapshot, the restore bookend has nothing to diff against
+	// and would silently leave the cluster link disabled after switchover.
+	migrationInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
+
 	// If any credential in a pair/trio is set, the whole set must be set.
 	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
 	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
@@ -266,19 +274,20 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
 	config := &types.MigrationConfig{
-		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
-		SourceBootstrap:     sourceBootstrap,
-		ClusterBootstrap:    clusterBootstrap,
-		K8sNamespace:        k8sNamespace,
-		InitialCrName:       initialCrName,
-		KubeConfigPath:      kubeConfigPathResolved,
-		ClusterId:           clusterId,
-		ClusterRestEndpoint: clusterRestEndpoint,
-		ClusterLinkName:     clusterLinkName,
-		Topics:              topics,
-		FencedCrYAML:        fencedCrYAML,
-		SwitchoverCrYAML:    switchoverCrYAML,
-		CurrentState:        types.StateUninitialized,
+		MigrationId:             fmt.Sprintf("migration-%s", uuid.New().String()),
+		SourceBootstrap:         sourceBootstrap,
+		ClusterBootstrap:        clusterBootstrap,
+		K8sNamespace:            k8sNamespace,
+		InitialCrName:           initialCrName,
+		KubeConfigPath:          kubeConfigPathResolved,
+		ClusterId:               clusterId,
+		ClusterRestEndpoint:     clusterRestEndpoint,
+		ClusterLinkName:         clusterLinkName,
+		Topics:                  topics,
+		FencedCrYAML:            fencedCrYAML,
+		SwitchoverCrYAML:        switchoverCrYAML,
+		CurrentState:            types.StateUninitialized,
+		PauseConsumerOffsetSync: pauseConsumerOffsetSync,
 	}
 
 	// ===== PHASE 3: Early write - upsert migration and write to file =====
