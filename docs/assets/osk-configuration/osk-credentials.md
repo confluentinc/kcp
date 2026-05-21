@@ -105,8 +105,8 @@ clusters:
 | `id`                | string           | yes      | Unique identifier for the cluster. Used as the cluster key in `kcp-state.json` and as the `--cluster-id` value for downstream `create-asset` commands. |
 | `bootstrap_servers` | list of strings  | yes      | Broker `host:port` addresses.                                                                                                                |
 | `auth_method`       | object           | yes      | Authentication method. Choose **exactly one** sub-block (see below).                                                                         |
-| `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters`.                                |
-| `prometheus`        | object           | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` on `kcp scan clusters`.                              |
+| `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point endpoints to Connect workers rather than brokers. |
+| `prometheus`        | object           | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` on `kcp scan clusters` or `kcp scan self-managed-connectors`. |
 | `metadata`          | map<string,string> | no     | Free-form labels surfaced in reports and the UI (e.g. `environment`, `location`).                                                            |
 
 ### `auth_method` — pick one
@@ -173,4 +173,5 @@ between them by changing the flag.
 ## Where to go next
 
 - [`kcp scan clusters`](../command-reference/scan/clusters.md) — pass this file with `--credentials-file`.
-- [Metrics collection](metrics-collection.md) — design notes on Jolokia vs Prometheus, the metrics that `kcp` records, and how rates are computed.
+- [Metrics collection](metrics-collection.md) — design notes on Jolokia vs Prometheus, the broker metrics that `kcp` records, and how rates are computed.
+- [Connect metrics collection](connect-metrics-collection.md) — collecting metrics from Kafka Connect workers.
