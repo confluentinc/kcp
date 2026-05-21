@@ -128,8 +128,12 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 		return nil, fmt.Errorf("failed to list acls: %v", err)
 	}
 
-	// Flatten the ACLs for easier processing
-	var flattenedAcls []types.Acls
+	// Flatten the ACLs for easier processing. Initialize as a non-nil
+	// empty slice so a successful scan with 0 ACLs persists as `[]` and
+	// stays distinguishable from `--skip-acls` (which leaves Acls nil).
+	// Downstream consumers (kcp report plan) key off non-nil to mean
+	// "the scan ran".
+	flattenedAcls := []types.Acls{}
 	for _, resourceAcl := range acls {
 		for _, acl := range resourceAcl.Acls {
 			flattenedAcl := types.Acls{
