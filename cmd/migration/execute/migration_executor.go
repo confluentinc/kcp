@@ -98,6 +98,7 @@ func (m *MigrationExecutor) Run() error {
 	)
 
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
+		migration.WarnIfPausedOnExecuteFailure(&config, err)
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 

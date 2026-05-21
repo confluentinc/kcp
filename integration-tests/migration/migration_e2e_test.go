@@ -648,17 +648,20 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	})
 	t.Cleanup(func() { stopProducer(t, cfg) })
 
-	// Poll cluster link config in parallel with execute so we can observe
-	// the disable transition mid-flight. The goroutine uses the Soft variant
-	// because require.NoError on the parent *testing.T is unsafe from a
-	// non-test goroutine — transient wget/JSON errors are swallowed locally
-	// instead of crashing the test.
+	// Best-effort polling of the live cluster-link config alongside execute.
+	// This is purely advisory: it produces a log line showing the observed
+	// true→false→true sequence when timing permits, but a fast FSM run may
+	// not catch the disabled window. The deterministic check is on the
+	// bookend's stdout lines (asserted below). The goroutine uses the Soft
+	// variant because require.NoError on the parent *testing.T is unsafe
+	// from a non-test goroutine — transient wget/JSON errors are swallowed
+	// locally instead of crashing the test.
 	configObservations := make(chan string, 100)
 	pollCtx, cancelPoll := context.WithCancel(context.Background())
 	pollDone := make(chan struct{})
 	go func() {
 		defer close(pollDone)
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -677,6 +680,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 		}
 	}()
 
+	var executeStdout string
 	t.Run("execute_with_flag", func(t *testing.T) {
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
@@ -694,6 +698,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		executeStdout = stdout
 		t.Logf("execute stdout:\n%s", stdout)
 		t.Logf("execute stderr:\n%s", stderr)
 		require.NoError(t, err, "kcp migration execute failed")
@@ -707,29 +712,29 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	cancelPoll()
 	<-pollDone
 
-	// --- Step 3: assert true → false → true sequence ---
-	t.Run("observed_transition_sequence", func(t *testing.T) {
-		close(configObservations)
-		seen := []string{}
-		for v := range configObservations {
-			if len(seen) == 0 || seen[len(seen)-1] != v {
-				seen = append(seen, v)
-			}
+	// Log the observed sequence (advisory only — see comment on the poller).
+	close(configObservations)
+	seen := []string{}
+	for v := range configObservations {
+		if len(seen) == 0 || seen[len(seen)-1] != v {
+			seen = append(seen, v)
 		}
-		t.Logf("observed cluster-link config sequence during execute: %v", seen)
+	}
+	t.Logf("observed cluster-link config sequence during execute (advisory): %v", seen)
 
-		// The polling can race with the bookends, but we expect at minimum to
-		// have witnessed enable=false at some point. The final state must be
-		// "true" (restored).
-		sawFalse := false
-		for _, v := range seen {
-			if v == "false" {
-				sawFalse = true
-				break
-			}
-		}
-		assert.True(t, sawFalse, "expected to observe consumer.offset.sync.enable=false at some point during execute")
-		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg), "final state must be restored to true")
+	// --- Step 3: deterministic assertions ---
+	t.Run("bookend_ran_and_final_state_restored", func(t *testing.T) {
+		// The bookend prints these lines unconditionally when it runs. They
+		// are durable evidence that the disable→restore cycle executed,
+		// without depending on poll timing landing inside the FSM window.
+		assert.Contains(t, executeStdout, "Pausing consumer.offset.sync",
+			"execute stdout must show the disable bookend ran")
+		assert.Contains(t, executeStdout, "Restoring consumer.offset.sync",
+			"execute stdout must show the restore bookend ran")
+
+		// And the live cluster link must be back to enable=true.
+		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
+			"final state must be restored to true")
 	})
 }
 

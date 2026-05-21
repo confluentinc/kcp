@@ -136,7 +136,18 @@ func (s *MigrationWorkflow) Initialize(
 
 	// Update config with discovered data
 	config.ClusterLinkTopics = clusterLinkTopics
-	config.ClusterLinkConfigs = configs
+
+	// Defensive guard: never overwrite the pre-disable snapshot once the
+	// bookend has flipped consumer.offset.sync.enable=false. If Initialize
+	// were ever called after DisableOffsetSync ran (today blocked at the CLI
+	// by --skip-validate / --pause-consumer-offset-sync mutual exclusion in
+	// cmd/migration/init), `configs` would reflect the post-disable live
+	// state and clobber the snapshot RestoreOffsetSync needs to diff against
+	// — silently leaving the cluster link disabled. Keep the existing
+	// snapshot in that case.
+	if !config.PauseConsumerOffsetSyncFlipped {
+		config.ClusterLinkConfigs = configs
+	}
 
 	slog.Debug("migration initialized successfully")
 	return nil

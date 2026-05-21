@@ -19,9 +19,11 @@ const (
 	consumerOffsetPrefix = "consumer.offset."
 )
 
-// restoreTimeout caps the post-switchover restore call so a hung REST endpoint
-// can't keep the operator's terminal stuck after a successful migration.
-const restoreTimeout = 30 * time.Second
+// bookendCallTimeout bounds each individual REST call the disable/restore
+// bookends make (one ListConfigs, one PUT per alteration). Applied per-call
+// rather than per-batch so a slow REST endpoint on one PUT does not starve
+// the rest of the restore.
+const bookendCallTimeout = 30 * time.Second
 
 // DisableOffsetSync runs the pre-execute disable bookend for the
 // --pause-consumer-offset-sync flow.
@@ -57,7 +59,11 @@ func DisableOffsetSync(
 
 	fmt.Printf("\n%s\n", color.CyanString("⏸  Pausing consumer.offset.sync on cluster link..."))
 
-	currentConfigs, err := cl.ListConfigs(ctx, clCfg)
+	// Per-call deadlines derived from the parent ctx so signal cancellation
+	// still propagates, but a hung REST endpoint cannot block indefinitely.
+	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	currentConfigs, err := cl.ListConfigs(listCtx, clCfg)
+	listCancel()
 	if err != nil {
 		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
 	}
@@ -69,9 +75,12 @@ func DisableOffsetSync(
 		return fmt.Errorf("cluster link %q drift detected: %s=%q, expected %q — refusing to flip", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
 	}
 
-	if err := cl.AlterConfigs(ctx, clCfg, []clusterlink.ConfigAlteration{
+	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	err = cl.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
-	}); err != nil {
+	})
+	alterCancel()
+	if err != nil {
 		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
 	}
 
@@ -100,10 +109,12 @@ func DisableOffsetSync(
 // performs a single SET consumer.offset.sync.enable=true.
 //
 // The ctx argument is accepted for symmetry with DisableOffsetSync but the
-// network calls use a fresh background ctx with a bounded timeout. The
+// network calls use a fresh background ctx with a per-call timeout. The
 // restore must run even when the parent ctx is already cancelled (e.g. a
 // signal arrived between orchestrator.Execute returning and the bookend
-// firing) — that is the case the soft-fail semantic exists for.
+// firing) — that is the case the soft-fail semantic exists for. Each PUT
+// gets its own timeout budget so a slow endpoint on one key cannot starve
+// the rest of the restore.
 func RestoreOffsetSync(
 	_ context.Context,
 	cl clusterlink.Service,
@@ -117,9 +128,6 @@ func RestoreOffsetSync(
 
 	fmt.Printf("\n%s\n", color.CyanString("▶️  Restoring consumer.offset.sync on cluster link..."))
 
-	restoreCtx, cancel := context.WithTimeout(context.Background(), restoreTimeout)
-	defer cancel()
-
 	var alterations []clusterlink.ConfigAlteration
 
 	if len(config.ClusterLinkConfigs) == 0 {
@@ -129,7 +137,9 @@ func RestoreOffsetSync(
 			{Name: offsetSyncEnableKey, Value: "true", Operation: clusterlink.OperationSet},
 		}
 	} else {
-		currentConfigs, err := cl.ListConfigs(restoreCtx, clCfg)
+		listCtx, listCancel := context.WithTimeout(context.Background(), bookendCallTimeout)
+		currentConfigs, err := cl.ListConfigs(listCtx, clCfg)
+		listCancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
 				"%s Migration completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.\n",
@@ -163,8 +173,24 @@ func RestoreOffsetSync(
 			}
 			keys = append(keys, k)
 		}
+		// AlterConfigs is non-atomic (one PUT per key, short-circuit on error).
+		// Order the toggle key LAST so a partial restore failure leaves the
+		// link in the safer state: filters re-applied with sync still disabled,
+		// rather than sync re-enabled with stale or missing filters.
 		sort.Strings(keys)
+		toggleLast := make([]string, 0, len(keys))
+		var toggleKey string
 		for _, k := range keys {
+			if k == offsetSyncEnableKey {
+				toggleKey = k
+				continue
+			}
+			toggleLast = append(toggleLast, k)
+		}
+		if toggleKey != "" {
+			toggleLast = append(toggleLast, toggleKey)
+		}
+		for _, k := range toggleLast {
 			alterations = append(alterations, clusterlink.ConfigAlteration{
 				Name:      k,
 				Value:     config.ClusterLinkConfigs[k],
@@ -185,20 +211,38 @@ func RestoreOffsetSync(
 		return
 	}
 
-	if err := cl.AlterConfigs(restoreCtx, clCfg, alterations); err != nil {
-		attempted := make([]string, len(alterations))
-		for i, a := range alterations {
-			attempted[i] = a.Name
+	// Apply alterations one at a time so each PUT gets its own timeout budget
+	// and we can report exactly which keys were applied vs. still owed on
+	// partial failure. Toggle key is ordered last (see slice build above) so
+	// a mid-loop failure leaves the link in the safer state.
+	for i, alt := range alterations {
+		callCtx, callCancel := context.WithTimeout(context.Background(), bookendCallTimeout)
+		err := cl.AlterConfigs(callCtx, clCfg, []clusterlink.ConfigAlteration{alt})
+		callCancel()
+		if err != nil {
+			applied := make([]string, 0, i)
+			for _, a := range alterations[:i] {
+				applied = append(applied, a.Name)
+			}
+			remaining := make([]string, 0, len(alterations)-i)
+			for _, a := range alterations[i:] {
+				remaining = append(remaining, a.Name)
+			}
+			appliedStr := "none"
+			if len(applied) > 0 {
+				appliedStr = strings.Join(applied, ", ")
+			}
+			fmt.Fprintf(os.Stderr,
+				"%s Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.\n",
+				color.YellowString("⚠️"),
+				consumerOffsetPrefix,
+				config.ClusterLinkName,
+				err,
+				appliedStr,
+				strings.Join(remaining, ", "),
+			)
+			return
 		}
-		fmt.Fprintf(os.Stderr,
-			"%s Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   The cluster link may still be in the paused state — re-apply the following configs manually before resuming normal operation: %s\n",
-			color.YellowString("⚠️"),
-			consumerOffsetPrefix,
-			config.ClusterLinkName,
-			err,
-			strings.Join(attempted, ", "),
-		)
-		return
 	}
 
 	config.PauseConsumerOffsetSyncFlipped = false
@@ -210,6 +254,28 @@ func RestoreOffsetSync(
 		names[i] = a.Name
 	}
 	fmt.Printf("   %s restored %s* configs on cluster link %s: %s\n", color.GreenString("✔"), consumerOffsetPrefix, config.ClusterLinkName, strings.Join(names, ", "))
+}
+
+// WarnIfPausedOnExecuteFailure prints a stderr remediation message when
+// orchestrator.Execute returns an error while the cluster link is still in
+// the disabled state (PauseConsumerOffsetSyncFlipped=true). The restore
+// bookend only runs after a successful execute, so without this warning the
+// operator has no signal that the cluster link is paused.
+//
+// Soft-fail: never returns an error — this is best-effort messaging on top of
+// the underlying execute error.
+func WarnIfPausedOnExecuteFailure(config *types.MigrationConfig, execErr error) {
+	if !config.PauseConsumerOffsetSyncFlipped {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"%s Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.\n",
+		color.YellowString("⚠️"),
+		execErr,
+		config.ClusterLinkName,
+		offsetSyncEnableKey,
+		offsetSyncEnableKey,
+	)
 }
 
 // BuildClusterLinkConfig assembles a clusterlink.Config from a migration

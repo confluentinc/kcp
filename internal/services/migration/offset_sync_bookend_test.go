@@ -283,7 +283,8 @@ func TestRestoreOffsetSync_HappyPath_ClearsMarker(t *testing.T) {
 	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
 	assert.Equal(t, 1, rec.listConfigs, "ListConfigs must run when snapshot is non-empty")
 	require.Len(t, rec.alterConfigs, 2, "must restore both filters and enable toggle")
-	// Sorted by name: consumer.offset.group.filters < consumer.offset.sync.enable
+	// Toggle is ordered LAST so a partial restore failure leaves the link in
+	// the safer state (filters re-applied with sync still disabled).
 	assert.Equal(t, "consumer.offset.group.filters", rec.alterConfigs[0].Name)
 	assert.Equal(t, `{"groups":["app-*"]}`, rec.alterConfigs[0].Value)
 	assert.Equal(t, clusterlink.OperationSet, rec.alterConfigs[0].Operation)
@@ -311,9 +312,12 @@ func TestRestoreOffsetSync_HappyPath_MultipleSyncKeysRestoredSorted(t *testing.T
 
 	RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
 	require.Len(t, rec.alterConfigs, 3)
+	// Non-toggle keys appear in sorted order; toggle key is forced to the end
+	// so a partial-restore failure leaves sync disabled rather than re-enabled
+	// with stale filters.
 	assert.Equal(t, "consumer.offset.group.filters", rec.alterConfigs[0].Name)
-	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[1].Name)
-	assert.Equal(t, "consumer.offset.sync.ms", rec.alterConfigs[2].Name)
+	assert.Equal(t, "consumer.offset.sync.ms", rec.alterConfigs[1].Name)
+	assert.Equal(t, "consumer.offset.sync.enable", rec.alterConfigs[2].Name)
 	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped)
 }
 
@@ -475,10 +479,10 @@ func TestRestoreOffsetSync_ListConfigsFails_SoftFailKeepsMarker(t *testing.T) {
 }
 
 func TestRestoreOffsetSync_AlterFailsMultiKey_RemediationNamesAllKeys(t *testing.T) {
-	// AE5 + R9: AlterConfigs returns 503 mid-batch. Remediation message lists
-	// every key the bookend attempted to restore (the implementation can't
-	// know which entries the server accepted, see clusterlink.AlterConfigs
-	// non-atomic note).
+	// AE5 + R9: AlterConfigs returns 503 on the first per-key call. The bookend
+	// short-circuits the loop (toggle would have been last, so the safer state
+	// — sync still disabled — is preserved). The remediation message lists
+	// every owed key so the operator can re-apply manually.
 	mock, rec := newDiffMock(
 		map[string]string{},
 		nil,
@@ -498,12 +502,14 @@ func TestRestoreOffsetSync_AlterFailsMultiKey_RemediationNamesAllKeys(t *testing
 		RestoreOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
 	})
 
-	require.Len(t, rec.alterConfigs, 2, "AlterConfigs attempt batched both keys")
+	require.Len(t, rec.alterConfigs, 1, "loop short-circuits on first per-key failure")
+	assert.Equal(t, "consumer.offset.group.filters", rec.alterConfigs[0].Name, "non-toggle key is attempted first; toggle would have been last")
 	assert.True(t, cfg.PauseConsumerOffsetSyncFlipped, "marker MUST stay true on soft-fail so state file knows restore is owed")
 	assert.Equal(t, 0, rec.persist)
-	assert.Contains(t, out, "consumer.offset.sync.enable", "remediation message names the toggle")
-	assert.Contains(t, out, "consumer.offset.group.filters", "remediation message names the filters key")
+	assert.Contains(t, out, "consumer.offset.sync.enable", "remediation message names the toggle (still owed)")
+	assert.Contains(t, out, "consumer.offset.group.filters", "remediation message names the filters key (still owed)")
 	assert.Contains(t, out, "link-soft", "remediation message names the cluster link")
+	assert.Contains(t, out, "Applied: none", "remediation message reports nothing was applied")
 }
 
 func TestRestoreOffsetSync_AlterFails_SoftFailKeepsMarker(t *testing.T) {

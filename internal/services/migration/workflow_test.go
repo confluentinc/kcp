@@ -295,6 +295,41 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t 
 	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
 }
 
+// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot
+// pins the defensive guard against the snapshot-clobbering bug. If Initialize
+// is ever called after DisableOffsetSync has run (i.e. Flipped=true), the live
+// configs reflect the post-disable state. Writing them to ClusterLinkConfigs
+// would clobber the pre-disable snapshot that RestoreOffsetSync needs to diff
+// against. The guard must keep the existing snapshot in that case.
+//
+// Today the CLI blocks the ordering hazard via mutual exclusion of
+// --skip-validate and --pause-consumer-offset-sync, but this test pins the
+// in-code defense in case a future caller reintroduces the ordering.
+func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		// Post-disable live state — toggle false, filters cleared.
+		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+	})
+	preDisableSnapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	config := &types.MigrationConfig{
+		ClusterLinkName:                "link-mid-flight",
+		PauseConsumerOffsetSync:        true,
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             preDisableSnapshot,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+
+	assert.Equal(t, "true", config.ClusterLinkConfigs["consumer.offset.sync.enable"],
+		"pre-disable toggle value must survive Initialize when Flipped=true")
+	assert.Equal(t, `{"groups":["app-*"]}`, config.ClusterLinkConfigs["consumer.offset.group.filters"],
+		"pre-disable filters value must survive Initialize when Flipped=true")
+}
+
 // ===========================================================================
 // CheckLags tests
 // ===========================================================================

@@ -199,6 +199,12 @@ All flags can be provided via environment variables using uppercase names with u
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
+	// --pause-consumer-offset-sync requires the init-time snapshot captured by
+	// the validation path, so it cannot be combined with --skip-validate.
+	// Without the snapshot, the restore bookend has nothing to diff against
+	// and would silently leave the cluster link disabled after switchover.
+	migrationInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
+
 	// If any credential in a pair/trio is set, the whole set must be set.
 	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
 	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
@@ -293,9 +299,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
-		if pauseConsumerOffsetSync {
-			fmt.Fprintf(os.Stderr, "⚠️  --pause-consumer-offset-sync intent recorded but precondition NOT validated (--skip-validate set). The cluster link's consumer.offset.sync.enable state is not checked at init time.\n")
-		}
 		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
 		return nil
 	}

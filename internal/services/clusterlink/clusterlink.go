@@ -258,23 +258,23 @@ func (s *ConfluentCloudService) AlterConfigs(ctx context.Context, config Config,
 			return fmt.Errorf("unsupported AlterConfigs operation %q for %s", a.Operation, a.Name)
 		}
 		if err != nil {
-			return translateAlterError(config, err)
+			return translateAlterError(config, a, err)
 		}
 	}
 	return nil
 }
 
-func translateAlterError(config Config, err error) error {
+func translateAlterError(config Config, alteration ConfigAlteration, err error) error {
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) {
 		switch statusErr.StatusCode {
 		case http.StatusNotFound:
-			return fmt.Errorf("cluster link %q not found on cluster %s", config.LinkName, config.ClusterID)
+			return fmt.Errorf("cluster link %q not found on cluster %s (while %s %q)", config.LinkName, config.ClusterID, alteration.Operation, alteration.Name)
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return fmt.Errorf("authentication failed (status %d) — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode)
+			return fmt.Errorf("authentication failed (status %d) while %s %q on cluster link %q — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode, alteration.Operation, alteration.Name, config.LinkName)
 		}
 	}
-	return fmt.Errorf("failed to alter cluster link configs: %w", err)
+	return fmt.Errorf("failed to %s cluster link config %q on link %q: %w", alteration.Operation, alteration.Name, config.LinkName, err)
 }
 
 // PromoteMirrorTopics promotes the specified mirror topics
