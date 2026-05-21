@@ -117,16 +117,21 @@ func (s *MigrationWorkflow) Initialize(
 	// validate the precondition: the cluster link must currently have
 	// consumer.offset.sync.enable=true. Refuse fail-fast if the key is missing
 	// or set to anything other than "true".
-	if config.PauseConsumerOffsetSync {
-		const offsetSyncKey = "consumer.offset.sync.enable"
-		observed, present := configs[offsetSyncKey]
+	//
+	// Skip the check when PauseConsumerOffsetSyncFlipped is already true: kcp
+	// itself set the value to "false" via DisableOffsetSync, so seeing "false"
+	// here is the expected mid-flight state, not drift. This matters when init
+	// ran with --skip-validate (no init-time precondition) and the first
+	// execute reaches Initialize via the FSM after the bookend has already run.
+	if config.PauseConsumerOffsetSync && !config.PauseConsumerOffsetSyncFlipped {
+		observed, present := configs[offsetSyncEnableKey]
 		switch {
 		case !present:
-			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncKey, "true")
+			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
 		case observed != "true":
-			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncKey, observed, "true")
+			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
 		}
-		fmt.Printf("   %s Cluster link %s=true (pause-on-execute intent recorded)\n", color.GreenString("✔"), offsetSyncKey)
+		fmt.Printf("   %s Cluster link %s=true (pause-on-execute intent recorded)\n", color.GreenString("✔"), offsetSyncEnableKey)
 	}
 
 	// Update config with discovered data

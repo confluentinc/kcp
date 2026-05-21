@@ -272,6 +272,29 @@ func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testi
 	require.NoError(t, err, "flag off must not assert offset-sync state")
 }
 
+// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition
+// covers the --skip-validate + --pause-consumer-offset-sync flow where:
+//  1. init runs with --skip-validate so the precondition was NOT checked at init time
+//  2. first execute calls DisableOffsetSync which sets enable=false and marker=true
+//  3. FSM transitions out of StateUninitialized, calling Initialize
+//
+// At step 3 the live config is "false" (kcp just set it) and the marker is
+// true, meaning kcp is the reason the value drifted. Initialize must NOT
+// refuse — that would wedge the migration mid-flight.
+func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+	})
+	config := &types.MigrationConfig{
+		ClusterLinkName:                "link-mid-flight",
+		PauseConsumerOffsetSync:        true,
+		PauseConsumerOffsetSyncFlipped: true,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
+}
+
 // ===========================================================================
 // CheckLags tests
 // ===========================================================================

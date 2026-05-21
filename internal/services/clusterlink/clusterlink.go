@@ -109,6 +109,17 @@ type Service interface {
 	ListConfigs(ctx context.Context, config Config) (map[string]string, error)
 	ValidateTopics(topics []string, clusterLinkTopics []string) error
 	PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error)
+
+	// AlterConfigs applies the given alterations to the cluster link's configs.
+	//
+	// IMPORTANT: this method is NOT atomic across multiple alterations. The
+	// implementation iterates the slice and issues one network call per entry,
+	// short-circuiting on the first error. On mid-batch failure, alterations
+	// before the failing index are already persisted server-side; alterations
+	// at and after the failing index are NOT applied. The returned error does
+	// not identify which entries succeeded — callers that need batch
+	// atomicity must implement compensation themselves, or call this method
+	// with a single alteration at a time.
 	AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) error
 }
 
@@ -220,6 +231,10 @@ func (s *ConfluentCloudService) ValidateTopics(topics []string, clusterLinkTopic
 // {"value": ...}, DELETE maps to DELETE /configs/{name}. We iterate the
 // batch client-side to provide a stable interface above the
 // version-dependent shape — first error short-circuits and is returned.
+//
+// NOT atomic: alterations before the failing index are already persisted
+// server-side. The returned error does not identify the partition between
+// applied and skipped entries. See the Service interface doc.
 //
 // Empty alterations short-circuit without a network call. 404 / 401 / 403
 // translate to actionable messages matching GetClusterLink's style.
@@ -376,7 +391,10 @@ func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config,
 	if err != nil {
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)
@@ -398,7 +416,10 @@ func (s *ConfluentCloudService) doDeleteRequest(ctx context.Context, config Conf
 	if err != nil {
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)

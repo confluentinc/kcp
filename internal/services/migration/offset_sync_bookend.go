@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/types"
@@ -12,6 +13,10 @@ import (
 )
 
 const offsetSyncEnableKey = "consumer.offset.sync.enable"
+
+// restoreTimeout caps the post-switchover restore call so a hung REST endpoint
+// can't keep the operator's terminal stuck after a successful migration.
+const restoreTimeout = 30 * time.Second
 
 // DisableOffsetSync runs the pre-execute disable bookend for the
 // --pause-consumer-offset-sync flow.
@@ -79,8 +84,14 @@ func DisableOffsetSync(
 // does NOT propagate an error, because the switchover itself succeeded (R13).
 // The PauseConsumerOffsetSyncFlipped marker stays true on failure so the
 // state file records that a restore is still owed.
+//
+// The ctx argument is accepted for symmetry with DisableOffsetSync but the
+// AlterConfigs call uses a fresh background ctx with a bounded timeout. The
+// restore must run even when the parent ctx is already cancelled (e.g. a
+// signal arrived between orchestrator.Execute returning and the bookend
+// firing) — that is the case the soft-fail semantic exists for.
 func RestoreOffsetSync(
-	ctx context.Context,
+	_ context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
 	config *types.MigrationConfig,
@@ -92,17 +103,18 @@ func RestoreOffsetSync(
 
 	fmt.Printf("\n%s\n", color.CyanString("▶️  Restoring consumer.offset.sync on cluster link..."))
 
-	if err := cl.AlterConfigs(ctx, clCfg, []clusterlink.ConfigAlteration{
+	restoreCtx, cancel := context.WithTimeout(context.Background(), restoreTimeout)
+	defer cancel()
+
+	if err := cl.AlterConfigs(restoreCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: "true", Operation: clusterlink.OperationSet},
 	}); err != nil {
 		fmt.Fprintf(os.Stderr,
-			"%s Migration completed but failed to restore %s on cluster link %q (%v).\n   Run: confluent kafka link configuration update --link %s --cluster %s %s=true\n",
+			"%s Migration completed but failed to restore %s on cluster link %q (%v).\n   The cluster link is still in the paused state — re-enable %s=true manually before resuming normal operation.\n",
 			color.YellowString("⚠️"),
 			offsetSyncEnableKey,
 			config.ClusterLinkName,
 			err,
-			config.ClusterLinkName,
-			config.ClusterId,
 			offsetSyncEnableKey,
 		)
 		return

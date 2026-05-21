@@ -255,6 +255,38 @@ func TestRestoreOffsetSync_AlterSucceedsPersistFails_StillCorrects(t *testing.T)
 	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped, "in-memory marker cleared even if persist failed (cluster link is correct)")
 }
 
+// TestRestoreOffsetSync_ParentCtxCancelled_StillRestores verifies the
+// soft-fail semantic survives parent-ctx cancellation. The migration may
+// complete successfully and only then have its ctx cancelled (signal arriving
+// between Execute returning and the bookend running, future caller that
+// cancels on completion, etc.). RestoreOffsetSync must use a fresh ctx so the
+// AlterConfigs PUT actually runs.
+func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
+	rec := &callRecorder{}
+	var ctxErrAtCall error
+	mock := &mockClusterLinkService{
+		alterConfigsFn: func(ctx context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			ctxErrAtCall = ctx.Err()
+			rec.alterConfigs = append(rec.alterConfigs, alts...)
+			return nil
+		},
+	}
+	cfg := &types.MigrationConfig{
+		ClusterLinkName:                "link-1",
+		PauseConsumerOffsetSyncFlipped: true,
+		CurrentState:                   types.StateSwitched,
+	}
+
+	parentCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	RestoreOffsetSync(parentCtx, mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+
+	require.Len(t, rec.alterConfigs, 1, "AlterConfigs must be called even when parent ctx is cancelled")
+	assert.NoError(t, ctxErrAtCall, "AlterConfigs must receive a non-cancelled ctx at the moment of call (soft-fail intent)")
+	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped, "marker cleared after successful restore")
+}
+
 // ---------------------------------------------------------------------------
 // BuildClusterLinkConfig — small but worth pinning.
 // ---------------------------------------------------------------------------

@@ -271,9 +271,30 @@ func envIsFreshForMigration(t *testing.T, cfg envConfig) bool {
 // the key is missing). Used by tests to observe transitions during execute.
 func getClusterLinkOffsetSyncEnable(t *testing.T, cfg envConfig) string {
 	t.Helper()
-	url := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/configs", cfg.RestProxyEndpoint, cfg.DestClusterID, cfg.ClusterLinkName)
-	out, err := runInPod(t, cfg, 30*time.Second, "wget", "-qO-", url)
-	require.NoError(t, err, "wget cluster link configs: %s", out)
+	v, err := getClusterLinkOffsetSyncEnableSoft(cfg)
+	require.NoError(t, err)
+	return v
+}
+
+// getClusterLinkOffsetSyncEnableSoft is the goroutine-safe variant: it
+// returns (value, error) instead of calling require on a *testing.T. Use
+// this inside background goroutines — Go's testing package documents
+// FailNow/require as unsafe outside the test goroutine.
+func getClusterLinkOffsetSyncEnableSoft(cfg envConfig) (string, error) {
+	configURL := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/configs", cfg.RestProxyEndpoint, cfg.DestClusterID, cfg.ClusterLinkName)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	args := []string{
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"exec", cfg.KCPPod, "--",
+		"wget", "-qO-", configURL,
+	}
+	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("wget cluster link configs: %s: %w", out, err)
+	}
 
 	var resp struct {
 		Data []struct {
@@ -281,13 +302,15 @@ func getClusterLinkOffsetSyncEnable(t *testing.T, cfg envConfig) string {
 			Value string `json:"value"`
 		} `json:"data"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(out), &resp), "unmarshalling configs response: %s", out)
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", fmt.Errorf("unmarshalling configs response: %s: %w", out, err)
+	}
 	for _, c := range resp.Data {
 		if c.Name == "consumer.offset.sync.enable" {
-			return c.Value
+			return c.Value, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func readMigrationState(t *testing.T, cfg envConfig, podPath string) migrationState {
@@ -611,7 +634,10 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	t.Cleanup(func() { stopProducer(t, cfg) })
 
 	// Poll cluster link config in parallel with execute so we can observe
-	// the disable transition mid-flight.
+	// the disable transition mid-flight. The goroutine uses the Soft variant
+	// because require.NoError on the parent *testing.T is unsafe from a
+	// non-test goroutine — transient wget/JSON errors are swallowed locally
+	// instead of crashing the test.
 	configObservations := make(chan string, 100)
 	pollCtx, cancelPoll := context.WithCancel(context.Background())
 	pollDone := make(chan struct{})
@@ -624,7 +650,10 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 			case <-pollCtx.Done():
 				return
 			case <-ticker.C:
-				v := getClusterLinkOffsetSyncEnable(t, cfg)
+				v, err := getClusterLinkOffsetSyncEnableSoft(cfg)
+				if err != nil {
+					continue
+				}
 				select {
 				case configObservations <- v:
 				default:
