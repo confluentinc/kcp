@@ -15,11 +15,10 @@ package types
 // callout on the Dedicated verdict when any of them is the reason.
 type PlanInputs struct {
 	// Sizing overrides (defaults live in plan-config.yaml).
-	SLATarget                  *string  `yaml:"sla_target,omitempty"                    json:"sla_target,omitempty"`
-	SizingPercentile           *string  `yaml:"sizing_percentile,omitempty"             json:"sizing_percentile,omitempty"`
-	HeadroomFraction           *float64 `yaml:"headroom_fraction,omitempty"             json:"headroom_fraction,omitempty"`
-	PrivateLinkSafetyThreshold *float64 `yaml:"privatelink_safety_threshold,omitempty"  json:"privatelink_safety_threshold,omitempty"`
-	SpikyWorkloadRatio         *float64 `yaml:"spiky_workload_ratio,omitempty"          json:"spiky_workload_ratio,omitempty"`
+	SLATarget          *string  `yaml:"sla_target,omitempty"          json:"sla_target,omitempty"`
+	SizingPercentile   *string  `yaml:"sizing_percentile,omitempty"   json:"sizing_percentile,omitempty"`
+	HeadroomFraction   *float64 `yaml:"headroom_fraction,omitempty"   json:"headroom_fraction,omitempty"`
+	SpikyWorkloadRatio *float64 `yaml:"spiky_workload_ratio,omitempty" json:"spiky_workload_ratio,omitempty"`
 
 	// Customer-declared hard requirements that force Dedicated.
 	// Default `false`; only the customer (or an SE on their behalf) sets these.
@@ -35,7 +34,19 @@ type PlanInputs struct {
 	// Existing VPC connectivity to MSK. When set to `transit_gateway`
 	// or `vpc_peering` and the cluster is Dedicated, the same pattern
 	// is recommended for Confluent Cloud. `privatelink_or_pni` (default)
-	// lets the Plan pick between PrivateLink and PNI based on the
-	// safety threshold.
+	// keeps the AWS-to-AWS Enterprise default (PNI) unless one of the
+	// PrivateLink triggers fires (see CCEgressRequired,
+	// ProjectedPNIGatewayCount, non-AWS target_cloud).
 	ExistingVPCConnectivity *string `yaml:"existing_vpc_connectivity,omitempty" json:"existing_vpc_connectivity,omitempty"`
+
+	// CCEgressRequired = "Do CC-side workloads need to push traffic
+	// back into your customer VPC?" PNI does not natively support
+	// egress from CC into customer infrastructure; when true the
+	// networking default flips from PNI to PrivateLink.
+	CCEgressRequired *bool `yaml:"cc_egress_required,omitempty" json:"cc_egress_required,omitempty"`
+
+	// ProjectedPNIGatewayCount — projected PNI gateway count for the
+	// deployment. When ≥ 2, the recommendation flips from PNI to
+	// PrivateLink. Default 1 (single gateway).
+	ProjectedPNIGatewayCount *int `yaml:"projected_pni_gateway_count,omitempty" json:"projected_pni_gateway_count,omitempty"`
 }
