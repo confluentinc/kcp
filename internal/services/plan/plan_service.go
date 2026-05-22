@@ -97,7 +97,10 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 // per cluster. The Plan still ships a recommendation in each case (the
 // SLA floor for degraded sizing, the verdict from the other rules when
 // Rule 2 is skipped, etc.) — the OQ tells the customer what action will
-// upgrade that recommendation.
+// upgrade that recommendation. SERVERLESS-specific suppressions: ACLs
+// and broker inventory are expected-empty on MSK Serverless, so the
+// detector reads `isServerless` from cluster_signals.go to skip those
+// OQs rather than telling the customer to re-run a scan that won't help.
 func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	if sizing.Degraded {
@@ -109,7 +112,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing) [
 			HowToClose: "Re-run `kcp scan metrics` against this cluster.",
 		})
 	}
-	if c.KafkaAdminClientInformation.Acls == nil {
+	if c.KafkaAdminClientInformation.Acls == nil && !isServerless(c) {
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "acls_not_scanned",
 			ClusterID:  c.Name,
@@ -118,7 +121,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing) [
 			HowToClose: "Re-run `kcp scan clusters` with admin credentials to populate the ACL list.",
 		})
 	}
-	if brokerCount(c) == 0 {
+	if brokerCount(c) == 0 && !isServerless(c) {
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "broker_inventory_empty",
 			ClusterID:  c.Name,

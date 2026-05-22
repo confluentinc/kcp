@@ -60,18 +60,28 @@ func TestResolvePlanInputsDefaults(t *testing.T) {
 		assert.Nil(t, resolved.Raw)
 		assert.Equal(t, "p95", resolved.SizingPercentile)
 		assert.InDelta(t, 0.30, resolved.HeadroomFraction, 0.0001)
-		assert.InDelta(t, 0.80, resolved.PrivateLinkSafetyThreshold, 0.0001)
 		assert.InDelta(t, 2.0, resolved.SpikyWorkloadRatio, 0.0001)
 		assert.Equal(t, "99.9", resolved.SLATarget)
+		assert.False(t, resolved.CCEgressRequired)
+		assert.Equal(t, 1, resolved.ProjectedPNIGatewayCount)
 	})
 
 	t.Run("customer values override defaults", func(t *testing.T) {
 		hf := 0.45
 		sla := "99.95"
-		in := &types.PlanInputs{HeadroomFraction: &hf, SLATarget: &sla}
+		egress := true
+		gateways := 3
+		in := &types.PlanInputs{
+			HeadroomFraction:         &hf,
+			SLATarget:                &sla,
+			CCEgressRequired:         &egress,
+			ProjectedPNIGatewayCount: &gateways,
+		}
 		resolved := ResolvePlanInputs(in, cfg)
 		assert.InDelta(t, 0.45, resolved.HeadroomFraction, 0.0001)
 		assert.Equal(t, "99.95", resolved.SLATarget)
+		assert.True(t, resolved.CCEgressRequired)
+		assert.Equal(t, 3, resolved.ProjectedPNIGatewayCount)
 		// Untouched defaults persist.
 		assert.Equal(t, "p95", resolved.SizingPercentile)
 		// Raw preserves the pointer.

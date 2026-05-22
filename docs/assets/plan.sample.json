@@ -13,13 +13,14 @@
     "sla_target": "99.9",
     "sizing_percentile": "p95",
     "headroom_fraction": 0.3,
-    "privatelink_safety_threshold": 0.8,
     "spiky_workload_ratio": 2,
     "enforce_schemas_at_the_broker": false,
     "requires_high_throughput_rest_produce_api": false,
     "requires_99_95_sla_within_a_single_zone": false,
     "target_cloud": "azure",
-    "existing_vpc_connectivity": "privatelink_or_pni"
+    "existing_vpc_connectivity": "privatelink_or_pni",
+    "cc_egress_required": false,
+    "projected_pni_gateway_count": 1
   },
   "source_environment": {
     "clusters": [
@@ -288,14 +289,14 @@
       "verdict": "PrivateLink",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "peak burst 1 eCKU = 10% of PrivateLink's 10 eCKU cap (safety threshold 80%)"
+      "reason": "target_cloud=\"azure\" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink"
     },
     {
       "cluster_id": "steady-events",
       "verdict": "PrivateLink",
       "peak_burst_ecku": 3,
       "percentage_of_cap": 30,
-      "reason": "peak burst 3 eCKU = 30% of PrivateLink's 10 eCKU cap (safety threshold 80%)"
+      "reason": "target_cloud=\"azure\" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink"
     }
   ],
   "sizing_appendix": [

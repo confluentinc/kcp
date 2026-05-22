@@ -14,23 +14,24 @@ const (
 	vpcConnectivityVPCPeering     = "vpc_peering"
 )
 
+// pniGatewayBreakeven is the projected-gateway count at which the
+// recommendation flips from PNI to PrivateLink.
+const pniGatewayBreakeven = 2
+
 // DecideNetworking picks the Confluent Cloud networking product for one
 // cluster.
 //
 //	Dedicated + existing_vpc_connectivity == transit_gateway → Transit Gateway
 //	Dedicated + existing_vpc_connectivity == vpc_peering     → VPC Peering
 //	Dedicated (otherwise)                                    → PNI
-//	Enterprise + peak_burst < threshold × privatelink_max_eCKU → PrivateLink
-//	Enterprise (otherwise)                                   → PNI
+//	Enterprise + target_cloud != "aws"                       → PrivateLink (PNI is AWS-to-AWS only)
+//	Enterprise + cc_egress_required                          → PrivateLink (PNI lacks native CC→customer egress)
+//	Enterprise + projected_pni_gateway_count ≥ 2             → PrivateLink
+//	Enterprise (otherwise)                                   → PNI (AWS-Enterprise default)
 //
 // `existing_vpc_connectivity` is only honored on the Dedicated path —
-// Transit Gateway and VPC Peering are Dedicated-only products. On
-// Enterprise the PrivateLink-vs-PNI flip remains driven by the safety
-// threshold.
+// Transit Gateway and VPC Peering are Dedicated-only products.
 func DecideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) types.NetworkingDecision {
-	caps := cfg.EnterpriseCaps
-	threshold := inputs.PrivateLinkSafetyThreshold
-
 	if ct.Verdict == types.ClusterTypeDedicated {
 		switch inputs.ExistingVPCConnectivity {
 		case vpcConnectivityTransitGateway:
@@ -59,14 +60,37 @@ func DecideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, 
 		}
 	}
 
-	thresholdECKU := threshold * float64(caps.PrivateLinkMaxECKU)
-	if float64(sizing.PeakBurstECKU) < thresholdECKU {
+	// Enterprise path: PNI is the default for AWS-to-AWS workloads. The
+	// flip to PrivateLink only fires on one of three explicit triggers.
+	target := inputs.TargetCloud
+	if target == "" {
+		target = "aws"
+	}
+	if target != "aws" {
 		return types.NetworkingDecision{
 			ClusterID:       sizing.ClusterID,
 			Verdict:         types.NetworkingPrivateLink,
 			PeakBurstECKU:   sizing.PeakBurstECKU,
 			PercentageOfCap: sizing.PeakBurstPctOfPLCap,
-			Reason:          fmt.Sprintf("peak burst %d eCKU = %.0f%% of PrivateLink's %d eCKU cap (safety threshold %.0f%%)", sizing.PeakBurstECKU, sizing.PeakBurstPctOfPLCap, caps.PrivateLinkMaxECKU, threshold*100),
+			Reason:          fmt.Sprintf("target_cloud=%q — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink", target),
+		}
+	}
+	if inputs.CCEgressRequired {
+		return types.NetworkingDecision{
+			ClusterID:       sizing.ClusterID,
+			Verdict:         types.NetworkingPrivateLink,
+			PeakBurstECKU:   sizing.PeakBurstECKU,
+			PercentageOfCap: sizing.PeakBurstPctOfPLCap,
+			Reason:          "cc_egress_required=true — PNI does not natively support egress from CC into customer infrastructure",
+		}
+	}
+	if inputs.ProjectedPNIGatewayCount >= pniGatewayBreakeven {
+		return types.NetworkingDecision{
+			ClusterID:       sizing.ClusterID,
+			Verdict:         types.NetworkingPrivateLink,
+			PeakBurstECKU:   sizing.PeakBurstECKU,
+			PercentageOfCap: sizing.PeakBurstPctOfPLCap,
+			Reason:          fmt.Sprintf("projected_pni_gateway_count=%d (≥ %d) — flip to PrivateLink", inputs.ProjectedPNIGatewayCount, pniGatewayBreakeven),
 		}
 	}
 	return types.NetworkingDecision{
@@ -74,6 +98,6 @@ func DecideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, 
 		Verdict:         types.NetworkingPNI,
 		PeakBurstECKU:   sizing.PeakBurstECKU,
 		PercentageOfCap: sizing.PeakBurstPctOfPLCap,
-		Reason:          fmt.Sprintf("peak burst %d eCKU = %.0f%% of PrivateLink's %d eCKU cap, over the %.0f%% safety threshold", sizing.PeakBurstECKU, sizing.PeakBurstPctOfPLCap, caps.PrivateLinkMaxECKU, threshold*100),
+		Reason:          "AWS-Enterprise default — PNI",
 	}
 }

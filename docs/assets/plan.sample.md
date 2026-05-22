@@ -8,8 +8,8 @@ _Generated 2026-05-15 15:00:00 UTC by KCP 0.7.2 from `./kcp-state.json`._
 - **CKU** — Confluent Kafka Unit, the Dedicated-tier equivalent of eCKU. Sizing math is the same; only the unit name changes. Dedicated clusters always render with `CKU`.
 - **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 (override with `sizing_percentile`) so a transient spike doesn't permanently inflate the recommended cluster size.
 - **Final size** — the recommended eCKU (Enterprise) or CKU (Dedicated) count for the cluster. `(floor)` next to a value means the SLA minimum was binding (the math came in below the floor and was rounded up).
-- **PrivateLink** — single-AZ private connectivity, up to 10 eCKU. The default network when the cluster fits inside it with headroom. Enterprise only.
-- **PNI** (Private Network Interface) — multi-AZ private connectivity, up to 32 eCKU. Used when PrivateLink's cap is too close to the cluster's peak burst; **always required on Dedicated**.
+- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity. The **default for AWS Enterprise**. **Always required on Dedicated** (scales to 32 eCKU on AWS).
+- **PrivateLink** — capped at 10 eCKU on Enterprise. Fires when `target_cloud != "aws"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count` is ≥ 2.
 
 ## 1. Source Environment
 
@@ -35,8 +35,8 @@ _Generated 2026-05-15 15:00:00 UTC by KCP 0.7.2 from `./kcp-state.json`._
 
 - **heavy-acls** — Cluster type **Dedicated Multi-Zone (MZ)** — ACL count exceeds Enterprise cap (4001 ACLs > Enterprise cap 4000). Networking **PNI** — Dedicated cluster — PNI required (no TGW / VPC Peering override).
 - **mtls-to-azure** — Cluster type **Dedicated Multi-Zone (MZ)** — Source uses mTLS, target is non-AWS (target_cloud="azure"). Networking **PNI** — Dedicated cluster — PNI required (no TGW / VPC Peering override).
-- **small-orders** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PrivateLink** — peak burst 1 eCKU = 10% of PrivateLink's 10 eCKU cap (safety threshold 80%).
-- **steady-events** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PrivateLink** — peak burst 3 eCKU = 30% of PrivateLink's 10 eCKU cap (safety threshold 80%).
+- **small-orders** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PrivateLink** — target_cloud="azure" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink.
+- **steady-events** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PrivateLink** — target_cloud="azure" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink.
 
 ## Appendix A1 — Sizing Math
 <details><summary>Show sizing math per cluster</summary>
