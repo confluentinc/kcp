@@ -241,6 +241,7 @@ func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange t
 			PrometheusMetricName: mq.PrometheusMetric,
 			CurlCommand:          fmt.Sprintf("curl -G '%s/api/v1/query_range' --data-urlencode 'query=%s' --data-urlencode 'start=%s' --data-urlencode 'end=%s' --data-urlencode 'step=%ds'", promBaseURL, resolvedQuery, start.Format(time.RFC3339), end.Format(time.RFC3339), int(step.Seconds())),
 			AggregationNote:      note,
+			LabelFilter:          labels,
 		})
 	}
 
