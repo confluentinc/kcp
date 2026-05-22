@@ -22,6 +22,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
 	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterConnectMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -114,6 +115,7 @@ func (ui *UI) Run() error {
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
+	e.GET("/metrics/osk/:clusterId/connect", ui.handleGetOSKConnectMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -250,6 +252,51 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "No metrics available for this cluster",
 			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
+		})
+	}
+
+	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
+func (ui *UI) handleGetOSKConnectMetrics(c echo.Context) error {
+	clusterId := c.Param("clusterId")
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": err.Error(),
+		})
+	}
+
+	if state.OSKSources == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error": "No OSK sources in state",
+		})
+	}
+
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
+	processedState := ui.reportService.ProcessState(*state)
+
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, startTime, endTime)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found or no Connect metrics available",
+			"message": err.Error(),
+		})
+	}
+
+	if filteredMetrics.Metrics == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "No Connect metrics available for this cluster",
+			"message": "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics",
 		})
 	}
 
