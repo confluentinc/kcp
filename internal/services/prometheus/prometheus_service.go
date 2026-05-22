@@ -57,11 +57,50 @@ func ConnectQueryDefinitions() []MetricQuery {
 type PrometheusService struct {
 	client  *client.PrometheusClient
 	queries []MetricQuery
+	labels  map[string]string
 }
 
-// NewPrometheusService creates a new Prometheus metrics service
-func NewPrometheusService(promClient *client.PrometheusClient, queries []MetricQuery) *PrometheusService {
-	return &PrometheusService{client: promClient, queries: queries}
+// NewPrometheusService creates a new Prometheus metrics service.
+// Labels is an optional map of Prometheus label selectors to scope queries
+// to a specific target (e.g. {"job": "confluent/connect-jmx-exporter"}).
+// Pass nil for no filtering.
+func NewPrometheusService(promClient *client.PrometheusClient, queries []MetricQuery, labels map[string]string) *PrometheusService {
+	return &PrometheusService{client: promClient, queries: queries, labels: labels}
+}
+
+// applyLabelFilter injects label selectors into a PromQL query by finding
+// the metric name and appending {key="value",...} after it.
+func applyLabelFilter(query, metricName string, labels map[string]string) string {
+	if len(labels) == 0 || metricName == "" {
+		return query
+	}
+
+	var parts []string
+	for k, v := range labels {
+		parts = append(parts, fmt.Sprintf("%s=\"%s\"", k, v))
+	}
+	labelStr := strings.Join(parts, ",")
+
+	// Extract the base metric name (without any existing selector)
+	baseName := metricName
+	if idx := strings.Index(metricName, "{"); idx >= 0 {
+		baseName = metricName[:idx]
+	}
+
+	// Find where the metric name appears in the query and look for existing braces
+	idx := strings.Index(query, baseName)
+	if idx < 0 {
+		return query
+	}
+
+	afterName := idx + len(baseName)
+	if afterName < len(query) && query[afterName] == '{' {
+		// Insert our labels at the start of the existing selector
+		return query[:afterName+1] + labelStr + "," + query[afterName+1:]
+	}
+
+	// No existing selector — add one
+	return query[:afterName] + "{" + labelStr + "}" + query[afterName:]
 }
 
 // SelectStep chooses an appropriate query step based on the time range
@@ -107,6 +146,7 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		if strings.Contains(query, "%s") {
 			query = fmt.Sprintf(query, rateWindow)
 		}
+		query = applyLabelFilter(query, mq.PrometheusMetric, s.labels)
 		results, err := s.client.QueryRange(ctx, query, start, end, step)
 		if err != nil {
 			slog.Warn("Prometheus query failed, skipping metric", "label", mq.Label, "error", err)
@@ -152,13 +192,13 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		},
 		Metrics:    allMetrics,
 		Aggregates: aggregates,
-		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange, start, end, s.queries),
+		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange, start, end, s.queries, s.labels),
 	}, nil
 }
 
 // buildPrometheusQueryInfo generates MetricQueryInfo entries for all Prometheus metrics,
 // including the resolved PromQL query and a curl command to reproduce it.
-func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration, start, end time.Time, queries []MetricQuery) []types.MetricQueryInfo {
+func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration, start, end time.Time, queries []MetricQuery, labels map[string]string) []types.MetricQueryInfo {
 	infos := make([]types.MetricQueryInfo, 0, len(queries))
 	periodSec := int32(step.Seconds())
 	durationStr := types.FormatQueryDuration(queryRange)
@@ -168,6 +208,7 @@ func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange t
 		if strings.Contains(resolvedQuery, "%s") {
 			resolvedQuery = fmt.Sprintf(resolvedQuery, rateWindow)
 		}
+		resolvedQuery = applyLabelFilter(resolvedQuery, mq.PrometheusMetric, labels)
 
 		var statistic string
 		var note string

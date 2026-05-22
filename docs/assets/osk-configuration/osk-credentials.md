@@ -157,6 +157,9 @@ prometheus:
   tls:                          # optional — omit for plain HTTP
     ca_cert: /path/to/ca.pem
     insecure_skip_verify: false
+  filter:                       # optional — scope queries to a specific target
+    labels:
+      job: confluent/kafka-jmx-exporter
 ```
 
 | Field                       | Required | Description                                                          |
@@ -165,6 +168,7 @@ prometheus:
 | `auth.username` / `password`| no       | HTTP basic auth credentials.                                         |
 | `tls.ca_cert`               | no       | CA certificate for HTTPS Prometheus endpoints.                       |
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
+| `filter.labels`             | no       | Map of Prometheus label selectors to scope queries. When set, all PromQL queries include these as `{key="value"}` filters. Useful when a single Prometheus scrapes multiple clusters. |
 
 `jolokia` and `prometheus` are mutually exclusive per scan invocation — `--metrics`
 selects which one `kcp` reads. You can keep both blocks in the file and switch

@@ -107,6 +107,9 @@ clusters:
     # Alternative: query Prometheus for historical Connect metrics
     # prometheus:
     #   url: http://prometheus:9090
+    #   filter:                     # scope queries to this Connect cluster
+    #     labels:
+    #       job: confluent/connect-jmx-exporter
 ```
 
 !!! note "Jolokia endpoints for Connect vs brokers"
@@ -117,6 +120,32 @@ clusters:
     the same credentials file is used but the endpoints should point to
     **Connect worker** Jolokia agents, which typically run on a different
     host and/or port.
+
+## Filtering by Connect cluster (Prometheus)
+
+When a single Prometheus instance scrapes multiple Connect clusters, all
+metrics are combined by default. Use `filter.labels` in the credentials file
+to scope queries to a specific Connect cluster:
+
+```yaml
+prometheus:
+  url: http://prometheus:9090
+  filter:
+    labels:
+      job: confluent/connect-jmx-exporter
+```
+
+This appends `{job="confluent/connect-jmx-exporter"}` to every PromQL query,
+returning metrics only for that Connect cluster. The label name and value
+depend on your Prometheus scrape configuration — common labels include `job`,
+`component`, `namespace`, or `pod`.
+
+To discover available labels, query Prometheus directly:
+
+```bash
+curl -s -G 'http://prometheus:9090/api/v1/query' \
+  --data-urlencode 'query=kafka_connect_worker_connector_count' | jq '.data.result[].metric'
+```
 
 ## Worked examples
 

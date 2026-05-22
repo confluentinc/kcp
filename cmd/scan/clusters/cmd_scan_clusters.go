@@ -475,8 +475,13 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		))
 	}
 
+	var labels map[string]string
+	if clusterCreds.Prometheus.Filter != nil {
+		labels = clusterCreds.Prometheus.Filter.Labels
+	}
+
 	promClient := client.NewPrometheusClient(clusterCreds.Prometheus.URL, promOpts...)
-	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions())
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }
 
