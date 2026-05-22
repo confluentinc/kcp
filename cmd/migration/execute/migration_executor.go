@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -35,6 +36,10 @@ type MigrationExecutorOpts struct {
 	TlsClientCert         string
 	TlsClientKey          string
 	InsecureSkipTLSVerify bool
+	// RolloutTimeout bounds the gateway-readiness wait during fence and
+	// switch. A value of 0 means no deadline — the wait runs until the
+	// operator reports ready or the user cancels.
+	RolloutTimeout time.Duration
 }
 
 type MigrationExecutor struct {
@@ -77,6 +82,7 @@ func (m *MigrationExecutor) Run() error {
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
+	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
 
 	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 	persist := func() error {
