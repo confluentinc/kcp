@@ -105,8 +105,8 @@ clusters:
 | `id`                | string           | yes      | Unique identifier for the cluster. Used as the cluster key in `kcp-state.json` and as the `--cluster-id` value for downstream `create-asset` commands. |
 | `bootstrap_servers` | list of strings  | yes      | Broker `host:port` addresses.                                                                                                                |
 | `auth_method`       | object           | yes      | Authentication method. Choose **exactly one** sub-block (see below).                                                                         |
-| `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters`.                                |
-| `prometheus`        | object           | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` on `kcp scan clusters`.                              |
+| `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point endpoints to Connect workers rather than brokers. |
+| `prometheus`        | object           | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` on `kcp scan clusters` or `kcp scan self-managed-connectors`. |
 | `metadata`          | map<string,string> | no     | Free-form labels surfaced in reports and the UI (e.g. `environment`, `location`).                                                            |
 
 ### `auth_method` — pick one
@@ -157,6 +157,9 @@ prometheus:
   tls:                          # optional — omit for plain HTTP
     ca_cert: /path/to/ca.pem
     insecure_skip_verify: false
+  filter:                       # optional — scope queries to a specific target
+    labels:
+      job: confluent/kafka-jmx-exporter
 ```
 
 | Field                       | Required | Description                                                          |
@@ -165,6 +168,7 @@ prometheus:
 | `auth.username` / `password`| no       | HTTP basic auth credentials.                                         |
 | `tls.ca_cert`               | no       | CA certificate for HTTPS Prometheus endpoints.                       |
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
+| `filter.labels`             | no       | Map of Prometheus label selectors to scope queries. When set, all PromQL queries include these as `{key="value"}` filters. Useful when a single Prometheus scrapes multiple clusters. |
 
 `jolokia` and `prometheus` are mutually exclusive per scan invocation — `--metrics`
 selects which one `kcp` reads. You can keep both blocks in the file and switch
@@ -173,4 +177,5 @@ between them by changing the flag.
 ## Where to go next
 
 - [`kcp scan clusters`](../command-reference/scan/clusters.md) — pass this file with `--credentials-file`.
-- [Metrics collection](metrics-collection.md) — design notes on Jolokia vs Prometheus, the metrics that `kcp` records, and how rates are computed.
+- [Metrics collection](metrics-collection.md) — design notes on Jolokia vs Prometheus, the broker metrics that `kcp` records, and how rates are computed.
+- [Connect metrics collection](connect-metrics-collection.md) — collecting metrics from Kafka Connect workers.

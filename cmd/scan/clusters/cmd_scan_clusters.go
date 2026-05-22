@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -174,7 +173,7 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 			if metricsRange == "" {
 				return fmt.Errorf("--metrics-range is required when --metrics prometheus is set")
 			}
-			if _, err := parseDurationDays(metricsRange); err != nil {
+			if _, err := utils.ParseDurationDays(metricsRange); err != nil {
 				return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
 			}
 			if cmd.Flags().Changed("metrics-duration") {
@@ -448,7 +447,7 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
-	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jolokiaOpts...)
+	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(), jolokiaOpts...)
 	return jmxService.CollectOverDuration(ctx, duration, interval)
 }
 
@@ -457,7 +456,7 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		return nil, fmt.Errorf("no prometheus config for cluster %s", clusterCreds.ID)
 	}
 
-	queryRange, _ := parseDurationDays(metricsRange)
+	queryRange, _ := utils.ParseDurationDays(metricsRange)
 
 	slog.Info("collecting Prometheus metrics", "cluster", clusterCreds.ID, "range", metricsRange)
 	fmt.Printf("\n📊 Collecting Prometheus metrics for cluster '%s' (range: %s)...\n", clusterCreds.ID, metricsRange)
@@ -476,19 +475,13 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		))
 	}
 
+	var labels map[string]string
+	if clusterCreds.Prometheus.Filter != nil {
+		labels = clusterCreds.Prometheus.Filter.Labels
+	}
+
 	promClient := client.NewPrometheusClient(clusterCreds.Prometheus.URL, promOpts...)
-	promService := prometheussvc.NewPrometheusService(promClient)
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }
 
-// parseDurationDays parses duration strings like "1d", "7d", "30d" into time.Duration
-func parseDurationDays(s string) (time.Duration, error) {
-	if len(s) < 2 || s[len(s)-1] != 'd' {
-		return 0, fmt.Errorf("must end with 'd' (e.g. 7d, 30d)")
-	}
-	days, err := strconv.Atoi(s[:len(s)-1])
-	if err != nil || days <= 0 {
-		return 0, fmt.Errorf("invalid number of days")
-	}
-	return time.Duration(days) * 24 * time.Hour, nil
-}

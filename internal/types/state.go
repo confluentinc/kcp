@@ -664,9 +664,10 @@ type MetricQueryInfo struct {
 	PrometheusMetricName string `json:"prometheus_metric_name,omitempty"`
 
 	// Shared fields
-	CurlCommand     string `json:"curl_command,omitempty"` // Jolokia curl or Prometheus API curl
-	QueryDuration   string `json:"query_duration,omitempty"`
-	AggregationNote string `json:"aggregation_note"`
+	CurlCommand     string            `json:"curl_command,omitempty"` // Jolokia curl or Prometheus API curl
+	QueryDuration   string            `json:"query_duration,omitempty"`
+	AggregationNote string            `json:"aggregation_note"`
+	LabelFilter     map[string]string `json:"label_filter,omitempty"`
 }
 
 // FormatQueryDuration formats a duration for display, using days when >= 24h.
