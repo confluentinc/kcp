@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -28,6 +29,12 @@ var (
 	tlsCaCert     string
 	tlsClientCert string
 	tlsClientKey  string
+
+	metricsSource   string
+	metricsDuration string
+	metricsInterval string
+	metricsRange    string
+	credentialsFile string
 )
 
 func NewScanSelfManagedConnectorsCmd() *cobra.Command {
@@ -57,7 +64,16 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
     --connect-rest-url http://connect:8083 \
     --cluster-id my-cluster \
     --source-type osk \
-    --use-unauthenticated`,
+    --use-unauthenticated
+
+  # Scan with Jolokia metrics collection
+  kcp scan self-managed-connectors \
+    --state-file kcp-state.json \
+    --connect-rest-url http://connect:8083 \
+    --cluster-id my-cluster \
+    --use-unauthenticated \
+    --metrics jolokia --metrics-duration 5m --metrics-interval 10s \
+    --credentials-file osk-credentials.yaml`,
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
@@ -103,6 +119,16 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd.Flags().AddFlagSet(tlsFlags)
 	groups[tlsFlags] = "TLS Credentials"
 
+	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
+	metricsFlags.SortFlags = false
+	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics backend: 'jolokia' or 'prometheus'. Requires --credentials-file.")
+	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia metrics (e.g., 5m, 30m). Required with --metrics jolokia.")
+	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia metrics (default: 10s).")
+	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Time range to query from Prometheus (e.g., 7d, 30d). Required with --metrics prometheus.")
+	metricsFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to OSK credentials file containing Jolokia/Prometheus configuration.")
+	selfManagedConnectorsCmd.Flags().AddFlagSet(metricsFlags)
+	groups[metricsFlags] = "Metrics Collection"
+
 	selfManagedConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
@@ -110,8 +136,8 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 			fmt.Printf("Examples:\n%s\n\n", c.Example)
 		}
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Optional Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials", "Metrics Collection"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -149,6 +175,46 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 		_ = cmd.MarkFlagRequired("tls-ca-cert")
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
+	}
+
+	// Validate metrics flags
+	if metricsSource != "" {
+		if metricsSource != "jolokia" && metricsSource != "prometheus" {
+			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
+		}
+		if credentialsFile == "" {
+			return fmt.Errorf("--credentials-file is required when --metrics is set")
+		}
+		switch metricsSource {
+		case "jolokia":
+			if metricsDuration == "" {
+				return fmt.Errorf("--metrics-duration is required when --metrics jolokia is set")
+			}
+			if _, err := time.ParseDuration(metricsDuration); err != nil {
+				return fmt.Errorf("invalid --metrics-duration '%s': %w", metricsDuration, err)
+			}
+			if _, err := time.ParseDuration(metricsInterval); err != nil {
+				return fmt.Errorf("invalid --metrics-interval '%s': %w", metricsInterval, err)
+			}
+			duration, _ := time.ParseDuration(metricsDuration)
+			interval, _ := time.ParseDuration(metricsInterval)
+			if duration <= interval {
+				return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
+			}
+			if cmd.Flags().Changed("metrics-range") {
+				return fmt.Errorf("--metrics-range cannot be used with --metrics jolokia")
+			}
+		case "prometheus":
+			if metricsRange == "" {
+				return fmt.Errorf("--metrics-range is required when --metrics prometheus is set")
+			}
+			if _, err := utils.ParseDurationDays(metricsRange); err != nil {
+				return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
+			}
+			if cmd.Flags().Changed("metrics-duration") {
+				return fmt.Errorf("--metrics-duration cannot be used with --metrics prometheus")
+			}
+		}
 	}
 
 	return nil
@@ -248,6 +314,11 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 			ClientCert: tlsClientCert,
 			ClientKey:  tlsClientKey,
 		},
+		MetricsSource:   metricsSource,
+		CredentialsFile: credentialsFile,
+		MetricsDuration: metricsDuration,
+		MetricsInterval: metricsInterval,
+		MetricsRange:    metricsRange,
 	}
 
 	return &opts, nil
