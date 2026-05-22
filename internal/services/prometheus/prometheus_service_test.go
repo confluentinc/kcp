@@ -295,6 +295,20 @@ func TestApplyLabelFilter(t *testing.T) {
 			labels,
 			"sum(kafka_connect_worker_connector_count)",
 		},
+		{
+			"multiple labels are sorted deterministically",
+			"sum(kafka_connect_worker_connector_count)",
+			"kafka_connect_worker_connector_count",
+			map[string]string{"namespace": "confluent", "job": "connect-exporter"},
+			`sum(kafka_connect_worker_connector_count{job="connect-exporter",namespace="confluent"})`,
+		},
+		{
+			"label values with special characters are escaped",
+			"sum(kafka_connect_worker_connector_count)",
+			"kafka_connect_worker_connector_count",
+			map[string]string{"job": `value"with\quotes`},
+			`sum(kafka_connect_worker_connector_count{job="value\"with\\quotes"})`,
+		},
 	}
 
 	for _, tt := range tests {

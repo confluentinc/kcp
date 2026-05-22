@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,8 +76,18 @@ func applyLabelFilter(query, metricName string, labels map[string]string) string
 		return query
 	}
 
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var parts []string
-	for k, v := range labels {
+	for _, k := range keys {
+		// Escape backslashes and double quotes in label values for valid PromQL
+		v := strings.ReplaceAll(labels[k], `\`, `\\`)
+		v = strings.ReplaceAll(v, `"`, `\"`)
 		parts = append(parts, fmt.Sprintf("%s=\"%s\"", k, v))
 	}
 	labelStr := strings.Join(parts, ",")
