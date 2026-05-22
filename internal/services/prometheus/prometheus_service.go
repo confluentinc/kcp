@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,7 +14,8 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type metricQuery struct {
+// MetricQuery defines a single Prometheus metric to collect.
+type MetricQuery struct {
 	Label string
 	// Query is a format string. %s is replaced with the rate window (e.g. "5m", "4h").
 	// Queries without %s are used as-is.
@@ -22,24 +24,94 @@ type metricQuery struct {
 	PrometheusMetric string
 }
 
-var prometheusQueries = []metricQuery{
-	{"BytesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesinpersec_total"},
-	{"BytesOutPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
-	{"MessagesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_messagesinpersec_total"},
-	{"PartitionCount", "sum(kafka_server_replicamanager_partitioncount)", "kafka_server_replicamanager_partitioncount"},
-	{"GlobalPartitionCount", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}"},
-	{"ClientConnectionCount", "sum(kafka_server_socketservermetrics_connection_count)", "kafka_server_socketservermetrics_connection_count"},
-	{"TotalLocalStorageUsage", "sum(kafka_log_log_size) / (1024*1024*1024)", "kafka_log_log_size"},
+// BrokerQueryDefinitions returns the standard Kafka broker Prometheus queries.
+func BrokerQueryDefinitions() []MetricQuery {
+	return []MetricQuery{
+		{"BytesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesinpersec_total"},
+		{"BytesOutPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
+		{"MessagesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_messagesinpersec_total"},
+		{"PartitionCount", "sum(kafka_server_replicamanager_partitioncount)", "kafka_server_replicamanager_partitioncount"},
+		{"GlobalPartitionCount", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}"},
+		{"ClientConnectionCount", "sum(kafka_server_socketservermetrics_connection_count)", "kafka_server_socketservermetrics_connection_count"},
+		{"TotalLocalStorageUsage", "sum(kafka_log_log_size) / (1024*1024*1024)", "kafka_log_log_size"},
+	}
+}
+
+// ConnectQueryDefinitions returns Prometheus queries for Kafka Connect worker metrics.
+// Metric names match the JMX exporter naming convention (kafka_connect_worker_*).
+// Client-level metrics (incoming/outgoing-byte-rate, connection-count, request-rate)
+// require the JMX exporter to whitelist kafka.connect:client-id=*,type=connect-metrics.
+func ConnectQueryDefinitions() []MetricQuery {
+	return []MetricQuery{
+		{"connector-count", "sum(kafka_connect_worker_connector_count)", "kafka_connect_worker_connector_count"},
+		{"task-count", "sum(kafka_connect_worker_task_count)", "kafka_connect_worker_task_count"},
+		{"source-record-write-rate", "sum(kafka_connect_source_task_source_record_write_rate)", "kafka_connect_source_task_source_record_write_rate"},
+		{"source-record-poll-rate", "sum(kafka_connect_source_task_source_record_poll_rate)", "kafka_connect_source_task_source_record_poll_rate"},
+		{"incoming-byte-rate", "sum(kafka_connect_network_io_incoming_byte_rate)", "kafka_connect_network_io_incoming_byte_rate"},
+		{"outgoing-byte-rate", "sum(kafka_connect_network_io_outgoing_byte_rate)", "kafka_connect_network_io_outgoing_byte_rate"},
+		{"connection-count", "sum(kafka_connect_network_io_connection_count)", "kafka_connect_network_io_connection_count"},
+		{"request-rate", "sum(kafka_connect_network_io_request_rate)", "kafka_connect_network_io_request_rate"},
+	}
 }
 
 // PrometheusService collects Kafka metrics from a Prometheus server
 type PrometheusService struct {
-	client *client.PrometheusClient
+	client  *client.PrometheusClient
+	queries []MetricQuery
+	labels  map[string]string
 }
 
-// NewPrometheusService creates a new Prometheus metrics service
-func NewPrometheusService(promClient *client.PrometheusClient) *PrometheusService {
-	return &PrometheusService{client: promClient}
+// NewPrometheusService creates a new Prometheus metrics service.
+// Labels is an optional map of Prometheus label selectors to scope queries
+// to a specific target (e.g. {"job": "confluent/connect-jmx-exporter"}).
+// Pass nil for no filtering.
+func NewPrometheusService(promClient *client.PrometheusClient, queries []MetricQuery, labels map[string]string) *PrometheusService {
+	return &PrometheusService{client: promClient, queries: queries, labels: labels}
+}
+
+// applyLabelFilter injects label selectors into a PromQL query by finding
+// the metric name and appending {key="value",...} after it.
+func applyLabelFilter(query, metricName string, labels map[string]string) string {
+	if len(labels) == 0 || metricName == "" {
+		return query
+	}
+
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		// Escape backslashes and double quotes in label values for valid PromQL
+		v := strings.ReplaceAll(labels[k], `\`, `\\`)
+		v = strings.ReplaceAll(v, `"`, `\"`)
+		parts = append(parts, fmt.Sprintf("%s=\"%s\"", k, v))
+	}
+	labelStr := strings.Join(parts, ",")
+
+	// Extract the base metric name (without any existing selector)
+	baseName := metricName
+	if idx := strings.Index(metricName, "{"); idx >= 0 {
+		baseName = metricName[:idx]
+	}
+
+	// Find where the metric name appears in the query and look for existing braces
+	idx := strings.Index(query, baseName)
+	if idx < 0 {
+		return query
+	}
+
+	afterName := idx + len(baseName)
+	if afterName < len(query) && query[afterName] == '{' {
+		// Insert our labels at the start of the existing selector
+		return query[:afterName+1] + labelStr + "," + query[afterName+1:]
+	}
+
+	// No existing selector — add one
+	return query[:afterName] + "{" + labelStr + "}" + query[afterName:]
 }
 
 // SelectStep chooses an appropriate query step based on the time range
@@ -80,15 +152,15 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 	var allMetrics []types.ProcessedMetric
 	valuesByLabel := make(map[string][]float64)
 
-	for _, mq := range prometheusQueries {
+	for _, mq := range s.queries {
 		query := mq.Query
 		if strings.Contains(query, "%s") {
 			query = fmt.Sprintf(query, rateWindow)
 		}
+		query = applyLabelFilter(query, mq.PrometheusMetric, s.labels)
 		results, err := s.client.QueryRange(ctx, query, start, end, step)
 		if err != nil {
 			slog.Warn("Prometheus query failed, skipping metric", "label", mq.Label, "error", err)
-			fmt.Printf("   ⚠️  Query failed for %s: %v\n", mq.Label, err)
 			continue
 		}
 
@@ -98,7 +170,6 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		}
 		if dataPoints == 0 {
 			slog.Warn("Prometheus query returned no data points", "label", mq.Label, "query", query)
-			fmt.Printf("   ⚠️  No data returned for %s — metric may not be exposed by your Prometheus exporter\n", mq.Label)
 		}
 
 		for _, result := range results {
@@ -118,8 +189,8 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 	}
 
 	if len(allMetrics) == 0 {
-		fmt.Printf("\n   ⚠️  No metrics data was collected from Prometheus. Ensure your Prometheus instance is scraping Kafka broker metrics.\n")
-		fmt.Printf("   See %sosk-configuration/metrics-collection/#prometheus-promql-queries for expected metric names.\n", build_info.DocsURL())
+		slog.Warn("No metrics data was collected from Prometheus. Ensure your Prometheus instance is scraping the expected metrics.",
+			"docs", build_info.DocsURL()+"osk-configuration/metrics-collection/#prometheus-promql-queries")
 	}
 
 	aggregates := calculateAggregates(valuesByLabel)
@@ -132,22 +203,23 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		},
 		Metrics:    allMetrics,
 		Aggregates: aggregates,
-		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange, start, end),
+		QueryInfo:  buildPrometheusQueryInfo(s.client.BaseURL(), rateWindow, step, queryRange, start, end, s.queries, s.labels),
 	}, nil
 }
 
 // buildPrometheusQueryInfo generates MetricQueryInfo entries for all Prometheus metrics,
 // including the resolved PromQL query and a curl command to reproduce it.
-func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration, start, end time.Time) []types.MetricQueryInfo {
-	infos := make([]types.MetricQueryInfo, 0, len(prometheusQueries))
+func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange time.Duration, start, end time.Time, queries []MetricQuery, labels map[string]string) []types.MetricQueryInfo {
+	infos := make([]types.MetricQueryInfo, 0, len(queries))
 	periodSec := int32(step.Seconds())
 	durationStr := types.FormatQueryDuration(queryRange)
 
-	for _, mq := range prometheusQueries {
+	for _, mq := range queries {
 		resolvedQuery := mq.Query
 		if strings.Contains(resolvedQuery, "%s") {
 			resolvedQuery = fmt.Sprintf(resolvedQuery, rateWindow)
 		}
+		resolvedQuery = applyLabelFilter(resolvedQuery, mq.PrometheusMetric, labels)
 
 		var statistic string
 		var note string
@@ -180,6 +252,7 @@ func buildPrometheusQueryInfo(promBaseURL, rateWindow string, step, queryRange t
 			PrometheusMetricName: mq.PrometheusMetric,
 			CurlCommand:          fmt.Sprintf("curl -G '%s/api/v1/query_range' --data-urlencode 'query=%s' --data-urlencode 'start=%s' --data-urlencode 'end=%s' --data-urlencode 'step=%ds'", promBaseURL, resolvedQuery, start.Format(time.RFC3339), end.Format(time.RFC3339), int(step.Seconds())),
 			AggregationNote:      note,
+			LabelFilter:          labels,
 		})
 	}
 
