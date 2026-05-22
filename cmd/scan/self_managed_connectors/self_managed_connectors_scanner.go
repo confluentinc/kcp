@@ -427,8 +427,13 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 		))
 	}
 
+	var labels map[string]string
+	if clusterCreds.Prometheus.Filter != nil {
+		labels = clusterCreds.Prometheus.Filter.Labels
+	}
+
 	promClient := client.NewPrometheusClient(clusterCreds.Prometheus.URL, promOpts...)
-	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.ConnectQueryDefinitions())
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.ConnectQueryDefinitions(), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }
 

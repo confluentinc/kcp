@@ -144,6 +144,13 @@ Prometheus JMX Exporter with a standard Kafka configuration. If your exporter
 uses custom relabelling rules that rename these metrics, the queries will return
 empty results.
 
+## Filtering by cluster (Prometheus)
+
+When a single Prometheus instance scrapes multiple Kafka clusters, use
+`filter.labels` in `osk-credentials.yaml` to scope queries to a specific
+cluster. See the [`prometheus` field reference](osk-credentials.md#prometheus--optional-for-historical-metrics)
+for details.
+
 ## Worked examples
 
 ```bash
