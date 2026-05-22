@@ -23,6 +23,13 @@ type MigrationConfig struct {
 	ClusterLinkTopics  []string          `json:"cluster_link_topics"`
 	ClusterLinkConfigs map[string]string `json:"cluster_link_configs"`
 
+	// Operator intent: pause cluster-link consumer offset sync for the duration of execute.
+	// PauseConsumerOffsetSync records the operator's choice at init time.
+	// PauseConsumerOffsetSyncFlipped is set when kcp has executed the disable AlterConfigs and
+	// not yet restored — supports drift detection, idempotent resume, and remediation messaging.
+	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
+	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
+
 	// Gateway CR configuration
 	InitialCrName    string `json:"initial_cr_name"`
 	K8sNamespace     string `json:"k8s_namespace"`

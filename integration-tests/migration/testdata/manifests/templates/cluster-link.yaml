@@ -1,7 +1,7 @@
 apiVersion: platform.confluent.io/v1beta1
 kind: ClusterLink
 metadata:
-  name: e2e-link
+  name: __CLUSTER_LINK_NAME__
   namespace: confluent
 spec:
   sourceKafkaCluster:
@@ -12,7 +12,7 @@ spec:
     kafkaRestClassRef:
       name: destination-kafka-rest-class
   mirrorTopics:
-    - name: e2e-test-topic
+    - name: __TOPIC_NAME__
   configs:
     consumer.offset.sync.enable: "true"
     consumer.offset.sync.ms: "1000"

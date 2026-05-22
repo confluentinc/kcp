@@ -2,15 +2,18 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // ===========================================================================
@@ -187,6 +190,147 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 	for _, topic := range config.Topics {
 		assert.True(t, expected[topic], "unexpected topic %q in discovered topics", topic)
 	}
+}
+
+// ===========================================================================
+// PauseConsumerOffsetSync precondition tests (U2)
+// ===========================================================================
+
+// makeOffsetSyncWorkflow builds a workflow with mocks that satisfy Initialize
+// up to the cluster-link config check. listConfigsFn is the seam under test.
+func makeOffsetSyncWorkflow(t *testing.T, listConfigsFn func(_ context.Context, _ clusterlink.Config) (map[string]string, error)) *MigrationWorkflow {
+	t.Helper()
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
+			return []byte("yaml"), nil
+		},
+	}
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
+		},
+		listConfigsFn: listConfigsFn,
+	}
+	return NewMigrationWorkflow(gw, cl)
+}
+
+func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		return map[string]string{"consumer.offset.sync.enable": "true"}, nil
+	})
+	config := &types.MigrationConfig{
+		ClusterLinkName:         "link-pause",
+		PauseConsumerOffsetSync: true,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+	assert.True(t, config.PauseConsumerOffsetSync, "intent should be retained on config")
+	assert.False(t, config.PauseConsumerOffsetSyncFlipped, "flipped marker must remain false at init time")
+}
+
+func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+	})
+	config := &types.MigrationConfig{
+		ClusterLinkName:         "link-falsey",
+		PauseConsumerOffsetSync: true,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "link-falsey")
+	assert.Contains(t, err.Error(), "consumer.offset.sync.enable")
+	assert.Contains(t, err.Error(), `"false"`)
+}
+
+func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		return map[string]string{"other.key": "value"}, nil
+	})
+	config := &types.MigrationConfig{
+		ClusterLinkName:         "link-absent",
+		PauseConsumerOffsetSync: true,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "link-absent")
+	assert.Contains(t, err.Error(), "no consumer.offset.sync.enable config key", "error must distinguish absent key from false value")
+}
+
+func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testing.T) {
+	// Cluster link reports enable=false. Without the flag, init must succeed
+	// regardless — the precondition only applies when the operator opted in.
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+	})
+	config := &types.MigrationConfig{
+		ClusterLinkName:         "link-offset-disabled",
+		PauseConsumerOffsetSync: false,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "flag off must not assert offset-sync state")
+}
+
+// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition
+// covers the --skip-validate + --pause-consumer-offset-sync flow where:
+//  1. init runs with --skip-validate so the precondition was NOT checked at init time
+//  2. first execute calls DisableOffsetSync which sets enable=false and marker=true
+//  3. FSM transitions out of StateUninitialized, calling Initialize
+//
+// At step 3 the live config is "false" (kcp just set it) and the marker is
+// true, meaning kcp is the reason the value drifted. Initialize must NOT
+// refuse — that would wedge the migration mid-flight.
+func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+	})
+	config := &types.MigrationConfig{
+		ClusterLinkName:                "link-mid-flight",
+		PauseConsumerOffsetSync:        true,
+		PauseConsumerOffsetSyncFlipped: true,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
+}
+
+// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot
+// pins the defensive guard against the snapshot-clobbering bug. If Initialize
+// is ever called after DisableOffsetSync has run (i.e. Flipped=true), the live
+// configs reflect the post-disable state. Writing them to ClusterLinkConfigs
+// would clobber the pre-disable snapshot that RestoreOffsetSync needs to diff
+// against. The guard must keep the existing snapshot in that case.
+//
+// Today the CLI blocks the ordering hazard via mutual exclusion of
+// --skip-validate and --pause-consumer-offset-sync, but this test pins the
+// in-code defense in case a future caller reintroduces the ordering.
+func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t *testing.T) {
+	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+		// Post-disable live state — toggle false, filters cleared.
+		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+	})
+	preDisableSnapshot := map[string]string{
+		"consumer.offset.sync.enable":   "true",
+		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
+	}
+	config := &types.MigrationConfig{
+		ClusterLinkName:                "link-mid-flight",
+		PauseConsumerOffsetSync:        true,
+		PauseConsumerOffsetSyncFlipped: true,
+		ClusterLinkConfigs:             preDisableSnapshot,
+	}
+
+	err := wf.Initialize(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+
+	assert.Equal(t, "true", config.ClusterLinkConfigs["consumer.offset.sync.enable"],
+		"pre-disable toggle value must survive Initialize when Flipped=true")
+	assert.Equal(t, `{"groups":["app-*"]}`, config.ClusterLinkConfigs["consumer.offset.group.filters"],
+		"pre-disable filters value must survive Initialize when Flipped=true")
 }
 
 // ===========================================================================
@@ -459,6 +603,193 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
 	require.Error(t, err)
 	assert.Equal(t, "source and destination offset services are required", err.Error())
+}
+
+// ===========================================================================
+// FenceGateway / SwitchGateway tests
+// ===========================================================================
+
+func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
+	var callOrder []string
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			callOrder = append(callOrder, "apply")
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			callOrder = append(callOrder, "wait")
+			if onProgress != nil {
+				onProgress(gateway.GatewayReadinessProgress{InitialPodCount: 3, PodsReady: 3, Elapsed: 2 * time.Second, RolloutDetected: true, Ready: true})
+			}
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply must precede wait")
+}
+
+func TestWorkflow_FenceGateway_DoesNotCallUIDDiffingMethods(t *testing.T) {
+	var unwantedCall string
+	gw := &mockGatewayService{
+		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
+			unwantedCall = "GetGatewayPodUIDs"
+			return nil, nil
+		},
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+			unwantedCall = "WaitForGatewayPods"
+			return nil
+		},
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		// waitForGatewayReadyFn defaults to nil → returns nil success
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Empty(t, unwantedCall, "FenceGateway must not use UID-diffing methods, but called: %s", unwantedCall)
+}
+
+func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return fmt.Errorf("k8s 403")
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to apply fenced gateway CR")
+	assert.Contains(t, err.Error(), "k8s 403")
+}
+
+func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	wf.SetRolloutTimeout(100 * time.Millisecond)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.DeadlineExceeded), "DeadlineExceeded must propagate: %v", err)
+}
+
+func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	err := wf.FenceGateway(ctx, config)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled))
+}
+
+func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
+	var observedTimeout time.Duration
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			observedTimeout = timeout
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	wf.SetRolloutTimeout(15 * time.Minute)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, 15*time.Minute, observedTimeout)
+}
+
+func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
+	var observedTimeout time.Duration
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			observedTimeout = timeout
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), observedTimeout, "default rolloutTimeout should be 0 (no deadline)")
+}
+
+func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
+	var callOrder []string
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
+			callOrder = append(callOrder, fmt.Sprintf("apply:%s", string(yaml)))
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			callOrder = append(callOrder, "wait")
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"apply:switchover", "wait"}, callOrder, "apply (switchover YAML) must precede wait")
+}
+
+func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("kube unreachable")
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed waiting for gateway readiness")
+	assert.Contains(t, err.Error(), "kube unreachable")
 }
 
 // ===========================================================================
