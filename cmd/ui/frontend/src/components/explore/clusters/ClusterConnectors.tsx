@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
 import { formatDate } from '@/lib/formatters'
 import { CONNECTOR_TABS } from '@/constants'
+import { ConnectMetrics } from './ConnectMetrics'
 import type { ConnectorTab } from '@/types'
 
 interface Connector {
@@ -51,11 +52,21 @@ interface SelfManagedConnector {
 interface ClusterConnectorsProps {
   connectors: Connector[]
   selfManagedConnectors?: SelfManagedConnector[]
+  connectMetrics?: {
+    metadata?: {
+      start_date?: string
+      end_date?: string
+      period?: number
+    }
+  }
+  clusterId?: string
 }
 
 export const ClusterConnectors = ({
   connectors,
   selfManagedConnectors = [],
+  connectMetrics,
+  clusterId,
 }: ClusterConnectorsProps) => {
   const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
 
@@ -275,6 +286,14 @@ export const ClusterConnectors = ({
 
     return (
       <div className="space-y-8">
+        {connectMetrics?.metadata && clusterId && (
+          <ConnectMetrics
+            clusterId={clusterId}
+            connectMetricsMetadata={connectMetrics.metadata}
+            isActive={activeTab === CONNECTOR_TABS.SELF_MANAGED}
+          />
+        )}
+
         {Object.entries(groupedConnectors).map(([connectHost, connectors]) => (
           <div
             key={connectHost}
