@@ -169,3 +169,53 @@ func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 	assert.NotContains(t, body, "⚠", "state-derived Dedicated escalations must not surface the wrong-click callout")
 	assert.NotContains(t, body, "5–10×")
 }
+
+// Clusters whose source scan didn't populate the load-bearing signals
+// (topics + ACLs on a PROVISIONED cluster) render every downstream
+// column as `_deferred_` in both the Sizing & Cluster Decisions table
+// and the Sizing Math appendix — we won't ship a confident verdict
+// against missing data. Regression guard: an incomplete-scan cluster
+// must NOT render the numeric "1 eCKU Enterprise PNI" pattern.
+func TestRenderMarkdown_ScanIncompleteRendersDeferred(t *testing.T) {
+	cfg := defaultCfg(t)
+	p := &types.Plan{
+		Sizing: []types.ClusterSizing{
+			{ClusterID: "ok", FinalECKU: 1, SizedInMBps: 5, SizedOutMBps: 8, MaxRatioDriver: "ingress"},
+			{ClusterID: "gap", FinalECKU: 1, ScanIncomplete: true, SLAFloorECKU: 1, MaxRatioDriver: "ingress"},
+		},
+		ClusterTypeDecision: []types.ClusterTypeDecision{
+			{ClusterID: "ok", Verdict: types.ClusterTypeEnterprise},
+			{ClusterID: "gap", Verdict: types.ClusterTypeEnterprise},
+		},
+		NetworkingDecision: []types.NetworkingDecision{
+			{ClusterID: "ok", Verdict: types.NetworkingPNI, Reason: "PNI default"},
+			{ClusterID: "gap", Verdict: types.NetworkingPNI, Reason: "PNI default"},
+		},
+		SizingAppendix: []types.SizingMathDetail{
+			{ClusterID: "ok", Formula: "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))"},
+		},
+	}
+	out, err := RenderMarkdown(p, cfg)
+	require.NoError(t, err)
+	body := string(out)
+
+	// Main decisions table: gap cluster shows _deferred_ across the verdict columns.
+	assert.Contains(t, body, "| gap | _scan incomplete_ | _unknown_ | _deferred_ | _deferred_ | _deferred_ |",
+		"incomplete-scan cluster must render every downstream column as deferred in the Sizing table")
+	// "Why These Recommendations" should explain the deferral.
+	assert.Contains(t, body, "**gap** — sizing **deferred**",
+		"incomplete-scan cluster must surface a deferred rationale, not a confident verdict")
+	// Sizing-math appendix row must also defer.
+	assert.Contains(t, body, "| gap | _scan incomplete_ | _scan incomplete_ | _unknown_ | _n/a_ | _deferred_ |",
+		"incomplete-scan cluster must render the appendix row as deferred too")
+	// The healthy cluster's numeric verdict must still render — we're
+	// gating per-cluster, not blanket-suppressing the whole table.
+	assert.Contains(t, body, "| ok | 5.0 / 8.0 | 0 | 1 eCKU | Enterprise | PNI |",
+		"fully-scanned cluster must still render its numeric verdict alongside deferred ones")
+
+	// Negative checks: no confident verdict leaked for the gap cluster.
+	for _, badPattern := range []string{"| gap | 0.0 / 0.0", "gap | 1 eCKU"} {
+		assert.False(t, strings.Contains(body, badPattern),
+			"incomplete-scan cluster must not render the confident-verdict pattern %q", badPattern)
+	}
+}
