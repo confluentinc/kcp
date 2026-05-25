@@ -144,69 +144,112 @@ func TestBrokerCountAndTopicCountReadFromState(t *testing.T) {
 // The shipping recommendation still exists for every cluster; the OQ is
 // the action that upgrades it.
 func TestDetectOpenQuestions(t *testing.T) {
-	t.Run("missing P95 metrics → missing_p95_metrics OQ", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "noMetrics"}
+	cfg := defaultCfg(t)
+	provisioned := func(name string) types.ProcessedCluster {
+		c := types.ProcessedCluster{Name: name}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
-		sizing := types.ClusterSizing{ClusterID: "noMetrics", Degraded: true, DegradedReason: "no BytesInPerSec p95"}
+		return c
+	}
+	ent := types.ClusterTypeDecision{Verdict: types.ClusterTypeEnterprise}
+	pniNet := func(id string) types.NetworkingDecision {
+		return types.NetworkingDecision{ClusterID: id, Verdict: types.NetworkingPNI}
+	}
 
-		oqs := detectOpenQuestions(c, sizing)
-		assertContainsOQ(t, oqs, "missing_p95_metrics", "Re-run `kcp scan metrics`")
+	t.Run("missing P95 metrics → missing_p95_metrics OQ", func(t *testing.T) {
+		c := provisioned("noMetrics")
+		sizing := types.ClusterSizing{ClusterID: "noMetrics", Degraded: true, DegradedReason: "no BytesInPerSec p95"}
+		oqs := detectOpenQuestions(c, sizing, ent, pniNet("noMetrics"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		assertContainsOQ(t, oqs, "missing_p95_metrics", "kcp scan metrics")
 	})
 
-	t.Run("nil ACLs → acls_not_scanned OQ", func(t *testing.T) {
+	t.Run("nil ACLs on PROVISIONED with topics scan → acls_not_scanned suppressed (scan ran with 0 ACLs)", func(t *testing.T) {
+		// With Topics populated + PROVISIONED, aclScanRan() returns true,
+		// so a successful scan that found 0 ACLs is NOT a gap.
+		c := provisioned("provisioned-zero-acls")
+		c.KafkaAdminClientInformation.Acls = nil
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "provisioned-zero-acls", FinalECKU: 1}, ent, pniNet("provisioned-zero-acls"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		for _, oq := range oqs {
+			assert.NotEqual(t, "acls_not_scanned", oq.ID, "scan-with-0 must NOT emit the OQ")
+		}
+	})
+
+	t.Run("no topics scan + nil ACLs → acls_not_scanned OQ", func(t *testing.T) {
 		c := types.ProcessedCluster{Name: "noAcls"}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
-		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
-		c.KafkaAdminClientInformation.Acls = nil
-
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noAcls", FinalECKU: 1})
-		assertContainsOQ(t, oqs, "acls_not_scanned", "admin credentials")
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
+		// Topics nil → scan didn't run; ACLs nil follows from same gap
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noAcls", FinalECKU: 1}, ent, pniNet("noAcls"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		assertContainsOQ(t, oqs, "acls_not_scanned", "admin Kafka credentials")
 	})
 
-	t.Run("zero brokers → broker_inventory_empty OQ", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "noBrokers"}
+	t.Run("SERVERLESS cluster suppresses acls_not_scanned and broker_inventory_empty", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "serverless"}
 		c.AWSClientInformation.Nodes = nil
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
-		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+		c.KafkaAdminClientInformation.Acls = nil
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "serverless", FinalECKU: 1}, ent, pniNet("serverless"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		for _, oq := range oqs {
+			assert.NotEqual(t, "acls_not_scanned", oq.ID, "serverless does not expose ACLs via this API")
+			assert.NotEqual(t, "broker_inventory_empty", oq.ID, "serverless has no broker nodes by design")
+		}
+	})
 
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noBrokers", FinalECKU: 1})
+	t.Run("zero brokers on PROVISIONED → broker_inventory_empty OQ", func(t *testing.T) {
+		c := provisioned("noBrokers")
+		c.AWSClientInformation.Nodes = nil
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noBrokers", FinalECKU: 1}, ent, pniNet("noBrokers"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "broker_inventory_empty", "kcp discover")
 	})
 
 	t.Run("zero topics → topic_inventory_empty OQ", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "noTopics"}
-		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		c := provisioned("noTopics")
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 0}}
-		c.KafkaAdminClientInformation.Acls = []types.Acls{}
-
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noTopics", FinalECKU: 1})
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noTopics", FinalECKU: 1}, ent, pniNet("noTopics"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "topic_inventory_empty", "kcp scan clusters")
 	})
 
-	t.Run("spiky workload does NOT generate an OQ (FYI only)", func(t *testing.T) {
-		// Spiky is informational — Enterprise elasticity absorbs the
-		// spike, so there's nothing the customer MUST do. The renderer
-		// surfaces it as a one-line note in the rationale section, not
-		// as an Actions Needed item.
-		c := types.ProcessedCluster{Name: "spiky"}
-		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
-		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
-		c.KafkaAdminClientInformation.Acls = []types.Acls{}
-		sizing := types.ClusterSizing{ClusterID: "spiky", FinalECKU: 2, SpikyIngress: true}
+	t.Run("PrivateLink trigger + sized > cap → networking_privatelink_over_cap OQ", func(t *testing.T) {
+		c := provisioned("overCap")
+		sizing := types.ClusterSizing{ClusterID: "overCap", FinalECKU: 15} // > 10 eCKU PL cap
+		net := types.NetworkingDecision{ClusterID: "overCap", Verdict: types.NetworkingPrivateLink}
+		oqs := detectOpenQuestions(c, sizing, ent, net, cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		assertContainsOQ(t, oqs, "networking_privatelink_over_cap", "account team")
+	})
 
-		oqs := detectOpenQuestions(c, sizing)
+	t.Run("PrivateLink with sized <= cap → no over-cap OQ", func(t *testing.T) {
+		c := provisioned("underCap")
+		sizing := types.ClusterSizing{ClusterID: "underCap", FinalECKU: 5}
+		net := types.NetworkingDecision{ClusterID: "underCap", Verdict: types.NetworkingPrivateLink}
+		oqs := detectOpenQuestions(c, sizing, ent, net, cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		for _, oq := range oqs {
+			assert.NotEqual(t, "networking_privatelink_over_cap", oq.ID)
+		}
+	})
+
+	t.Run("PNI with any sizing → no over-cap OQ (only fires on PrivateLink verdict)", func(t *testing.T) {
+		c := provisioned("pniBig")
+		sizing := types.ClusterSizing{ClusterID: "pniBig", FinalECKU: 25}
+		net := types.NetworkingDecision{ClusterID: "pniBig", Verdict: types.NetworkingPNI}
+		oqs := detectOpenQuestions(c, sizing, ent, net, cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		for _, oq := range oqs {
+			assert.NotEqual(t, "networking_privatelink_over_cap", oq.ID)
+		}
+	})
+
+	t.Run("spiky workload does NOT generate an OQ (FYI only)", func(t *testing.T) {
+		c := provisioned("spiky")
+		sizing := types.ClusterSizing{ClusterID: "spiky", FinalECKU: 2, SpikyIngress: true}
+		oqs := detectOpenQuestions(c, sizing, ent, pniNet("spiky"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
 		assert.Empty(t, oqs, "spiky clusters should NOT emit an OQ — informational only")
 	})
 
 	t.Run("fully populated cluster emits no OQs", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "complete"}
-		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
-		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
-		c.KafkaAdminClientInformation.Acls = []types.Acls{}
-
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "complete", FinalECKU: 2})
+		c := provisioned("complete")
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "complete", FinalECKU: 2}, ent, pniNet("complete"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
 		assert.Empty(t, oqs, "happy-path clusters should not surface OQs")
 	})
 }
