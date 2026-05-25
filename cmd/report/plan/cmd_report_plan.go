@@ -39,6 +39,7 @@ func NewReportPlanCmd() *cobra.Command {
   # JSON only
   kcp report plan --state-file kcp-state.json --output json`,
 		SilenceErrors: true,
+		SilenceUsage:  true, // don't dump --help on runtime errors (only flag-parse errors should surface usage)
 		PreRunE:       preRunReportPlan,
 		RunE:          runReportPlan,
 	}
