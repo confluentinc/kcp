@@ -20,7 +20,11 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	var b bytes.Buffer
 
 	fmt.Fprintf(&b, "# Migration Plan — %s → Confluent Cloud\n\n", p.Header.Source)
-	fmt.Fprintf(&b, "_Generated %s by KCP %s from `%s`._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, p.Header.StateFilePath)
+	schemaSuffix := ""
+	if p.Header.PlanSchemaVersion != "" {
+		schemaSuffix = fmt.Sprintf(" · plan schema `%s`", p.Header.PlanSchemaVersion)
+	}
+	fmt.Fprintf(&b, "_Generated %s by KCP %s from `%s`%s._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, p.Header.StateFilePath, schemaSuffix)
 
 	writeDefinitions(&b, cfg)
 	writeSourceEnvironment(&b, p)
@@ -37,31 +41,80 @@ func writeOpenQuestions(b *bytes.Buffer, p *types.Plan) {
 	}
 	b.WriteString("## 3. Actions Needed\n\n")
 	b.WriteString("Each item below is a concrete action that tightens the recommendation in **Sizing & Cluster Decisions**. The current recommendation stands; doing these closes a state-file or scan gap.\n\n")
-	for i, oq := range p.OpenQuestions {
-		title := oq.Title
+
+	// Group per-cluster OQs by ID so identical Body / HowToClose text
+	// renders once, with an `Affects:` line listing the cluster IDs.
+	// Plan-level OQs (empty ClusterID) live in their own group keyed by
+	// title to avoid merging into the same group as per-cluster OQs that
+	// happen to share an ID. Group order follows the first-seen position
+	// in p.OpenQuestions, which is already priority-sorted.
+	type group struct {
+		oq       types.OpenQuestion
+		clusters []string
+	}
+	groups := make([]*group, 0, len(p.OpenQuestions))
+	byKey := make(map[string]*group, len(p.OpenQuestions))
+	for _, oq := range p.OpenQuestions {
+		var key string
+		switch {
+		case oq.ClusterID == "":
+			// Plan-level — never merge with per-cluster OQs.
+			key = "plan-level\x00" + oq.ID + "\x00" + oq.Title
+		case oq.ID != "":
+			// Per-cluster grouping by ID.
+			key = "cluster\x00" + oq.ID
+		default:
+			// No ID and a ClusterID — can't safely group; keep distinct.
+			key = "cluster\x00\x00" + oq.Title + "\x00" + oq.ClusterID
+		}
+		g, ok := byKey[key]
+		if !ok {
+			g = &group{oq: oq}
+			byKey[key] = g
+			groups = append(groups, g)
+		}
 		if oq.ClusterID != "" {
-			title = fmt.Sprintf("`%s` — %s", oq.ClusterID, title)
+			g.clusters = append(g.clusters, oq.ClusterID)
 		}
-		fmt.Fprintf(b, "%d. **%s**\n", i+1, title)
-		if oq.Body != "" {
-			fmt.Fprintf(b, "   - %s\n", oq.Body)
+	}
+
+	for i, g := range groups {
+		fmt.Fprintf(b, "%d. **%s**\n", i+1, g.oq.Title)
+		if len(g.clusters) > 0 {
+			fmt.Fprintf(b, "   - _Affects:_ %s\n", formatClusterList(g.clusters))
 		}
-		if oq.HowToClose != "" {
-			fmt.Fprintf(b, "   - _How to close:_ %s\n", oq.HowToClose)
+		if g.oq.Body != "" {
+			fmt.Fprintf(b, "   - %s\n", g.oq.Body)
+		}
+		if g.oq.HowToClose != "" {
+			fmt.Fprintf(b, "   - _How to close:_ %s\n", g.oq.HowToClose)
 		}
 	}
 	b.WriteString("\n")
 }
 
+// formatClusterList renders a list of cluster IDs as “ `a` “, “ `b` “,
+// “ `c` “ for inline display.
+func formatClusterList(ids []string) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = "`" + id + "`"
+	}
+	return strings.Join(parts, ", ")
+}
+
 func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	caps := cfg.EnterpriseCaps
 	b.WriteString("## Definitions\n\n")
+	b.WriteString("- **Enterprise / Dedicated** — Confluent Cloud cluster tiers. Enterprise has elastic billing per eCKU; Dedicated is fixed-provisioned per CKU.\n")
 	fmt.Fprintf(b, "- **eCKU** — Elastic Confluent Kafka Unit, the throughput unit on Enterprise clusters. %d MB/s ingress + %d MB/s egress per eCKU at the per-eCKU caps used below.\n", caps.PerECKUIngressMBps, caps.PerECKUEgressMBps)
 	b.WriteString("- **CKU** — Confluent Kafka Unit, the Dedicated-tier equivalent of eCKU. Sizing math is the same; only the unit name changes. Dedicated clusters always render with `CKU`.\n")
 	b.WriteString("- **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 (override with `sizing_percentile`) so a transient spike doesn't permanently inflate the recommended cluster size.\n")
 	b.WriteString("- **Final size** — the recommended eCKU (Enterprise) or CKU (Dedicated) count for the cluster. `(floor)` next to a value means the SLA minimum was binding (the math came in below the floor and was rounded up).\n")
-	fmt.Fprintf(b, "- **PrivateLink** — single-AZ private connectivity, up to %d eCKU. The default network when the cluster fits inside it with headroom. Enterprise only.\n", caps.PrivateLinkMaxECKU)
-	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — multi-AZ private connectivity, up to %d eCKU. Used when PrivateLink's cap is too close to the cluster's peak burst; **always required on Dedicated**.\n\n", caps.PNIMaxECKU)
+	b.WriteString("- **Peak burst** — short-window peak throughput observed in metrics, expressed as eCKU. Surfaces in the spiky-workload note when peak diverges from P95 by more than the configured ratio.\n")
+	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to %d eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS).\n", caps.PNIMaxECKU)
+	fmt.Fprintf(b, "- **PrivateLink** — capped at %d eCKU on Enterprise. Fires when `target_cloud != \"aws\"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP.\n", caps.PrivateLinkMaxECKU)
+	fmt.Fprintf(b, "- **ACL cap (%d)** — Enterprise supports up to %d ACLs; exceeding the cap forces Dedicated. Source: cluster-types.html.\n\n", caps.ACLCountCap, caps.ACLCountCap)
 }
 
 func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan) {
@@ -136,29 +189,37 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 	// the networking decision. Reads cleanly even for 30+ clusters because
 	// each entry is one or two lines.
 	b.WriteString("### Why These Recommendations\n\n")
+	srcByID := make(map[string]types.SourceClusterSummary, len(p.SourceEnvironment.Clusters))
+	for _, sc := range p.SourceEnvironment.Clusters {
+		srcByID[sc.ClusterID] = sc
+	}
 	for _, s := range p.Sizing {
+		ct := ctByID[s.ClusterID]
+		unit := finalSizeUnit(ct)
+		src := srcByID[s.ClusterID]
 		if s.Degraded {
 			// Symptom-only here; the action lives in Actions Needed
 			// (so it isn't duplicated across two surfaces).
-			fmt.Fprintf(b, "- **%s** — metrics missing (%s). Final eCKU defaults to the SLA floor (%d). See Actions Needed below.\n", s.ClusterID, s.DegradedReason, s.FinalECKU)
+			if src.IsServerless {
+				fmt.Fprintf(b, "- **%s** — **MSK Serverless source**; broker count is N/A by design and the CloudWatch metrics path differs from Provisioned. Final %s defaults to the SLA floor (%d) until throughput is supplied. See Actions Needed below.\n", s.ClusterID, unit, s.FinalECKU)
+			} else {
+				fmt.Fprintf(b, "- **%s** — metrics missing (%s). Final %s defaults to the SLA floor (%d). See Actions Needed below.\n", s.ClusterID, s.DegradedReason, unit, s.FinalECKU)
+			}
 			continue
 		}
 		var pieces []string
 		var customerDeclaredTriggers []string
-		if ct, ok := ctByID[s.ClusterID]; ok {
-			ctLabel := clusterTypeLabel(ct)
-			if len(ct.Triggers) == 0 {
-				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — no hard-limit rule fired", ctLabel))
-			} else {
-				rules := make([]string, 0, len(ct.Triggers))
-				for _, t := range ct.Triggers {
-					rules = append(rules, fmt.Sprintf("%s (%s)", t.Description, t.Evidence))
-					if t.CustomerDeclared {
-						customerDeclaredTriggers = append(customerDeclaredTriggers, t.RowID)
-					}
+		if len(ct.Triggers) == 0 {
+			pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — no hard-limit rule fired", clusterTypeLabel(ct)))
+		} else {
+			rules := make([]string, 0, len(ct.Triggers))
+			for _, t := range ct.Triggers {
+				rules = append(rules, fmt.Sprintf("%s (%s)", t.Description, t.Evidence))
+				if t.CustomerDeclared {
+					customerDeclaredTriggers = append(customerDeclaredTriggers, t.RowID)
 				}
-				pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — %s", ctLabel, strings.Join(rules, "; ")))
 			}
+			pieces = append(pieces, fmt.Sprintf("Cluster type **%s** — %s", clusterTypeLabel(ct), strings.Join(rules, "; ")))
 		}
 		if n, ok := netByID[s.ClusterID]; ok {
 			pieces = append(pieces, fmt.Sprintf("Networking **%s** — %s", n.Verdict, n.Reason))
@@ -169,7 +230,11 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan) {
 		}
 		// Spiky-workload note (FYI only — sizing already absorbs the spike).
 		if s.SpikyIngress || s.SpikyEgress {
-			fmt.Fprintf(b, "  - _Note: %s. Sizing is P95-based and Enterprise elasticity absorbs the spike; set `sizing_percentile: p99` in `plan-inputs.yaml` if you'd rather size to the peak._\n", spikyDescription(s))
+			absorbed := "Enterprise elasticity absorbs"
+			if ct.Verdict == types.ClusterTypeDedicated {
+				absorbed = "the sized Dedicated capacity absorbs"
+			}
+			fmt.Fprintf(b, "  - _Note: %s. Sizing is P95-based and %s the spike; set `sizing_percentile: p99` in `plan-inputs.yaml` if you'd rather size to the peak._\n", spikyDescription(s), absorbed)
 		}
 	}
 	b.WriteString("\n")
@@ -192,9 +257,36 @@ func spikyDescription(s types.ClusterSizing) string {
 
 func formatSpikeRatio(dir string, peak, p95 float64) string {
 	if p95 <= 0 {
-		return fmt.Sprintf("%s peak %.0f MB/s (no P95 baseline)", dir, peak)
+		return fmt.Sprintf("%s peak %s MB/s (no P95 baseline)", dir, formatMBps(peak))
 	}
-	return fmt.Sprintf("%s peak %.0f MB/s vs P95 %.0f MB/s (%.1fx)", dir, peak, p95, peak/p95)
+	return fmt.Sprintf("%s peak %s MB/s vs P95 %s MB/s (%.1fx)", dir, formatMBps(peak), formatMBps(p95), peak/p95)
+}
+
+// formatMBps renders a MB/s value with precision scaled to the value's
+// magnitude, so a 0.27 MB/s peak vs 0.002 MB/s P95 reads as "0.27 vs
+// 0.002" rather than "0 vs 0" (which makes a 136x ratio look like
+// nonsense).
+func formatMBps(v float64) string {
+	switch {
+	case v >= 10:
+		return fmt.Sprintf("%.0f", v)
+	case v >= 1:
+		return fmt.Sprintf("%.1f", v)
+	case v >= 0.01:
+		return fmt.Sprintf("%.3f", v)
+	default:
+		return fmt.Sprintf("%.4f", v)
+	}
+}
+
+// finalSizeUnit returns "eCKU" or "CKU" for the given cluster-type
+// verdict so rendered prose matches the unit in the Sizing & Cluster
+// Decisions table.
+func finalSizeUnit(ct types.ClusterTypeDecision) string {
+	if ct.Verdict == types.ClusterTypeDedicated {
+		return "CKU"
+	}
+	return "eCKU"
 }
 
 func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
@@ -204,12 +296,12 @@ func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 	partitionCap := cfg.EnterpriseCaps.PerECKUPartitionRate
 	b.WriteString("## Appendix A1 — Sizing Math\n")
 	b.WriteString("<details><summary>Show sizing math per cluster</summary>\n\n")
-	b.WriteString("Each cluster is sized by taking the largest of its three throughput-vs-cap ratios (ingress, egress, partitions) and scaling that by `(1 + headroom)`, so the recommended eCKU has spare capacity above the observed P95. SLA floor binds when the math comes in below the minimum eCKU for the target SLA.\n\n")
+	b.WriteString("Each cluster is sized by taking the largest of its three throughput-vs-cap ratios (ingress, egress, partitions) and scaling that by `(1 + headroom)`, so the recommended size has spare capacity above the observed P95. The default headroom is 0.30 — override via `headroom_fraction` in `plan-inputs.yaml`. SLA floor binds when the math comes in below the minimum eCKU for the target SLA (1 eCKU for 99.9, 2 eCKU for 99.99 — published in the Confluent Cloud cluster-types SLA table). The `Sized` and `Final` columns are in eCKU on Enterprise and CKU on Dedicated.\n\n")
 	// The formula is identical for every cluster (caps + headroom are
 	// constants, not per-cluster). Print it once, then a single audit
 	// table covers every cluster in a row.
 	fmt.Fprintf(b, "Formula: `%s`\n\n", p.SizingAppendix[0].Formula)
-	b.WriteString("| Cluster | Ingress ratio | Egress ratio | Partition ratio | Max (driver) | Sized eCKU | SLA floor | Final eCKU |\n")
+	b.WriteString("| Cluster | Ingress ratio | Egress ratio | Partition ratio | Max (driver) | Sized | SLA floor | Final |\n")
 	b.WriteString("|---|---:|---:|---:|---|---:|---:|---:|\n")
 	for _, s := range p.Sizing {
 		if s.Degraded {
@@ -220,7 +312,7 @@ func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 		fmt.Fprintf(b, "| %s | %.4f | %.4f | %.4f | **%.4f** (%s) | %d | %d | %d |\n",
 			s.ClusterID, s.IngressRatio, s.EgressRatio, s.PartitionRatio, s.MaxRatio, s.MaxRatioDriver, s.SizedECKU, s.SLAFloorECKU, s.FinalECKU)
 	}
-	b.WriteString("\nMax-ratio is multiplied by `(1 + headroom)` and rounded up to get `Sized eCKU`. `Final eCKU` is `max(Sized, SLA floor)`.\n\n")
+	b.WriteString("\nMax-ratio is multiplied by `(1 + headroom)` and rounded up to get `Sized`. `Final` is `max(Sized, SLA floor)`.\n\n")
 	b.WriteString("</details>\n\n")
 }
 
