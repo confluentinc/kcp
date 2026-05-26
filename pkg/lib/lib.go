@@ -63,7 +63,10 @@ func GeneratePlan(stateJSON, planInputs []byte) (*PlanResult, error) {
 	}
 	resolved := plan.ResolvePlanInputs(pi, cfg)
 	processed := report.NewReportService().ProcessState(*state)
-	p, err := plan.NewPlanService(cfg, time.Now).Build(processed, resolved, "lib")
+	// Empty state-file path: library callers passed bytes, not a file.
+	// The renderer omits the "from <path>" header clause when this is
+	// empty; JSON consumers get `"state_file_path": ""`.
+	p, err := plan.NewPlanService(cfg, time.Now).Build(processed, resolved, "")
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
@@ -75,7 +78,13 @@ func GeneratePlan(stateJSON, planInputs []byte) (*PlanResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("render plan markdown: %w", err)
 	}
-	piYAML, err := yaml.Marshal(resolved)
+	// Strip the Raw pointer before YAML marshalling so the echoed
+	// plan-inputs match the flat plan-inputs.yaml shape — Raw is a
+	// runtime helper that surfaces customer-set vs default fields and
+	// has no place in user-facing YAML output.
+	echo := resolved
+	echo.Raw = nil
+	piYAML, err := yaml.Marshal(echo)
 	if err != nil {
 		return nil, fmt.Errorf("marshal resolved plan-inputs: %w", err)
 	}

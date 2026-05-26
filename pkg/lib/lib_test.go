@@ -123,6 +123,13 @@ func TestGeneratePlan_PlanInputsEchoesOverridesAndDefaults(t *testing.T) {
 	if _, ok := got["sizing_percentile"]; !ok {
 		t.Fatalf("PlanInputs missing default key sizing_percentile; keys: %v", keys(got))
 	}
+	// PlanInputsResolved carries a `Raw *PlanInputs` runtime helper. It
+	// must not surface in the YAML echo — the echo is supposed to match
+	// the flat plan-inputs.yaml shape a user edits, not the internal
+	// resolved struct.
+	if _, ok := got["raw"]; ok {
+		t.Fatalf("PlanInputs YAML must not contain `raw` wrapper; keys: %v", keys(got))
+	}
 }
 
 func keys(m map[string]any) []string {
