@@ -29,12 +29,28 @@ func TestDecideClusterType_DedicatedWhenSizedOverPNICap(t *testing.T) {
 	assert.Contains(t, d.Triggers[0].Evidence, "32 eCKU")
 }
 
+// provisionedClusterWithScan returns a ProcessedCluster shaped like a
+// successful `kcp scan clusters` run against a PROVISIONED MSK cluster —
+// Topics populated, MskClusterConfig.ClusterType = PROVISIONED. The ACL
+// slice is what the caller wants the rule to evaluate against.
+// provisionedClusterWithScan builds a ProcessedCluster shaped like a
+// successful `kcp scan clusters` run against a PROVISIONED MSK cluster:
+// Topics populated and Acls set to the caller's slice (use `nil` to
+// model "scan didn't run / --skip-acls" and `[]Acls{}` to model
+// "successful scan with 0 ACLs"). Pass non-empty Acls to exercise rules
+// that need real ACL counts.
+func provisionedClusterWithScan(name string, acls []types.Acls) types.ProcessedCluster {
+	c := types.ProcessedCluster{Name: name}
+	c.KafkaAdminClientInformation.Acls = acls
+	c.KafkaAdminClientInformation.Topics = &types.Topics{}
+	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
+	return c
+}
+
 func TestDecideClusterType_DedicatedWhenACLsOverCap(t *testing.T) {
 	cfg := defaultCfg(t)
-	// acl_count_cap = 4000; emit 4001 ACLs.
-	acls := make([]types.Acls, 4001)
-	c := types.ProcessedCluster{Name: "many-acls"}
-	c.KafkaAdminClientInformation.Acls = acls
+	// acl_count_cap = 4000; emit 4001 ACLs against a successful scan.
+	c := provisionedClusterWithScan("many-acls", make([]types.Acls, 4001))
 	sizing := types.ClusterSizing{ClusterID: "many-acls", FinalECKU: 5}
 
 	d := DecideClusterType(c, sizing, cfg, defaultInputs())
@@ -45,15 +61,44 @@ func TestDecideClusterType_DedicatedWhenACLsOverCap(t *testing.T) {
 	assert.False(t, d.Triggers[0].CustomerDeclared, "state-derived rules must not carry the cost-callout marker")
 }
 
-func TestDecideClusterType_ACLRuleSkippedWhenNilACLs(t *testing.T) {
-	// `null` (admin scan didn't run) is distinct from `0 ACLs`.
+// Three nil-vs-empty cases for rule 2:
+//
+//  1. ACL list is non-nil (caller passes `[]Acls{}` or N entries) → rule
+//     evaluates against the count. Tests the helper logic; in practice
+//     the current scanner produces `[]` only when at least one ACL was
+//     appended, but the helper must still behave correctly if a non-nil
+//     empty slice ever lands in state.
+//  2. Acls == nil (either scan didn't run, `--skip-acls` was passed, or
+//     a successful scan returned 0 ACLs — all three indistinguishable
+//     from the current state schema) → rule skipped.
+//  3. Acls == nil on SERVERLESS → ACLs aren't exposed via this API; rule
+//     skipped (don't false-positive on serverless deployments).
+func TestDecideClusterType_ACLRuleNilVsEmpty(t *testing.T) {
 	cfg := defaultCfg(t)
-	c := types.ProcessedCluster{Name: "no-admin-scan"}
-	c.KafkaAdminClientInformation.Acls = nil
-	sizing := types.ClusterSizing{ClusterID: "no-admin-scan", FinalECKU: 5}
+	sizing := types.ClusterSizing{ClusterID: "x", FinalECKU: 5}
 
-	d := DecideClusterType(c, sizing, cfg, defaultInputs())
-	assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "nil ACLs must skip the rule, not fire it")
+	t.Run("non-nil ACL slice evaluates the rule (under cap)", func(t *testing.T) {
+		c := provisionedClusterWithScan("provisioned-empty-acls", []types.Acls{})
+		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "0 ACLs is under the 4000 cap — rule should evaluate, not fire")
+	})
+
+	t.Run("nil ACLs (scan didn't run or --skip-acls or successful 0-ACL scan) — rule skipped", func(t *testing.T) {
+		// Current scanner persists Acls=nil for all three states;
+		// without an explicit "scanned" flag we take the conservative
+		// position that nil means "uncertain" and skip the rule.
+		c := provisionedClusterWithScan("provisioned-nil-acls", nil)
+		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "nil ACLs must skip rule 2 (count is unknown), not fire it")
+	})
+
+	t.Run("SERVERLESS cluster — rule skipped regardless of ACL slice", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "serverless"}
+		c.KafkaAdminClientInformation.Topics = &types.Topics{}
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
+		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "SERVERLESS doesn't expose ACLs via this API — rule should skip")
+	})
 }
 
 func TestDecideClusterType_CustomerDeclaredFlags(t *testing.T) {
@@ -172,9 +217,7 @@ func TestDecideClusterType_Topology(t *testing.T) {
 	t.Run("rule 5 wins topology when combined with other rules", func(t *testing.T) {
 		// 99.95 SLA flag + ACL-cap exceeded → both rules fire; topology
 		// must escalate to Single-Zone (more restrictive).
-		acls := make([]types.Acls, 4001)
-		c2 := types.ProcessedCluster{Name: "combo"}
-		c2.KafkaAdminClientInformation.Acls = acls
+		c2 := provisionedClusterWithScan("combo", make([]types.Acls, 4001))
 		in := defaultInputs()
 		in.Requires9995SLAWithinSingleZone = true
 		d := DecideClusterType(c2, sizing, cfg, in)
