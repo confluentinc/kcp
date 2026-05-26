@@ -11,14 +11,16 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-// PlanResult is the dual-format output of GeneratePlan. Both renderings
-// come from a single Build pass — calling GeneratePlan once is strictly
-// cheaper than calling two separate functions when the caller wants
-// both formats, and the marginal cost of rendering the unused format
-// is negligible compared to Build itself.
+// PlanResult is the output of GeneratePlan. JSON and Markdown are two
+// renderings of the same Plan from a single Build pass. PlanInputs is
+// the resolved input set (caller-supplied fields merged with kcp
+// defaults) serialised as YAML — same shape as a plan-inputs.yaml file,
+// so a UI can show it as an editable text block (with room for future
+// commented-out optional knobs that a JSON echo would strip).
 type PlanResult struct {
-	JSON     []byte // same schema as `kcp report plan --output json`
-	Markdown []byte // same rendering as `kcp report plan --output md`
+	JSON       []byte // same schema as `kcp report plan --output json`
+	Markdown   []byte // same rendering as `kcp report plan --output md`
+	PlanInputs []byte // resolved plan-inputs (request merged with kcp defaults), as YAML
 }
 
 // ScanSummary parses a kcp-state.json byte slice and returns the
@@ -73,5 +75,9 @@ func GeneratePlan(stateJSON, planInputs []byte) (*PlanResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("render plan markdown: %w", err)
 	}
-	return &PlanResult{JSON: js, Markdown: md}, nil
+	piYAML, err := yaml.Marshal(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("marshal resolved plan-inputs: %w", err)
+	}
+	return &PlanResult{JSON: js, Markdown: md, PlanInputs: piYAML}, nil
 }

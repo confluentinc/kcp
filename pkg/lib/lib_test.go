@@ -2,10 +2,12 @@ package lib_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/pkg/lib"
+	"github.com/goccy/go-yaml"
 )
 
 // minimal but valid kcp-state.json with one MSK Provisioned cluster.
@@ -48,7 +50,11 @@ func TestScanSummary_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestGeneratePlan_ReturnsBothRenderings(t *testing.T) {
+// With nil planInputs, PlanInputs in the reply must still be populated
+// with the full default set — it's the same `resolved` struct that
+// Build consumed, so a follow-up call echoing it back produces an
+// identical plan and a UI can use the first call to discover defaults.
+func TestGeneratePlan_NilInputsEchoesDefaults(t *testing.T) {
 	res, err := lib.GeneratePlan([]byte(sampleStateJSON), nil)
 	if err != nil {
 		t.Fatalf("GeneratePlan: %v", err)
@@ -59,6 +65,9 @@ func TestGeneratePlan_ReturnsBothRenderings(t *testing.T) {
 	if len(res.Markdown) == 0 {
 		t.Fatal("GeneratePlan.Markdown is empty")
 	}
+	if len(res.PlanInputs) == 0 {
+		t.Fatal("GeneratePlan.PlanInputs is empty")
+	}
 	var plan map[string]any
 	if err := json.Unmarshal(res.JSON, &plan); err != nil {
 		t.Fatalf("GeneratePlan.JSON is not valid JSON: %v", err)
@@ -66,20 +75,79 @@ func TestGeneratePlan_ReturnsBothRenderings(t *testing.T) {
 	if !strings.Contains(string(res.Markdown), "Migration Plan") {
 		t.Fatalf("GeneratePlan.Markdown missing expected header; got first 200 bytes: %s", truncate(res.Markdown, 200))
 	}
+	var inputs map[string]any
+	if err := yaml.Unmarshal(res.PlanInputs, &inputs); err != nil {
+		t.Fatalf("GeneratePlan.PlanInputs is not valid YAML: %v", err)
+	}
+	// Spot-check three independent default keys; if any is missing the
+	// resolver is leaking nil pointers and the UI can't render its form.
+	for _, k := range []string{"sizing_percentile", "headroom_fraction", "target_cloud"} {
+		if _, ok := inputs[k]; !ok {
+			t.Fatalf("PlanInputs missing default key %q; keys: %v", k, keys(inputs))
+		}
+	}
+	// The echo must match what Build consumed: the inputs in the plan
+	// JSON's header must equal the standalone PlanInputs field. (json
+	// and yaml decoders both produce map[string]any; numeric types may
+	// differ — compare via fmt.Sprint to dodge int64/float64 noise.)
+	planInputs, ok := plan["inputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("plan.inputs missing from plan JSON; top-level keys: %v", keys(plan))
+	}
+	for _, k := range []string{"sizing_percentile", "headroom_fraction", "target_cloud"} {
+		gotPlan, gotInputs := fmt.Sprint(planInputs[k]), fmt.Sprint(inputs[k])
+		if gotPlan != gotInputs {
+			t.Fatalf("plan.inputs[%q] = %s, PlanInputs[%q] = %s (must match)", k, gotPlan, k, gotInputs)
+		}
+	}
+}
+
+// PlanInputs in the reply must echo back the caller's overrides AND
+// include the default keys they didn't set, so a UI can use an empty
+// initial call to discover the full input shape.
+func TestGeneratePlan_PlanInputsEchoesOverridesAndDefaults(t *testing.T) {
+	inputs := []byte(`{"target_cloud":"azure"}`)
+	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
+	if err != nil {
+		t.Fatalf("GeneratePlan: %v", err)
+	}
+	var got map[string]any
+	if err := yaml.Unmarshal(res.PlanInputs, &got); err != nil {
+		t.Fatalf("PlanInputs is not valid YAML: %v", err)
+	}
+	if got["target_cloud"] != "azure" {
+		t.Fatalf("PlanInputs.target_cloud = %v, want azure", got["target_cloud"])
+	}
+	// At least one default key the caller didn't set must be present —
+	// the whole point of the echo is to surface defaults to the UI.
+	if _, ok := got["sizing_percentile"]; !ok {
+		t.Fatalf("PlanInputs missing default key sizing_percentile; keys: %v", keys(got))
+	}
+}
+
+func keys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // Plan-inputs as JSON: goccy/go-yaml accepts JSON (subset of YAML 1.2),
 // so HTTP callers can pass an incoming request body straight through
-// without a YAML dependency.
+// without a YAML dependency. Assertion targets PlanInputs (the resolved
+// echo) rather than markdown so it's independent of the renderer's
+// current surface area.
 func TestGeneratePlan_AcceptsJSONPlanInputs(t *testing.T) {
 	inputs := []byte(`{"target_cloud":"azure","headroom_fraction":0.4}`)
 	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
 	if err != nil {
 		t.Fatalf("GeneratePlan with JSON inputs: %v", err)
 	}
-	if !strings.Contains(string(res.Markdown), "azure") {
-		t.Fatal("plan markdown should mention azure target_cloud from the JSON inputs")
-	}
+	assertPlanInputsContains(t, res.PlanInputs, map[string]any{
+		"target_cloud":      "azure",
+		"headroom_fraction": 0.4,
+	})
 }
 
 func TestGeneratePlan_AcceptsYAMLPlanInputs(t *testing.T) {
@@ -88,8 +156,22 @@ func TestGeneratePlan_AcceptsYAMLPlanInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GeneratePlan with YAML inputs: %v", err)
 	}
-	if !strings.Contains(string(res.Markdown), "azure") {
-		t.Fatal("plan markdown should mention azure target_cloud from the YAML inputs")
+	assertPlanInputsContains(t, res.PlanInputs, map[string]any{
+		"target_cloud":      "azure",
+		"headroom_fraction": 0.4,
+	})
+}
+
+func assertPlanInputsContains(t *testing.T, planInputs []byte, want map[string]any) {
+	t.Helper()
+	var got map[string]any
+	if err := yaml.Unmarshal(planInputs, &got); err != nil {
+		t.Fatalf("PlanInputs is not valid YAML: %v", err)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("PlanInputs[%q] = %v, want %v", k, got[k], v)
+		}
 	}
 }
 
