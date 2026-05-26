@@ -1,6 +1,7 @@
 nav:
 
 - Home: README.md
+- Source Compatibility: source-compatibility.md
 - command-reference
 - osk-configuration
 - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md

@@ -187,6 +187,14 @@
   border-color: #eaecef;
 }
 
+/* Matrix tables: tint the first column to match the header row,
+   so command names read as row labels. Opt-in via <div class="matrix">. */
+.md-typeset .matrix table:not([class]) td:first-child {
+  background-color: #fafbfc;
+  font-weight: 600;
+  color: var(--md-default-fg-color);
+}
+
 /* --------------------------------------------------------------------------
    Search box — quieter frame to match the flatter header.
    -------------------------------------------------------------------------- */
