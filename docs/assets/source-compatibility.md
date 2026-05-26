@@ -1,6 +1,6 @@
 # Source compatibility
 
-KCP supports two source types — **AWS MSK** and **Open Source Kafka (OSK)** — and not every command supports every source flavor today. This page is the authoritative quick-lookup for which `kcp` subcommands work against which source.
+KCP supports two source types - **AWS MSK** and **Open Source Kafka (OSK)** - and not every command supports every source flavour today. This page is the authoritative quick-lookup for which `kcp` subcommands work against which source.
 
 > [!TIP]
 > Looking for _how_ a command works? See the [Command Reference](command-reference/index.md). This page covers _whether_ it works for your source.
