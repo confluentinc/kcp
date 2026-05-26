@@ -8,7 +8,7 @@ KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations
 > - **AWS MSK (Managed Streaming for Kafka)** — full discovery via AWS APIs + Kafka Admin API.
 > - **Open Source Kafka (OSK)** — direct scanning via Kafka Admin API.
 >
-> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics.
+> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics, or the [Source Compatibility](source-compatibility.md) matrix for which commands support which source flavor (MSK Provisioned/Express, MSK Serverless, OSK).
 
 ## Installation
 
