@@ -20,7 +20,14 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	var b bytes.Buffer
 
 	fmt.Fprintf(&b, "# Migration Plan — %s → Confluent Cloud\n\n", p.Header.Source)
-	fmt.Fprintf(&b, "_Generated %s by KCP %s from `%s`._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, p.Header.StateFilePath)
+	// `from <path>` clause is omitted when the path is empty — library
+	// callers (pkg/lib) pass bytes, not a file path; only the CLI
+	// `kcp report plan --state-file ...` populates this field.
+	fromClause := ""
+	if p.Header.StateFilePath != "" {
+		fromClause = fmt.Sprintf(" from `%s`", p.Header.StateFilePath)
+	}
+	fmt.Fprintf(&b, "_Generated %s by KCP %s%s._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, fromClause)
 
 	writeDefinitions(&b, cfg)
 	writeSourceEnvironment(&b, p)
