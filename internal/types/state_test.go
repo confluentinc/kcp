@@ -1180,6 +1180,31 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 }
 
+func TestNewStateFromBytes_LegacyFormat_TopLevelRegions(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1","clusters":[]}]}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for legacy format, got nil")
+	}
+	if !strings.Contains(err.Error(), "legacy format") {
+		t.Errorf("expected legacy format error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "0.7.2") {
+		t.Errorf("expected error to contain version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_LegacyFormat_NoVersion(t *testing.T) {
+	data := []byte(`{"regions":[{"region_name":"us-east-1","clusters":[]}]}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for legacy format, got nil")
+	}
+	if !strings.Contains(err.Error(), "an older version") {
+		t.Errorf("expected 'an older version' in error, got: %v", err)
+	}
+}
+
 func TestFormatQueryDuration(t *testing.T) {
 	tests := []struct {
 		name     string
