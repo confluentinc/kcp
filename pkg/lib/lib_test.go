@@ -106,7 +106,7 @@ func TestGeneratePlan_NilInputsEchoesDefaults(t *testing.T) {
 // include the default keys they didn't set, so a UI can use an empty
 // initial call to discover the full input shape.
 func TestGeneratePlan_PlanInputsEchoesOverridesAndDefaults(t *testing.T) {
-	inputs := []byte(`{"target_cloud":"azure"}`)
+	inputs := []byte("target_cloud: azure\n")
 	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
 	if err != nil {
 		t.Fatalf("GeneratePlan: %v", err)
@@ -138,23 +138,6 @@ func keys(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-// Plan-inputs as JSON: goccy/go-yaml accepts JSON (subset of YAML 1.2),
-// so HTTP callers can pass an incoming request body straight through
-// without a YAML dependency. Assertion targets PlanInputs (the resolved
-// echo) rather than markdown so it's independent of the renderer's
-// current surface area.
-func TestGeneratePlan_AcceptsJSONPlanInputs(t *testing.T) {
-	inputs := []byte(`{"target_cloud":"azure","headroom_fraction":0.4}`)
-	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
-	if err != nil {
-		t.Fatalf("GeneratePlan with JSON inputs: %v", err)
-	}
-	assertPlanInputsContains(t, res.PlanInputs, map[string]any{
-		"target_cloud":      "azure",
-		"headroom_fraction": 0.4,
-	})
 }
 
 func TestGeneratePlan_AcceptsYAMLPlanInputs(t *testing.T) {

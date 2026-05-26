@@ -5,9 +5,7 @@
 //
 // Formats:
 //   - state bytes must be JSON (kcp-state.json — what `kcp scan` writes).
-//   - plan_inputs bytes may be JSON or YAML (goccy/go-yaml accepts both
-//     since JSON is a YAML 1.2 subset), so an HTTP caller can pass an
-//     incoming request body through without a YAML dependency.
+//   - plan_inputs bytes must be YAML (plan-inputs.yaml shape).
 //   - Plan output is JSON + Markdown. Resolved plan_inputs are echoed
 //     back as YAML so callers preserve the plan-inputs.yaml shape their
 //     users edit.
@@ -15,7 +13,7 @@
 // API surface:
 //
 //	func ScanSummary(stateJSON []byte) ([]byte, error)
-//	func GeneratePlan(stateJSON, planInputs []byte) (*PlanResult, error)
+//	func GeneratePlan(stateJSON, planInputsYAML []byte) (*PlanResult, error)
 //
 //	type PlanResult struct { JSON, Markdown, PlanInputs []byte }
 //

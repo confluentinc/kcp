@@ -40,11 +40,9 @@ func ScanSummary(stateJSON []byte) ([]byte, error) {
 }
 
 // GeneratePlan builds a migration plan from a state file and optional
-// plan-inputs. Pass nil planInputs for defaults. planInputs may be JSON
-// or YAML bytes — JSON is a YAML 1.2 subset, so goccy/go-yaml accepts
-// either content type, which lets HTTP callers pass an incoming
-// request body straight through without a YAML dependency on their side.
-func GeneratePlan(stateJSON, planInputs []byte) (*PlanResult, error) {
+// plan-inputs YAML. Pass nil planInputsYAML for defaults. planInputsYAML
+// must follow the plan-inputs.yaml shape; see docs/assets/plan-inputs.example.yaml.
+func GeneratePlan(stateJSON, planInputsYAML []byte) (*PlanResult, error) {
 	state, err := types.NewStateFromBytes(stateJSON)
 	if err != nil {
 		return nil, fmt.Errorf("parse state: %w", err)
@@ -54,9 +52,9 @@ func GeneratePlan(stateJSON, planInputs []byte) (*PlanResult, error) {
 		return nil, fmt.Errorf("load plan-config: %w", err)
 	}
 	var pi *types.PlanInputs
-	if len(planInputs) > 0 {
+	if len(planInputsYAML) > 0 {
 		var parsed types.PlanInputs
-		if err := yaml.Unmarshal(planInputs, &parsed); err != nil {
+		if err := yaml.Unmarshal(planInputsYAML, &parsed); err != nil {
 			return nil, fmt.Errorf("parse plan-inputs: %w", err)
 		}
 		pi = &parsed
