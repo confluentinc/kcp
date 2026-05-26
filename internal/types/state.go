@@ -138,6 +138,24 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		slog.Warn("state file has no kcp_build_info.version — this may not be a valid KCP state file")
 	}
 
+	// Detect legacy state file format where regions lived at the top level
+	// instead of under msk_sources. The data deserialises successfully but
+	// the clusters end up invisible because they're under the wrong key.
+	hasSources := (state.MSKSources != nil && len(state.MSKSources.Regions) > 0) ||
+		(state.OSKSources != nil && len(state.OSKSources.Clusters) > 0)
+	if !hasSources {
+		var legacy struct {
+			Regions []json.RawMessage `json:"regions"`
+		}
+		if err := json.Unmarshal(data, &legacy); err == nil && len(legacy.Regions) > 0 {
+			version := state.KcpBuildInfo.Version
+			if version == "" {
+				version = "an older version"
+			}
+			return nil, fmt.Errorf("state file uses a legacy format (created with KCP version %s) — please recreate it using kcp discover or kcp scan clusters with the current version of KCP", version)
+		}
+	}
+
 	return &state, nil
 }
 
