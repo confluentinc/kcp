@@ -40,7 +40,6 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		Raw:                                  in,
 		SizingPercentile:                     defaults.SizingPercentile,
 		HeadroomFraction:                     defaults.HeadroomFraction,
-		PrivateLinkSafetyThreshold:           defaults.PrivateLinkSafetyThreshold,
 		SpikyWorkloadRatio:                   defaults.SpikyWorkloadRatio,
 		SLATarget:                            defaultSLATarget,
 		EnforceSchemasAtTheBroker:            defaults.EnforceSchemasAtTheBroker,
@@ -48,6 +47,8 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		Requires9995SLAWithinSingleZone:      defaults.Requires9995SLAWithinSingleZone,
 		TargetCloud:                          defaults.TargetCloud,
 		ExistingVPCConnectivity:              defaults.ExistingVPCConnectivity,
+		CCEgressRequired:                     defaults.CCEgressRequired,
+		ProjectedPNIGatewayCount:             defaults.ProjectedPNIGatewayCount,
 	}
 	if in == nil {
 		return out
@@ -60,9 +61,6 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.HeadroomFraction != nil {
 		out.HeadroomFraction = *in.HeadroomFraction
-	}
-	if in.PrivateLinkSafetyThreshold != nil {
-		out.PrivateLinkSafetyThreshold = *in.PrivateLinkSafetyThreshold
 	}
 	if in.SpikyWorkloadRatio != nil {
 		out.SpikyWorkloadRatio = *in.SpikyWorkloadRatio
@@ -81,6 +79,74 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.ExistingVPCConnectivity != nil {
 		out.ExistingVPCConnectivity = *in.ExistingVPCConnectivity
+	}
+	if in.CCEgressRequired != nil {
+		out.CCEgressRequired = *in.CCEgressRequired
+	}
+	if in.ProjectedPNIGatewayCount != nil {
+		out.ProjectedPNIGatewayCount = *in.ProjectedPNIGatewayCount
+	}
+	return out
+}
+
+// ResolvePlanInputsForCluster layers a cluster-specific override on top
+// of the resolved globals. If `in.Clusters[clusterName]` is set, every
+// non-nil field in it wins over the global. Otherwise the global view
+// is returned unchanged. Caller uses this per-cluster during Plan
+// build so heterogeneous fleets get the right verdicts without one
+// global flag flipping every cluster's tier.
+//
+// **Hot path note:** when iterating many clusters, prefer
+// `applyClusterOverride` against a pre-resolved global view — this
+// function re-resolves globals on every call.
+func ResolvePlanInputsForCluster(in *types.PlanInputs, cfg *PlanConfig, clusterName string) types.PlanInputsResolved {
+	out := ResolvePlanInputs(in, cfg)
+	return applyClusterOverride(out, in, clusterName)
+}
+
+// applyClusterOverride takes an already-resolved global `PlanInputsResolved`
+// and layers any per-cluster override on top. Returns the global
+// unchanged when no override applies. Used by `PlanService.Build` to
+// avoid re-running the (cheap but non-trivial) global resolution
+// against `in.Raw` for every cluster — the global view is computed
+// once and reused.
+func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, clusterName string) types.PlanInputsResolved {
+	if in == nil {
+		return out
+	}
+	override, ok := in.Clusters[clusterName]
+	if !ok {
+		return out
+	}
+	if override.SLATarget != nil {
+		out.SLATarget = *override.SLATarget
+	}
+	if override.HeadroomFraction != nil {
+		out.HeadroomFraction = *override.HeadroomFraction
+	}
+	if override.SpikyWorkloadRatio != nil {
+		out.SpikyWorkloadRatio = *override.SpikyWorkloadRatio
+	}
+	if override.EnforceSchemasAtTheBroker != nil {
+		out.EnforceSchemasAtTheBroker = *override.EnforceSchemasAtTheBroker
+	}
+	if override.RequiresHighThroughputRESTProduceAPI != nil {
+		out.RequiresHighThroughputRESTProduceAPI = *override.RequiresHighThroughputRESTProduceAPI
+	}
+	if override.Requires9995SLAWithinSingleZone != nil {
+		out.Requires9995SLAWithinSingleZone = *override.Requires9995SLAWithinSingleZone
+	}
+	if override.TargetCloud != nil {
+		out.TargetCloud = *override.TargetCloud
+	}
+	if override.ExistingVPCConnectivity != nil {
+		out.ExistingVPCConnectivity = *override.ExistingVPCConnectivity
+	}
+	if override.CCEgressRequired != nil {
+		out.CCEgressRequired = *override.CCEgressRequired
+	}
+	if override.ProjectedPNIGatewayCount != nil {
+		out.ProjectedPNIGatewayCount = *override.ProjectedPNIGatewayCount
 	}
 	return out
 }
