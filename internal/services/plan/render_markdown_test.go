@@ -166,8 +166,13 @@ func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 
-	assert.NotContains(t, body, "⚠", "state-derived Dedicated escalations must not surface the wrong-click callout")
-	assert.NotContains(t, body, "higher monthly cost")
+	assert.NotContains(t, body, "⚠ **Cost callout:**", "state-derived Dedicated must not surface the customer-declared wrong-click callout")
+	// State-derived Dedicated DOES get a separate ℹ cost-direction note
+	// (round-3 feedback: bigger cost decisions than SLA-SZ shouldn't be
+	// silent). It uses ℹ not ⚠ and frames recovery as "not recoverable
+	// by editing plan-inputs.yaml" — semantically distinct from the
+	// wrong-click flow.
+	assert.Contains(t, body, "ℹ **Cost direction:**", "state-derived Dedicated must surface the cost-direction note")
 }
 
 // Clusters whose source scan didn't populate the load-bearing signals
@@ -332,7 +337,7 @@ func TestRenderMarkdown_GlobalTriggerCollapsesToBanner(t *testing.T) {
 	// (note the leading `  - `); the banner uses `> ⚠ **Cost callout
 	// (applies to every cluster below):**`. Count only the per-cluster
 	// shape to verify it didn't ALSO fire when the global banner did.
-	perClusterCount := strings.Count(body, "  - > ⚠ **Cost callout:**")
+	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 1, bannerCount, "global trigger must collapse to exactly one banner up top")
 	assert.Equal(t, 0, perClusterCount, "the per-cluster cost callout must NOT fire when the banner already did")
@@ -384,7 +389,7 @@ func TestDetectGlobalCustomerTriggers_PartialFireKeepsInline(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 	bannerCount := strings.Count(body, "applies to every cluster below")
-	perClusterCount := strings.Count(body, "  - > ⚠ **Cost callout:**")
+	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 0, bannerCount, "partial fire (2 of 3) must NOT collapse to a global banner")
 	assert.Equal(t, 2, perClusterCount, "each firing cluster must keep its inline cost callout when scope is partial")

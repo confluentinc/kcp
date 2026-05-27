@@ -24,9 +24,39 @@ type PlanConfig struct {
 	LastVerified             string `yaml:"last_verified"`
 	KCPVersionAtVerification string `yaml:"kcp_version_at_verification"`
 
-	EnterpriseCaps    EnterpriseCaps    `yaml:"enterprise_caps"`
-	ClusterLinking    ClusterLinking    `yaml:"cluster_linking"`
-	PlanInputDefaults PlanInputDefaults `yaml:"plan_input_defaults"`
+	EnterpriseCaps    EnterpriseCaps         `yaml:"enterprise_caps"`
+	ClusterLinking    ClusterLinking         `yaml:"cluster_linking"`
+	PlanInputDefaults PlanInputDefaults      `yaml:"plan_input_defaults"`
+	AuthMapping       map[string]AuthMapping `yaml:"auth_mapping"`
+	Thresholds        Thresholds             `yaml:"thresholds"`
+}
+
+// Thresholds collects numeric cutoffs that the rule engine and the
+// renderer need but that aren't customer-facing knobs — pulled out
+// so an admin can tune them without code edits if a tenant has a
+// genuinely different operating envelope.
+type Thresholds struct {
+	// StaleStateDays — emit the state-file-stale OQ when the state
+	// snapshot is older than this many days.
+	StaleStateDays int `yaml:"stale_state_days"`
+	// PNIGatewayBreakeven — projected PNI gateway count at or above
+	// which the recommendation flips from PNI to PrivateLink.
+	PNIGatewayBreakeven int `yaml:"pni_gateway_breakeven"`
+}
+
+// AuthMapping is one row in the source→target auth lookup table
+// keyed by source-auth token (scram / iam / mtls / unauth). Defaults
+// resolve via this table when the customer doesn't override via
+// `target_auth_method`. Source + LastVerified carry the row's
+// provenance (which Confluent doc the values come from, and when an
+// engineer last checked it).
+type AuthMapping struct {
+	Target            string `yaml:"target"`
+	GatewayCompatible bool   `yaml:"gateway_compatible"`
+	TransparentSwap   bool   `yaml:"transparent_swap"`
+	Note              string `yaml:"note"`
+	Source            string `yaml:"source"`
+	LastVerified      string `yaml:"last_verified"`
 }
 
 type EnterpriseCaps struct {
@@ -63,6 +93,17 @@ type PlanInputDefaults struct {
 	// Networking triggers (PNI→PrivateLink) — see PlanInputsResolved.
 	CCEgressRequired         bool `yaml:"cc_egress_required"`
 	ProjectedPNIGatewayCount int  `yaml:"projected_pni_gateway_count"`
+
+	// Cutover defaults.
+	DowntimeTolerance            string `yaml:"downtime_tolerance"`
+	SubPattern                   string `yaml:"sub_pattern"`
+	PreferGateway                bool   `yaml:"prefer_gateway"`
+	ConfluentForKubernetesStatus string `yaml:"confluent_for_kubernetes_status"`
+	CCGatewayLicenseStatus       string `yaml:"cc_gateway_license_status"`
+	IAMPreMigrationStatus        string `yaml:"iam_pre_migration_status"`
+
+	// Auth defaults.
+	TargetAuthMethod string `yaml:"target_auth_method"`
 }
 
 // LoadPlanConfig returns the embedded plan-config.yaml, optionally
@@ -121,6 +162,32 @@ func (c *PlanConfig) Validate() error {
 	}
 	if defaults.ProjectedPNIGatewayCount < 1 {
 		return fmt.Errorf("plan-config plan_input_defaults.projected_pni_gateway_count must be >= 1 (got %v)", defaults.ProjectedPNIGatewayCount)
+	}
+	if c.Thresholds.StaleStateDays < 1 {
+		return fmt.Errorf("plan-config thresholds.stale_state_days must be >= 1 (got %v)", c.Thresholds.StaleStateDays)
+	}
+	if c.Thresholds.PNIGatewayBreakeven < 1 {
+		return fmt.Errorf("plan-config thresholds.pni_gateway_breakeven must be >= 1 (got %v)", c.Thresholds.PNIGatewayBreakeven)
+	}
+	// Every auth_mapping entry MUST carry Target + provenance (Source +
+	// LastVerified). The fields exist so the rendered Plan can audit
+	// where each recommendation came from — a silently-empty mapping
+	// row would propagate as a blank Plan footnote.
+	requiredSources := []string{"scram", "iam", "mtls", "unauth"}
+	for _, s := range requiredSources {
+		row, ok := c.AuthMapping[s]
+		if !ok {
+			return fmt.Errorf("plan-config auth_mapping is missing required entry %q", s)
+		}
+		if row.Target == "" {
+			return fmt.Errorf("plan-config auth_mapping[%s].target must be non-empty", s)
+		}
+		if row.Source == "" {
+			return fmt.Errorf("plan-config auth_mapping[%s].source must be non-empty (provenance is mandatory)", s)
+		}
+		if row.LastVerified == "" {
+			return fmt.Errorf("plan-config auth_mapping[%s].last_verified must be non-empty (provenance is mandatory)", s)
+		}
 	}
 	return nil
 }

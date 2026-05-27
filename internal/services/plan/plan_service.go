@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -51,6 +52,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 			StateFilePath:     stateFilePath,
 			KCPVersion:        build_info.Version,
 			GeneratedAt:       s.now().UTC(),
+			StateGeneratedAt:  state.Timestamp.UTC(),
 			PlanSchemaVersion: "1-experimental",
 		},
 		Inputs: inputs,
@@ -82,20 +84,40 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		ct.InputsMissing = slices.Clone(missing)
 		net.InputsMissing = slices.Clone(missing)
 
+		auth := DecideAuth(c, s.cfg, clusterInputs)
+
 		plan.Sizing = append(plan.Sizing, sizing)
 		plan.ClusterTypeDecision = append(plan.ClusterTypeDecision, ct)
 		plan.NetworkingDecision = append(plan.NetworkingDecision, net)
+		plan.Auth = append(plan.Auth, auth)
 		plan.SourceEnvironment.Clusters = append(plan.SourceEnvironment.Clusters, types.SourceClusterSummary{
 			ClusterID:    c.Name,
 			Region:       c.Region,
 			TopicCount:   topicCount(c),
 			BrokerCount:  brokerCount(c),
 			IsServerless: isServerless(c),
+			SourceAuths:  auth.SourceAuths,
 		})
-		plan.OpenQuestions = append(plan.OpenQuestions, detectOpenQuestions(c, sizing, ct, net, s.cfg, clusterInputs)...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectOpenQuestions(c, sizing, ct, net, auth, s.cfg, clusterInputs)...)
 	}
 	plan.SourceEnvironment.TotalRegions = countRegions(state)
 	plan.SizingAppendix = buildSizingAppendix(plan.Sizing, s.cfg, inputs)
+
+	// Cutover is fleet-wide (one Plan = one cutover style). Only emit
+	// when there are clusters to migrate; an empty fleet has nothing
+	// to cut over.
+	if len(clusters) > 0 {
+		cutover := DecideCutover(clusters, inputs)
+		plan.Cutover = &cutover
+		plan.OpenQuestions = append(plan.OpenQuestions, detectCutoverOpenQuestions(cutover, inputs, fleetUsesIAM(clusters))...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectAuthFleetOpenQuestions(inputs)...)
+	}
+	// Stale-state OQ: surface a fleet-wide accuracy warning when the
+	// source state file is older than the freshness window. The Plan
+	// still renders against whatever's in state.json — but a 14-day-old
+	// snapshot could miss ACL drift, new brokers, etc. that would
+	// change the verdicts.
+	plan.OpenQuestions = append(plan.OpenQuestions, detectStaleStateOQ(state.Timestamp, s.now(), s.cfg.Thresholds.StaleStateDays)...)
 
 	// Stable order: blocker OQs first, acknowledgement OQs last; tie-break
 	// on cluster ID so two clusters of equal priority sort alphabetically.
@@ -117,8 +139,46 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 // will upgrade that recommendation. SERVERLESS-specific suppressions for
 // "ACLs not populated" and "0 brokers" live in cluster_signals.go so the
 // same logic is shared with the rule evaluator.
-func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, ct types.ClusterTypeDecision, net types.NetworkingDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.OpenQuestion {
+func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, ct types.ClusterTypeDecision, net types.NetworkingDecision, auth types.AuthDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
+	// Auth posture undetectable. Fires whenever the source has no
+	// detected auth methods on a non-serverless cluster — auth is its
+	// own concern, surfaced independently of topic / ACL inventory gaps
+	// (those have their own OQs and don't suppress this one).
+	// Serverless clusters legitimately produce no detected methods
+	// when IAM isn't enabled; suppress only for them.
+	if len(auth.SourceAuths) == 0 && !isServerless(c) {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "auth_posture_unknown",
+			ClusterID:  c.Name,
+			Title:      "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
+			Body:       "Neither `AWSClientInformation.MskClusterConfig.Provisioned.ClientAuthentication` nor `kafka_admin_client_information.sasl_mechanism` reports an enabled auth method. A real MSK Provisioned cluster always has at least one. Likely cause: discover ran without admin credentials (or the state file pre-dates the auth scan).",
+			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account, OR provide admin Kafka credentials to `kcp scan clusters` so the Admin probe can backfill `sasl_mechanism`.", regionFlag(c.Region)),
+		})
+	}
+	// Customer-set target_auth_method conflicts with a source whose
+	// auth_mapping is gateway_compatible: false (today: IAM). The plan
+	// emits the override mapping but the gateway path itself remains
+	// incompatible — surface the conflict so the customer sees the gap.
+	// Skip the conflict OQ when the customer opted out of the gateway
+	// — gateway compatibility is moot on the plain-CL path, so the
+	// conflict isn't real. Also skip on unknown target (the
+	// target_auth_method_unknown OQ already fires for that; pairing the
+	// two would double-report a single typo).
+	if inputs.TargetAuthMethod != "" && inputs.PreferGateway && knownTargetAuthMethod(inputs.TargetAuthMethod) {
+		for _, row := range auth.TargetMappings {
+			if !row.GatewayCompatible {
+				oqs = append(oqs, types.OpenQuestion{
+					ID:         "auth_target_gateway_incompatible",
+					ClusterID:  c.Name,
+					Title:      fmt.Sprintf("`target_auth_method: %s` set but source auth `%s` is gateway-incompatible", inputs.TargetAuthMethod, row.SourceAuth),
+					Body:       fmt.Sprintf("You've overridden the target auth to `%s`, but the source uses `%s` — the CC Gateway can't accept `%s` clients at all (regardless of where they land on the CC side). The target-side override changes the credential clients present to CC; it does not change which auth scheme CC accepts at the gateway. Source clients need to pre-migrate to a gateway-compatible auth (SCRAM or mTLS) on MSK before the gateway path is viable.", inputs.TargetAuthMethod, row.SourceAuth, row.SourceAuth),
+					HowToClose: fmt.Sprintf("Two paths: (a) pre-migrate source clients off `%s` on MSK — typical replacement is SASL/SCRAM (see [MSK SASL/SCRAM docs](https://docs.aws.amazon.com/msk/latest/developerguide/msk-password.html)); flip the matching pre-migration prereq to `complete` and re-run the plan. OR (b) unset `target_auth_method` and let the per-source default apply — the override doesn't help here because the gateway barrier is on the source side.", row.SourceAuth),
+				})
+				break // one OQ per cluster, not one per gateway-incompatible row
+			}
+		}
+	}
 	if sizing.Degraded {
 		oqs = append(oqs, types.OpenQuestion{
 			ID:        "missing_p95_metrics",
@@ -136,7 +196,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 			Title:     "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
 			Body:      "The `acl_count_exceeds_cap` hard-limit rule needs a successful ACL scan to evaluate. Either the scan didn't run, or `--skip-acls` was passed; without the ACL list the rule is treated as inconclusive and the verdict resolves on the other rules.",
 			// `kcp scan clusters` doesn't take --region — it reads region from the state file.
-			HowToClose: "Re-run `kcp scan clusters --source-type msk --credentials-file <msk-credentials.yaml>` with admin Kafka credentials (SASL/IAM or SCRAM) and without `--skip-acls` so the ACL list populates.",
+			HowToClose: "Re-run `kcp scan clusters --source-type msk --credentials-file msk-credentials.yaml` without `--skip-acls`. The credentials file is a YAML with the admin Kafka credentials (SASL/IAM or SCRAM) — see `kcp scan clusters --help` for the schema, or [the kcp docs](https://confluentinc.github.io/kcp/command-reference/scan/clusters/) for a sample.\n\nSample `msk-credentials.yaml`:\n```yaml\nclusters:\n  - cluster_arn: <arn>\n    authentication_type: SASL_SCRAM        # or AWS_MSK_IAM\n    sasl_scram_username: <username>        # for SASL/SCRAM\n    sasl_scram_password: <password>\n```",
 		})
 	}
 	if brokerInventoryGap(c) {
@@ -177,33 +237,129 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	return oqs
 }
 
-// Priority order for OQs. Lower number renders first. Constants here so
-// every OQ has an explicit rank — a new ID without a priority entry
-// falls through to oqPriorityUnknown and renders last.
-const (
-	oqPriorityNetworkingOverCap = iota // infeasible PrivateLink recommendation — blocker
-	oqPriorityMissingMetrics           // missing P95 → sizing fell back to floor
-	oqPriorityBrokerInventory          // broker count == 0 (scan gap)
-	oqPriorityTopicInventory           // topic count == 0 (scan gap)
-	oqPriorityACLsNotScanned           // ACL admin scan didn't run
-	oqPriorityUnknown                  // fallback for new IDs added without a priority entry
-)
-
-func openQuestionPriority(id string) int {
-	switch id {
-	case "networking_privatelink_over_cap":
-		return oqPriorityNetworkingOverCap
-	case "missing_p95_metrics":
-		return oqPriorityMissingMetrics
-	case "broker_inventory_empty":
-		return oqPriorityBrokerInventory
-	case "topic_inventory_empty":
-		return oqPriorityTopicInventory
-	case "acls_not_scanned":
-		return oqPriorityACLsNotScanned
-	default:
-		return oqPriorityUnknown
+// detectCutoverOpenQuestions surfaces fleet-wide gateway-intent / prereq
+// gaps. Emitted once per Plan (no ClusterID — these aren't per-cluster).
+// Three independent OQs can fire:
+//   - gateway intent ambiguous (degraded_awaiting_oq)
+//   - gateway prereqs pending (degraded_prereqs_pending)
+//   - seconds_per_service tolerance requires the gateway, but it isn't
+//     mediated for some reason (cross-check; message varies by cause).
+//
+// detectStaleStateOQ surfaces a fleet-wide OQ when the source state
+// file is older than `staleDays`. Compares state.Timestamp against the
+// Plan's GeneratedAt time; if the state was empty (zero timestamp) the
+// OQ is suppressed because there's nothing to compare against.
+// `staleDays` comes from plan-config.yaml `thresholds.stale_state_days`.
+func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDays int) []types.OpenQuestion {
+	if stateTimestamp.IsZero() {
+		return nil
 	}
+	threshold := time.Duration(staleDays) * 24 * time.Hour
+	age := generatedAt.UTC().Sub(stateTimestamp.UTC())
+	if age < threshold {
+		return nil
+	}
+	days := int(age.Hours() / 24)
+	return []types.OpenQuestion{{
+		ID:         "state_file_stale",
+		Title:      fmt.Sprintf("State file is %d days old — verdicts may not reflect current source state", days),
+		Body:       fmt.Sprintf("The source state file is dated `%s`; this Plan was generated `%s` (%d days later). Verdicts above (ACL-cap, broker counts, throughput sizing) are computed against the state file as-is, but the source environment may have drifted since.", stateTimestamp.UTC().Format("2006-01-02 15:04:05 UTC"), generatedAt.UTC().Format("2006-01-02 15:04:05 UTC"), days),
+		HowToClose: "Re-run `kcp discover` (and `kcp scan clusters` if you have admin creds) to refresh the state file, then re-run `kcp report plan`. If the source environment hasn't changed materially, you can ignore this OQ.",
+	}}
+}
+
+func detectCutoverOpenQuestions(cutover types.CutoverDecision, inputs types.PlanInputsResolved, iamInUse bool) []types.OpenQuestion {
+	var oqs []types.OpenQuestion
+	if !knownDowntimeTolerance(inputs.DowntimeTolerance) {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "downtime_tolerance_unknown",
+			Title:      fmt.Sprintf("`downtime_tolerance: %s` is not a recognised value — defaulted to Stop-Restart-Repeat", inputs.DowntimeTolerance),
+			Body:       "The Plan only recognises `zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose`. The current value falls outside the enum, so the Plan inherits the Confluent default (Stop-Restart-Repeat) silently — which is probably not what you intended.",
+			HowToClose: "Set `downtime_tolerance` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
+		})
+	}
+	switch cutover.RecommendationStatus {
+	case types.RecommendationDegradedAwaitingOQ:
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "gateway_intent_unconfirmed",
+			Title:      "Gateway intent — pick CC Gateway or plain Cluster Linking",
+			Body:       "`prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open.",
+			HowToClose: "In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.",
+		})
+	case types.RecommendationDegradedPrereqsPending:
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "gateway_prereqs_pending",
+			Title:      "Gateway prereqs — pending items before the gateway path can be recommended",
+			Body:       fmt.Sprintf("`prefer_gateway: true` and at least one gateway prereq is still at `not_started`: %s. The gateway-mediated path needs all applicable prereqs at `in_progress` or `complete`. Plain Cluster Linking applies until they advance.", pendingPrereqList(inputs, iamInUse)),
+			HowToClose: "Move each pending prereq above to `in_progress` (intent declared) or `complete` (done). Re-run `kcp report plan` once the prereqs advance.",
+		})
+	}
+	// Cross-check: `seconds_per_service` is only achievable through the
+	// gateway. If the customer asks for it but mediation isn't possible
+	// (opt-out OR ambiguous OR prereqs pending), surface a cause-specific
+	// OQ. Blue/Green sidesteps the gateway entirely and never trips this.
+	if inputs.DowntimeTolerance == DowntimeSecondsPerService && cutover.GatewayMediated != types.GatewayMediatedTrue && cutover.Style != types.CutoverBlueGreen {
+		body := "seconds_per_service downtime tolerance requires CC-Gateway mediation (the gateway's 30–90s `BROKER_NOT_AVAILABLE` window is what makes sub-minute cutovers possible). The current Plan doesn't mediate via the gateway because: "
+		switch {
+		case !inputs.PreferGateway:
+			body += "`prefer_gateway: false`. Set `prefer_gateway: true` OR relax `downtime_tolerance` to `minutes_per_service` (plain Cluster Linking)."
+		case cutover.RecommendationStatus == types.RecommendationDegradedAwaitingOQ:
+			body += "gateway intent is unconfirmed (see the related Open Question above). Commit to the gateway path or relax `downtime_tolerance`."
+		default:
+			body += "one or more gateway prereqs are still at `not_started`. Move pending prereqs to `in_progress`/`complete`, OR relax `downtime_tolerance` to `minutes_per_service`."
+		}
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "downtime_tolerance_requires_gateway",
+			Title:      "`downtime_tolerance: seconds_per_service` requires the gateway but the recommendation is plain Cluster Linking",
+			Body:       body,
+			HowToClose: "Adjust either `prefer_gateway` / the gateway prereq statuses, or `downtime_tolerance`, in `plan-inputs.yaml`.",
+		})
+	}
+	return oqs
+}
+
+// detectAuthFleetOpenQuestions surfaces fleet-wide auth OQs that aren't
+// tied to a particular cluster — currently just the `target_auth_method`
+// typo signal (a global field, so emitting it per-cluster would produce
+// N identical OQs from one typo).
+func detectAuthFleetOpenQuestions(inputs types.PlanInputsResolved) []types.OpenQuestion {
+	var oqs []types.OpenQuestion
+	if !knownTargetAuthMethod(inputs.TargetAuthMethod) {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "target_auth_method_unknown",
+			Title:      fmt.Sprintf("`target_auth_method: %s` is not a recognised value — per-source defaults applied instead", inputs.TargetAuthMethod),
+			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The current value falls outside the enum; the per-source `auth_mapping` default is used silently for every cluster.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth),
+			HowToClose: "Set `target_auth_method` in `plan-inputs.yaml` (or `clusters[<name>].target_auth_method` for a per-cluster override) to one of the recognised values, OR unset it to keep the per-source default.",
+		})
+	}
+	return oqs
+}
+
+// pendingPrereqList renders the list of gateway prereqs still at
+// `not_started`, for inclusion in an OQ body. Inline rather than a
+// helper-with-cases because the body string is one-shot per Plan.
+func pendingPrereqList(inputs types.PlanInputsResolved, iamInUse bool) string {
+	var pending []string
+	if inputs.ConfluentForKubernetesStatus == PrereqNotStarted {
+		pending = append(pending, "`confluent_for_kubernetes_status`")
+	}
+	if inputs.CCGatewayLicenseStatus == PrereqNotStarted {
+		pending = append(pending, "`cc_gateway_license_status`")
+	}
+	if iamInUse && inputs.IAMPreMigrationStatus == PrereqNotStarted {
+		pending = append(pending, "`iam_pre_migration_status`")
+	}
+	if len(pending) == 0 {
+		return "(none — but eligibility check failed for another reason)"
+	}
+	return strings.Join(pending, ", ")
+}
+
+// openQuestionPriority is a thin shim over the OQ registry — keeps the
+// sort callsite in Build readable without a direct map lookup. New OQ
+// IDs land in `oqRegistry` (see oq_registry.go), not here.
+func openQuestionPriority(id string) int {
+	return oqMetaFor(id).Priority
 }
 
 func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
