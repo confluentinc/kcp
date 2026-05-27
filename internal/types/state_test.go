@@ -1180,28 +1180,36 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 }
 
-func TestNewStateFromBytes_LegacyFormat_TopLevelRegions(t *testing.T) {
-	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1","clusters":[]}]}`)
+func TestNewStateFromBytes_UnknownFields_WithVersion_RejectsWithVersionContext(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
 	_, err := NewStateFromBytes(data)
 	if err == nil {
-		t.Fatal("expected error for legacy format, got nil")
-	}
-	if !strings.Contains(err.Error(), "legacy format") {
-		t.Errorf("expected legacy format error, got: %v", err)
+		t.Fatal("expected error for unknown fields, got nil")
 	}
 	if !strings.Contains(err.Error(), "0.7.2") {
-		t.Errorf("expected error to contain version, got: %v", err)
+		t.Errorf("expected error to contain file version, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), build_info.Version) {
+		t.Errorf("expected error to contain running version, got: %v", err)
 	}
 }
 
-func TestNewStateFromBytes_LegacyFormat_NoVersion(t *testing.T) {
-	data := []byte(`{"regions":[{"region_name":"us-east-1","clusters":[]}]}`)
+func TestNewStateFromBytes_UnknownFields_NoVersion_Rejects(t *testing.T) {
+	data := []byte(`{"regions":[{"region_name":"us-east-1"}]}`)
 	_, err := NewStateFromBytes(data)
 	if err == nil {
-		t.Fatal("expected error for legacy format, got nil")
+		t.Fatal("expected error for unknown fields, got nil")
 	}
-	if !strings.Contains(err.Error(), "an older version") {
-		t.Errorf("expected 'an older version' in error, got: %v", err)
+	if !strings.Contains(err.Error(), "state file could not be loaded") {
+		t.Errorf("expected load error, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"},"unexpected_field":"value"}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
 	}
 }
 
