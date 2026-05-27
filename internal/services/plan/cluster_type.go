@@ -77,6 +77,9 @@ var hardLimitCatalog = []hardLimit{
 				return skipped("acl_count_cap not configured")
 			}
 			if !aclScanRan(cluster) {
+				if isServerless(cluster) {
+					return skipped("MSK Serverless does not expose ACLs via the admin API path kcp scans; this rule is N/A for Serverless clusters")
+				}
 				return skipped("no ACL list in state file — scan likely didn't run or used `--skip-acls`; rule resolves on the other rules")
 			}
 			count := len(cluster.KafkaAdminClientInformation.Acls)

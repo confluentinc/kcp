@@ -49,6 +49,13 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		ExistingVPCConnectivity:              defaults.ExistingVPCConnectivity,
 		CCEgressRequired:                     defaults.CCEgressRequired,
 		ProjectedPNIGatewayCount:             defaults.ProjectedPNIGatewayCount,
+		DowntimeTolerance:                    defaults.DowntimeTolerance,
+		SubPattern:                           defaults.SubPattern,
+		PreferGateway:                        defaults.PreferGateway,
+		ConfluentForKubernetesStatus:         defaults.ConfluentForKubernetesStatus,
+		CCGatewayLicenseStatus:               defaults.CCGatewayLicenseStatus,
+		IAMPreMigrationStatus:                defaults.IAMPreMigrationStatus,
+		TargetAuthMethod:                     defaults.TargetAuthMethod,
 	}
 	if in == nil {
 		return out
@@ -85,6 +92,27 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.ProjectedPNIGatewayCount != nil {
 		out.ProjectedPNIGatewayCount = *in.ProjectedPNIGatewayCount
+	}
+	if in.DowntimeTolerance != nil {
+		out.DowntimeTolerance = *in.DowntimeTolerance
+	}
+	if in.SubPattern != nil {
+		out.SubPattern = *in.SubPattern
+	}
+	if in.PreferGateway != nil {
+		out.PreferGateway = *in.PreferGateway
+	}
+	if in.ConfluentForKubernetesStatus != nil {
+		out.ConfluentForKubernetesStatus = *in.ConfluentForKubernetesStatus
+	}
+	if in.CCGatewayLicenseStatus != nil {
+		out.CCGatewayLicenseStatus = *in.CCGatewayLicenseStatus
+	}
+	if in.IAMPreMigrationStatus != nil {
+		out.IAMPreMigrationStatus = *in.IAMPreMigrationStatus
+	}
+	if in.TargetAuthMethod != nil {
+		out.TargetAuthMethod = *in.TargetAuthMethod
 	}
 	return out
 }
@@ -147,6 +175,9 @@ func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, cl
 	}
 	if override.ProjectedPNIGatewayCount != nil {
 		out.ProjectedPNIGatewayCount = *override.ProjectedPNIGatewayCount
+	}
+	if override.TargetAuthMethod != nil {
+		out.TargetAuthMethod = *override.TargetAuthMethod
 	}
 	return out
 }

@@ -53,3 +53,71 @@ plan_input_defaults:
   # `target_cloud != aws`.
   cc_egress_required: false        # CC→customer VPC egress not natively supported by PNI
   projected_pni_gateway_count: 1   # ≥2 → flip to PrivateLink
+
+  # Cutover defaults. `let_confluent_choose` resolves to
+  # Stop-Restart-Repeat — Confluent's canonical recommendation. The
+  # gateway prereq statuses default to `not_started`; a customer who
+  # hasn't engaged with the gateway question stays in the "ambiguous
+  # intent" branch (degraded_awaiting_oq) until they answer.
+  downtime_tolerance: let_confluent_choose
+  sub_pattern: app-by-app
+  prefer_gateway: true
+  confluent_for_kubernetes_status: not_started
+  cc_gateway_license_status: not_started
+  iam_pre_migration_status: not_started
+
+  # Auth default target. Intentionally empty — the per-source
+  # default lives in `auth_mapping` below. Only set via plan-inputs.yaml
+  # when the customer wants to force a single target across all source
+  # auths detected on a cluster.
+  target_auth_method: ""
+
+# Source → target auth lookup. Keyed by source-auth token. The
+# plan renders all detected source auths and the recommended target
+# for each — it doesn't pick one when a cluster has multiple enabled.
+auth_mapping:
+  scram:
+    target: confluent_cloud_api_keys
+    gateway_compatible: true
+    transparent_swap: true   # gateway swaps credentials transparently
+    # Note left empty — the "transparent swap" label in the Gateway
+    # column already conveys this row's behavior; repeating it as a
+    # Note on every SCRAM cluster adds noise without information.
+    note: ""
+    source: https://docs.confluent.io/cloud/current/security/authenticate/overview.html
+    last_verified: "2026-05-20"
+  iam:
+    target: confluent_cloud_api_keys
+    gateway_compatible: false   # IAM clients cannot connect to the gateway
+    transparent_swap: false
+    note: "IAM clients cannot connect to the CC Gateway. Pre-migrate to SCRAM or mTLS first."
+    source: https://github.com/confluentinc/kcp/blob/main/docs/assets/getting-started-with-zero-cut-migrations.md
+    last_verified: "2026-05-20"
+  mtls:
+    target: mtls
+    gateway_compatible: true
+    transparent_swap: false   # gateway terminates TLS and re-issues an ACM-PCA cert source-side
+    note: "Gateway terminates TLS and re-issues an ACM-PCA cert source-side (auth-swap mode)."
+    source: https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html
+    last_verified: "2026-05-20"
+  unauth:
+    target: confluent_cloud_api_keys
+    gateway_compatible: true
+    transparent_swap: false
+    note: "Plaintext on production is unusual; review with the customer."
+    source: https://docs.confluent.io/cloud/current/security/authenticate/overview.html
+    last_verified: "2026-05-20"
+
+# Threshold cutoffs — numeric levers the rule engine and renderer need
+# but that aren't customer-facing knobs. Tune here if a tenant has a
+# genuinely different operating envelope (older state files acceptable,
+# different PNI/PrivateLink breakeven, etc.).
+thresholds:
+  # Emit a 🟡 state-file-stale OQ when the source state.json is older
+  # than this many days. Conservative default: 7. Anything younger is
+  # silent; anything older surfaces a re-discover prompt.
+  stale_state_days: 7
+  # Projected PNI gateway count at or above which the networking
+  # recommendation flips from PNI to PrivateLink. 2 = first additional
+  # gateway crosses the cost line.
+  pni_gateway_breakeven: 2

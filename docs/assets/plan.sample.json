@@ -4,12 +4,11 @@
     "state_file_path": "sample-state.json",
     "kcp_version": "0.0.0-localdev",
     "generated_at": "2026-05-15T15:00:00Z",
+    "state_generated_at": "2026-05-15T15:00:00Z",
     "plan_schema_version": "1-experimental"
   },
   "inputs": {
-    "raw": {
-      "target_cloud": "azure"
-    },
+    "raw": {},
     "sla_target": "99.9",
     "sizing_percentile": "p95",
     "headroom_fraction": 0.3,
@@ -17,10 +16,17 @@
     "enforce_schemas_at_the_broker": false,
     "requires_high_throughput_rest_produce_api": false,
     "requires_99_95_sla_within_a_single_zone": false,
-    "target_cloud": "azure",
+    "target_cloud": "aws",
     "existing_vpc_connectivity": "privatelink_or_pni",
     "cc_egress_required": false,
-    "projected_pni_gateway_count": 1
+    "projected_pni_gateway_count": 1,
+    "downtime_tolerance": "let_confluent_choose",
+    "sub_pattern": "app-by-app",
+    "prefer_gateway": true,
+    "confluent_for_kubernetes_status": "not_started",
+    "cc_gateway_license_status": "not_started",
+    "iam_pre_migration_status": "not_started",
+    "target_auth_method": ""
   },
   "source_environment": {
     "clusters": [
@@ -28,25 +34,37 @@
         "cluster_id": "heavy-acls",
         "region": "us-east-1",
         "broker_count": 3,
-        "topic_count": 65
+        "topic_count": 65,
+        "source_auths": [
+          "scram"
+        ]
       },
       {
-        "cluster_id": "mtls-to-azure",
+        "cluster_id": "mtls-cluster",
         "region": "us-east-1",
         "broker_count": 3,
-        "topic_count": 38
+        "topic_count": 38,
+        "source_auths": [
+          "mtls"
+        ]
       },
       {
         "cluster_id": "small-orders",
         "region": "us-east-1",
         "broker_count": 3,
-        "topic_count": 42
+        "topic_count": 42,
+        "source_auths": [
+          "scram"
+        ]
       },
       {
         "cluster_id": "steady-events",
         "region": "us-east-1",
         "broker_count": 6,
-        "topic_count": 120
+        "topic_count": 120,
+        "source_auths": [
+          "scram"
+        ]
       }
     ],
     "total_regions": 1
@@ -98,7 +116,7 @@
       ]
     },
     {
-      "cluster_id": "mtls-to-azure",
+      "cluster_id": "mtls-cluster",
       "sized_in_mbps": 12,
       "sized_out_mbps": 18,
       "peak_in_mbps": 15,
@@ -121,23 +139,23 @@
       "spiky_egress": false,
       "citations": [
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.p95",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.p95",
           "value": 12582912
         },
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.p95",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.p95",
           "value": 18874368
         },
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.max",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.max",
           "value": 15728640
         },
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.max",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.max",
           "value": 23068672
         },
         {
-          "path": "cluster[mtls-to-azure].kafka_admin_client_information.topics.summary.total_partitions",
+          "path": "cluster[mtls-cluster].kafka_admin_client_information.topics.summary.total_partitions",
           "value": 250
         }
       ]
@@ -281,22 +299,13 @@
           "row_id": "mtls_on_non_aws_target",
           "description": "Source uses mTLS, target is non-AWS",
           "outcome": "not_fired",
-          "evidence": "no mTLS source + target_cloud=\"azure\""
+          "evidence": "no mTLS source + target_cloud=\"aws\""
         }
       ]
     },
     {
-      "cluster_id": "mtls-to-azure",
-      "verdict": "Dedicated",
-      "triggers": [
-        {
-          "row_id": "mtls_on_non_aws_target",
-          "description": "Source uses mTLS, target is non-AWS",
-          "evidence": "mTLS source + target_cloud=\"azure\" (mTLS on non-AWS requires Dedicated)"
-        }
-      ],
-      "topology": "MultiZone",
-      "final_cku": 1,
+      "cluster_id": "mtls-cluster",
+      "verdict": "Enterprise",
       "evaluated_rules": [
         {
           "row_id": "eCKU_exceeds_pni_cap",
@@ -331,8 +340,8 @@
         {
           "row_id": "mtls_on_non_aws_target",
           "description": "Source uses mTLS, target is non-AWS",
-          "outcome": "fired",
-          "evidence": "mTLS source + target_cloud=\"azure\" (mTLS on non-AWS requires Dedicated)"
+          "outcome": "not_fired",
+          "evidence": "mTLS source + target_cloud=\"aws\" (AWS supports mTLS on Enterprise/Freight)"
         }
       ]
     },
@@ -374,7 +383,7 @@
           "row_id": "mtls_on_non_aws_target",
           "description": "Source uses mTLS, target is non-AWS",
           "outcome": "not_fired",
-          "evidence": "no mTLS source + target_cloud=\"azure\""
+          "evidence": "no mTLS source + target_cloud=\"aws\""
         }
       ]
     },
@@ -416,7 +425,7 @@
           "row_id": "mtls_on_non_aws_target",
           "description": "Source uses mTLS, target is non-AWS",
           "outcome": "not_fired",
-          "evidence": "no mTLS source + target_cloud=\"azure\""
+          "evidence": "no mTLS source + target_cloud=\"aws\""
         }
       ]
     }
@@ -424,31 +433,119 @@
   "networking_decision": [
     {
       "cluster_id": "heavy-acls",
-      "verdict": "PrivateLink",
+      "verdict": "PNI",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "target_cloud=\"azure\" — PNI / TGW / VPC Peering are AWS-only, so cross-cloud Dedicated lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
+      "reason": "Dedicated AWS cluster — PNI required (TGW / VPC Peering are alternatives only when the customer's existing MSK topology already uses them; see `existing_vpc_connectivity` in plan-inputs.yaml)"
     },
     {
-      "cluster_id": "mtls-to-azure",
-      "verdict": "PrivateLink",
+      "cluster_id": "mtls-cluster",
+      "verdict": "PNI",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "target_cloud=\"azure\" — PNI / TGW / VPC Peering are AWS-only, so cross-cloud Dedicated lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
+      "reason": "default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap)"
     },
     {
       "cluster_id": "small-orders",
-      "verdict": "PrivateLink",
+      "verdict": "PNI",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "target_cloud=\"azure\" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
+      "reason": "default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap)"
     },
     {
       "cluster_id": "steady-events",
-      "verdict": "PrivateLink",
+      "verdict": "PNI",
       "peak_burst_ecku": 3,
       "percentage_of_cap": 30,
-      "reason": "target_cloud=\"azure\" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
+      "reason": "default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap)"
+    }
+  ],
+  "cutover": {
+    "style": "Stop-Restart-Repeat",
+    "sub_pattern": "app-by-app",
+    "gateway_mediated": "false",
+    "recommendation_status": "degraded_awaiting_oq",
+    "alternatives_shown_for_trust": [
+      "Stop-Wait-Restart",
+      "Restart-All-At-Once",
+      "Blue/Green"
+    ],
+    "prereqs": [
+      {
+        "description": "Confluent for Kubernetes (CFK) cluster",
+        "status": "blocked"
+      },
+      {
+        "description": "Confluent Cloud Gateway Add-On license",
+        "status": "blocked"
+      }
+    ]
+  },
+  "auth": [
+    {
+      "cluster_id": "heavy-acls",
+      "source_auths_detected": [
+        "scram"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "scram",
+          "effective_target": "confluent_cloud_api_keys",
+          "gateway_compatible": true,
+          "transparent_swap": true,
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-cluster",
+      "source_auths_detected": [
+        "mtls"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "mtls",
+          "effective_target": "mtls",
+          "gateway_compatible": true,
+          "transparent_swap": false,
+          "note": "Gateway terminates TLS and re-issues an ACM-PCA cert source-side (auth-swap mode).",
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "source_auths_detected": [
+        "scram"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "scram",
+          "effective_target": "confluent_cloud_api_keys",
+          "gateway_compatible": true,
+          "transparent_swap": true,
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    },
+    {
+      "cluster_id": "steady-events",
+      "source_auths_detected": [
+        "scram"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "scram",
+          "effective_target": "confluent_cloud_api_keys",
+          "gateway_compatible": true,
+          "transparent_swap": true,
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
     }
   ],
   "sizing_appendix": [
@@ -487,7 +584,7 @@
       ]
     },
     {
-      "cluster_id": "mtls-to-azure",
+      "cluster_id": "mtls-cluster",
       "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
       "intermediate_steps": [
         "ingress ratio = 12.00 MBps / 60 = 0.2000",
@@ -499,23 +596,23 @@
       ],
       "citations": [
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.p95",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.p95",
           "value": 12582912
         },
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.p95",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.p95",
           "value": 18874368
         },
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesInPerSec.max",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.max",
           "value": 15728640
         },
         {
-          "path": "cluster[mtls-to-azure].metrics.aggregates.BytesOutPerSec.max",
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.max",
           "value": 23068672
         },
         {
-          "path": "cluster[mtls-to-azure].kafka_admin_client_information.topics.summary.total_partitions",
+          "path": "cluster[mtls-cluster].kafka_admin_client_information.topics.summary.total_partitions",
           "value": 250
         }
       ]
@@ -587,6 +684,14 @@
           "value": 800
         }
       ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "gateway_intent_unconfirmed",
+      "title": "Gateway intent — pick CC Gateway or plain Cluster Linking",
+      "body": "`prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open.",
+      "how_to_close": "In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ."
     }
   ]
 }

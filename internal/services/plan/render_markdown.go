@@ -26,34 +26,104 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	fmt.Fprintf(&b, "_Generated %s by KCP %s from `%s`%s._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, p.Header.StateFilePath, schemaSuffix)
 
 	writeDefinitions(&b, cfg)
-	writeSourceEnvironment(&b, p)
-	writeSizingAndDecisions(&b, p, cfg)
-	writeOpenQuestions(&b, p)
+	// Section numbering is dynamic: empty Cutover or empty Auth slices
+	// drop their section, and Actions Needed claims the next available
+	// number. Avoids "jumps from §2 to §5" when an empty fleet skips §3/§4.
+	section := 1
+	writeSourceEnvironment(&b, p, section)
+	section++
+	writeSizingAndDecisions(&b, p, cfg, section)
+	section++
+	if p.Cutover != nil {
+		writeCutover(&b, p.Cutover, cfg, section)
+		section++
+	}
+	if len(p.Auth) > 0 {
+		writeAuth(&b, p.Auth, p.Cutover, p.Inputs, section)
+		section++
+	}
+	writeOpenQuestions(&b, p, section)
 	writeSizingAppendix(&b, p, cfg)
 	writeRulesAppendix(&b, p)
 
 	return b.Bytes(), nil
 }
 
-func writeOpenQuestions(b *bytes.Buffer, p *types.Plan) {
+func writeOpenQuestions(b *bytes.Buffer, p *types.Plan, section int) {
 	if len(p.OpenQuestions) == 0 {
+		fmt.Fprintf(b, "## %d. Actions Needed\n\n", section)
+		b.WriteString("_No actions outstanding — the Plan above renders without unresolved questions._\n\n")
 		return
 	}
-	b.WriteString("## 3. Actions Needed\n\n")
-	b.WriteString("Each item below is a concrete action that tightens the recommendation in **Sizing & Cluster Decisions**. The current recommendation stands; doing these closes a state-file or scan gap.\n\n")
-	for i, g := range groupOpenQuestions(p.OpenQuestions) {
-		fmt.Fprintf(b, "%d. **%s**\n", i+1, g.oq.Title)
+	fmt.Fprintf(b, "## %d. Actions Needed\n\n", section)
+	groups := groupOpenQuestions(p.OpenQuestions)
+	siblingIDs := oqIDSet(p.OpenQuestions)
+	// Build per-group rendered severity + title up front so the legend
+	// can mention only severities that actually appear in this Plan.
+	rendered := make([]struct {
+		severity string
+		title    string
+	}, len(groups))
+	present := map[string]bool{}
+	for i, g := range groups {
+		meta := oqMetaFor(g.oq.ID)
+		sev, title := promoteSeverity(meta, g.oq.Title, siblingIDs)
+		rendered[i].severity = sev
+		rendered[i].title = title
+		present[sev] = true
+	}
+	b.WriteString("Each item below is a concrete action that tightens the recommendation. The current recommendation stands; these close state-file gaps, fix invalid inputs, or resolve preference questions.")
+	if legend := severityLegend(present); legend != "" {
+		fmt.Fprintf(b, " %s", legend)
+	}
+	b.WriteString("\n\n")
+	for i, g := range groups {
+		fmt.Fprintf(b, "%d. %s **%s**\n", i+1, rendered[i].severity, rendered[i].title)
 		if len(g.clusters) > 0 {
-			fmt.Fprintf(b, "   - _Affects:_ %s\n", formatClusterList(g.clusters))
+			fmt.Fprintf(b, "   - **Affects:** %s\n", formatClusterList(g.clusters))
 		}
 		if g.oq.Body != "" {
-			fmt.Fprintf(b, "   - %s\n", g.oq.Body)
+			fmt.Fprintf(b, "   - %s\n", indentMultiline(g.oq.Body, "     "))
 		}
 		if g.oq.HowToClose != "" {
-			fmt.Fprintf(b, "   - _How to close:_ %s\n", g.oq.HowToClose)
+			fmt.Fprintf(b, "   - _How to close:_ %s\n", indentMultiline(g.oq.HowToClose, "     "))
 		}
 	}
 	b.WriteString("\n")
+}
+
+// severityLegend renders only the severities that appear in this Plan.
+// Suppresses the legend entirely when nothing is present (no OQs path
+// short-circuits earlier; this guards an all-promoted edge case).
+func severityLegend(present map[string]bool) string {
+	if len(present) == 0 {
+		return ""
+	}
+	parts := []string{}
+	if present["🔴"] {
+		parts = append(parts, "🔴 blocker (fix before cutover)")
+	}
+	if present["🟡"] {
+		parts = append(parts, "🟡 affects accuracy (fix before relying on the plan)")
+	}
+	if present["🟢"] {
+		parts = append(parts, "🟢 preference (pick one)")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "**Severity prefix:** " + strings.Join(parts, " · ") + "."
+}
+
+// oqIDSet returns a lookup of OQ IDs present in this Plan. Used to
+// drive sibling-aware severity promotions through the OQ registry
+// (see oq_registry.go — `promoteSeverity`).
+func oqIDSet(oqs []types.OpenQuestion) map[string]bool {
+	out := make(map[string]bool, len(oqs))
+	for _, oq := range oqs {
+		out[oq.ID] = true
+	}
+	return out
 }
 
 // oqGroup collapses OQs that render identically (same ID + Body +
@@ -98,6 +168,18 @@ func groupOpenQuestions(oqs []types.OpenQuestion) []oqGroup {
 	return groups
 }
 
+// indentMultiline prefixes every newline-separated continuation line
+// in `s` with `indent` so the line stays nested under its parent
+// ordered-list / bullet item. Without this, an embedded fenced code
+// block in an OQ Body or HowToClose terminates the enclosing list
+// item because the ``` lands at column 0.
+func indentMultiline(s, indent string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	return strings.ReplaceAll(s, "\n", "\n"+indent)
+}
+
 // formatClusterList renders a list of cluster IDs as “ `a` “, “ `b` “,
 // “ `c` “ for inline display.
 func formatClusterList(ids []string) string {
@@ -119,11 +201,22 @@ func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	b.WriteString("- **Peak burst** — short-window peak throughput observed in metrics, expressed as eCKU. Surfaces in the spiky-workload note when peak diverges from P95 by more than the configured ratio.\n")
 	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to %d eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS).\n", caps.PNIMaxECKU)
 	fmt.Fprintf(b, "- **PrivateLink** — capped at %d eCKU on Enterprise. Fires when `target_cloud != \"aws\"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP.\n", caps.PrivateLinkMaxECKU)
-	fmt.Fprintf(b, "- **ACL cap (%d)** — Enterprise supports up to %d ACLs; exceeding the cap forces Dedicated. Source: cluster-types.html.\n\n", caps.ACLCountCap, caps.ACLCountCap)
+	fmt.Fprintf(b, "- **ACL cap (%d)** — Enterprise supports up to %d ACLs; exceeding the cap forces Dedicated. Source: [%s](%s).\n\n", caps.ACLCountCap, caps.ACLCountCap, caps.Source, caps.Source)
+	// Cutover-style + plain-CL definitions live in a collapsible block —
+	// they're load-bearing context for §3 but expanding inline triples
+	// the Definitions wall before the reader has any context.
+	b.WriteString("<details><summary>Cutover-related terms (Stop-Restart-Repeat, Blue/Green, CC Gateway-mediated, etc.)</summary>\n\n")
+	b.WriteString("- **Stop-Restart-Repeat** — phased per-service cutover. Each application (or topic) is stopped on MSK, mirrored to CC, and resumed at the CC endpoint, one at a time. Recoverable per step; longer elapsed time.\n")
+	b.WriteString("- **Stop-Wait-Restart** — single coordinated maintenance window. Producers stop, the mirror catches up, services resume in sequence inside the window.\n")
+	b.WriteString("- **Restart-All-At-Once** — single window where every client reconfigures and reconnects at the same instant. Largest blast radius; one rollback point for the whole fleet.\n")
+	b.WriteString("- **Blue/Green** — parallel run on both sides via Cluster Linking. Zero downtime, highest operational complexity; customer-designed orchestration.\n")
+	b.WriteString("- **CC Gateway-mediated** — a sidecar component that absorbs the cutover with a 30–90 s `BROKER_NOT_AVAILABLE` window per service, after which clients auto-retry against CC. Removes the per-service producer restart; requires Confluent for Kubernetes + a Gateway Add-On license.\n")
+	b.WriteString("- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the simpler op model. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Fully supported; chosen via `prefer_gateway: false`.\n")
+	b.WriteString("\n</details>\n\n")
 }
 
-func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan) {
-	b.WriteString("## 1. Source Environment\n\n")
+func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan, section int) {
+	fmt.Fprintf(b, "## %d. Source Environment\n\n", section)
 	if len(p.SourceEnvironment.Clusters) == 0 {
 		b.WriteString("_No clusters found in the state file. Re-run `kcp discover` / `kcp scan ...` and try again._\n\n")
 		return
@@ -150,24 +243,53 @@ func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan) {
 	}
 	fmt.Fprintf(b, "- **%d** source %s across **%d** %s · **%d** brokers · **%d** topics%s\n\n",
 		len(p.SourceEnvironment.Clusters), clusterWord, p.SourceEnvironment.TotalRegions, regionWord, totalBrokers, totalTopics, serverlessNote)
-	b.WriteString("| Cluster | Region | Brokers | Topics |\n")
-	b.WriteString("|---|---|---:|---:|\n")
+	b.WriteString("| Cluster | Region | Brokers | Topics | Source auth |\n")
+	b.WriteString("|---|---|---:|---:|---|\n")
 	for _, c := range p.SourceEnvironment.Clusters {
 		brokerCell := fmt.Sprintf("%d", c.BrokerCount)
 		if c.IsServerless {
 			brokerCell = "_N/A (serverless)_"
 		}
-		fmt.Fprintf(b, "| %s | %s | %s | %d |\n", escapeMarkdownTableCell(c.ClusterID), escapeMarkdownTableCell(c.Region), brokerCell, c.TopicCount)
+		fmt.Fprintf(b, "| %s | %s | %s | %d | %s |\n",
+			escapeMarkdownTableCell(c.ClusterID),
+			escapeMarkdownTableCell(c.Region),
+			brokerCell,
+			c.TopicCount,
+			sourceAuthCell(c.SourceAuths),
+		)
 	}
 	b.WriteString("\n")
+	if serverlessCount > 0 {
+		b.WriteString("**MSK Serverless caveats** — the fleet includes one or more Serverless source clusters. These differ from Provisioned MSK in ways that affect the migration plan:\n")
+		b.WriteString("- **No broker inventory.** Serverless is a pay-per-throughput managed service; the broker count column reads `N/A`.\n")
+		b.WriteString("- **ACL semantics differ.** Serverless does not expose ACLs via the admin API path kcp scans; the `acl_count_exceeds_cap` rule cannot evaluate on Serverless clusters.\n")
+		b.WriteString("- **Auth surface is smaller.** Only SASL/IAM is supported on Serverless; SCRAM / mTLS / unauthenticated paths don't apply.\n")
+		b.WriteString("- **Workload shape changes at the migration boundary.** Serverless billing is throughput-based; CC destination clusters are eCKU / CKU sized. Confirm sizing against actual rate metrics with your Confluent account team.\n\n")
+	}
 }
 
-func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
-	b.WriteString("## 2. Sizing & Cluster Decisions\n\n")
+// sourceAuthCell renders the Source-auth column: comma-separated
+// `code`-formatted tokens, or "_none detected_" italic when empty.
+// Multiple auths on one cluster (e.g. SCRAM + mTLS both enabled on
+// MSK) are surfaced together; the plan never picks one.
+func sourceAuthCell(auths []string) string {
+	if len(auths) == 0 {
+		return "_none detected_"
+	}
+	parts := make([]string, len(auths))
+	for i, a := range auths {
+		parts[i] = "`" + a + "`"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, section int) {
+	fmt.Fprintf(b, "## %d. Sizing & Cluster Decisions\n\n", section)
 	if len(p.Sizing) == 0 {
 		b.WriteString("_No clusters to size._\n\n")
 		return
 	}
+	b.WriteString("This section combines three per-cluster decisions: the **sizing** (how many eCKU each cluster needs to absorb its workload at the chosen percentile + headroom), the **cluster type** (Enterprise, Dedicated, or Freight — driven by hard limits like ACL count and customer-declared flags), and the **networking** topology (PNI, PrivateLink, Transit Gateway, or VPC Peering — driven by `target_cloud`, egress requirements, and projected PNI gateway count). They render together because each row's verdict in one column constrains the others: e.g. a Dedicated cluster opens up PrivateLink networking patterns that Enterprise caps.\n\n")
 
 	// Build cluster_id-keyed lookups so the rendered table can't silently
 	// mis-pair a cluster's sizing with another cluster's verdict — earlier
@@ -202,7 +324,9 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 		// missing.
 		if s.Degraded {
 			throughputCell = "_metrics missing_"
-			sizeCell = formatSizeCell(s.FinalECKU, ctDecision, true)
+			// sizeCell already carries the (floor) suffix via the
+			// earlier formatSizeCell call (degraded flag was already
+			// true). No re-format needed.
 		}
 		// Partitions column reflects topics specifically (the only
 		// signal that drives partition count). The `*` marker is
@@ -212,7 +336,13 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 		if slices.Contains(s.InputsMissing, "topics") {
 			partitionsCell = "_unknown_"
 		}
-		if len(s.InputsMissing) > 0 {
+		// Provisional `*` marker fires for ANY signal that makes the
+		// size cell less than fully trusted: missing scan inputs OR a
+		// degraded (metrics-missing) sizing fallback to the SLA floor.
+		// Without the second branch, a metrics-degraded cluster shows
+		// `1 eCKU (floor)` without the asterisk that explicitly means
+		// "provisional" — three notations for the same condition.
+		if len(s.InputsMissing) > 0 || s.Degraded {
 			sizeCell += " *"
 		}
 		fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %s |\n",
@@ -220,7 +350,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 	}
 	b.WriteString("\n")
 	if hasProvisional(p.Sizing) {
-		b.WriteString("`*` = sizing is provisional — some scan inputs were missing; see each cluster's Why line for the specifics.\n\n")
+		b.WriteString("`*` = sizing is provisional — some scan inputs were missing or metrics were degraded; see each cluster's Why line. `(floor)` next to a size means the SLA minimum bound it; both can apply to the same cluster.\n\n")
 	}
 
 	// Per-cluster rationale: each line cites the cluster-type decision and
@@ -242,6 +372,17 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 		if szIsGlobal(globalCustomerTriggers) {
 			writeSZTradeoff(b, cfg, calloutGlobal)
 		}
+	}
+	// Fleet-level state-derived Dedicated banner: emit once at the top
+	// of the section when ≥ 2 clusters land on Dedicated because of a
+	// state-driven rule (no customer-declared trigger). Below the
+	// threshold the per-cluster note is still readable; above it we
+	// were repeating the same paragraph 30 times.
+	stateDerivedDedicatedCount := countStateDerivedDedicated(p.ClusterTypeDecision)
+	hoistStateDerivedBanner := stateDerivedDedicatedCount >= 2
+	if hoistStateDerivedBanner {
+		fmt.Fprintf(b, "> ℹ **Cost direction (fleet):** %d clusters land on Dedicated because of state-derived hard-limit rules — i.e. the cluster as scanned hit a cap that Enterprise can't carry. The escalation isn't recoverable by editing `plan-inputs.yaml`; confirm with your Confluent account team that the scanned capacity reflects each cluster's actual workload before committing. Dedicated has a higher monthly cost than Enterprise.\n\n",
+			stateDerivedDedicatedCount)
 	}
 	for _, s := range p.Sizing {
 		ct := ctByID[s.ClusterID]
@@ -289,6 +430,16 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 		perClusterTriggers := filterNonGlobalTriggers(customerDeclaredTriggers, globalCustomerTriggers)
 		if len(perClusterTriggers) > 0 {
 			writeCostCallout(b, perClusterTriggers, calloutPerCluster)
+		}
+		// State-derived Dedicated cost note: when the verdict is
+		// Dedicated and none of the firing rules are customer-declared
+		// (so the customer-callout above didn't fire), surface a
+		// shorter note so the cost direction is visible. Recovery isn't
+		// "flip a flag" here — the fleet's state forced the escalation
+		// — but the cost-direction signal is the same. Suppressed when
+		// the fleet-level banner above already covers it.
+		if !hoistStateDerivedBanner && ct.Verdict == types.ClusterTypeDedicated && len(customerDeclaredTriggers) == 0 && len(ct.Triggers) > 0 {
+			b.WriteString("  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.\n")
 		}
 		// Single-Zone resilience tradeoff: skipped when the SZ trigger
 		// fired globally (banner already covered it); otherwise emit
@@ -376,7 +527,7 @@ func pluralize(singular string, n int) string {
 // the `*` legend after the Sizing & Cluster Decisions table.
 func hasProvisional(sizings []types.ClusterSizing) bool {
 	for _, s := range sizings {
-		if len(s.InputsMissing) > 0 {
+		if len(s.InputsMissing) > 0 || s.Degraded {
 			return true
 		}
 	}
@@ -480,11 +631,14 @@ func writeRulesAppendix(b *bytes.Buffer, p *types.Plan) {
 	b.WriteString("## Appendix A2 — Hard-Limit Rules Evaluated\n")
 	b.WriteString("<details><summary>Show per-cluster rule-evaluation trace</summary>\n\n")
 	b.WriteString("Every cluster runs the same hard-limit catalog; this table records each rule's outcome so a reviewer can confirm the verdict and see negative evidence (e.g. \"47 ACLs ≤ 4000 cap\"). `skipped` rows mean the rule couldn't be evaluated — the cluster's verdict resolves on the other rules.\n\n")
+	if !p.Header.StateGeneratedAt.IsZero() {
+		fmt.Fprintf(b, "_Evidence below reflects the source state file as of %s. Re-run `kcp discover` / `kcp scan ...` if the source environment has changed materially since._\n\n", p.Header.StateGeneratedAt.Format("2006-01-02 15:04:05 UTC"))
+	}
 	for _, ct := range p.ClusterTypeDecision {
 		if len(ct.EvaluatedRules) == 0 {
 			continue
 		}
-		fmt.Fprintf(b, "**%s**\n\n", escapeMarkdownTableCell(ct.ClusterID))
+		fmt.Fprintf(b, "**Cluster** `%s`\n\n", escapeMarkdownTableCell(ct.ClusterID))
 		b.WriteString("| Rule | Outcome | Detail |\n|---|---|---|\n")
 		for _, r := range ct.EvaluatedRules {
 			detail := r.Evidence
@@ -539,7 +693,7 @@ func writeCostCallout(b *bytes.Buffer, triggers []types.HardLimitTrigger, scope 
 	case calloutGlobal:
 		fmt.Fprintf(b, "> ⚠ **Cost callout (applies to every cluster below):** "+costCalloutBody+"\n\n", labels)
 	case calloutPerCluster:
-		fmt.Fprintf(b, "  - > ⚠ **Cost callout:** "+costCalloutBody+"\n", labels)
+		fmt.Fprintf(b, "  - ⚠ **Cost callout:** "+costCalloutBody+"\n", labels)
 	}
 }
 
@@ -552,7 +706,7 @@ func writeSZTradeoff(b *bytes.Buffer, cfg *PlanConfig, scope calloutScope) {
 	case calloutGlobal:
 		fmt.Fprintf(b, "> ℹ "+szTradeoffBody+"\n\n", mzFloor)
 	case calloutPerCluster:
-		fmt.Fprintf(b, "  - > ℹ "+szTradeoffBody+"\n", mzFloor)
+		fmt.Fprintf(b, "  - ℹ "+szTradeoffBody+"\n", mzFloor)
 	}
 }
 
@@ -569,6 +723,32 @@ func szIsGlobal(global []types.HardLimitTrigger) bool {
 // banner instead of N repeated per-cluster callouts. Per-cluster
 // overrides (where the same trigger fires on a subset) keep their
 // inline cost callout because the noise signal there is real.
+// countStateDerivedDedicated returns the number of clusters whose
+// verdict is Dedicated AND every firing trigger was state-derived
+// (no customer-declared flag in the trigger set). Drives the
+// fleet-level "Cost direction" banner when many clusters share the
+// state-forced escalation — at small N the per-cluster inline note
+// is fine; at fleet scale it becomes noise.
+func countStateDerivedDedicated(decisions []types.ClusterTypeDecision) int {
+	n := 0
+	for _, ct := range decisions {
+		if ct.Verdict != types.ClusterTypeDedicated || len(ct.Triggers) == 0 {
+			continue
+		}
+		anyCustomer := false
+		for _, t := range ct.Triggers {
+			if t.CustomerDeclared {
+				anyCustomer = true
+				break
+			}
+		}
+		if !anyCustomer {
+			n++
+		}
+	}
+	return n
+}
+
 func detectGlobalCustomerTriggers(decisions []types.ClusterTypeDecision) []types.HardLimitTrigger {
 	if len(decisions) == 0 {
 		return nil
@@ -685,4 +865,323 @@ func formatSizeCell(finalECKU int, ct types.ClusterTypeDecision, degraded bool) 
 		return fmt.Sprintf("%d %s (floor)", value, suffix)
 	}
 	return fmt.Sprintf("%d %s", value, suffix)
+}
+
+// ----- §3 cutover -----
+
+// writeCutover renders the fleet-wide cutover recommendation: chosen
+// style, gateway mediation status with degraded markers, alternatives
+// shown for trust, and the gateway prereq table. Skips the section
+// entirely when there's no cutover decision (empty fleet).
+func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, cfg *PlanConfig, section int) {
+	if c == nil {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Cutover Approach\n\n", section)
+	b.WriteString("_The cutover style below applies to the **entire fleet**. Per-cluster cutover overrides aren't supported in this kcp version (planned for a follow-up). Heterogeneous fleets can run kcp against a state-file subset that contains only the clusters sharing a style — re-run for each subset and combine the recommendations manually._\n\n")
+	fmt.Fprintf(b, "- **Style:** %s\n", cutoverStyleLabel(c.Style, c.SubPattern))
+	fmt.Fprintf(b, "- **Gateway mediation:** %s\n", cutoverGatewayLabel(c.GatewayMediated, c.RecommendationStatus))
+	if marker := recommendationStatusMarker(c.RecommendationStatus); marker != "" {
+		fmt.Fprintf(b, "  - %s\n", marker)
+	}
+	writeCutoverAlternatives(b, c.AlternativesShown)
+	writeCutoverPrereqs(b, c.Prereqs)
+	b.WriteString("\n")
+	// Blue/Green is customer-designed — kcp doesn't generate the
+	// orchestration. Promote the runbook hint to its own sub-heading
+	// so the multi-sentence content reads as a separate concern, not
+	// a comically heavy list item.
+	if c.Style == types.CutoverBlueGreen {
+		linkingURL := "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html"
+		if cfg != nil && cfg.ClusterLinking.Source != "" {
+			linkingURL = cfg.ClusterLinking.Source
+		}
+		b.WriteString("### Runbook (Blue/Green)\n\n")
+		fmt.Fprintf(b, "kcp does not generate Blue/Green orchestration. See [Confluent Cloud Cluster Linking guide](%s) for the parallel-run pattern; the customer designs cutover gating, consumer-offset handoff, and rollback.\n\n", linkingURL)
+		b.WriteString("**Scope check** — three items to confirm with your account team before committing:\n")
+		b.WriteString("- Dual-ingest cost on the source side\n")
+		b.WriteString("- Consumer-coordinator change window\n")
+		b.WriteString("- Consumer-offset translation strategy\n\n")
+	}
+}
+
+// cutoverStyleLabel renders the style + sub-pattern label. Stop-Restart-Repeat
+// carries the sub-pattern suffix (app-by-app vs topic-by-topic); other
+// styles render as-is.
+func cutoverStyleLabel(style types.CutoverStyle, sub types.CutoverSubPattern) string {
+	base := cutoverStyleName(style)
+	if style == types.CutoverStopRestartRepeat && sub != "" {
+		return fmt.Sprintf("%s (%s)", base, sub)
+	}
+	return base
+}
+
+func cutoverStyleName(style types.CutoverStyle) string {
+	switch style {
+	case types.CutoverStopRestartRepeat:
+		return "Stop-Restart-Repeat"
+	case types.CutoverStopWaitRestart:
+		return "Stop-Wait-Restart"
+	case types.CutoverRestartAllAtOnce:
+		return "Restart-All-At-Once"
+	case types.CutoverBlueGreen:
+		return "Blue/Green"
+	default:
+		return string(style)
+	}
+}
+
+// cutoverGatewayLabel returns the "CC Gateway / plain Cluster Linking /
+// not applicable" phrasing for the rendered Gateway mediation line.
+// Plain Cluster Linking gets a tradeoff hint so it doesn't read as
+// second-class — it's a fully supported path that some customers
+// deliberately pick.
+func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationStatus) string {
+	switch m {
+	case types.GatewayMediatedTrue:
+		return "CC Gateway-mediated (transparent per-service cutover, 30–90 s `BROKER_NOT_AVAILABLE` window)"
+	case types.GatewayMediatedFalse:
+		if status == types.RecommendationCustomerChoice {
+			return "Plain Cluster Linking (gateway opted out via `prefer_gateway: false`). Simpler ops; requires per-service producer restart at cutover. Pick this when the CFK + Gateway Add-On license aren't justifiable for the fleet's downtime budget."
+		}
+		return "Plain Cluster Linking"
+	case types.GatewayMediatedNotApplicable:
+		return "Not applicable — Blue/Green doesn't sit on a single cutover step"
+	default:
+		return string(m)
+	}
+}
+
+// recommendationStatusMarker returns the inline ℹ note shown beneath
+// the Gateway mediation line for unresolved-decision paths, or empty
+// for the canonical / customer-choice paths (those don't need a callout).
+// "Awaiting" framing, not "Degraded" — plain Cluster Linking is a fully
+// supported path; the marker just signals an open decision, not a
+// broken state.
+func recommendationStatusMarker(status types.RecommendationStatus) string {
+	switch status {
+	case types.RecommendationDegradedAwaitingOQ:
+		return "ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose."
+	case types.RecommendationDegradedPrereqsPending:
+		return "ℹ **Awaiting gateway prereqs** — gateway path requested but one or more prereqs are still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
+	default:
+		return ""
+	}
+}
+
+// writeCutoverAlternatives renders a short bullet list explaining the
+// styles the plan considered and didn't pick. Keeps the reader's trust
+// without forcing them to walk the full decision tree.
+func writeCutoverAlternatives(b *bytes.Buffer, alts []types.CutoverStyle) {
+	if len(alts) == 0 {
+		return
+	}
+	b.WriteString("- **Alternatives considered:**\n")
+	for _, s := range alts {
+		fmt.Fprintf(b, "  - **%s** — %s\n", cutoverStyleName(s), cutoverAlternativeWhy(s))
+	}
+}
+
+// cutoverAlternativeWhy returns the one-line "why this isn't the
+// recommendation" string for each style.
+func cutoverAlternativeWhy(s types.CutoverStyle) string {
+	switch s {
+	case types.CutoverStopRestartRepeat:
+		return "phased per-service rollout; recoverable steps, longer elapsed time. Pick via `downtime_tolerance: seconds_per_service | minutes_per_service | let_confluent_choose`."
+	case types.CutoverStopWaitRestart:
+		return "single coordinated window; needs the window to be long enough for re-mirroring + validation. Pick via `downtime_tolerance: scheduled_window_sequential`."
+	case types.CutoverRestartAllAtOnce:
+		return "single window; every client reconfigures at the same instant. Highest blast radius. Pick via `downtime_tolerance: scheduled_window_all_at_once`."
+	case types.CutoverBlueGreen:
+		return "parallel run via Cluster Linking; zero downtime, highest operational complexity. Pick via `downtime_tolerance: zero`."
+	default:
+		return ""
+	}
+}
+
+// writeCutoverPrereqs renders the prereq status table. When the
+// prereq list is empty (Blue/Green OR customer opted out), emits a
+// symmetric "no prereqs required" stub so both paths visually
+// balance — without it, a reader scanning multiple plans wonders
+// whether a row went missing. When IAM prereq is absent from a
+// non-empty list, adds a one-line note clarifying it was suppressed
+// because no IAM source was detected.
+func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
+	if len(prereqs) == 0 {
+		b.WriteString("- **Prerequisites:** _none required for this path._\n")
+		return
+	}
+	b.WriteString("- **Prerequisites:**\n\n")
+	b.WriteString("  | Prereq | Status |\n")
+	b.WriteString("  |---|---|\n")
+	var hasIAM bool
+	for _, p := range prereqs {
+		fmt.Fprintf(b, "  | %s | %s |\n", escapeMarkdownTableCell(p.Description), prereqStatusLabel(p.Status))
+		if strings.Contains(p.Description, "IAM") {
+			hasIAM = true
+		}
+	}
+	if !hasIAM {
+		b.WriteString("\n  _IAM pre-migration prereq omitted — no IAM source detected in this fleet._\n")
+	}
+	b.WriteString("\n")
+}
+
+func prereqStatusLabel(s types.PrereqStatus) string {
+	switch s {
+	case types.PrereqMet:
+		return "✅ met"
+	case types.PrereqInProgress:
+		return "🚧 in progress"
+	case types.PrereqBlocked:
+		return "⛔ not started"
+	case types.PrereqUnconfirmed:
+		return "❓ unconfirmed"
+	default:
+		return string(s)
+	}
+}
+
+// ----- §4 auth -----
+
+// writeAuth renders the per-cluster source→target auth mapping table.
+// One row per source auth detected on each cluster.
+//
+// `cutover` and `inputs` are read for the IAM-transition footnote
+// when source-detected auth is IAM AND `iam_pre_migration_status:
+// complete` AND the gateway is mediated, the §4 source row is a
+// pre-migration snapshot and the prereq says clients have already
+// moved off IAM — surface that so §3 and §4 don't read as contradictory.
+func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.CutoverDecision, inputs types.PlanInputsResolved, section int) {
+	if len(auths) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Client Auth Migration\n\n", section)
+	b.WriteString("Per-cluster source→target mapping. Each source-auth method on every cluster maps to a recommended Confluent Cloud auth — the recommendation can be overridden globally via `target_auth_method` or per-cluster via `clusters[<name>].target_auth_method`. The **Works via CC Gateway** column describes whether this auth method *could* flow through the CC Gateway when the gateway path is in use — it's a property of the auth mapping, not a statement about which path §3 picked.\n\n")
+	// Notes column carries non-empty values only on rows where the
+	// auth_mapping row has something specific to say (IAM blocker,
+	// mTLS auth-swap detail, unauth review hint). All-empty notes
+	// across the entire table drop the column entirely.
+	notesUseful := anyNotesPresent(auths)
+	if notesUseful {
+		b.WriteString("| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway | Notes |\n")
+		b.WriteString("|---|---|---|---|---|\n")
+	} else {
+		b.WriteString("| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway |\n")
+		b.WriteString("|---|---|---|---|\n")
+	}
+	for _, a := range auths {
+		if len(a.TargetMappings) == 0 {
+			if notesUseful {
+				fmt.Fprintf(b, "| %s | _none detected_ | _n/a_ | _n/a_ | _Source auth posture unknown — see Actions Needed._ |\n",
+					escapeMarkdownTableCell(a.ClusterID))
+			} else {
+				fmt.Fprintf(b, "| %s | _none detected_ | _n/a_ | _n/a_ |\n",
+					escapeMarkdownTableCell(a.ClusterID))
+			}
+			continue
+		}
+		for i, row := range a.TargetMappings {
+			cluster := escapeMarkdownTableCell(a.ClusterID)
+			if i > 0 {
+				cluster = ""
+			}
+			noteCell := strings.TrimSpace(row.Note)
+			if noteCell == "" {
+				noteCell = "—"
+			}
+			if notesUseful {
+				fmt.Fprintf(b, "| %s | `%s` | `%s` | %s | %s |\n",
+					cluster, row.SourceAuth, row.EffectiveTarget,
+					gatewayCompatibleLabel(row.GatewayCompatible, row.TransparentSwap),
+					escapeMarkdownTableCell(noteCell))
+			} else {
+				fmt.Fprintf(b, "| %s | `%s` | `%s` | %s |\n",
+					cluster, row.SourceAuth, row.EffectiveTarget,
+					gatewayCompatibleLabel(row.GatewayCompatible, row.TransparentSwap))
+			}
+		}
+	}
+	// IAM-transition footnote — when prereq is `complete` and
+	// gateway is in play, the IAM rows above are a pre-migration
+	// snapshot, not the post-migration auth.
+	if cutover != nil && inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput && cutover.GatewayMediated == types.GatewayMediatedTrue {
+		anyIAM := false
+		for _, a := range auths {
+			for _, row := range a.TargetMappings {
+				if row.SourceAuth == SourceAuthIAM {
+					anyIAM = true
+					break
+				}
+			}
+		}
+		if anyIAM {
+			b.WriteString("\n_The IAM rows above reflect the **pre-migration** auth recorded by `kcp discover`. With `iam_pre_migration_status: complete`, clients have moved off IAM (to SCRAM or mTLS) — re-run `kcp discover` / `kcp scan clusters` to refresh §4 against post-migration state._\n")
+		}
+	}
+	writeAuthMappingProvenance(b, auths)
+	b.WriteString("\n")
+}
+
+// writeAuthMappingProvenance surfaces the per-row source URL +
+// last_verified date so a reviewer can audit where each auth-mapping
+// recommendation came from. Walks the unique (SourceAuth, Source,
+// LastVerified) tuples and emits one bullet per source row.
+func writeAuthMappingProvenance(b *bytes.Buffer, auths []types.AuthDecision) {
+	type provKey struct{ source, lastVerified, sourceAuth string }
+	seen := map[provKey]bool{}
+	var rows []provKey
+	for _, a := range auths {
+		for _, r := range a.TargetMappings {
+			if r.Source == "" && r.LastVerified == "" {
+				continue
+			}
+			k := provKey{source: r.Source, lastVerified: r.LastVerified, sourceAuth: r.SourceAuth}
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			rows = append(rows, k)
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].sourceAuth < rows[j].sourceAuth })
+	b.WriteString("\n_Mapping provenance:_\n")
+	for _, r := range rows {
+		fmt.Fprintf(b, "- `%s` mapping → %s (last verified %s)\n",
+			r.sourceAuth, r.source, r.lastVerified)
+	}
+}
+
+// anyNotesPresent reports whether any auth-mapping row across the
+// fleet has a non-empty Note. Drives the §4 Notes-column drop when
+// nothing in the column would carry information.
+func anyNotesPresent(auths []types.AuthDecision) bool {
+	for _, a := range auths {
+		for _, row := range a.TargetMappings {
+			if strings.TrimSpace(row.Note) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// gatewayCompatibleLabel renders the Gateway-compatible cell.
+// Transparent swap means clients don't restart at cutover (gateway
+// handles credential exchange in flight); non-transparent gateway
+// paths still work but require auth-side coordination (e.g. mTLS cert
+// re-issue). Both are spelled out so readers don't infer "transparent"
+// means "the only good option".
+func gatewayCompatibleLabel(compatible, transparent bool) string {
+	switch {
+	case compatible && transparent:
+		return "✅ yes (transparent swap)"
+	case compatible:
+		return "✅ yes (auth-swap mode)"
+	default:
+		return "❌ no"
+	}
 }

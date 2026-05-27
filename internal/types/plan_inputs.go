@@ -51,6 +51,44 @@ type PlanInputs struct {
 	// PrivateLink. Default 1 (single gateway).
 	ProjectedPNIGatewayCount *int `yaml:"projected_pni_gateway_count,omitempty" json:"projected_pni_gateway_count,omitempty"`
 
+	// ----- cutover -----
+
+	// DowntimeTolerance maps 1:1 to a cutover style. Enum values:
+	//   zero                          → Blue/Green
+	//   seconds_per_service           → Stop-Restart-Repeat (gateway REQUIRED)
+	//   minutes_per_service           → Stop-Restart-Repeat (gateway optional)
+	//   scheduled_window_sequential   → Stop-Wait-Restart
+	//   scheduled_window_all_at_once  → Restart-All-At-Once
+	//   let_confluent_choose          → Stop-Restart-Repeat (Confluent default)
+	DowntimeTolerance *string `yaml:"downtime_tolerance,omitempty" json:"downtime_tolerance,omitempty"`
+
+	// SubPattern is only consulted when the resolved style is
+	// Stop-Restart-Repeat. Values: `app-by-app` (default) | `topic-by-topic`.
+	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
+
+	// PreferGateway lets the customer opt out of the gateway-mediated
+	// recommendation even when they're eligible. Default true mirrors
+	// Confluent's canonical recommendation; set false for plain Cluster
+	// Linking.
+	PreferGateway *bool `yaml:"prefer_gateway,omitempty" json:"prefer_gateway,omitempty"`
+
+	// Gateway prereq statuses. Each is one of `not_started` |
+	// `in_progress` | `complete`. Eligibility for the canonical
+	// recommendation requires all three to be at `in_progress` or
+	// `complete` (with the IAM prereq only relevant when IAM is
+	// detected on any source cluster).
+	ConfluentForKubernetesStatus *string `yaml:"confluent_for_kubernetes_status,omitempty" json:"confluent_for_kubernetes_status,omitempty"`
+	CCGatewayLicenseStatus       *string `yaml:"cc_gateway_license_status,omitempty"       json:"cc_gateway_license_status,omitempty"`
+	IAMPreMigrationStatus        *string `yaml:"iam_pre_migration_status,omitempty"        json:"iam_pre_migration_status,omitempty"`
+
+	// ----- auth -----
+
+	// TargetAuthMethod overrides the default target auth (looked up
+	// per source auth in `auth_mapping`). Enum:
+	// `confluent_cloud_api_keys` (default) | `mtls` | `oauth`.
+	// Per-cluster override available via `clusters[name].target_auth_method`.
+	TargetAuthMethod *string `yaml:"target_auth_method,omitempty" json:"target_auth_method,omitempty"`
+
 	// Clusters — per-cluster overrides keyed by source cluster name.
 	// Heterogeneous fleets (mixed-SLA, mixed-tier) need finer-grained
 	// inputs than the global flags above; without this, flipping a
@@ -83,4 +121,7 @@ type ClusterPlanInputs struct {
 	ExistingVPCConnectivity              *string  `yaml:"existing_vpc_connectivity,omitempty"                  json:"existing_vpc_connectivity,omitempty"`
 	CCEgressRequired                     *bool    `yaml:"cc_egress_required,omitempty"                         json:"cc_egress_required,omitempty"`
 	ProjectedPNIGatewayCount             *int     `yaml:"projected_pni_gateway_count,omitempty"                json:"projected_pni_gateway_count,omitempty"`
+	// TargetAuthMethod is the per-cluster override for the target
+	// auth verdict. Same enum as the global field.
+	TargetAuthMethod *string `yaml:"target_auth_method,omitempty" json:"target_auth_method,omitempty"`
 }

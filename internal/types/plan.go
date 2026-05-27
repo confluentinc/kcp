@@ -3,10 +3,10 @@ package types
 import "time"
 
 // Plan is the deterministic Migration Plan emitted by `kcp report plan`.
-// This MVP scope covers source-environment summary, sizing, cluster-type
-// decision, and networking decision only. Auth approach, switchover,
-// red flags, cost reconciliation, and the rest of the §4 surface in the
-// design doc land in follow-up PRs.
+// Current scope: source-environment summary, sizing, cluster-type,
+// networking, cutover (fleet-wide), and auth (per-cluster). Red flags,
+// tiered storage, cost reconciliation, and the rest of the design-doc
+// surface land in follow-up PRs.
 type Plan struct {
 	Header              PlanHeader            `json:"header"`
 	Inputs              PlanInputsResolved    `json:"inputs"`
@@ -14,8 +14,14 @@ type Plan struct {
 	Sizing              []ClusterSizing       `json:"sizing"`
 	ClusterTypeDecision []ClusterTypeDecision `json:"cluster_type_decision"`
 	NetworkingDecision  []NetworkingDecision  `json:"networking_decision"`
-	SizingAppendix      []SizingMathDetail    `json:"sizing_appendix"`
-	OpenQuestions       []OpenQuestion        `json:"open_questions,omitempty"`
+	// Cutover is fleet-wide — one Plan can't ship two cutover styles.
+	// Nil when no clusters were found in the state file.
+	Cutover *CutoverDecision `json:"cutover,omitempty"`
+	// Auth is per-cluster — source auth methods differ across MSK clusters
+	// in the same fleet, so each gets its own source→target mapping.
+	Auth           []AuthDecision     `json:"auth,omitempty"`
+	SizingAppendix []SizingMathDetail `json:"sizing_appendix"`
+	OpenQuestions  []OpenQuestion     `json:"open_questions,omitempty"`
 }
 
 // OpenQuestion is a per-cluster (or plan-level) gap the customer needs
@@ -36,6 +42,11 @@ type PlanHeader struct {
 	StateFilePath string    `json:"state_file_path"`
 	KCPVersion    string    `json:"kcp_version"`
 	GeneratedAt   time.Time `json:"generated_at"`
+	// StateGeneratedAt is the timestamp the source state file was
+	// produced (state.Timestamp). Surfaced in the rendered Plan so a
+	// reviewer can see how fresh the underlying scan is — important
+	// for negative-evidence claims like "0 ACLs" in Appendix A2.
+	StateGeneratedAt time.Time `json:"state_generated_at,omitempty"`
 
 	// PlanSchemaVersion is a string while the JSON shape is still
 	// shifting: top-level keys (auth_approach, switchover_approach,
@@ -61,6 +72,12 @@ type SourceClusterSummary struct {
 	// uses it to suppress Provisioned-only framing (broker counts,
 	// "incomplete scan" guidance) that doesn't apply to Serverless.
 	IsServerless bool `json:"is_serverless,omitempty"`
+	// SourceAuths lists the auth methods enabled on the source cluster
+	// (stable enum tokens: scram, iam, mtls, unauth). Drawn from the
+	// same MSK ClientAuthentication signals AuthDecision reads — surfaced here in
+	// §1 so a reader scanning the Source Environment table sees the
+	// auth posture alongside brokers / topics before the §4 mapping.
+	SourceAuths []string `json:"source_auths,omitempty"`
 }
 
 // ----- sizing & decisions -----
@@ -287,4 +304,141 @@ type PlanInputsResolved struct {
 	// workload properties, not state-derived.
 	CCEgressRequired         bool `json:"cc_egress_required"`
 	ProjectedPNIGatewayCount int  `json:"projected_pni_gateway_count"`
+
+	// Cutover — `downtime_tolerance` drives the style; the others
+	// govern gateway eligibility + opt-out.
+	DowntimeTolerance            string `json:"downtime_tolerance"`
+	SubPattern                   string `json:"sub_pattern"`
+	PreferGateway                bool   `json:"prefer_gateway"`
+	ConfluentForKubernetesStatus string `json:"confluent_for_kubernetes_status"`
+	CCGatewayLicenseStatus       string `json:"cc_gateway_license_status"`
+	IAMPreMigrationStatus        string `json:"iam_pre_migration_status"`
+
+	// Auth — target verdict; cluster-level override flows through
+	// `applyClusterOverride` per the heterogeneous-fleet rule.
+	TargetAuthMethod string `json:"target_auth_method"`
+}
+
+// ----- cutover -----
+
+// CutoverStyle is the strategic shape of the cutover.
+// Mapped 1:1 from `downtime_tolerance` in plan-inputs.yaml.
+type CutoverStyle string
+
+const (
+	// String values match the customer-facing tokens (hyphenated).
+	// Go identifiers can't contain hyphens; the renderer translates these
+	// to display labels via cutoverStyleName.
+	CutoverStopRestartRepeat CutoverStyle = "Stop-Restart-Repeat"
+	CutoverStopWaitRestart   CutoverStyle = "Stop-Wait-Restart"
+	CutoverRestartAllAtOnce  CutoverStyle = "Restart-All-At-Once"
+	CutoverBlueGreen         CutoverStyle = "Blue/Green"
+)
+
+// CutoverSubPattern is the team-topology choice within Stop-Restart-Repeat.
+// Empty for any other CutoverStyle.
+type CutoverSubPattern string
+
+const (
+	SubPatternUnset        CutoverSubPattern = ""
+	SubPatternAppByApp     CutoverSubPattern = "app-by-app"
+	SubPatternTopicByTopic CutoverSubPattern = "topic-by-topic"
+)
+
+// GatewayMediated is tri-state: true / false / not_applicable. The
+// last value fires only on Blue/Green, where the gateway doesn't sit
+// on the cutover step at all.
+type GatewayMediated string
+
+const (
+	GatewayMediatedTrue          GatewayMediated = "true"
+	GatewayMediatedFalse         GatewayMediated = "false"
+	GatewayMediatedNotApplicable GatewayMediated = "not_applicable"
+)
+
+// RecommendationStatus signals how confident the plan is in the
+// recommendation, and what (if anything) the customer should resolve to
+// move it forward.
+type RecommendationStatus string
+
+const (
+	// RecommendationCanonical: customer is gateway-eligible and the
+	// Stop-Restart-Repeat + Gateway pairing is being recommended.
+	RecommendationCanonical RecommendationStatus = "canonical"
+	// RecommendationCustomerChoice: customer either opted out of the
+	// gateway (prefer_gateway: false) or picked Blue/Green.
+	RecommendationCustomerChoice RecommendationStatus = "customer_choice"
+	// RecommendationDegradedAwaitingOQ: prefer_gateway is still default
+	// and all three gateway prereqs are not_started — customer hasn't
+	// engaged with the gateway question. Plan falls back to plain CL.
+	RecommendationDegradedAwaitingOQ RecommendationStatus = "degraded_awaiting_oq"
+	// RecommendationDegradedPrereqsPending: prefer_gateway is true but
+	// at least one prereq is still at not_started. Some engagement,
+	// not finished.
+	RecommendationDegradedPrereqsPending RecommendationStatus = "degraded_prereqs_pending"
+)
+
+// PrereqStatus mirrors the customer-facing plan-inputs status values
+// (`not_started` → blocked, `in_progress` → in-progress, `complete` →
+// met) plus an `unconfirmed` fallback for prereqs whose source data
+// isn't pinned (e.g. Express tier compatibility per release).
+type PrereqStatus string
+
+const (
+	PrereqMet         PrereqStatus = "met"
+	PrereqInProgress  PrereqStatus = "in_progress"
+	PrereqBlocked     PrereqStatus = "blocked"
+	PrereqUnconfirmed PrereqStatus = "unconfirmed"
+)
+
+// Prereq is one item in the rendered Prerequisites table on the
+// cutover section. Description is the human-readable label; the
+// renderer doesn't transform it.
+type Prereq struct {
+	Description string       `json:"description"`
+	Status      PrereqStatus `json:"status"`
+}
+
+// CutoverDecision is the fleet-wide cutover plan.
+type CutoverDecision struct {
+	Style                CutoverStyle         `json:"style"`
+	SubPattern           CutoverSubPattern    `json:"sub_pattern,omitempty"` // only when Style == StopRestartRepeat
+	GatewayMediated      GatewayMediated      `json:"gateway_mediated"`
+	RecommendationStatus RecommendationStatus `json:"recommendation_status"`
+	// AlternativesShown lists the styles the renderer explains for
+	// trust but doesn't recommend — gives the reader the full pattern
+	// set without forcing a deeper decision tree.
+	AlternativesShown []CutoverStyle `json:"alternatives_shown_for_trust,omitempty"`
+	Prereqs           []Prereq       `json:"prereqs,omitempty"`
+}
+
+// ----- auth -----
+
+// AuthDecision is the per-cluster source→target auth mapping.
+// SourceAuths holds the methods detected on the source MSK cluster as
+// stable enum tokens ("scram", "iam", "mtls", "unauth"); the plan does
+// NOT pick one when multiple are enabled — it shows all options.
+type AuthDecision struct {
+	ClusterID      string           `json:"cluster_id"`
+	SourceAuths    []string         `json:"source_auths_detected"`
+	TargetMappings []AuthMappingRow `json:"target_mappings,omitempty"`
+}
+
+// AuthMappingRow describes one source→target option. TransparentSwap
+// fires when the CC Gateway can swap credentials without a producer
+// restart (e.g. SCRAM → SASL/PLAIN with API key). GatewayCompatible is
+// false for IAM — IAM clients cannot connect to the gateway and must
+// pre-migrate to SCRAM or mTLS first.
+type AuthMappingRow struct {
+	SourceAuth        string `json:"source_auth"`
+	EffectiveTarget   string `json:"effective_target"`
+	GatewayCompatible bool   `json:"gateway_compatible"`
+	TransparentSwap   bool   `json:"transparent_swap"`
+	Note              string `json:"note,omitempty"`
+	// Source + LastVerified carry per-row provenance from the
+	// auth_mapping table in plan-config.yaml — surfaced in the
+	// rendered Plan as a footnote so the reviewer can audit where the
+	// recommendation comes from.
+	Source       string `json:"source,omitempty"`
+	LastVerified string `json:"last_verified,omitempty"`
 }
