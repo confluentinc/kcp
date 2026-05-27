@@ -26,24 +26,36 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	fmt.Fprintf(&b, "_Generated %s by KCP %s from `%s`%s._\n\n", p.Header.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), p.Header.KCPVersion, p.Header.StateFilePath, schemaSuffix)
 
 	writeDefinitions(&b, cfg)
-	writeSourceEnvironment(&b, p)
-	writeSizingAndDecisions(&b, p, cfg)
-	writeCutover(&b, p.Cutover, cfg)
-	writeAuth(&b, p.Auth, p.Cutover, p.Inputs)
-	writeOpenQuestions(&b, p)
+	// Section numbering is dynamic: empty Cutover or empty Auth slices
+	// drop their section, and Actions Needed claims the next available
+	// number. Avoids "jumps from §2 to §5" when an empty fleet skips §3/§4.
+	section := 1
+	writeSourceEnvironment(&b, p, section)
+	section++
+	writeSizingAndDecisions(&b, p, cfg, section)
+	section++
+	if p.Cutover != nil {
+		writeCutover(&b, p.Cutover, cfg, section)
+		section++
+	}
+	if len(p.Auth) > 0 {
+		writeAuth(&b, p.Auth, p.Cutover, p.Inputs, section)
+		section++
+	}
+	writeOpenQuestions(&b, p, section)
 	writeSizingAppendix(&b, p, cfg)
 	writeRulesAppendix(&b, p)
 
 	return b.Bytes(), nil
 }
 
-func writeOpenQuestions(b *bytes.Buffer, p *types.Plan) {
+func writeOpenQuestions(b *bytes.Buffer, p *types.Plan, section int) {
 	if len(p.OpenQuestions) == 0 {
-		b.WriteString("## 5. Actions Needed\n\n")
+		fmt.Fprintf(b, "## %d. Actions Needed\n\n", section)
 		b.WriteString("_No actions outstanding — the Plan above renders without unresolved questions._\n\n")
 		return
 	}
-	b.WriteString("## 5. Actions Needed\n\n")
+	fmt.Fprintf(b, "## %d. Actions Needed\n\n", section)
 	groups := groupOpenQuestions(p.OpenQuestions)
 	siblingIDs := oqIDSet(p.OpenQuestions)
 	// Build per-group rendered severity + title up front so the legend
@@ -203,8 +215,8 @@ func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	b.WriteString("\n</details>\n\n")
 }
 
-func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan) {
-	b.WriteString("## 1. Source Environment\n\n")
+func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan, section int) {
+	fmt.Fprintf(b, "## %d. Source Environment\n\n", section)
 	if len(p.SourceEnvironment.Clusters) == 0 {
 		b.WriteString("_No clusters found in the state file. Re-run `kcp discover` / `kcp scan ...` and try again._\n\n")
 		return
@@ -271,8 +283,8 @@ func sourceAuthCell(auths []string) string {
 	return strings.Join(parts, ", ")
 }
 
-func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
-	b.WriteString("## 2. Sizing & Cluster Decisions\n\n")
+func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, section int) {
+	fmt.Fprintf(b, "## %d. Sizing & Cluster Decisions\n\n", section)
 	if len(p.Sizing) == 0 {
 		b.WriteString("_No clusters to size._\n\n")
 		return
@@ -861,11 +873,11 @@ func formatSizeCell(finalECKU int, ct types.ClusterTypeDecision, degraded bool) 
 // style, gateway mediation status with degraded markers, alternatives
 // shown for trust, and the gateway prereq table. Skips the section
 // entirely when there's no cutover decision (empty fleet).
-func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, cfg *PlanConfig) {
+func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, cfg *PlanConfig, section int) {
 	if c == nil {
 		return
 	}
-	b.WriteString("## 3. Cutover Approach\n\n")
+	fmt.Fprintf(b, "## %d. Cutover Approach\n\n", section)
 	b.WriteString("_The cutover style below applies to the **entire fleet**. Per-cluster cutover overrides aren't supported in this kcp version (planned for a follow-up). Heterogeneous fleets can run kcp against a state-file subset that contains only the clusters sharing a style — re-run for each subset and combine the recommendations manually._\n\n")
 	fmt.Fprintf(b, "- **Style:** %s\n", cutoverStyleLabel(c.Style, c.SubPattern))
 	fmt.Fprintf(b, "- **Gateway mediation:** %s\n", cutoverGatewayLabel(c.GatewayMediated, c.RecommendationStatus))
@@ -1040,11 +1052,11 @@ func prereqStatusLabel(s types.PrereqStatus) string {
 // complete` AND the gateway is mediated, the §4 source row is a
 // pre-migration snapshot and the prereq says clients have already
 // moved off IAM — surface that so §3 and §4 don't read as contradictory.
-func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.CutoverDecision, inputs types.PlanInputsResolved) {
+func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.CutoverDecision, inputs types.PlanInputsResolved, section int) {
 	if len(auths) == 0 {
 		return
 	}
-	b.WriteString("## 4. Client Auth Migration\n\n")
+	fmt.Fprintf(b, "## %d. Client Auth Migration\n\n", section)
 	b.WriteString("Per-cluster source→target mapping. Each source-auth method on every cluster maps to a recommended Confluent Cloud auth — the recommendation can be overridden globally via `target_auth_method` or per-cluster via `clusters[<name>].target_auth_method`. The **Works via CC Gateway** column describes whether this auth method *could* flow through the CC Gateway when the gateway path is in use — it's a property of the auth mapping, not a statement about which path §3 picked.\n\n")
 	// Notes column carries non-empty values only on rows where the
 	// auth_mapping row has something specific to say (IAM blocker,

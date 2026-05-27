@@ -517,6 +517,42 @@ func TestDetectAuthFleetOpenQuestions_TargetAuthMethodTypo(t *testing.T) {
 	assert.Empty(t, detectAuthFleetOpenQuestions(resolved))
 }
 
+// Per-cluster target_auth_method typos surface as cluster-scoped OQs
+// so the affected cluster is obvious; without this the override
+// silently falls back to the per-source default.
+func TestDetectAuthFleetOpenQuestions_PerClusterTargetAuthTypo(t *testing.T) {
+	typo := "oauthhh"
+	good := TargetAuthOAuth
+	raw := &types.PlanInputs{
+		Clusters: map[string]types.ClusterPlanInputs{
+			"alpha": {TargetAuthMethod: &typo},
+			"bravo": {TargetAuthMethod: &good},
+		},
+	}
+	resolved := types.PlanInputsResolved{Raw: raw}
+	oqs := detectAuthFleetOpenQuestions(resolved)
+	require.Len(t, oqs, 1, "only the typo cluster should emit an OQ")
+	assert.Equal(t, "target_auth_method_unknown", oqs[0].ID)
+	assert.Equal(t, "alpha", oqs[0].ClusterID)
+	assert.Contains(t, oqs[0].Title, "oauthhh")
+}
+
+// ambiguousGatewayIntent ignores `iam_pre_migration_status` for fleets
+// that don't use IAM — otherwise a non-IAM fleet that accidentally
+// flipped that prereq would lose the `gateway_intent_unconfirmed` OQ.
+func TestAmbiguousGatewayIntent_IgnoresIAMPrereqWhenNoIAM(t *testing.T) {
+	inputs := types.PlanInputsResolved{
+		PreferGateway:                true,
+		ConfluentForKubernetesStatus: PrereqNotStarted,
+		CCGatewayLicenseStatus:       PrereqNotStarted,
+		IAMPreMigrationStatus:        PrereqStatusInProgressInput,
+	}
+	assert.True(t, ambiguousGatewayIntent(inputs, false),
+		"non-IAM fleet: stray iam_pre_migration_status must not disqualify the ambiguous state")
+	assert.False(t, ambiguousGatewayIntent(inputs, true),
+		"IAM fleet: an advanced iam_pre_migration_status moves past ambiguity")
+}
+
 // promoteSeverity flips gateway_intent_unconfirmed and
 // gateway_prereqs_pending from 🟢 to 🔴 — and rewrites the title — when
 // auth_target_gateway_incompatible is present in the same Plan. Without

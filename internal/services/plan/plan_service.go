@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -259,7 +260,11 @@ func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDa
 	if age < threshold {
 		return nil
 	}
-	days := int(age.Hours() / 24)
+	// Round to nearest full day so the rendered title isn't off by a
+	// long fractional remainder (a 7d 23h-old file rendering as
+	// "7 days old" reads as wrong-by-a-day). Math.Round avoids
+	// truncation toward zero.
+	days := int(math.Round(age.Hours() / 24))
 	return []types.OpenQuestion{{
 		ID:         "state_file_stale",
 		Title:      fmt.Sprintf("State file is %d days old — verdicts may not reflect current source state", days),
@@ -318,10 +323,13 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, inputs types.Plan
 	return oqs
 }
 
-// detectAuthFleetOpenQuestions surfaces fleet-wide auth OQs that aren't
-// tied to a particular cluster — currently just the `target_auth_method`
-// typo signal (a global field, so emitting it per-cluster would produce
-// N identical OQs from one typo).
+// detectAuthFleetOpenQuestions surfaces auth OQs that come from
+// invalid customer input — the global `target_auth_method` typo
+// (fleet-level OQ, single emit) and any per-cluster
+// `clusters[<name>].target_auth_method` typos (per-cluster OQs so the
+// affected cluster is obvious). Per-cluster typos silently fall back
+// to the per-source default in DecideAuth via effectiveTarget, so
+// without this detector they're invisible to the customer.
 func detectAuthFleetOpenQuestions(inputs types.PlanInputsResolved) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	if !knownTargetAuthMethod(inputs.TargetAuthMethod) {
@@ -331,6 +339,30 @@ func detectAuthFleetOpenQuestions(inputs types.PlanInputsResolved) []types.OpenQ
 			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The current value falls outside the enum; the per-source `auth_mapping` default is used silently for every cluster.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth),
 			HowToClose: "Set `target_auth_method` in `plan-inputs.yaml` (or `clusters[<name>].target_auth_method` for a per-cluster override) to one of the recognised values, OR unset it to keep the per-source default.",
 		})
+	}
+	if inputs.Raw != nil {
+		clusterNames := make([]string, 0, len(inputs.Raw.Clusters))
+		for name := range inputs.Raw.Clusters {
+			clusterNames = append(clusterNames, name)
+		}
+		sort.Strings(clusterNames)
+		for _, name := range clusterNames {
+			cluster := inputs.Raw.Clusters[name]
+			if cluster.TargetAuthMethod == nil {
+				continue
+			}
+			value := *cluster.TargetAuthMethod
+			if knownTargetAuthMethod(value) {
+				continue
+			}
+			oqs = append(oqs, types.OpenQuestion{
+				ID:         "target_auth_method_unknown",
+				ClusterID:  name,
+				Title:      fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
+				Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
+				HowToClose: fmt.Sprintf("Set `clusters[%s].target_auth_method` in `plan-inputs.yaml` to one of the recognised values, OR remove the override to keep the per-source default.", name),
+			})
+		}
 	}
 	return oqs
 }

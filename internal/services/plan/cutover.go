@@ -58,7 +58,7 @@ func DecideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsRes
 
 	iamInUse := fleetUsesIAM(clusters)
 	eligible := gatewayEligible(inputs, iamInUse)
-	ambiguous := ambiguousGatewayIntent(inputs)
+	ambiguous := ambiguousGatewayIntent(inputs, iamInUse)
 
 	var mediated types.GatewayMediated
 	var status types.RecommendationStatus
@@ -175,16 +175,26 @@ func prereqAdvanced(status string) bool {
 
 // ambiguousGatewayIntent reports whether the customer hasn't expressed
 // any preference about the gateway — `prefer_gateway: true` (default)
-// AND all three prereqs at `not_started`. Distinguishes "I deliberately
-// want plain CL" (`prefer_gateway: false`) from "I haven't thought
-// about the gateway yet".
-func ambiguousGatewayIntent(inputs types.PlanInputsResolved) bool {
+// AND every *applicable* prereq is at `not_started`. The IAM prereq
+// only counts when the fleet actually uses IAM, mirroring
+// gatewayEligible — otherwise a non-IAM fleet that accidentally sets
+// `iam_pre_migration_status: in_progress` would flip the status from
+// `degraded_awaiting_oq` to `degraded_prereqs_pending` even though the
+// IAM prereq doesn't apply to this fleet.
+func ambiguousGatewayIntent(inputs types.PlanInputsResolved, iamInUse bool) bool {
 	if !inputs.PreferGateway {
 		return false
 	}
-	return inputs.ConfluentForKubernetesStatus == PrereqNotStarted &&
-		inputs.CCGatewayLicenseStatus == PrereqNotStarted &&
-		inputs.IAMPreMigrationStatus == PrereqNotStarted
+	if inputs.ConfluentForKubernetesStatus != PrereqNotStarted {
+		return false
+	}
+	if inputs.CCGatewayLicenseStatus != PrereqNotStarted {
+		return false
+	}
+	if iamInUse && inputs.IAMPreMigrationStatus != PrereqNotStarted {
+		return false
+	}
+	return true
 }
 
 // alternativesShown returns the cutover styles that the renderer
