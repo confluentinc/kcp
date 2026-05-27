@@ -1,8 +1,8 @@
 {
   "header": {
     "source": "Amazon MSK",
-    "state_file_path": "./kcp-state.json",
-    "kcp_version": "0.7.2",
+    "state_file_path": "sample-state.json",
+    "kcp_version": "0.0.0-localdev",
     "generated_at": "2026-05-15T15:00:00Z",
     "plan_schema_version": "1-experimental"
   },
@@ -13,13 +13,14 @@
     "sla_target": "99.9",
     "sizing_percentile": "p95",
     "headroom_fraction": 0.3,
-    "privatelink_safety_threshold": 0.8,
     "spiky_workload_ratio": 2,
     "enforce_schemas_at_the_broker": false,
     "requires_high_throughput_rest_produce_api": false,
     "requires_99_95_sla_within_a_single_zone": false,
     "target_cloud": "azure",
-    "existing_vpc_connectivity": "privatelink_or_pni"
+    "existing_vpc_connectivity": "privatelink_or_pni",
+    "cc_egress_required": false,
+    "projected_pni_gateway_count": 1
   },
   "source_environment": {
     "clusters": [
@@ -244,7 +245,45 @@
         }
       ],
       "topology": "MultiZone",
-      "final_cku": 1
+      "final_cku": 1,
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 1 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "fired",
+          "evidence": "4001 ACLs \u003e Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "no mTLS source + target_cloud=\"azure\""
+        }
+      ]
     },
     {
       "cluster_id": "mtls-to-azure",
@@ -253,49 +292,163 @@
         {
           "row_id": "mtls_on_non_aws_target",
           "description": "Source uses mTLS, target is non-AWS",
-          "evidence": "target_cloud=\"azure\""
+          "evidence": "mTLS source + target_cloud=\"azure\" (mTLS on non-AWS requires Dedicated)"
         }
       ],
       "topology": "MultiZone",
-      "final_cku": 1
+      "final_cku": 1,
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 1 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "not_fired",
+          "evidence": "0 ACLs ≤ Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "fired",
+          "evidence": "mTLS source + target_cloud=\"azure\" (mTLS on non-AWS requires Dedicated)"
+        }
+      ]
     },
     {
       "cluster_id": "small-orders",
-      "verdict": "Enterprise"
+      "verdict": "Enterprise",
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 1 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "not_fired",
+          "evidence": "0 ACLs ≤ Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "no mTLS source + target_cloud=\"azure\""
+        }
+      ]
     },
     {
       "cluster_id": "steady-events",
-      "verdict": "Enterprise"
+      "verdict": "Enterprise",
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 3 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "not_fired",
+          "evidence": "0 ACLs ≤ Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "no mTLS source + target_cloud=\"azure\""
+        }
+      ]
     }
   ],
   "networking_decision": [
     {
       "cluster_id": "heavy-acls",
-      "verdict": "PNI",
+      "verdict": "PrivateLink",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "Dedicated cluster — PNI required (no TGW / VPC Peering override)"
+      "reason": "target_cloud=\"azure\" — PNI / TGW / VPC Peering are AWS-only, so cross-cloud Dedicated lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
     },
     {
       "cluster_id": "mtls-to-azure",
-      "verdict": "PNI",
+      "verdict": "PrivateLink",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "Dedicated cluster — PNI required (no TGW / VPC Peering override)"
+      "reason": "target_cloud=\"azure\" — PNI / TGW / VPC Peering are AWS-only, so cross-cloud Dedicated lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
     },
     {
       "cluster_id": "small-orders",
       "verdict": "PrivateLink",
       "peak_burst_ecku": 1,
       "percentage_of_cap": 10,
-      "reason": "peak burst 1 eCKU = 10% of PrivateLink's 10 eCKU cap (safety threshold 80%)"
+      "reason": "target_cloud=\"azure\" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
     },
     {
       "cluster_id": "steady-events",
       "verdict": "PrivateLink",
       "peak_burst_ecku": 3,
       "percentage_of_cap": 30,
-      "reason": "peak burst 3 eCKU = 30% of PrivateLink's 10 eCKU cap (safety threshold 80%)"
+      "reason": "target_cloud=\"azure\" — PNI is AWS-to-AWS only, so cross-cloud lands on PrivateLink (set `target_cloud: aws` in `plan-inputs.yaml` to undo)"
     }
   ],
   "sizing_appendix": [

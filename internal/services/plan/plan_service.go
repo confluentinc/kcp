@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -62,20 +63,36 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		if len(c.ClusterMetrics.Aggregates) == 0 && len(c.ClusterMetrics.Metrics) > 0 {
 			c.ClusterMetrics.Aggregates = report.CalculateMetricsAggregates(c.ClusterMetrics.Metrics)
 		}
-		sizing := ComputeClusterSizing(c, s.cfg, inputs)
-		ct := DecideClusterType(c, sizing, s.cfg, inputs)
-		net := DecideNetworking(sizing, ct, s.cfg, inputs)
+		// Per-cluster overrides win over globals — heterogeneous fleets
+		// need finer-grained inputs than flipping one global flag across
+		// every cluster. We start from the already-resolved global view
+		// (`inputs`) and layer any per-cluster overlay via
+		// `applyClusterOverride` — that avoids the redundant global
+		// re-resolution `ResolvePlanInputsForCluster` would do on every
+		// iteration.
+		clusterInputs := applyClusterOverride(inputs, inputs.Raw, c.Name)
+		sizing := ComputeClusterSizing(c, s.cfg, clusterInputs)
+		missing := inputsMissing(c)
+		// Each consumer gets its own slice — without Clone, a future
+		// `append` to any one InputsMissing would silently mutate the
+		// others if cap permits.
+		sizing.InputsMissing = slices.Clone(missing)
+		ct := DecideClusterType(c, sizing, s.cfg, clusterInputs)
+		net := DecideNetworking(sizing, ct, s.cfg, clusterInputs)
+		ct.InputsMissing = slices.Clone(missing)
+		net.InputsMissing = slices.Clone(missing)
 
 		plan.Sizing = append(plan.Sizing, sizing)
 		plan.ClusterTypeDecision = append(plan.ClusterTypeDecision, ct)
 		plan.NetworkingDecision = append(plan.NetworkingDecision, net)
 		plan.SourceEnvironment.Clusters = append(plan.SourceEnvironment.Clusters, types.SourceClusterSummary{
-			ClusterID:   c.Name,
-			Region:      c.Region,
-			TopicCount:  topicCount(c),
-			BrokerCount: brokerCount(c),
+			ClusterID:    c.Name,
+			Region:       c.Region,
+			TopicCount:   topicCount(c),
+			BrokerCount:  brokerCount(c),
+			IsServerless: isServerless(c),
 		})
-		plan.OpenQuestions = append(plan.OpenQuestions, detectOpenQuestions(c, sizing)...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectOpenQuestions(c, sizing, ct, net, s.cfg, clusterInputs)...)
 	}
 	plan.SourceEnvironment.TotalRegions = countRegions(state)
 	plan.SizingAppendix = buildSizingAppendix(plan.Sizing, s.cfg, inputs)
@@ -96,44 +113,59 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 // detectOpenQuestions surfaces state-file gaps and inferred-signal quirks
 // per cluster. The Plan still ships a recommendation in each case (the
 // SLA floor for degraded sizing, the verdict from the other rules when
-// Rule 2 is skipped, etc.) — the OQ tells the customer what action will
-// upgrade that recommendation.
-func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing) []types.OpenQuestion {
+// the ACL rule is skipped, etc.) — the OQ tells the customer what action
+// will upgrade that recommendation. SERVERLESS-specific suppressions for
+// "ACLs not populated" and "0 brokers" live in cluster_signals.go so the
+// same logic is shared with the rule evaluator.
+func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, ct types.ClusterTypeDecision, net types.NetworkingDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	if sizing.Degraded {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "missing_p95_metrics",
-			ClusterID:  c.Name,
-			Title:      "No P95 throughput metrics — sizing fell back to SLA floor",
-			Body:       sizing.DegradedReason,
-			HowToClose: "Re-run `kcp scan metrics` against this cluster.",
+			ID:        "missing_p95_metrics",
+			ClusterID: c.Name,
+			Title:     fmt.Sprintf("No %s throughput metrics — sizing fell back to SLA floor", percentileHeader(inputs.SizingPercentile)),
+			Body:      sizing.DegradedReason,
+			// Metrics are collected by `kcp discover` (CloudWatch path), not a separate `scan metrics` subcommand.
+			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` without `--skip-metrics` so CloudWatch metrics get backfilled into the state file.", regionFlag(c.Region)),
 		})
 	}
-	if c.KafkaAdminClientInformation.Acls == nil {
+	if !aclScanRan(c) && !isServerless(c) {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "acls_not_scanned",
-			ClusterID:  c.Name,
-			Title:      "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
-			Body:       "The `acl_count_exceeds_cap` hard-limit rule needs the ACL list to evaluate. With `acls == null` the rule is treated as inconclusive; the verdict resolves on the other rules.",
-			HowToClose: "Re-run `kcp scan clusters` with admin credentials to populate the ACL list.",
+			ID:        "acls_not_scanned",
+			ClusterID: c.Name,
+			Title:     "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
+			Body:      "The `acl_count_exceeds_cap` hard-limit rule needs a successful ACL scan to evaluate. Either the scan didn't run, or `--skip-acls` was passed; without the ACL list the rule is treated as inconclusive and the verdict resolves on the other rules.",
+			// `kcp scan clusters` doesn't take --region — it reads region from the state file.
+			HowToClose: "Re-run `kcp scan clusters --source-type msk --credentials-file <msk-credentials.yaml>` with admin Kafka credentials (SASL/IAM or SCRAM) and without `--skip-acls` so the ACL list populates.",
 		})
 	}
-	if brokerCount(c) == 0 {
+	if brokerInventoryGap(c) {
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "broker_inventory_empty",
 			ClusterID:  c.Name,
 			Title:      "Source environment shows 0 brokers — likely an incomplete scan",
-			Body:       "`AWSClientInformation.Nodes` is empty for this cluster. The Source Environment table reads as `Brokers: 0`, which is almost certainly wrong for a real MSK cluster.",
-			HowToClose: "Re-run `kcp discover` against the source account / region to populate the broker inventory.",
+			Body:       "`AWSClientInformation.Nodes` is empty for this cluster. The Source Environment table reads as `Brokers: 0`, which is almost certainly wrong for an MSK Provisioned cluster.",
+			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to populate the broker inventory.", regionFlag(c.Region)),
 		})
 	}
 	if topicCount(c) == 0 {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "topic_inventory_empty",
+			ID:        "topic_inventory_empty",
+			ClusterID: c.Name,
+			Title:     "Source environment shows 0 topics — likely an incomplete scan",
+			Body:      "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero).",
+			// `kcp scan clusters` doesn't take --region — it reads region from the state file.
+			HowToClose: "Re-run `kcp scan clusters --source-type msk --credentials-file <msk-credentials.yaml>` with admin Kafka credentials (without `--skip-topics`) to populate the topic list.",
+		})
+	}
+	if privateLinkSizingExceedsCap(sizing, ct, net, cfg) {
+		cap := cfg.EnterpriseCaps.PrivateLinkMaxECKU
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "networking_privatelink_over_cap",
 			ClusterID:  c.Name,
-			Title:      "Source environment shows 0 topics — likely an incomplete scan",
-			Body:       "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero).",
-			HowToClose: "Re-run `kcp scan clusters` with admin credentials to populate the topic list.",
+			Title:      fmt.Sprintf("PrivateLink trigger fired but cluster sizing exceeds the %d-eCKU PrivateLink cap on Enterprise", cap),
+			Body:       fmt.Sprintf("PrivateLink networking on Enterprise is capped at %d eCKU. One or more clusters sized above that cap, and a PrivateLink trigger fired (target_cloud, cc_egress_required, or projected_pni_gateway_count), so the plan still recommends PrivateLink — an infeasible combination above the %d-eCKU cap. See the Sizing & Cluster Decisions table above for each affected cluster's final eCKU.", cap, cap),
+			HowToClose: fmt.Sprintf("Raise this with your Confluent account team. Dedicated supports PrivateLink without the %d-eCKU Enterprise cap and is the most likely path to keep both the PrivateLink requirement and the throughput.", cap),
 		})
 	}
 	// Spiky workload is an informational signal, not an Open Question:
@@ -149,15 +181,18 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing) [
 // every OQ has an explicit rank — a new ID without a priority entry
 // falls through to oqPriorityUnknown and renders last.
 const (
-	oqPriorityMissingMetrics  = iota // missing P95 → sizing fell back to floor
-	oqPriorityBrokerInventory        // broker count == 0 (scan gap)
-	oqPriorityTopicInventory         // topic count == 0 (scan gap)
-	oqPriorityACLsNotScanned         // Acls == nil (admin-cred gap)
-	oqPriorityUnknown                // fallback for new IDs added without a priority entry
+	oqPriorityNetworkingOverCap = iota // infeasible PrivateLink recommendation — blocker
+	oqPriorityMissingMetrics           // missing P95 → sizing fell back to floor
+	oqPriorityBrokerInventory          // broker count == 0 (scan gap)
+	oqPriorityTopicInventory           // topic count == 0 (scan gap)
+	oqPriorityACLsNotScanned           // ACL admin scan didn't run
+	oqPriorityUnknown                  // fallback for new IDs added without a priority entry
 )
 
 func openQuestionPriority(id string) int {
 	switch id {
+	case "networking_privatelink_over_cap":
+		return oqPriorityNetworkingOverCap
 	case "missing_p95_metrics":
 		return oqPriorityMissingMetrics
 	case "broker_inventory_empty":
@@ -196,6 +231,17 @@ func countRegions(state types.ProcessedState) int {
 	return len(regions)
 }
 
+// regionFlag returns " --region <region>" when region is non-empty,
+// otherwise an empty string — so HowToClose commands rendered against a
+// hand-edited or partially-populated state file don't produce an invalid
+// `--region ` flag with a trailing empty value.
+func regionFlag(region string) string {
+	if region == "" {
+		return ""
+	}
+	return " --region " + region
+}
+
 func topicCount(c types.ProcessedCluster) int {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		return 0
@@ -216,7 +262,10 @@ func buildSizingAppendix(sizings []types.ClusterSizing, cfg *PlanConfig, inputs 
 		}
 		out = append(out, types.SizingMathDetail{
 			ClusterID: s.ClusterID,
-			Formula:   fmt.Sprintf("CEIL(max(P95In/%d, P95Out/%d, partitions/%d) * (1 + %.2f headroom))", caps.PerECKUIngressMBps, caps.PerECKUEgressMBps, caps.PerECKUPartitionRate, inputs.HeadroomFraction),
+			Formula: fmt.Sprintf("CEIL(max(%sIn/%d, %sOut/%d, partitions/%d) * (1 + %.2f headroom))",
+				percentileHeader(inputs.SizingPercentile), caps.PerECKUIngressMBps,
+				percentileHeader(inputs.SizingPercentile), caps.PerECKUEgressMBps,
+				caps.PerECKUPartitionRate, inputs.HeadroomFraction),
 			IntermediateSteps: []string{
 				fmt.Sprintf("ingress ratio = %.2f MBps / %d = %.4f", s.SizedInMBps, caps.PerECKUIngressMBps, s.IngressRatio),
 				fmt.Sprintf("egress ratio  = %.2f MBps / %d = %.4f", s.SizedOutMBps, caps.PerECKUEgressMBps, s.EgressRatio),
