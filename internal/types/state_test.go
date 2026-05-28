@@ -1049,7 +1049,7 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "state file could not be loaded") {
+	if !strings.Contains(err.Error(), "Please recreate the state file") {
 		t.Errorf("expected load error from fallback, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "0.5.0") {
@@ -1073,7 +1073,7 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to unmarshal state file") {
+	if !strings.Contains(err.Error(), "Please recreate the state file") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -1096,7 +1096,7 @@ func TestNewStateFromFile_SchemaMismatch_NoVersion_SurfacesFriendlyError(t *test
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "state file could not be loaded") {
+	if !strings.Contains(err.Error(), "Please recreate the state file") {
 		t.Errorf("expected friendly error for versionless schema mismatch, got: %v", err)
 	}
 }
@@ -1153,7 +1153,7 @@ func TestNewStateFromBytes_SchemaMismatch_NoVersion(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "state file could not be loaded") {
+	if !strings.Contains(err.Error(), "Please recreate the state file") {
 		t.Errorf("expected friendly error, got: %v", err)
 	}
 }
@@ -1164,7 +1164,7 @@ func TestNewStateFromBytes_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to unmarshal state file") {
+	if !strings.Contains(err.Error(), "Please recreate the state file") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -1200,7 +1200,7 @@ func TestNewStateFromBytes_UnknownFields_NoVersion_Rejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown fields, got nil")
 	}
-	if !strings.Contains(err.Error(), "state file could not be loaded") {
+	if !strings.Contains(err.Error(), "Please recreate the state file") {
 		t.Errorf("expected load error, got: %v", err)
 	}
 }

@@ -131,11 +131,11 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				return nil, fmt.Errorf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover or kcp scan clusters using the latest KCP release", err, raw.KcpBuildInfo.Version, build_info.Version)
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
 			}
-			return nil, fmt.Errorf("state file could not be loaded: %v. Please recreate the state file with kcp discover or kcp scan clusters using the latest KCP release", err)
+			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
 		}
-		return nil, fmt.Errorf("failed to unmarshal state file: %v. Please recreate the state file with kcp discover or kcp scan clusters using the latest KCP release", err)
+		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
 	}
 
 	if state.KcpBuildInfo.Version == "" {

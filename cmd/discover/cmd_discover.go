@@ -182,11 +182,12 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		return nil, fmt.Errorf("failed to check state file: %v", err)
 	} else {
 		// State file exists - load it
+		slog.Info("Found existing state file, attempting to load it", "file", stateFileName)
 		state, err = types.NewStateFromFile(stateFileName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
-		slog.Debug("using existing state file", "file", stateFileName)
+		slog.Debug("Loaded existing state file", "file", stateFileName)
 	}
 
 	// Check if existing credentials file exists
