@@ -8,11 +8,12 @@ For MSK, `kcp discover` pulls cluster metrics straight from CloudWatch. OSK
 clusters do not have an equivalent metrics surface, so [`kcp scan clusters`](../command-reference/scan/clusters.md)
 supports two collection backends, selected with `--metrics <source>`:
 
-!!! tip "Connect cluster metrics"
-
-    For collecting metrics from Kafka Connect workers (connector count, task
-    throughput, byte rates), see
-    [Connect metrics collection](connect-metrics-collection.md).
+> [!TIP]
+> **Connect cluster metrics**
+>
+> For collecting metrics from Kafka Connect workers (connector count, task
+> throughput, byte rates), see
+> [Connect metrics collection](connect-metrics-collection.md).
 
 | Backend      | Mode                  | Required flags                                                  | Required `osk-credentials.yaml` block |
 | ------------ | --------------------- | --------------------------------------------------------------- | ------------------------------------- |

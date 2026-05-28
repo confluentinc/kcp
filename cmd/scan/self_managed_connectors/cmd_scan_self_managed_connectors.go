@@ -157,6 +157,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 
 	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-sasl-scram", "use-tls", "use-unauthenticated")
 	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-sasl-scram", "use-tls", "use-unauthenticated")
+	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("metrics-duration", "metrics-range")
 
 	return selfManagedConnectorsCmd
 }
@@ -182,37 +183,29 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 		if metricsSource != "jolokia" && metricsSource != "prometheus" {
 			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
 		}
-		if credentialsFile == "" {
-			return fmt.Errorf("--credentials-file is required when --metrics is set")
-		}
+		_ = cmd.MarkFlagRequired("credentials-file")
 		switch metricsSource {
 		case "jolokia":
-			if metricsDuration == "" {
-				return fmt.Errorf("--metrics-duration is required when --metrics jolokia is set")
-			}
-			if _, err := time.ParseDuration(metricsDuration); err != nil {
+			_ = cmd.MarkFlagRequired("metrics-duration")
+			if _, err := time.ParseDuration(metricsDuration); metricsDuration != "" && err != nil {
 				return fmt.Errorf("invalid --metrics-duration '%s': %w", metricsDuration, err)
 			}
 			if _, err := time.ParseDuration(metricsInterval); err != nil {
 				return fmt.Errorf("invalid --metrics-interval '%s': %w", metricsInterval, err)
 			}
-			duration, _ := time.ParseDuration(metricsDuration)
-			interval, _ := time.ParseDuration(metricsInterval)
-			if duration <= interval {
-				return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
-			}
-			if cmd.Flags().Changed("metrics-range") {
-				return fmt.Errorf("--metrics-range cannot be used with --metrics jolokia")
+			if metricsDuration != "" {
+				duration, _ := time.ParseDuration(metricsDuration)
+				interval, _ := time.ParseDuration(metricsInterval)
+				if duration <= interval {
+					return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
+				}
 			}
 		case "prometheus":
-			if metricsRange == "" {
-				return fmt.Errorf("--metrics-range is required when --metrics prometheus is set")
-			}
-			if _, err := utils.ParseDurationDays(metricsRange); err != nil {
-				return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
-			}
-			if cmd.Flags().Changed("metrics-duration") {
-				return fmt.Errorf("--metrics-duration cannot be used with --metrics prometheus")
+			_ = cmd.MarkFlagRequired("metrics-range")
+			if metricsRange != "" {
+				if _, err := utils.ParseDurationDays(metricsRange); err != nil {
+					return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
+				}
 			}
 		}
 	}
@@ -297,6 +290,28 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		}
 	}
 
+	// If metrics are requested, resolve the cluster credentials from the credentials file
+	var metricsClusterCreds *types.OSKClusterAuth
+	if metricsSource != "" && credentialsFile != "" {
+		creds, errs := types.NewOSKCredentialsFromFile(credentialsFile)
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("failed to load credentials file: %v", errs)
+		}
+		lookupID := oskClusterID
+		if detectedSourceType == types.SourceTypeMSK {
+			lookupID = clusterArn
+		}
+		for i, c := range creds.Clusters {
+			if c.ID == lookupID {
+				metricsClusterCreds = &creds.Clusters[i]
+				break
+			}
+		}
+		if metricsClusterCreds == nil {
+			return nil, fmt.Errorf("cluster %q not found in credentials file %s; metrics collection requires a matching cluster entry", lookupID, credentialsFile)
+		}
+	}
+
 	opts := SelfManagedConnectorsScannerOpts{
 		StateFile:      stateFile,
 		State:          state,
@@ -314,11 +329,11 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 			ClientCert: tlsClientCert,
 			ClientKey:  tlsClientKey,
 		},
-		MetricsSource:   metricsSource,
-		CredentialsFile: credentialsFile,
-		MetricsDuration: metricsDuration,
-		MetricsInterval: metricsInterval,
-		MetricsRange:    metricsRange,
+		MetricsSource:       metricsSource,
+		MetricsClusterCreds: metricsClusterCreds,
+		MetricsDuration:     metricsDuration,
+		MetricsInterval:     metricsInterval,
+		MetricsRange:        metricsRange,
 	}
 
 	return &opts, nil

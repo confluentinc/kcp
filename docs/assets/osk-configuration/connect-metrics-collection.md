@@ -112,14 +112,15 @@ clusters:
     #       job: confluent/connect-jmx-exporter
 ```
 
-!!! note "Jolokia endpoints for Connect vs brokers"
-
-    When collecting **broker** metrics (`kcp scan clusters --metrics jolokia`),
-    the Jolokia endpoints point to **Kafka broker** Jolokia agents. When
-    collecting **Connect** metrics (`kcp scan self-managed-connectors --metrics jolokia`),
-    the same credentials file is used but the endpoints should point to
-    **Connect worker** Jolokia agents, which typically run on a different
-    host and/or port.
+> [!NOTE]
+> **Jolokia endpoints for Connect vs brokers**
+>
+> When collecting **broker** metrics (`kcp scan clusters --metrics jolokia`),
+> the Jolokia endpoints point to **Kafka broker** Jolokia agents. When
+> collecting **Connect** metrics (`kcp scan self-managed-connectors --metrics jolokia`),
+> the same credentials file is used but the endpoints should point to
+> **Connect worker** Jolokia agents, which typically run on a different
+> host and/or port.
 
 ## Filtering by Connect cluster (Prometheus)
 

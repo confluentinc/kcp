@@ -43,11 +43,11 @@ type SelfManagedConnectorsScannerOpts struct {
 	SaslScramAuth  types.ConnectSaslScramAuth
 	TlsAuth        types.ConnectTlsAuth
 
-	MetricsSource   string
-	CredentialsFile string
-	MetricsDuration string
-	MetricsInterval string
-	MetricsRange    string
+	MetricsSource       string
+	MetricsClusterCreds *types.OSKClusterAuth
+	MetricsDuration     string
+	MetricsInterval     string
+	MetricsRange        string
 }
 
 type SelfManagedConnectorsScanner struct {
@@ -58,11 +58,11 @@ type SelfManagedConnectorsScanner struct {
 	ClusterID  string
 	client     ConnectAPIClient
 
-	metricsSource   string
-	credentialsFile string
-	metricsDuration string
-	metricsInterval string
-	metricsRange    string
+	metricsSource       string
+	metricsClusterCreds *types.OSKClusterAuth
+	metricsDuration     string
+	metricsInterval     string
+	metricsRange        string
 }
 
 func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) *SelfManagedConnectorsScanner {
@@ -79,17 +79,17 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) *Sel
 	}
 
 	return &SelfManagedConnectorsScanner{
-		StateFile:       opts.StateFile,
-		State:           opts.State,
-		SourceType:      opts.SourceType,
-		ClusterArn:      opts.ClusterArn,
-		ClusterID:       opts.ClusterID,
-		client:          connectClient,
-		metricsSource:   opts.MetricsSource,
-		credentialsFile: opts.CredentialsFile,
-		metricsDuration: opts.MetricsDuration,
-		metricsInterval: opts.MetricsInterval,
-		metricsRange:    opts.MetricsRange,
+		StateFile:           opts.StateFile,
+		State:               opts.State,
+		SourceType:          opts.SourceType,
+		ClusterArn:          opts.ClusterArn,
+		ClusterID:           opts.ClusterID,
+		client:              connectClient,
+		metricsSource:       opts.MetricsSource,
+		metricsClusterCreds: opts.MetricsClusterCreds,
+		metricsDuration:     opts.MetricsDuration,
+		metricsInterval:     opts.MetricsInterval,
+		metricsRange:        opts.MetricsRange,
 	}
 }
 
@@ -344,39 +344,15 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 }
 
 func (s *SelfManagedConnectorsScanner) collectConnectMetrics(ctx context.Context) (*types.ProcessedClusterMetrics, error) {
-	creds, errs := types.NewOSKCredentialsFromFile(s.credentialsFile)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("failed to load credentials file: %v", errs)
-	}
-
-	// Find the cluster in credentials that matches our cluster ID
-	clusterID := s.ClusterID
-	if s.SourceType == types.SourceTypeMSK {
-		clusterID = s.ClusterArn
-	}
-
-	var clusterCreds *types.OSKClusterAuth
-	for i, c := range creds.Clusters {
-		if c.ID == clusterID {
-			clusterCreds = &creds.Clusters[i]
-			break
-		}
-	}
-
-	// If no exact match, use the first cluster in the credentials file
-	if clusterCreds == nil {
-		if len(creds.Clusters) == 0 {
-			return nil, fmt.Errorf("no clusters found in credentials file")
-		}
-		clusterCreds = &creds.Clusters[0]
-		slog.Info("using first cluster from credentials file for metrics", "cluster", clusterCreds.ID)
+	if s.metricsClusterCreds == nil {
+		return nil, fmt.Errorf("no cluster credentials provided for metrics collection")
 	}
 
 	switch s.metricsSource {
 	case "jolokia":
-		return s.collectConnectJolokiaMetrics(ctx, *clusterCreds)
+		return s.collectConnectJolokiaMetrics(ctx, *s.metricsClusterCreds)
 	case "prometheus":
-		return s.collectConnectPrometheusMetrics(ctx, *clusterCreds)
+		return s.collectConnectPrometheusMetrics(ctx, *s.metricsClusterCreds)
 	default:
 		return nil, fmt.Errorf("unsupported metrics source: %s", s.metricsSource)
 	}
