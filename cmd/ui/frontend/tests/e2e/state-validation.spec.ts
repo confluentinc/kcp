@@ -90,7 +90,7 @@ test.describe('State File Validation', () => {
       osk_sources: { clusters: [] },
       schema_registries: {
         confluent_schema_registry: [
-          { url: 'http://localhost:8081', schemas: [] },
+          { type: 'confluent', url: 'http://localhost:8081', subjects: [] },
         ],
       },
     }
