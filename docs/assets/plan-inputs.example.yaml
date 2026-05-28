@@ -3,11 +3,14 @@
 # All fields are optional. Pinned defaults live in plan-config.yaml
 # (embedded in the KCP binary). A missing field falls back to its default.
 #
-# MVP scope:
+# Field groups:
 #   - sizing knobs
 #   - customer-declared hard requirements that force Dedicated
 #   - existing VPC connectivity for the Dedicated networking path
 #   - networking triggers that flip the AWS-Enterprise default from PNI to PrivateLink
+#   - cutover approach + gateway prereqs
+#   - client auth migration (target auth, per-cluster overrides)
+#   - schema migration (strategy + CP/edition/reachability for Schema Linking)
 #
 # Usage:
 #   kcp report plan \
@@ -60,7 +63,7 @@
 # projected_pni_gateway_count: 1      # ≥2 → flip to PrivateLink
 
 # ---------------------------------------------------------------------------
-# Cutover approach (V1)
+# Cutover approach
 # ---------------------------------------------------------------------------
 # downtime_tolerance drives the cutover style. Pick the value that matches
 # your operational constraint; the Plan maps it 1:1 to a recommended style.
@@ -89,7 +92,7 @@
 # iam_pre_migration_status: not_started          # not_started | in_progress | complete
 
 # ---------------------------------------------------------------------------
-# Client auth migration (V1)
+# Client auth migration
 # ---------------------------------------------------------------------------
 # Target auth for ALL source auths detected on every cluster. Leave unset
 # to use the per-source default from the embedded auth_mapping table

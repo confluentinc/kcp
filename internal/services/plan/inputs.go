@@ -56,6 +56,9 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		CCGatewayLicenseStatus:               defaults.CCGatewayLicenseStatus,
 		IAMPreMigrationStatus:                defaults.IAMPreMigrationStatus,
 		TargetAuthMethod:                     defaults.TargetAuthMethod,
+		SchemaStrategy:                       defaults.SchemaStrategy,
+		ConfluentSRCPVersion:                 defaults.ConfluentSRCPVersion,
+		ConfluentSRCPEdition:                 defaults.ConfluentSRCPEdition,
 	}
 	if in == nil {
 		return out
@@ -113,6 +116,21 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.TargetAuthMethod != nil {
 		out.TargetAuthMethod = *in.TargetAuthMethod
+	}
+	if in.SchemaStrategy != nil {
+		out.SchemaStrategy = *in.SchemaStrategy
+	}
+	if in.SourceSROutboundReachableToCC != nil {
+		// Copy the value (not the pointer) so a later mutation of the
+		// caller-owned PlanInputs doesn't bleed into Resolved.
+		v := *in.SourceSROutboundReachableToCC
+		out.SourceSROutboundReachableToCC = &v
+	}
+	if in.ConfluentSRCPVersion != nil {
+		out.ConfluentSRCPVersion = *in.ConfluentSRCPVersion
+	}
+	if in.ConfluentSRCPEdition != nil {
+		out.ConfluentSRCPEdition = *in.ConfluentSRCPEdition
 	}
 	return out
 }

@@ -8,7 +8,9 @@
     "plan_schema_version": "1-experimental"
   },
   "inputs": {
-    "raw": {},
+    "raw": {
+      "schema_strategy": "no_schemas"
+    },
     "sla_target": "99.9",
     "sizing_percentile": "p95",
     "headroom_fraction": 0.3,
@@ -26,7 +28,8 @@
     "confluent_for_kubernetes_status": "not_started",
     "cc_gateway_license_status": "not_started",
     "iam_pre_migration_status": "not_started",
-    "target_auth_method": ""
+    "target_auth_method": "",
+    "schema_strategy": "no_schemas"
   },
   "source_environment": {
     "clusters": [
