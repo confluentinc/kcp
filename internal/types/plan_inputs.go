@@ -89,6 +89,35 @@ type PlanInputs struct {
 	// Per-cluster override available via `clusters[name].target_auth_method`.
 	TargetAuthMethod *string `yaml:"target_auth_method,omitempty" json:"target_auth_method,omitempty"`
 
+	// ----- schema migration -----
+
+	// SchemaStrategy declares the customer's intent for schemas. Enum:
+	//   unknown                          → emit OQ (default; first-run safety)
+	//   no_schemas                       → schemaless path (omit §Schema)
+	//   adopt_schemas_during_migration   → start with no source SR, adopt CC SR
+	//   migrate_existing_schema_registry → run the SR-detected path
+	SchemaStrategy *string `yaml:"schema_strategy,omitempty" json:"schema_strategy,omitempty"`
+
+	// SourceSROutboundReachableToCC is the customer's network-reachability
+	// declaration: can the source Confluent SR reach the CC SR endpoint
+	// outbound? Schema Linking's Schema Exporter is one-directional from
+	// source SR → CC SR, so without this the gateway-eligible verdict
+	// can't hold. Default nil = unknown.
+	SourceSROutboundReachableToCC *bool `yaml:"source_sr_outbound_reachable_to_cc,omitempty" json:"source_sr_outbound_reachable_to_cc,omitempty"`
+
+	// ConfluentSRCPVersion is the customer-declared Confluent Platform
+	// version of the source Schema Registry. Schema Linking requires
+	// CP 7.0 or later. Default nil = unknown — the scanner does not
+	// populate this today, so the customer declares it via plan-inputs.
+	// Accepted shape: "7.5.1" / "7.0" / "6.2" — string compare against
+	// the configured floor.
+	ConfluentSRCPVersion *string `yaml:"confluent_sr_cp_version,omitempty" json:"confluent_sr_cp_version,omitempty"`
+
+	// ConfluentSRCPEdition is the customer-declared Confluent Platform
+	// edition. Schema Linking requires `enterprise` (CP 7.0 Community
+	// does not include it). Enum: `enterprise` | `community`.
+	ConfluentSRCPEdition *string `yaml:"confluent_sr_cp_edition,omitempty" json:"confluent_sr_cp_edition,omitempty"`
+
 	// Clusters — per-cluster overrides keyed by source cluster name.
 	// Heterogeneous fleets (mixed-SLA, mixed-tier) need finer-grained
 	// inputs than the global flags above; without this, flipping a

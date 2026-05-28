@@ -28,6 +28,16 @@ cluster_linking:
   express_tier_supported: unknown    # verify per release
   source: https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/
 
+# Schema Linking eligibility floor. Source Confluent SR clusters below
+# any of these floors fall to `defer_to_account_team` rather than the
+# Schema Linking path — the REST API export/import alternative is real
+# but its rollout sequencing is workload-specific and not deterministic.
+schema_linking:
+  min_cp_version: "7.0"
+  requires_cp_edition: enterprise
+  source: https://docs.confluent.io/platform/current/schema-registry/schema-linking-cp.html
+  last_verified: "2026-05-27"
+
 plan_input_defaults:
   sizing_percentile: p95           # alternatives: p99, max — lowercase to match Confluent dashboards
   headroom_fraction: 0.30          # 0.0..1.0 — safety margin above the chosen percentile; overrideable via plan-inputs
@@ -71,6 +81,14 @@ plan_input_defaults:
   # when the customer wants to force a single target across all source
   # auths detected on a cluster.
   target_auth_method: ""
+
+  # Schema-migration defaults. `unknown` keeps first-run plans honest:
+  # the customer answers the strategy OQ once and the verdict pins.
+  # CP version/edition stay empty (= unknown) for the same reason —
+  # the scanner doesn't backfill them today.
+  schema_strategy: unknown
+  confluent_sr_cp_version: ""
+  confluent_sr_cp_edition: ""
 
 # Source → target auth lookup. Keyed by source-auth token. The
 # plan renders all detected source auths and the recommended target
