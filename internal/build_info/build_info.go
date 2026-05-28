@@ -35,6 +35,17 @@ func isDev(v string) bool {
 	return v == "" || v == "dev" || v == DefaultDevVersion
 }
 
+// SameVersion reports whether two kcp version strings refer to the same
+// release. The comparison is whitespace-strict but treats a leading "v"
+// as cosmetic, since the Makefile injects bare semvers ("0.8.1") into
+// the binary while Go's runtime/debug.ReadBuildInfo surfaces module
+// versions in their go.mod form ("v0.8.1"). Without this, an external
+// consumer pinned to v0.8.1 reading a state file stamped 0.8.1 would
+// see a spurious version-mismatch error.
+func SameVersion(a, b string) bool {
+	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
+}
+
 // ResolvedVersion returns the kcp version best identifying the running binary.
 // Official kcp builds set Version via ldflags; for those it simply returns
 // Version. Consumers that import this module as a Go library (where ldflags

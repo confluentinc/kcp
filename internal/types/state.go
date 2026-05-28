@@ -131,7 +131,7 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		runningVersion := build_info.ResolvedVersion()
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
-			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != runningVersion {
+			if raw.KcpBuildInfo.Version != "" && !build_info.SameVersion(raw.KcpBuildInfo.Version, runningVersion) {
 				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, runningVersion, raw.KcpBuildInfo.Version)
 			}
 			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)

@@ -1213,6 +1213,41 @@ func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	}
 }
 
+func TestNewStateFromBytes_VPrefixedFileVersionDoesNotFireMismatch(t *testing.T) {
+	saved := build_info.Version
+	build_info.Version = "0.8.1"
+	t.Cleanup(func() { build_info.Version = saved })
+
+	// File version is "v0.8.1" (with prefix, as a go.mod-resolved consumer
+	// would write it), running version after ldflags is "0.8.1" (bare, as
+	// the official Makefile injects). These should be treated as equivalent
+	// — the schema-mismatch error should fire (unknown field) but without
+	// the "you are running …" version-mismatch clause.
+	data := []byte(`{"kcp_build_info":{"version":"v0.8.1"},"unexpected_field":"x"}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
+	}
+	if strings.Contains(err.Error(), "you are running") {
+		t.Errorf("expected simpler error for v-prefix equivalent versions, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_GenuineVersionMismatchStillFires(t *testing.T) {
+	saved := build_info.Version
+	build_info.Version = "0.8.1"
+	t.Cleanup(func() { build_info.Version = saved })
+
+	data := []byte(`{"kcp_build_info":{"version":"v0.7.0"},"unexpected_field":"x"}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
+	}
+	if !strings.Contains(err.Error(), "you are running") {
+		t.Errorf("expected version-mismatch error for genuinely different versions, got: %v", err)
+	}
+}
+
 func TestNewStateFromBytesStrict_ValidJSONWithVersion_Succeeds(t *testing.T) {
 	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"}}`)
 	state, err := NewStateFromBytesStrict(data)

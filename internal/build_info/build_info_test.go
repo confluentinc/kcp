@@ -70,6 +70,32 @@ func TestResolveVersion(t *testing.T) {
 	}
 }
 
+func TestSameVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical bare semver", "0.8.1", "0.8.1", true},
+		{"identical v-prefixed", "v0.8.1", "v0.8.1", true},
+		{"v-prefix on left only", "v0.8.1", "0.8.1", true},
+		{"v-prefix on right only", "0.8.1", "v0.8.1", true},
+		{"different patch versions", "0.8.1", "0.8.2", false},
+		{"different patch, v-prefixed left", "v0.8.1", "0.8.2", false},
+		{"both dev sentinel", DefaultDevVersion, "v" + DefaultDevVersion, true},
+		{"both empty", "", "", true},
+		{"empty vs versioned", "", "v0.8.1", false},
+		{"v-only vs bare-only of same version", "v1.0.0", "1.0.0", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SameVersion(tc.a, tc.b); got != tc.want {
+				t.Errorf("SameVersion(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsDev(t *testing.T) {
 	cases := []struct {
 		version string
