@@ -1180,6 +1180,39 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 }
 
+func TestNewStateFromBytes_UnknownFields_WithVersion_RejectsWithVersionContext(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown fields, got nil")
+	}
+	if !strings.Contains(err.Error(), "0.7.2") {
+		t.Errorf("expected error to contain file version, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), build_info.Version) {
+		t.Errorf("expected error to contain running version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_UnknownFields_NoVersion_Rejects(t *testing.T) {
+	data := []byte(`{"regions":[{"region_name":"us-east-1"}]}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown fields, got nil")
+	}
+	if !strings.Contains(err.Error(), "state file could not be loaded") {
+		t.Errorf("expected load error, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"},"unexpected_field":"value"}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
+	}
+}
+
 func TestFormatQueryDuration(t *testing.T) {
 	tests := []struct {
 		name     string
