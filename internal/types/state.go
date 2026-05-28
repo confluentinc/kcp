@@ -61,7 +61,7 @@ func NewStateFrom(fromState *State) *State {
 	// Always create with fresh metadata for the current discovery run
 	workingState := &State{
 		KcpBuildInfo: KcpBuildInfo{
-			Version: build_info.Version,
+			Version: build_info.ResolvedVersion(),
 			Commit:  build_info.Commit,
 			Date:    build_info.Date,
 		},
@@ -129,9 +129,10 @@ func NewStateFromBytes(data []byte) (*State, error) {
 				Version string `json:"version"`
 			} `json:"kcp_build_info"`
 		}
+		runningVersion := build_info.ResolvedVersion()
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
-			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
+			if raw.KcpBuildInfo.Version != "" && !build_info.SameVersion(raw.KcpBuildInfo.Version, runningVersion) {
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, runningVersion, raw.KcpBuildInfo.Version)
 			}
 			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
 		}
@@ -143,6 +144,22 @@ func NewStateFromBytes(data []byte) (*State, error) {
 	}
 
 	return &state, nil
+}
+
+// NewStateFromBytesStrict is the same as NewStateFromBytes but additionally
+// rejects state files where kcp_build_info.version is empty or absent. It is
+// intended for library consumers (pkg/lib) and other callers that need to
+// surface "this is probably not a real kcp state file" as an error rather
+// than a log line.
+func NewStateFromBytesStrict(data []byte) (*State, error) {
+	state, err := NewStateFromBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	if state.KcpBuildInfo.Version == "" {
+		return nil, fmt.Errorf("state file has no kcp_build_info.version — this may not be a valid KCP state file; please recreate it with kcp discover (MSK) or kcp scan clusters (OSK) using KCP version %s", build_info.ResolvedVersion())
+	}
+	return state, nil
 }
 
 func (s *State) WriteToFile(filePath string) error {

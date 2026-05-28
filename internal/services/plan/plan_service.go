@@ -49,7 +49,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		Header: types.PlanHeader{
 			Source:            "Amazon MSK",
 			StateFilePath:     stateFilePath,
-			KCPVersion:        build_info.Version,
+			KCPVersion:        build_info.ResolvedVersion(),
 			GeneratedAt:       s.now().UTC(),
 			PlanSchemaVersion: "1-experimental",
 		},
