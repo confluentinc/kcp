@@ -117,7 +117,7 @@ For self-managed connector discovery, run ` + "`kcp scan self-managed-connectors
 	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics collection source: 'jolokia' or 'prometheus' (OSK only)")
 	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia (e.g. 10m, 1h). Required with --metrics jolokia.")
 	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia (e.g. 10s, 30s). Default: 10s.")
-	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Time range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
+	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Day range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
 	scanClustersCmd.Flags().AddFlagSet(metricsFlags)
 
 	_ = scanClustersCmd.MarkFlagRequired("source-type")

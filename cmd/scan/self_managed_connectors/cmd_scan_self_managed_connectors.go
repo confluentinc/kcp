@@ -124,7 +124,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics backend: 'jolokia' or 'prometheus'. Requires --credentials-file.")
 	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia metrics (e.g., 5m, 30m). Required with --metrics jolokia.")
 	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia metrics (default: 10s).")
-	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Time range to query from Prometheus (e.g., 7d, 30d). Required with --metrics prometheus.")
+	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Day range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
 	metricsFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to OSK credentials file containing Jolokia/Prometheus configuration.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(metricsFlags)
 	groups[metricsFlags] = "Metrics Collection"
