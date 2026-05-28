@@ -19,7 +19,12 @@ type Plan struct {
 	Cutover *CutoverDecision `json:"cutover,omitempty"`
 	// Auth is per-cluster — source auth methods differ across MSK clusters
 	// in the same fleet, so each gets its own source→target mapping.
-	Auth           []AuthDecision     `json:"auth,omitempty"`
+	Auth []AuthDecision `json:"auth,omitempty"`
+	// Schema is fleet-wide (the schema registry is one shared system,
+	// not per-cluster). Nil when the section is omitted — currently the
+	// `schemaless` path (`sr_detected == none` AND
+	// `schema_strategy == no_schemas`).
+	Schema         *SchemaDecision    `json:"schema,omitempty"`
 	SizingAppendix []SizingMathDetail `json:"sizing_appendix"`
 	OpenQuestions  []OpenQuestion     `json:"open_questions,omitempty"`
 }
@@ -317,6 +322,17 @@ type PlanInputsResolved struct {
 	// Auth — target verdict; cluster-level override flows through
 	// `applyClusterOverride` per the heterogeneous-fleet rule.
 	TargetAuthMethod string `json:"target_auth_method"`
+
+	// Schema migration. Strings/bools resolved from the customer
+	// input with `unknown` / nil-tri-state semantics: SchemaStrategy
+	// defaults to `unknown` so first-run plans don't fire spurious
+	// schemaless verdicts. The CP version + edition + outbound
+	// reachability stay nil-tri-state because "false" and "unknown"
+	// produce different OQs.
+	SchemaStrategy                string `json:"schema_strategy"`
+	SourceSROutboundReachableToCC *bool  `json:"source_sr_outbound_reachable_to_cc,omitempty"`
+	ConfluentSRCPVersion          string `json:"confluent_sr_cp_version,omitempty"`
+	ConfluentSRCPEdition          string `json:"confluent_sr_cp_edition,omitempty"`
 }
 
 // ----- cutover -----
@@ -422,6 +438,93 @@ type AuthDecision struct {
 	ClusterID      string           `json:"cluster_id"`
 	SourceAuths    []string         `json:"source_auths_detected"`
 	TargetMappings []AuthMappingRow `json:"target_mappings,omitempty"`
+}
+
+// ----- schema -----
+
+// SchemaSource is the detected source-side schema registry, derived
+// from the scanner's `state.schema_registries`. `none` means the
+// scanner ran but found neither a Confluent SR nor a Glue registry.
+// `confluent_and_glue` covers the rare both-registries deployment —
+// the decision applies each path independently.
+type SchemaSource string
+
+const (
+	SchemaSourceNone             SchemaSource = "none"
+	SchemaSourceConfluent        SchemaSource = "confluent"
+	SchemaSourceGlue             SchemaSource = "glue"
+	SchemaSourceConfluentAndGlue SchemaSource = "confluent_and_glue"
+)
+
+// SchemaPath is the recommended migration path:
+//   - `schema_linking` — Schema Linking from source Confluent SR → CC SR
+//     (zero-data-loss mirror; all three eligibility constraints hold).
+//   - `kcp_migrate_schemas_glue` — `kcp create-asset migrate-schemas
+//     --glue-registry` generates Terraform that imports every Glue
+//     schema into CC SR in one apply.
+//   - `defer_to_account_team` — Confluent SR detected but Schema-Linking
+//     eligibility fails (CP < 7.0, Community edition, or no outbound
+//     reachability). REST API export/import is technically possible but
+//     not deterministically described by kcp.
+//   - `schemaless` — no source SR + customer declared `no_schemas`.
+//   - `unknown` — fallback when an Open Question must close before the
+//     path is decidable (typically `schema_strategy: unknown`).
+type SchemaPath string
+
+const (
+	SchemaPathSchemaLinking  SchemaPath = "schema_linking"
+	SchemaPathMigrateGlue    SchemaPath = "kcp_migrate_schemas_glue"
+	SchemaPathDeferToAccount SchemaPath = "defer_to_account_team"
+	SchemaPathSchemaless     SchemaPath = "schemaless"
+	SchemaPathUnknown        SchemaPath = "unknown"
+)
+
+// SchemaDecision is the fleet-wide Schema Migration recommendation.
+// Source describes what was scanned; Paths describes every verdict
+// that applies — usually a single-element slice (one source → one
+// path), but the dual `confluent_and_glue` case carries two so JSON
+// consumers branching on a single path-slot don't miss the second
+// arm.
+//
+// The eligibility flags are populated only when Source includes
+// `confluent` so the renderer can show why Schema Linking was or
+// wasn't chosen.
+type SchemaDecision struct {
+	Source SchemaSource `json:"source"`
+	// Paths lists every recommended verdict that applies, in
+	// rendering order. Single-source cases have len(Paths)==1; the
+	// dual-source `confluent_and_glue` case has 2 entries (Glue
+	// first — it's the automatable path; Confluent path second).
+	//
+	// **JSON-consumer note for dual-source.** When Source is
+	// `confluent_and_glue` and len(Paths)==1 (only the Glue arm
+	// landed), the Confluent arm is in one of two states:
+	//   (a) eligibility flags undeclared — pending. Disambiguate by
+	//       reading the OpenQuestions for `schema_linking_eligibility_unknown`.
+	//   (b) all three eligibility flags resolved AND at least one is
+	//       false — verified ineligible. The OQ
+	//       `schema_linking_ineligible` will be present.
+	// Reading `MeetsCPVersionFloor` / `MeetsCPEditionRequirement` /
+	// `SourceSROutboundReachable` tri-states gives the same signal.
+	Paths []SchemaPath `json:"paths"`
+	// Schema-Linking eligibility constraints — all three must hold for
+	// SchemaPathSchemaLinking. Populated only when Source includes
+	// `confluent`; the renderer prints a 3-row eligibility table from
+	// these flags. *KnownAsTrue distinguishes "verified true" from
+	// "verified false" vs "unknown" — when any one is unknown the
+	// resulting Paths include `unknown` and the OQ asks the customer
+	// to confirm rather than guessing.
+	MeetsCPVersionFloor       *bool `json:"meets_cp_version_floor,omitempty"`
+	MeetsCPEditionRequirement *bool `json:"meets_cp_edition_requirement,omitempty"`
+	SourceSROutboundReachable *bool `json:"source_sr_outbound_reachable,omitempty"`
+	// GlueRegistries lists the Glue registry names detected on the
+	// source side — surfaced in the Terraform command the renderer
+	// emits for SchemaPathMigrateGlue (one apply per registry).
+	GlueRegistries []string `json:"glue_registries,omitempty"`
+	// ConfluentSRURLs lists the Confluent SR URLs detected. Surfaced
+	// in the eligibility table header so a reader knows which SR the
+	// verdict applies to.
+	ConfluentSRURLs []string `json:"confluent_sr_urls,omitempty"`
 }
 
 // AuthMappingRow describes one source→target option. TransparentSwap

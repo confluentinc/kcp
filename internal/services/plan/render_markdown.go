@@ -42,6 +42,10 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 		writeAuth(&b, p.Auth, p.Cutover, p.Inputs, section)
 		section++
 	}
+	if p.Schema != nil {
+		writeSchema(&b, p.Schema, p.Inputs, cfg, section)
+		section++
+	}
 	writeOpenQuestions(&b, p, section)
 	writeSizingAppendix(&b, p, cfg)
 	writeRulesAppendix(&b, p)
@@ -511,13 +515,18 @@ func escapeMarkdownTableCell(s string) string {
 	return s
 }
 
-// pluralize returns `singular` when n == 1, else `singular + "s"`.
+// pluralize returns `singular` when n == 1, else the plural form.
+// Handles the regular `+ s` rule by default; pass a `y → ies` word
+// (e.g. "registry") and the helper rewrites the suffix accordingly.
 // Trivial but used in multiple places ("cluster"/"clusters",
-// "rule"/"rules") so the call sites read naturally without inline
-// if-statements or programmatic `(s)` hacks.
+// "rule"/"rules", "registry"/"registries") so the call sites read
+// naturally without inline if-statements or programmatic `(s)` hacks.
 func pluralize(singular string, n int) string {
 	if n == 1 {
 		return singular
+	}
+	if strings.HasSuffix(singular, "y") {
+		return strings.TrimSuffix(singular, "y") + "ies"
 	}
 	return singular + "s"
 }
@@ -1184,4 +1193,215 @@ func gatewayCompatibleLabel(compatible, transparent bool) string {
 	default:
 		return "❌ no"
 	}
+}
+
+// ----- §schema -----
+
+// writeSchema renders the fleet-wide Schema Migration section. Skips
+// rendering entirely on the schemaless path (caller already nils
+// p.Schema in that branch). For mixed Confluent+Glue deployments
+// both verdicts render — Glue Terraform command and a Schema-Linking
+// eligibility table.
+func writeSchema(b *bytes.Buffer, dec *types.SchemaDecision, inputs types.PlanInputsResolved, cfg *PlanConfig, section int) {
+	if dec == nil {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Schema Migration\n\n", section)
+	b.WriteString("Schemas are a fleet-wide concern (one Schema Registry per source, not one per cluster).\n\n")
+	// The Schema-Linking glossary only applies to paths that use it
+	// (Confluent SR — solo or dual). Pure-Glue paths don't, so the
+	// definition would just confuse a Glue-only customer.
+	if sourceTouchesConfluent(dec.Source) {
+		b.WriteString("_**Schema Linking** is Confluent's source-pushes, CC-receives mirror — the source SR runs a one-directional exporter that streams schema updates to your CC SR endpoint, no manual export/import needed._\n\n")
+	}
+	b.WriteString("The verdict below combines:\n")
+	b.WriteString("- what `kcp scan schema-registry` / `kcp scan glue-schema-registry` found on the source, and\n")
+	b.WriteString("- the customer-declared `schema_strategy` / CP version / edition / network-reachability inputs in `plan-inputs.yaml`.\n\n")
+
+	fmt.Fprintf(b, "- **Source detected:** %s\n", schemaSourceLabel(dec.Source, dec.ConfluentSRURLs, dec.GlueRegistries))
+	fmt.Fprintf(b, "- **Recommended path%s:** %s\n", pluralize("", len(dec.Paths)), schemaPathsLabelForContext(dec.Paths, inputs.SchemaStrategy, dec.Source))
+	fmt.Fprintf(b, "- **Strategy declared:** %s\n\n", schemaStrategyDeclaredLabel(inputs.SchemaStrategy, dec))
+
+	// The eligibility table renders only when the customer's strategy
+	// actually engages Schema Linking. Suppress on the `no_schemas`
+	// strategy even if a Confluent SR was scanned — the table would
+	// otherwise show all-❔ unknown to a reader who explicitly said
+	// they're not migrating schemas. The mismatch OQ carries the
+	// reconciliation prompt. Normalize "" → unknown here so the
+	// comparison matches DecideSchema's own normalization (schema.go).
+	strategy := inputs.SchemaStrategy
+	if strategy == "" {
+		strategy = SchemaStrategyUnknown
+	}
+	suppressEligibilityTable := strategy == SchemaStrategyNoSchemas
+
+	switch dec.Source {
+	case types.SchemaSourceGlue:
+		writeGluePathCommand(b, dec.GlueRegistries)
+	case types.SchemaSourceConfluent:
+		if !suppressEligibilityTable {
+			writeSchemaLinkingEligibility(b, dec, cfg)
+		}
+	case types.SchemaSourceConfluentAndGlue:
+		// Both registries present: render each path side-by-side so the
+		// customer sees both recommendations without having to re-run
+		// the Plan against a narrowed scan.
+		writeGluePathCommand(b, dec.GlueRegistries)
+		if !suppressEligibilityTable {
+			writeSchemaLinkingEligibility(b, dec, cfg)
+		}
+	}
+
+	writeSchemaProvenance(b, dec, cfg)
+}
+
+// writeSchemaProvenance emits a citation line whose content depends on
+// the source. Glue-only paths cite the `kcp create-asset migrate-schemas`
+// docs (the active recommendation); Confluent paths cite the Schema
+// Linking docs (the eligibility floor); dual-source cites both.
+func writeSchemaProvenance(b *bytes.Buffer, dec *types.SchemaDecision, cfg *PlanConfig) {
+	const glueRef = "https://confluentinc.github.io/kcp/command-reference/create-asset/migrate-schemas/"
+	switch dec.Source {
+	case types.SchemaSourceGlue:
+		fmt.Fprintf(b, "\n_Mapping provenance: Glue migration command → %s._\n\n", glueRef)
+	case types.SchemaSourceConfluent:
+		fmt.Fprintf(b, "\n_Mapping provenance: Schema Linking eligibility (CP %s+ %s + outbound reachable) → %s (last verified %s)._\n\n",
+			cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.Source, cfg.SchemaLinking.LastVerified)
+	case types.SchemaSourceConfluentAndGlue:
+		fmt.Fprintf(b, "\n_Mapping provenance: Glue migration → %s; Schema Linking eligibility (CP %s+ %s + outbound reachable) → %s (last verified %s)._\n\n",
+			glueRef, cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.Source, cfg.SchemaLinking.LastVerified)
+	default:
+		// Source==None case: no provenance citation applies — the
+		// recommendation is purely strategy-driven and the OQ
+		// explains the next step.
+	}
+}
+
+// schemaPathsLabel formats one or more paths in rendering order. Used
+// by the "Recommended path(s)" bullet to handle both single- and
+// dual-source decisions uniformly. Joiner is " — **also:** " to keep
+// the inline-bold labels readable (each label already ends with `**`,
+// so a `**also**` joiner would collide asterisks).
+func schemaPathsLabel(paths []types.SchemaPath) string {
+	if len(paths) == 0 {
+		return schemaPathLabel(types.SchemaPathUnknown)
+	}
+	if len(paths) == 1 {
+		return schemaPathLabel(paths[0])
+	}
+	labels := make([]string, 0, len(paths))
+	for _, p := range paths {
+		labels = append(labels, schemaPathLabel(p))
+	}
+	return strings.Join(labels, " — **also:** ")
+}
+
+// schemaPathsLabelForContext is the entrypoint used by writeSchema.
+// Overrides the generic schemaPathsLabel rendering for context-specific
+// cases where the path enum's default text would mislead — currently:
+//   - `no_schemas` declared while a SR was scanned: the verdict path
+//     is Unknown but the underlying issue is the mismatch, not a
+//     missing input. Surface "Conflict" so the reader's eye lands on
+//     the contradiction rather than chasing a phantom missing field.
+func schemaPathsLabelForContext(paths []types.SchemaPath, strategy string, source types.SchemaSource) string {
+	if strategy == SchemaStrategyNoSchemas && source != types.SchemaSourceNone {
+		return "**Conflict** — strategy declares `no_schemas` but the scan found a Schema Registry; see §Actions Needed for reconciliation"
+	}
+	return schemaPathsLabel(paths)
+}
+
+// schemaStrategyDeclaredLabel renders the strategy bullet with a
+// status glyph when the declared value conflicts with what the scan
+// found, so a reader doesn't have to cross-reference §Schema with
+// §Actions Needed to spot the contradiction.
+func schemaStrategyDeclaredLabel(strategy string, dec *types.SchemaDecision) string {
+	if strategy == "" {
+		strategy = SchemaStrategyUnknown
+	}
+	if strategy == SchemaStrategyNoSchemas && dec.Source != types.SchemaSourceNone {
+		return fmt.Sprintf("`%s` ⚠ (scan found a Schema Registry)", strategy)
+	}
+	return fmt.Sprintf("`%s`", strategy)
+}
+
+func schemaSourceLabel(src types.SchemaSource, confluentURLs, glueNames []string) string {
+	switch src {
+	case types.SchemaSourceConfluent:
+		return fmt.Sprintf("Confluent Schema Registry (%d URL%s: %s)",
+			len(confluentURLs), pluralize("", len(confluentURLs)), strings.Join(quoteAll(confluentURLs), ", "))
+	case types.SchemaSourceGlue:
+		return fmt.Sprintf("AWS Glue Schema Registry (%d %s: %s)",
+			len(glueNames), pluralize("registry", len(glueNames)), strings.Join(quoteAll(glueNames), ", "))
+	case types.SchemaSourceConfluentAndGlue:
+		return "Confluent Schema Registry AND AWS Glue Schema Registry (each handled independently below)"
+	default:
+		return "_none detected_ — neither `kcp scan schema-registry` nor `kcp scan glue-schema-registry` found a registry on the source"
+	}
+}
+
+func schemaPathLabel(p types.SchemaPath) string {
+	switch p {
+	case types.SchemaPathSchemaLinking:
+		return "**Schema Linking** — source SR pushes schema updates to CC SR over TCP; alternative is manual REST export/import"
+	case types.SchemaPathMigrateGlue:
+		return "**`kcp create-asset migrate-schemas --glue-registry`** — one Terraform apply imports every schema in the Glue registry into CC SR"
+	case types.SchemaPathDeferToAccount:
+		return "**Defer to your Confluent account team** — REST API export/import is possible but not deterministic; see §Actions Needed for the failing constraint"
+	case types.SchemaPathSchemaless:
+		return "**Schemaless** — `schema_strategy: no_schemas` and no source SR was scanned; this section will not render"
+	default:
+		return "**Pending** — declare the missing input in `plan-inputs.yaml`; see §Actions Needed for the specific field"
+	}
+}
+
+// writeGluePathCommand emits one canonical `kcp create-asset
+// migrate-schemas` invocation with placeholder substitution hints,
+// then lists the detected registries (one apply per registry, run
+// the same command N times with `--glue-registry` varied).
+func writeGluePathCommand(b *bytes.Buffer, glueNames []string) {
+	b.WriteString("\n**Glue path — generates Terraform that imports every schema in a registry into CC SR as a `confluent_schema` resource. Run the command once per registry:**\n\n")
+	b.WriteString("```bash\nkcp create-asset migrate-schemas \\\n  --glue-registry <registry-name> \\\n  --region <aws-region> \\\n  --cc-sr-rest-endpoint <cc-sr-url>\n```\n\n")
+	b.WriteString("Find each placeholder:\n")
+	b.WriteString("- `<registry-name>` — one of the detected registries below.\n")
+	b.WriteString("- `<aws-region>` — the AWS region the Glue registry lives in (e.g. `us-east-1`).\n")
+	b.WriteString("- `<cc-sr-url>` — your CC Schema Registry REST endpoint, e.g. `https://psrc-xxxxx.us-east-1.aws.confluent.cloud`; find on CC Console → Environment → Schema Registry.\n\n")
+	fmt.Fprintf(b, "Detected %s: %s.\n\n", pluralize("registry", len(glueNames)), strings.Join(quoteAll(glueNames), ", "))
+	b.WriteString("Applying the generated Terraform imports every schema in that registry into CC SR in one apply. **Client-side work remains yours:** swap `AWSKafkaAvroSerializer` for `KafkaAvroSerializer` in producers / consumers, and reconcile any subject-name overlaps with topics that already exist on CC.\n")
+}
+
+// writeSchemaLinkingEligibility renders the three-row eligibility
+// table for the Confluent SR path. Verdict comes first so the
+// reader's eye lands on ✅/❌/❔ before the constraint text — at a
+// glance you see whether to read further or fix YAML.
+func writeSchemaLinkingEligibility(b *bytes.Buffer, dec *types.SchemaDecision, cfg *PlanConfig) {
+	b.WriteString("\n**Schema Linking eligibility (Confluent SR path):** all three rows must be **✅ yes** for the Schema Linking path to apply. Any **❌ no** falls to `defer_to_account_team`; any **❔ unknown** keeps the path at `unknown` until you declare the missing input.\n\n")
+	b.WriteString("| Verdict | Constraint | Input |\n")
+	b.WriteString("|---|---|---|\n")
+	fmt.Fprintf(b, "| %s | Source CP version ≥ %s | `plan-inputs.confluent_sr_cp_version` |\n",
+		eligibilityCell(dec.MeetsCPVersionFloor), cfg.SchemaLinking.MinCPVersion)
+	fmt.Fprintf(b, "| %s | Source CP edition is `%s` | `plan-inputs.confluent_sr_cp_edition` |\n",
+		eligibilityCell(dec.MeetsCPEditionRequirement), cfg.SchemaLinking.RequiresCPEdition)
+	fmt.Fprintf(b, "| %s | Source SR can reach CC SR outbound | `plan-inputs.source_sr_outbound_reachable_to_cc` |\n",
+		eligibilityCell(dec.SourceSROutboundReachable))
+}
+
+// eligibilityCell renders the verdict cell for a tri-state flag (nil
+// = unknown, *true = yes, *false = no).
+func eligibilityCell(flag *bool) string {
+	if flag == nil {
+		return "❔ unknown"
+	}
+	if *flag {
+		return "✅ yes"
+	}
+	return "❌ no"
+}
+
+// quoteAll wraps each string in backticks for inline code rendering.
+func quoteAll(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, "`"+v+"`")
+	}
+	return out
 }

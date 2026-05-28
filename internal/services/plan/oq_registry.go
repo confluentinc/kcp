@@ -10,9 +10,12 @@ package plan
 // switch, a severity-lookup switch, and a sibling-aware promotion
 // override). New OQ = one new entry in `oqRegistry`.
 type OQMeta struct {
-	// Priority controls the §5 Actions Needed sort order — lower
+	// Priority controls the Actions Needed sort order — lower
 	// priority renders first. IDs missing from the registry fall
-	// through to PriorityUnknown and sort last.
+	// through to PriorityUnknown and sort last. (Actions Needed's
+	// section number is computed dynamically by RenderMarkdown
+	// based on which sections fired; the registry only orders the
+	// items within it.)
 	Priority int
 
 	// Severity is the 🔴 / 🟡 / 🟢 prefix when no promotion applies.
@@ -44,66 +47,106 @@ type OQMeta struct {
 // so adding a new low-priority OQ doesn't accidentally outrank it.
 const PriorityUnknown = 1000
 
-// oqRegistry holds every OQ ID emitted by the detectors. Adding a
-// new OQ requires exactly one entry here and one detector emit; the
-// renderer and the priority sort both read from this map.
+// oqRegistry holds every OQ ID emitted by the detectors. Priority is
+// sparse + grouped by concern so new IDs land between siblings
+// without renumbering. The concern bands are:
+//
+//	100s  — Sizing
+//	200s  — Cluster Type
+//	300s  — Networking
+//	400s  — Cutover
+//	500s  — Auth
+//	600s  — Schema
+//	900s  — Fleet / state-file (cross-cutting)
+//
+// Within a band, 10-unit spacing leaves room for an inserted OQ to
+// slot between existing entries without a shuffle.
 var oqRegistry = map[string]OQMeta{
+	// Networking
 	"networking_privatelink_over_cap": {
-		Priority: 10,
+		Priority: 310,
 		Severity: "🔴",
 	},
+
+	// Cutover
 	"downtime_tolerance_requires_gateway": {
-		Priority: 20,
+		Priority: 410,
 		Severity: "🔴",
 	},
 	"downtime_tolerance_unknown": {
-		Priority: 30,
-		Severity: "🔴",
-	},
-	"target_auth_method_unknown": {
-		Priority: 40,
-		Severity: "🔴",
-	},
-	"auth_target_gateway_incompatible": {
-		Priority: 50,
+		Priority: 420,
 		Severity: "🔴",
 	},
 	"gateway_prereqs_pending": {
-		Priority:         60,
+		Priority:         430,
 		Severity:         "🟢",
 		PromoteWhen:      []string{"auth_target_gateway_incompatible"},
 		PromotedSeverity: "🔴",
 		PromotedTitle:    "Gateway prereqs — moot until the auth conflict above is resolved",
 	},
 	"gateway_intent_unconfirmed": {
-		Priority:         70,
+		Priority:         440,
 		Severity:         "🟢",
 		PromoteWhen:      []string{"auth_target_gateway_incompatible"},
 		PromotedSeverity: "🔴",
 		PromotedTitle:    "Gateway intent — moot until the auth conflict above is resolved",
 	},
+
+	// Auth
+	"target_auth_method_unknown": {
+		Priority: 510,
+		Severity: "🔴",
+	},
+	"auth_target_gateway_incompatible": {
+		Priority: 520,
+		Severity: "🔴",
+	},
+	"auth_posture_unknown": {
+		Priority: 530,
+		Severity: "🟡",
+	},
+
+	// Schema migration
+	"schema_strategy_invalid": {
+		Priority: 610,
+		Severity: "🔴",
+	},
+	"schema_linking_ineligible": {
+		Priority: 620,
+		Severity: "🔴",
+	},
+	"schema_strategy_unknown": {
+		Priority: 630,
+		Severity: "🟡",
+	},
+	"schema_linking_eligibility_unknown": {
+		Priority: 640,
+		Severity: "🟡",
+	},
+	"schema_state_strategy_mismatch": {
+		Priority: 650,
+		Severity: "🟡",
+	},
+
+	// Cross-cutting fleet / state-file signals
 	"state_file_stale": {
-		Priority: 80,
+		Priority: 910,
 		Severity: "🟡",
 	},
 	"missing_p95_metrics": {
-		Priority: 90,
+		Priority: 920,
 		Severity: "🟡",
 	},
 	"broker_inventory_empty": {
-		Priority: 100,
+		Priority: 930,
 		Severity: "🟡",
 	},
 	"topic_inventory_empty": {
-		Priority: 110,
-		Severity: "🟡",
-	},
-	"auth_posture_unknown": {
-		Priority: 120,
+		Priority: 940,
 		Severity: "🟡",
 	},
 	"acls_not_scanned": {
-		Priority: 130,
+		Priority: 950,
 		Severity: "🟡",
 	},
 }

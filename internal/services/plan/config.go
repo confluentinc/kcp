@@ -26,6 +26,7 @@ type PlanConfig struct {
 
 	EnterpriseCaps    EnterpriseCaps         `yaml:"enterprise_caps"`
 	ClusterLinking    ClusterLinking         `yaml:"cluster_linking"`
+	SchemaLinking     SchemaLinking          `yaml:"schema_linking"`
 	PlanInputDefaults PlanInputDefaults      `yaml:"plan_input_defaults"`
 	AuthMapping       map[string]AuthMapping `yaml:"auth_mapping"`
 	Thresholds        Thresholds             `yaml:"thresholds"`
@@ -104,6 +105,27 @@ type PlanInputDefaults struct {
 
 	// Auth defaults.
 	TargetAuthMethod string `yaml:"target_auth_method"`
+
+	// Schema-migration defaults. Defaults below resolve to
+	// `unknown` so first-run plans always ask the customer to declare
+	// strategy + reachability + CP version/edition rather than silently
+	// picking a path.
+	SchemaStrategy       string `yaml:"schema_strategy"`
+	ConfluentSRCPVersion string `yaml:"confluent_sr_cp_version,omitempty"`
+	ConfluentSRCPEdition string `yaml:"confluent_sr_cp_edition,omitempty"`
+}
+
+// SchemaLinking pins the version + edition floor that source Confluent
+// SR must clear for the Schema Linking path. Customers below these
+// floors get the `defer_to_account_team` verdict (REST API export /
+// import is technically possible but kcp doesn't drive it). The values
+// come from the [Schema Linking on CP docs](https://docs.confluent.io/platform/current/schema-registry/schema-linking-cp.html);
+// last-verified date below tracks when an engineer cross-checked them.
+type SchemaLinking struct {
+	MinCPVersion      string `yaml:"min_cp_version"`
+	RequiresCPEdition string `yaml:"requires_cp_edition"`
+	Source            string `yaml:"source"`
+	LastVerified      string `yaml:"last_verified"`
 }
 
 // LoadPlanConfig returns the embedded plan-config.yaml, optionally
@@ -162,6 +184,18 @@ func (c *PlanConfig) Validate() error {
 	}
 	if defaults.ProjectedPNIGatewayCount < 1 {
 		return fmt.Errorf("plan-config plan_input_defaults.projected_pni_gateway_count must be >= 1 (got %v)", defaults.ProjectedPNIGatewayCount)
+	}
+	if c.SchemaLinking.MinCPVersion == "" {
+		return fmt.Errorf("plan-config schema_linking.min_cp_version must be non-empty")
+	}
+	if c.SchemaLinking.RequiresCPEdition == "" {
+		return fmt.Errorf("plan-config schema_linking.requires_cp_edition must be non-empty")
+	}
+	if c.SchemaLinking.Source == "" {
+		return fmt.Errorf("plan-config schema_linking.source must be non-empty (provenance is mandatory)")
+	}
+	if c.SchemaLinking.LastVerified == "" {
+		return fmt.Errorf("plan-config schema_linking.last_verified must be non-empty (provenance is mandatory)")
 	}
 	if c.Thresholds.StaleStateDays < 1 {
 		return fmt.Errorf("plan-config thresholds.stale_state_days must be >= 1 (got %v)", c.Thresholds.StaleStateDays)

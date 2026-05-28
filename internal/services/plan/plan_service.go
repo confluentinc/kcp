@@ -14,8 +14,8 @@ import (
 )
 
 // PlanService orchestrates the deterministic plan-generation pipeline.
-// MVP scope: source-environment summary, sizing, cluster-type, networking.
-// Auth approach, switchover, red flags, etc. land in follow-up PRs.
+// Each Build step is a pure function so the test surface is the
+// orchestration, not its parts.
 type PlanService struct {
 	cfg *PlanConfig
 	now func() time.Time
@@ -113,6 +113,16 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		plan.OpenQuestions = append(plan.OpenQuestions, detectCutoverOpenQuestions(cutover, inputs, fleetUsesIAM(clusters))...)
 		plan.OpenQuestions = append(plan.OpenQuestions, detectAuthFleetOpenQuestions(inputs)...)
 	}
+	// Schema migration — fleet-wide; one Plan, one verdict. The
+	// `schemaless` branch returns nil so the renderer can omit the
+	// whole section cleanly. We still run the OQ detector either way:
+	// the strategy-typo / strategy-unknown signals are valuable even
+	// when the verdict resolves to no recommendation.
+	schema := DecideSchema(state, s.cfg, inputs)
+	if schema != nil && !HasPath(schema, types.SchemaPathSchemaless) {
+		plan.Schema = schema
+	}
+	plan.OpenQuestions = append(plan.OpenQuestions, detectSchemaOpenQuestions(schema, s.cfg, inputs)...)
 	// Stale-state OQ: surface a fleet-wide accuracy warning when the
 	// source state file is older than the freshness window. The Plan
 	// still renders against whatever's in state.json — but a 14-day-old
