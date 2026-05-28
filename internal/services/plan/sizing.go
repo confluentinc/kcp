@@ -122,7 +122,7 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 
 // normalizePercentile maps the customer's sizing_percentile input
 // (p95 | p99 | max) to the canonical lowercase form. Accepts legacy
-// uppercase variants (`P95`, `P99`) for back-compat with pre-spec
+// uppercase variants (`P95`, `P99`) for back-compat with older
 // inputs, but the canonical surface is lowercase to match Confluent
 // dashboards. Unknown values fall back to "p95".
 func normalizePercentile(s string) string {
