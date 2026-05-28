@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -116,8 +117,11 @@ func NewStateFromFile(stateFile string) (*State, error) {
 
 func NewStateFromBytes(data []byte) (*State, error) {
 	var state State
-	if err := json.Unmarshal(data, &state); err != nil {
-		// Unmarshal failed — the schema may have changed between versions.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
+		// Decode failed — the schema may have changed between versions,
+		// or the file contains unknown fields from a different KCP version.
 		// Try to extract just the version from the raw bytes to give a more
 		// actionable error than a raw JSON type error.
 		var raw struct {
@@ -127,15 +131,15 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				return nil, fmt.Errorf("state file could not be loaded: %v (file was created with KCP version %q, you are running %q — please try loading the state file with KCP version %q or recreating the state file with KCP version %q)", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version, build_info.Version)
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
 			}
-			return nil, fmt.Errorf("state file could not be loaded: %v — please recreate the state file using kcp discover or kcp scan clusters", err)
+			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
 		}
-		return nil, fmt.Errorf("failed to unmarshal state file: %v — please recreate the state file using kcp discover or kcp scan clusters", err)
+		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
 	}
 
 	if state.KcpBuildInfo.Version == "" {
-		slog.Warn("state file has no kcp_build_info.version — this may not be a valid KCP state file")
+		slog.Warn("state file has no kcp_build_info.version, this may not be a valid KCP state file")
 	}
 
 	return &state, nil
