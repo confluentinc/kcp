@@ -68,6 +68,121 @@ func brokerInventoryGap(c types.ProcessedCluster) bool {
 	return len(c.AWSClientInformation.Nodes) == 0
 }
 
+// knownEnum reports whether `value` is one of `valid` (empty value
+// always counts as known — it means "default applies"). Used by enum
+// validators across decisions (downtime_tolerance, target_auth_method)
+// to surface typos as OQs.
+func knownEnum(value string, valid ...string) bool {
+	if value == "" {
+		return true
+	}
+	for _, v := range valid {
+		if value == v {
+			return true
+		}
+	}
+	return false
+}
+
+// Source-auth tokens. Stable strings — these appear in the rendered
+// Plan (AuthDecision.SourceAuths) and key the auth_mapping table in
+// plan-config.yaml. Don't rename without bumping a schema doc.
+const (
+	SourceAuthSCRAM  = "scram"
+	SourceAuthIAM    = "iam"
+	SourceAuthMTLS   = "mtls"
+	SourceAuthUnauth = "unauth"
+)
+
+// sourceAuthsDetected returns the set of auth methods enabled on the
+// source MSK cluster, as a deterministic insertion-order list (IAM,
+// SCRAM, mTLS, Unauth — never alphabetical). Reads pointers from the
+// AWS SDK Cluster struct; a nil pointer or false `Enabled` is treated
+// as "off". Serverless clusters expose a smaller ClientAuthentication
+// shape — handled in a separate branch.
+//
+// Fallback: when the MSK ClientAuthentication block is empty (partial
+// admin scan), consults `KafkaAdminClientInformation.SaslMechanism`
+// from the Kafka Admin probe — a last-resort signal so a discover-side
+// gap doesn't silently leave source auths empty.
+//
+// Multiple auths can be enabled simultaneously; the plan renders all
+// detected source auths and never picks one when more than one is on.
+func sourceAuthsDetected(c types.ProcessedCluster) []string {
+	if isServerless(c) {
+		return serverlessSourceAuths(c)
+	}
+	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
+	var out []string
+	if prov != nil && prov.ClientAuthentication != nil {
+		auth := prov.ClientAuthentication
+		if auth.Sasl != nil {
+			if auth.Sasl.Iam != nil && auth.Sasl.Iam.Enabled != nil && *auth.Sasl.Iam.Enabled {
+				out = append(out, SourceAuthIAM)
+			}
+			if auth.Sasl.Scram != nil && auth.Sasl.Scram.Enabled != nil && *auth.Sasl.Scram.Enabled {
+				out = append(out, SourceAuthSCRAM)
+			}
+		}
+		if auth.Tls != nil && auth.Tls.Enabled != nil && *auth.Tls.Enabled {
+			out = append(out, SourceAuthMTLS)
+		}
+		if auth.Unauthenticated != nil && auth.Unauthenticated.Enabled != nil && *auth.Unauthenticated.Enabled {
+			out = append(out, SourceAuthUnauth)
+		}
+	}
+	if len(out) == 0 {
+		if fallback := authFromSaslMechanism(c.KafkaAdminClientInformation.SaslMechanism); fallback != "" {
+			out = append(out, fallback)
+		}
+	}
+	return out
+}
+
+// authFromSaslMechanism maps the Kafka Admin probe's `sasl_mechanism`
+// field to a source-auth token. Used as a discover-gap fallback when
+// the MSK ClientAuthentication block is empty. Returns "" for
+// unrecognised mechanisms — the caller leaves SourceAuths empty so the
+// auth_posture_unknown OQ still fires.
+func authFromSaslMechanism(mech string) string {
+	switch types.NormalizeSaslMechanism(mech) {
+	case "SCRAM-SHA-256", "SCRAM-SHA-512":
+		return SourceAuthSCRAM
+	case "AWS_MSK_IAM":
+		return SourceAuthIAM
+	case "PLAIN":
+		return SourceAuthUnauth
+	default:
+		return ""
+	}
+}
+
+func serverlessSourceAuths(c types.ProcessedCluster) []string {
+	srv := c.AWSClientInformation.MskClusterConfig.Serverless
+	if srv == nil || srv.ClientAuthentication == nil || srv.ClientAuthentication.Sasl == nil {
+		return nil
+	}
+	if iam := srv.ClientAuthentication.Sasl.Iam; iam != nil && iam.Enabled != nil && *iam.Enabled {
+		return []string{SourceAuthIAM}
+	}
+	return nil
+}
+
+// fleetUsesIAM reports whether any cluster in the processed fleet has
+// IAM enabled on the source side. Drives gateway eligibility —
+// IAM clients cannot connect to the CC Gateway and must pre-migrate
+// to SCRAM or mTLS first.
+func fleetUsesIAM(clusters []types.ProcessedCluster) bool {
+	for _, c := range clusters {
+		for _, auth := range sourceAuthsDetected(c) {
+			if auth == SourceAuthIAM {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // inputsMissing names load-bearing scan signals that weren't available
 // when decisions were computed for this cluster. Returned as a stable,
 // ordered list of short identifiers so downstream consumers can branch
@@ -76,17 +191,16 @@ func brokerInventoryGap(c types.ProcessedCluster) bool {
 // blanket-deferring the cluster — a verdict driven by a customer-
 // declared flag is still valid even when scan signals are missing.
 // Serverless clusters are evaluated against a smaller signal set —
-// `acls` and `brokers` don't apply there. The `!isServerless(c)` guard
-// on the `acls` line is intentional: aclScanRan already returns false
-// for serverless, but the explicit guard suppresses the false-positive
-// in the surfaced list (we don't want to tell the customer "acls
-// missing" for a serverless cluster that never had them).
+// `acls` and `brokers` don't apply there, so the serverless check
+// inlines directly rather than going through aclScanRan (which
+// returns false for serverless AND for nil-on-provisioned, an
+// ambiguity the caller would have to re-disambiguate).
 func inputsMissing(c types.ProcessedCluster) []string {
 	var missing []string
 	if c.KafkaAdminClientInformation.Topics == nil {
 		missing = append(missing, "topics")
 	}
-	if !aclScanRan(c) && !isServerless(c) {
+	if !isServerless(c) && c.KafkaAdminClientInformation.Acls == nil {
 		missing = append(missing, "acls")
 	}
 	if brokerInventoryGap(c) {
