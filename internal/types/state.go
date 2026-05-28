@@ -61,7 +61,7 @@ func NewStateFrom(fromState *State) *State {
 	// Always create with fresh metadata for the current discovery run
 	workingState := &State{
 		KcpBuildInfo: KcpBuildInfo{
-			Version: build_info.Version,
+			Version: build_info.ResolvedVersion(),
 			Commit:  build_info.Commit,
 			Date:    build_info.Date,
 		},
