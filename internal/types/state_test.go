@@ -1213,6 +1213,47 @@ func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	}
 }
 
+func TestNewStateFromBytesStrict_ValidJSONWithVersion_Succeeds(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"}}`)
+	state, err := NewStateFromBytesStrict(data)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if state.KcpBuildInfo.Version != build_info.Version {
+		t.Errorf("expected version %q, got %q", build_info.Version, state.KcpBuildInfo.Version)
+	}
+}
+
+func TestNewStateFromBytesStrict_EmptyVersion_Rejects(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":""}}`)
+	_, err := NewStateFromBytesStrict(data)
+	if err == nil {
+		t.Fatal("expected error for empty kcp_build_info.version, got nil")
+	}
+	if !strings.Contains(err.Error(), "kcp_build_info.version") {
+		t.Errorf("expected error to mention kcp_build_info.version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytesStrict_MissingVersion_Rejects(t *testing.T) {
+	data := []byte(`{}`)
+	_, err := NewStateFromBytesStrict(data)
+	if err == nil {
+		t.Fatal("expected error for missing kcp_build_info.version, got nil")
+	}
+	if !strings.Contains(err.Error(), "kcp_build_info.version") {
+		t.Errorf("expected error to mention kcp_build_info.version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytesStrict_DelegatesSchemaValidation(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"},"unexpected_field":"value"}`)
+	_, err := NewStateFromBytesStrict(data)
+	if err == nil {
+		t.Fatal("expected schema-mismatch error from delegated decoder, got nil")
+	}
+}
+
 func TestFormatQueryDuration(t *testing.T) {
 	tests := []struct {
 		name     string
