@@ -53,6 +53,14 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 		writeSchema(&b, p.Schema, p.Inputs, cfg, section)
 		section++
 	}
+	if p.RedFlags != nil && len(p.RedFlags.Rows) > 0 {
+		writeRedFlags(&b, p.RedFlags, section)
+		section++
+	}
+	if p.EffortSignals != nil && len(p.EffortSignals.Signals) > 0 {
+		writeEffortSignals(&b, p.EffortSignals, section)
+		section++
+	}
 	writeOpenQuestions(&b, p, section)
 	writeSizingAppendix(&b, p, cfg)
 	writeRulesAppendix(&b, p)
@@ -1411,4 +1419,97 @@ func quoteAll(values []string) []string {
 		out = append(out, "`"+v+"`")
 	}
 	return out
+}
+
+// ----- §red flags -----
+
+// writeRedFlags renders the fleet-wide §Red Flags section.
+// Triggered rows lead the section with their evidence; NotTriggered
+// and Unknown rows collapse into a tail summary (count + comma list)
+// so the customer can scan triggered items in one screenful even on
+// a 15-row table.
+func writeRedFlags(b *bytes.Buffer, section *types.RedFlagsSection, n int) {
+	if section == nil || len(section.Rows) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Red Flags\n\n", n)
+	b.WriteString("Items below aren't blockers — they're things to discuss with your Confluent SE. Each row's evidence is the field path + value from the scan so the conversation grounds in scan facts, not inference.\n\n")
+	var triggered, unknown, notTriggered []types.RedFlag
+	for _, r := range section.Rows {
+		switch r.Status {
+		case types.RedFlagTriggered:
+			triggered = append(triggered, r)
+		case types.RedFlagUnknown:
+			unknown = append(unknown, r)
+		default:
+			notTriggered = append(notTriggered, r)
+		}
+	}
+	if len(triggered) > 0 {
+		b.WriteString("### Triggered\n\n")
+		for _, r := range triggered {
+			fmt.Fprintf(b, "- 🔴 **%s**\n", r.Title)
+			if r.Evidence != "" {
+				fmt.Fprintf(b, "  - _Evidence:_ %s\n", r.Evidence)
+			}
+		}
+		b.WriteString("\n")
+	}
+	if len(unknown) > 0 {
+		b.WriteString("### Not scanned (declare in `plan-inputs.yaml` or re-run the scanner)\n\n")
+		for _, r := range unknown {
+			fmt.Fprintf(b, "- ❔ **%s**\n", r.Title)
+			if r.Evidence != "" {
+				fmt.Fprintf(b, "  - _Evidence:_ %s\n", r.Evidence)
+			}
+		}
+		b.WriteString("\n")
+	}
+	if len(notTriggered) > 0 {
+		labels := make([]string, 0, len(notTriggered))
+		for _, r := range notTriggered {
+			labels = append(labels, r.Title)
+		}
+		fmt.Fprintf(b, "_Not triggered (%d): %s._\n\n", len(notTriggered), strings.Join(labels, "; "))
+	}
+}
+
+// ----- §effort signals -----
+
+// writeEffortSignals renders the fleet-wide list of quantitative
+// effort inputs. One bullet per signal; the customer's PM uses these
+// counts (combined with their team's velocity) to scope days of
+// work — kcp doesn't ship a day-count estimate itself.
+func writeEffortSignals(b *bytes.Buffer, section *types.EffortSignalsSection, n int) {
+	if section == nil || len(section.Signals) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Effort Signals\n\n", n)
+	b.WriteString("Quantitative inputs your PM consumes to scope migration effort. kcp doesn't ship a day-count — these counts plus your team's velocity produce the estimate.\n\n")
+	b.WriteString("| Count | Signal |\n")
+	b.WriteString("|---:|---|\n")
+	for _, s := range section.Signals {
+		fmt.Fprintf(b, "| %d | %s |\n", s.Count, s.Label)
+	}
+	b.WriteString("\n")
+	// Notes / caveats below the table — each signal that has a Note
+	// renders one bullet so the reader can scan caveats without
+	// hunting through the table cells.
+	hasNotes := false
+	for _, s := range section.Signals {
+		if s.Note != "" {
+			hasNotes = true
+			break
+		}
+	}
+	if hasNotes {
+		b.WriteString("**Caveats:**\n\n")
+		for _, s := range section.Signals {
+			if s.Note == "" {
+				continue
+			}
+			fmt.Fprintf(b, "- _%s_ — %s\n", s.Label, s.Note)
+		}
+		b.WriteString("\n")
+	}
 }

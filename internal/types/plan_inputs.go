@@ -114,6 +114,39 @@ type PlanInputs struct {
 	// does not include it). Enum: `enterprise` | `community`.
 	ConfluentSRCPEdition *string `yaml:"confluent_sr_cp_edition,omitempty" json:"confluent_sr_cp_edition,omitempty"`
 
+	// ----- red flags -----
+
+	// ExactlyOnceTransactionsInUse declares whether the source has
+	// EOS / Kafka transactions enabled. There is no detectable state
+	// signal for this; customer-only. Default nil = unknown — the
+	// Red Flag row surfaces as "not scanned" rather than firing false.
+	ExactlyOnceTransactionsInUse *bool `yaml:"exactly_once_transactions_in_use,omitempty" json:"exactly_once_transactions_in_use,omitempty"`
+
+	// KafkaStreamsInUse declares whether Kafka Streams apps consume
+	// from the source. The Red Flag detector also runs a
+	// topic-pattern scan (`-changelog` / `-repartition`); this flag
+	// lets the customer affirm even when topic patterns miss.
+	KafkaStreamsInUse *bool `yaml:"kafka_streams_in_use,omitempty" json:"kafka_streams_in_use,omitempty"`
+
+	// ----- tiered storage -----
+
+	// ConsumerHistoryRequirement declares whether downstream consumers
+	// actually need to replay historical (tiered) data. Enum:
+	//   required (default)  → backfill is required; weigh the 3
+	//                         dimensions (mechanism / duration / cost)
+	//   not_required        → real-time-only consumers; defer to the
+	//                         account team for the cascade of
+	//                         per-topic + consumer-offset decisions
+	//   unknown             → customer hasn't decided yet
+	ConsumerHistoryRequirement *string `yaml:"consumer_history_requirement,omitempty" json:"consumer_history_requirement,omitempty"`
+
+	// HistoricalDataStrategy is the customer's preferred path when
+	// tiered-storage backfill IS required. Enum:
+	//   keep_msk_running_until_data_expires
+	//   bulk_load_historical_via_external_tool
+	//   defer_to_account_team   (default for the not_required cascade)
+	HistoricalDataStrategy *string `yaml:"historical_data_strategy,omitempty" json:"historical_data_strategy,omitempty"`
+
 	// Clusters — per-cluster overrides keyed by source cluster name.
 	// Heterogeneous fleets (mixed-SLA, mixed-tier) need finer-grained
 	// inputs than the global flags above; without this, flipping a

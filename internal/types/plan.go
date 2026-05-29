@@ -24,9 +24,28 @@ type Plan struct {
 	// not per-cluster). Nil when the section is omitted — currently the
 	// `schemaless` path (`sr_detected == none` AND
 	// `schema_strategy == no_schemas`).
-	Schema         *SchemaDecision    `json:"schema,omitempty"`
-	SizingAppendix []SizingMathDetail `json:"sizing_appendix"`
-	OpenQuestions  []OpenQuestion     `json:"open_questions,omitempty"`
+	Schema *SchemaDecision `json:"schema,omitempty"`
+	// RedFlags surfaces the boolean trigger rows over the Plan + state
+	// file. Triggered rows are items to discuss with the SE; each row
+	// carries its own evidence (field path + value) so the discussion
+	// is grounded in the scan, not on inference.
+	RedFlags *RedFlagsSection `json:"red_flags,omitempty"`
+	// EffortSignals is the list of quantitative signals the customer's
+	// PM consumes to scope migration effort. Counts only, no
+	// day-estimate.
+	EffortSignals *EffortSignalsSection `json:"effort_signals,omitempty"`
+	// TieredStorage is a per-cluster section describing the
+	// three-dimension trade-off (mechanism / duration / cost direction)
+	// for clusters with MSK tiered storage enabled. Nil when no source
+	// cluster has TIERED storage.
+	TieredStorage *TieredStorageSection `json:"tiered_storage,omitempty"`
+	// CostReconciliation lists MSK clusters that show up in the AWS
+	// cost report but were NOT discovered by `kcp discover`. Sorted by
+	// TotalSpend desc. Nil when cost data is empty or the diff is
+	// clean.
+	CostReconciliation *CostReconciliationSection `json:"cost_reconciliation,omitempty"`
+	SizingAppendix     []SizingMathDetail         `json:"sizing_appendix"`
+	OpenQuestions      []OpenQuestion             `json:"open_questions,omitempty"`
 }
 
 // OpenQuestion is a per-cluster (or plan-level) gap the customer needs
@@ -333,6 +352,16 @@ type PlanInputsResolved struct {
 	SourceSROutboundReachableToCC *bool  `json:"source_sr_outbound_reachable_to_cc,omitempty"`
 	ConfluentSRCPVersion          string `json:"confluent_sr_cp_version,omitempty"`
 	ConfluentSRCPEdition          string `json:"confluent_sr_cp_edition,omitempty"`
+
+	// Red Flags customer flags — nil tri-state.
+	ExactlyOnceTransactionsInUse *bool `json:"exactly_once_transactions_in_use,omitempty"`
+	KafkaStreamsInUse            *bool `json:"kafka_streams_in_use,omitempty"`
+
+	// Tiered Storage knobs. Strings normalized to lowercase tokens by
+	// the resolver; empty means "no preference declared" (treated as
+	// `unknown` by the detector so the section surfaces the OQ).
+	ConsumerHistoryRequirement string `json:"consumer_history_requirement,omitempty"`
+	HistoricalDataStrategy     string `json:"historical_data_strategy,omitempty"`
 }
 
 // ----- cutover -----
@@ -544,4 +573,112 @@ type AuthMappingRow struct {
 	// recommendation comes from.
 	Source       string `json:"source,omitempty"`
 	LastVerified string `json:"last_verified,omitempty"`
+}
+
+// ----- red flags -----
+
+// RedFlagStatus is the tri-state verdict for one Red Flag row:
+//
+//   - `triggered` — the boolean predicate over the state file is true.
+//   - `not_triggered` — the predicate is false and we have enough
+//     scan data to say so with confidence.
+//   - `unknown` — the underlying signal isn't available (scan didn't
+//     run, customer-declared flag wasn't set, etc.). The rendered
+//     Plan surfaces it as "not scanned" rather than silently
+//     defaulting to `not_triggered`.
+type RedFlagStatus string
+
+const (
+	RedFlagTriggered    RedFlagStatus = "triggered"
+	RedFlagNotTriggered RedFlagStatus = "not_triggered"
+	RedFlagUnknown      RedFlagStatus = "unknown"
+)
+
+// RedFlag is one row in §Red Flags. Title is the customer-facing
+// label; Evidence is the field path + value that drove the verdict so
+// the SE-customer discussion can ground in scan facts. ClusterID is
+// populated only for per-cluster rows; fleet-level rows leave it
+// empty.
+type RedFlag struct {
+	ID        string        `json:"id"`
+	Title     string        `json:"title"`
+	Status    RedFlagStatus `json:"status"`
+	Evidence  string        `json:"evidence,omitempty"`
+	ClusterID string        `json:"cluster_id,omitempty"`
+}
+
+// RedFlagsSection is the fleet-wide Red Flags decision output. Rows is
+// the full set evaluated in row order; the renderer leads with
+// triggered rows and collapses not-triggered/unknown into a tail
+// summary.
+type RedFlagsSection struct {
+	Rows []RedFlag `json:"rows"`
+}
+
+// ----- effort signals -----
+
+// EffortSignal is one quantitative input the customer's PM consumes to
+// scope migration effort. Count is the raw integer the signal
+// produced (e.g. number of IAM-auth clients). Note carries any caveat
+// the spec calls out (e.g. MM2 `IdentityReplicationPolicy` undercounts
+// checkpoint topics).
+type EffortSignal struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+	Note  string `json:"note,omitempty"`
+}
+
+// EffortSignalsSection is the fleet-wide list of effort signals.
+type EffortSignalsSection struct {
+	Signals []EffortSignal `json:"signals"`
+}
+
+// ----- tiered storage -----
+
+// TieredStorageCluster is the per-cluster tiered-storage view: which
+// cluster has TIERED storage, the GB volume from CloudWatch
+// (`RemoteLogSizeBytes` average — informational, not the basis for a
+// dollar estimate), and whether the customer's
+// `consumer_history_requirement` indicates the data must be carried
+// forward.
+type TieredStorageCluster struct {
+	ClusterID   string `json:"cluster_id"`
+	StorageMode string `json:"storage_mode"`
+	// RemoteLogSizeBytes is the average from CloudWatch metrics. Zero
+	// when the metric wasn't collected or the cluster doesn't have
+	// tiered data yet.
+	RemoteLogSizeBytes float64 `json:"remote_log_size_bytes,omitempty"`
+}
+
+// TieredStorageSection surfaces the three-dimension trade-off
+// (mechanism / duration / cost direction) for fleets with at least one
+// TIERED-storage cluster. Customer-decision shaped: kcp does not pick
+// a path, it makes the trade-off legible.
+type TieredStorageSection struct {
+	Clusters                   []TieredStorageCluster `json:"clusters"`
+	ConsumerHistoryRequirement string                 `json:"consumer_history_requirement"`
+	HistoricalDataStrategy     string                 `json:"historical_data_strategy"`
+}
+
+// ----- cost reconciliation -----
+
+// HiddenClusterCandidate is one MSK instance type that shows up in the
+// AWS cost report but was NOT discovered by `kcp discover`. Sorted by
+// TotalSpend desc; the customer (FinOps / cloud lead) decides which
+// candidates are real.
+type HiddenClusterCandidate struct {
+	Region         string  `json:"region"`
+	InstanceType   string  `json:"instance_type"`
+	TotalSpend     float64 `json:"total_spend"`
+	MonthsObserved int     `json:"months_observed,omitempty"`
+	DaysObserved   int     `json:"days_observed,omitempty"`
+}
+
+// CostReconciliationSection lists the candidate hidden MSK clusters
+// per region. Nil when cost data is empty or the diff is clean. When
+// cost data IS empty, the section nils and the detector emits an OQ
+// pointing at `kcp report costs`.
+type CostReconciliationSection struct {
+	Candidates []HiddenClusterCandidate `json:"candidates"`
 }

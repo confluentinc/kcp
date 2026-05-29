@@ -123,6 +123,16 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		plan.Schema = schema
 	}
 	plan.OpenQuestions = append(plan.OpenQuestions, detectSchemaOpenQuestions(schema, s.cfg, inputs)...)
+
+	// Red Flags — fleet-wide list of trigger rows the customer should
+	// discuss with the SE. Each row carries its own evidence (field
+	// path + value) so the conversation is grounded in scan facts.
+	plan.RedFlags = DetectRedFlags(state, plan, s.cfg, inputs)
+
+	// Effort Signals — quantitative inputs the customer's PM consumes
+	// to scope migration effort. Counts only; no day-estimate.
+	plan.EffortSignals = DetectEffortSignals(state, plan)
+
 	// Stale-state OQ: surface a fleet-wide accuracy warning when the
 	// source state file is older than the freshness window. The Plan
 	// still renders against whatever's in state.json — but a 14-day-old

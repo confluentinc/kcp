@@ -132,6 +132,20 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	if in.ConfluentSRCPEdition != nil {
 		out.ConfluentSRCPEdition = *in.ConfluentSRCPEdition
 	}
+	if in.ExactlyOnceTransactionsInUse != nil {
+		v := *in.ExactlyOnceTransactionsInUse
+		out.ExactlyOnceTransactionsInUse = &v
+	}
+	if in.KafkaStreamsInUse != nil {
+		v := *in.KafkaStreamsInUse
+		out.KafkaStreamsInUse = &v
+	}
+	if in.ConsumerHistoryRequirement != nil {
+		out.ConsumerHistoryRequirement = *in.ConsumerHistoryRequirement
+	}
+	if in.HistoricalDataStrategy != nil {
+		out.HistoricalDataStrategy = *in.HistoricalDataStrategy
+	}
 	return out
 }
 
