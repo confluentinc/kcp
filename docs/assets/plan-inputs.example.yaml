@@ -3,11 +3,14 @@
 # All fields are optional. Pinned defaults live in plan-config.yaml
 # (embedded in the KCP binary). A missing field falls back to its default.
 #
-# MVP scope:
+# Field groups:
 #   - sizing knobs
 #   - customer-declared hard requirements that force Dedicated
 #   - existing VPC connectivity for the Dedicated networking path
 #   - networking triggers that flip the AWS-Enterprise default from PNI to PrivateLink
+#   - cutover approach + gateway prereqs
+#   - client auth migration (target auth, per-cluster overrides)
+#   - schema migration (strategy + CP/edition/reachability for Schema Linking)
 #
 # Usage:
 #   kcp report plan \
@@ -58,3 +61,43 @@
 #
 # cc_egress_required: false           # true → CC-side workloads need to push traffic back into customer VPCs (PNI doesn't natively support this)
 # projected_pni_gateway_count: 1      # ≥2 → flip to PrivateLink
+
+# ---------------------------------------------------------------------------
+# Cutover approach
+# ---------------------------------------------------------------------------
+# downtime_tolerance drives the cutover style. Pick the value that matches
+# your operational constraint; the Plan maps it 1:1 to a recommended style.
+#   zero                          → Blue/Green (parallel run via Cluster Linking)
+#   seconds_per_service           → Stop-Restart-Repeat — REQUIRES the CC Gateway
+#   minutes_per_service           → Stop-Restart-Repeat — gateway optional
+#   scheduled_window_sequential   → Stop-Wait-Restart (one window, services rolled in sequence)
+#   scheduled_window_all_at_once  → Restart-All-At-Once (one window, every client flips at once)
+#   let_confluent_choose          → Stop-Restart-Repeat (Confluent's recommended default)
+#
+# downtime_tolerance: let_confluent_choose
+# sub_pattern: app-by-app             # app-by-app (default) | topic-by-topic — only used with Stop-Restart-Repeat
+
+# CC Gateway opt-out. Default true follows Confluent's canonical
+# recommendation; set false to use plain Cluster Linking even when eligible.
+# prefer_gateway: true
+
+# Gateway prereq statuses. All three default to `not_started`. Move to
+# `in_progress` to declare intent, `complete` once the prereq is satisfied.
+# The Plan can recommend the canonical gateway-mediated path only when all
+# applicable prereqs are at `in_progress` or `complete` (the IAM prereq is
+# only consulted if IAM is detected on any source cluster).
+#
+# confluent_for_kubernetes_status: not_started   # not_started | in_progress | complete
+# cc_gateway_license_status: not_started         # not_started | in_progress | complete
+# iam_pre_migration_status: not_started          # not_started | in_progress | complete
+
+# ---------------------------------------------------------------------------
+# Client auth migration
+# ---------------------------------------------------------------------------
+# Target auth for ALL source auths detected on every cluster. Leave unset
+# to use the per-source default from the embedded auth_mapping table
+# (SCRAM → API Keys, IAM → API Keys, mTLS → mTLS, Unauth → API Keys).
+# Set when you want a single target enforced across every detected source
+# auth — e.g. consolidating onto OAuth.
+#
+# target_auth_method: ""              # "" (default; per-source mapping) | confluent_cloud_api_keys | mtls | oauth
