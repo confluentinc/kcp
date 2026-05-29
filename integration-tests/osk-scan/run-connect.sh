@@ -40,9 +40,25 @@ if [ $WAIT_TIME -ge $MAX_WAIT ]; then
     exit 1
 fi
 
-# Additional wait for Connect to fully initialize
-echo "Waiting for Connect to fully initialize..."
-sleep 5
+# Wait for the test connector to be registered (created inside the container startup)
+echo "Waiting for test connector to be registered..."
+CONN_WAIT=0
+CONN_MAX=60
+while [ $CONN_WAIT -lt $CONN_MAX ]; do
+    CONN_COUNT=$(curl -s http://localhost:8083/connectors 2>/dev/null | jq 'length // 0' 2>/dev/null || echo 0)
+    if [ "$CONN_COUNT" -gt 0 ]; then
+        echo "Connector registered! ($CONN_COUNT connector(s) found)"
+        break
+    fi
+    sleep 2
+    CONN_WAIT=$((CONN_WAIT + 2))
+done
+
+if [ $CONN_WAIT -ge $CONN_MAX ]; then
+    echo "ERROR: No connectors registered within ${CONN_MAX}s"
+    echo "Connect REST response: $(curl -s http://localhost:8083/connectors 2>/dev/null)"
+    exit 1
+fi
 
 # Create a state file for the test
 STATE="test-state-kafka-connect.json"
