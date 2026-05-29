@@ -1213,6 +1213,82 @@ func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	}
 }
 
+func TestNewStateFromBytes_VPrefixedFileVersionDoesNotFireMismatch(t *testing.T) {
+	saved := build_info.Version
+	build_info.Version = "0.8.1"
+	t.Cleanup(func() { build_info.Version = saved })
+
+	// File version is "v0.8.1" (with prefix, as a go.mod-resolved consumer
+	// would write it), running version after ldflags is "0.8.1" (bare, as
+	// the official Makefile injects). These should be treated as equivalent
+	// — the schema-mismatch error should fire (unknown field) but without
+	// the "you are running …" version-mismatch clause.
+	data := []byte(`{"kcp_build_info":{"version":"v0.8.1"},"unexpected_field":"x"}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
+	}
+	if strings.Contains(err.Error(), "you are running") {
+		t.Errorf("expected simpler error for v-prefix equivalent versions, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytes_GenuineVersionMismatchStillFires(t *testing.T) {
+	saved := build_info.Version
+	build_info.Version = "0.8.1"
+	t.Cleanup(func() { build_info.Version = saved })
+
+	data := []byte(`{"kcp_build_info":{"version":"v0.7.0"},"unexpected_field":"x"}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
+	}
+	if !strings.Contains(err.Error(), "you are running") {
+		t.Errorf("expected version-mismatch error for genuinely different versions, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytesStrict_ValidJSONWithVersion_Succeeds(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"}}`)
+	state, err := NewStateFromBytesStrict(data)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if state.KcpBuildInfo.Version != build_info.Version {
+		t.Errorf("expected version %q, got %q", build_info.Version, state.KcpBuildInfo.Version)
+	}
+}
+
+func TestNewStateFromBytesStrict_EmptyVersion_Rejects(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":""}}`)
+	_, err := NewStateFromBytesStrict(data)
+	if err == nil {
+		t.Fatal("expected error for empty kcp_build_info.version, got nil")
+	}
+	if !strings.Contains(err.Error(), "kcp_build_info.version") {
+		t.Errorf("expected error to mention kcp_build_info.version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytesStrict_MissingVersion_Rejects(t *testing.T) {
+	data := []byte(`{}`)
+	_, err := NewStateFromBytesStrict(data)
+	if err == nil {
+		t.Fatal("expected error for missing kcp_build_info.version, got nil")
+	}
+	if !strings.Contains(err.Error(), "kcp_build_info.version") {
+		t.Errorf("expected error to mention kcp_build_info.version, got: %v", err)
+	}
+}
+
+func TestNewStateFromBytesStrict_DelegatesSchemaValidation(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"},"unexpected_field":"value"}`)
+	_, err := NewStateFromBytesStrict(data)
+	if err == nil {
+		t.Fatal("expected schema-mismatch error from delegated decoder, got nil")
+	}
+}
+
 func TestFormatQueryDuration(t *testing.T) {
 	tests := []struct {
 		name     string

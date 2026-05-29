@@ -2,12 +2,17 @@
 // Date) and small derived helpers (IsDev, DocsURL) that depend on it.
 package build_info
 
-import "strings"
+import (
+	"runtime/debug"
+	"strings"
+)
 
 const (
 	DefaultDevVersion = "0.0.0-localdev"
 
 	docsSiteBase = "https://confluentinc.github.io/kcp"
+
+	kcpModulePath = "github.com/confluentinc/kcp"
 )
 
 // Build information variables - set via ldflags during build
@@ -28,6 +33,50 @@ func IsDev() bool {
 func isDev(v string) bool {
 	v = strings.TrimPrefix(v, "v")
 	return v == "" || v == "dev" || v == DefaultDevVersion
+}
+
+// SameVersion reports whether two kcp version strings refer to the same
+// release. The comparison is whitespace-strict but treats a leading "v"
+// as cosmetic, since the Makefile injects bare semvers ("0.8.1") into
+// the binary while Go's runtime/debug.ReadBuildInfo surfaces module
+// versions in their go.mod form ("v0.8.1"). Without this, an external
+// consumer pinned to v0.8.1 reading a state file stamped 0.8.1 would
+// see a spurious version-mismatch error.
+func SameVersion(a, b string) bool {
+	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
+}
+
+// ResolvedVersion returns the kcp version best identifying the running binary.
+// Official kcp builds set Version via ldflags; for those it simply returns
+// Version. Consumers that import this module as a Go library (where ldflags
+// don't apply) get the kcp version recorded in their own binary's build info —
+// either as the main module (e.g. `go install github.com/confluentinc/kcp`)
+// or as a dependency (e.g. cc-growth-service importing pkg/lib). Falls back
+// to Version (typically DefaultDevVersion) when build info is unavailable.
+func ResolvedVersion() string {
+	info, _ := debug.ReadBuildInfo()
+	return resolveVersion(Version, info)
+}
+
+// resolveVersion is the pure, testable core of ResolvedVersion.
+func resolveVersion(ldflagVersion string, info *debug.BuildInfo) string {
+	if !isDev(ldflagVersion) {
+		return ldflagVersion
+	}
+	if info == nil {
+		return ldflagVersion
+	}
+	if info.Main.Path == kcpModulePath {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	for _, dep := range info.Deps {
+		if dep != nil && dep.Path == kcpModulePath && dep.Version != "" {
+			return dep.Version
+		}
+	}
+	return ldflagVersion
 }
 
 // DocsURL returns the versioned documentation URL matching the running binary.
