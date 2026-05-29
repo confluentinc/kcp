@@ -128,6 +128,26 @@ var oqRegistry = map[string]OQMeta{
 		Severity: "🟡",
 	},
 
+	// Tiered Storage
+	"tiered_consumer_history_invalid": {
+		Priority: 710,
+		Severity: "🔴",
+	},
+	"tiered_historical_strategy_invalid": {
+		Priority: 720,
+		Severity: "🔴",
+	},
+	"tiered_strategy_undeclared": {
+		Priority: 730,
+		Severity: "🟡",
+	},
+
+	// Cost reconciliation
+	"cost_data_not_collected": {
+		Priority: 810,
+		Severity: "🟡",
+	},
+
 	// Cross-cutting fleet / state-file signals
 	"state_file_stale": {
 		Priority: 910,

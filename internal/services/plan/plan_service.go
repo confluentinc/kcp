@@ -133,6 +133,20 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	// to scope migration effort. Counts only; no day-estimate.
 	plan.EffortSignals = DetectEffortSignals(state, plan)
 
+	// Tiered Storage — per-cluster trade-off framing for fleets with
+	// MSK tiered storage enabled. Customer-decision shaped; kcp
+	// doesn't pick a path, just makes the three dimensions
+	// (mechanism / duration / cost direction) legible.
+	plan.TieredStorage = DetectTieredStorage(state, inputs)
+	plan.OpenQuestions = append(plan.OpenQuestions, detectTieredStorageOpenQuestions(plan.TieredStorage, inputs)...)
+
+	// Cost-vs-Inventory Reconciliation — lists MSK instance types in
+	// the AWS cost report that `kcp discover` didn't surface. Sorted
+	// by spend desc; no materiality threshold (the customer judges
+	// what's real). Emits an OQ when cost data is empty.
+	plan.CostReconciliation = DetectCostReconciliation(state)
+	plan.OpenQuestions = append(plan.OpenQuestions, detectCostReconciliationOpenQuestions(state)...)
+
 	// Stale-state OQ: surface a fleet-wide accuracy warning when the
 	// source state file is older than the freshness window. The Plan
 	// still renders against whatever's in state.json — but a 14-day-old

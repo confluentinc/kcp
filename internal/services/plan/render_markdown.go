@@ -61,6 +61,14 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 		writeEffortSignals(&b, p.EffortSignals, section)
 		section++
 	}
+	if p.TieredStorage != nil && len(p.TieredStorage.Clusters) > 0 {
+		writeTieredStorage(&b, p.TieredStorage, section)
+		section++
+	}
+	if p.CostReconciliation != nil && len(p.CostReconciliation.Candidates) > 0 {
+		writeCostReconciliation(&b, p.CostReconciliation, section)
+		section++
+	}
 	writeOpenQuestions(&b, p, section)
 	writeSizingAppendix(&b, p, cfg)
 	writeRulesAppendix(&b, p)
@@ -1512,4 +1520,95 @@ func writeEffortSignals(b *bytes.Buffer, section *types.EffortSignalsSection, n 
 		}
 		b.WriteString("\n")
 	}
+}
+
+// ----- §tiered storage -----
+
+// writeTieredStorage renders the per-cluster tiered-storage view +
+// the three-dimension trade-off table. Customer-decision shaped: no
+// dollar estimate, no recommendation — kcp surfaces the mechanism /
+// duration / cost-direction so the customer (and account team) can
+// decide whether the cold data is worth re-fetching.
+func writeTieredStorage(b *bytes.Buffer, section *types.TieredStorageSection, n int) {
+	if section == nil || len(section.Clusters) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Tiered Storage\n\n", n)
+	b.WriteString("Cluster Linking does **not** carry historical tiered data forward. This section names the three dimensions of the trade-off (mechanism / duration / cost direction) so you can decide whether the cold data is worth re-fetching.\n\n")
+
+	// Per-cluster header
+	b.WriteString("**Clusters with tiered storage enabled:**\n\n")
+	b.WriteString("| Cluster | Storage mode | Remote log size (avg) |\n")
+	b.WriteString("|---|---|---:|\n")
+	for _, c := range section.Clusters {
+		fmt.Fprintf(b, "| %s | `%s` | %s |\n", c.ClusterID, c.StorageMode, formatBytesHuman(c.RemoteLogSizeBytes))
+	}
+	b.WriteString("\n")
+
+	// 3-dimension table
+	b.WriteString("**Three dimensions of the trade-off:**\n\n")
+	b.WriteString("| Dimension | What it is |\n")
+	b.WriteString("|---|---|\n")
+	b.WriteString("| **Mechanism — S3 re-fetch** | Backfilling means re-reading from MSK tiered storage (S3) and re-publishing into CC. Cluster Linking does not carry historical tiered data forward; some external tool (or extended dual-run) re-fetches it. |\n")
+	b.WriteString("| **Duration — backfill time** | Time-to-complete is a function of GB volume and ingest rate. Large historical volumes can take days or weeks to backfill. |\n")
+	b.WriteString("| **Cost direction — backfill $** | S3 GET / data-transfer-out charges on MSK, plus extra CC ingest. kcp does not estimate dollars; pull the AWS unit prices from your account team. |\n")
+	b.WriteString("\n")
+
+	// Customer declarations
+	fmt.Fprintf(b, "- **Consumer history requirement (declared):** `%s`\n", section.ConsumerHistoryRequirement)
+	strategy := section.HistoricalDataStrategy
+	if strategy == "" {
+		strategy = "_undeclared — see §Actions Needed_"
+		fmt.Fprintf(b, "- **Historical data strategy:** %s\n", strategy)
+	} else {
+		fmt.Fprintf(b, "- **Historical data strategy:** `%s`\n", strategy)
+	}
+}
+
+// formatBytesHuman renders a byte count as KB / MB / GB / TB with a
+// single decimal. Returns `_not collected_` when v is zero — the
+// CloudWatch metric was not present in the state file.
+func formatBytesHuman(v float64) string {
+	if v <= 0 {
+		return "_not collected_"
+	}
+	const (
+		kb = 1024.0
+		mb = kb * 1024
+		gb = mb * 1024
+		tb = gb * 1024
+	)
+	switch {
+	case v >= tb:
+		return fmt.Sprintf("%.1f TB", v/tb)
+	case v >= gb:
+		return fmt.Sprintf("%.1f GB", v/gb)
+	case v >= mb:
+		return fmt.Sprintf("%.1f MB", v/mb)
+	default:
+		return fmt.Sprintf("%.1f KB", v/kb)
+	}
+}
+
+// ----- §cost reconciliation -----
+
+// writeCostReconciliation renders the per-region table of MSK
+// instance types billed by AWS but NOT discovered by `kcp discover`.
+// No materiality threshold — the customer (FinOps / cloud lead /
+// platform engineer) decides which candidates are "real" hidden
+// clusters vs. decommissioned-but-still-billed ones.
+func writeCostReconciliation(b *bytes.Buffer, section *types.CostReconciliationSection, n int) {
+	if section == nil || len(section.Candidates) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## %d. Cost vs Inventory Reconciliation\n\n", n)
+	b.WriteString("MSK instance types that show up in the AWS cost report but were NOT discovered by `kcp discover`. Sorted by spend descending — no materiality threshold; the customer (FinOps / cloud lead) decides what's real vs. decommissioned-but-still-billed.\n\n")
+	b.WriteString("| Region | Instance type | Total spend (USD) | Months observed | Days observed |\n")
+	b.WriteString("|---|---|---:|---:|---:|\n")
+	for _, c := range section.Candidates {
+		fmt.Fprintf(b, "| %s | `%s` | $%.2f | %d | %d |\n",
+			c.Region, c.InstanceType, c.TotalSpend, c.MonthsObserved, c.DaysObserved)
+	}
+	b.WriteString("\n")
+	b.WriteString("_Cross-reference each candidate with your AWS console; common causes: a cluster intentionally excluded from `kcp discover` scope, a decommissioned cluster still showing up on the bill, or a cross-account cluster the scanner's IAM role can't see._\n\n")
 }
