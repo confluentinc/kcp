@@ -26,14 +26,14 @@ var (
 func NewReportPlanCmd() *cobra.Command {
 	reportPlanCmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate a deterministic Migration Plan from a kcp state file",
-		Long: "Generate a deterministic Migration Plan from a kcp-state.json produced by `kcp discover` and `kcp scan ...`. " +
-			"The same state file + same plan-inputs + same KCP version produce a byte-identical plan (modulo the `generated_at` timestamp), so the output is auditable.\n\n" +
+		Short: "Generate a Migration Plan to migrate to Confluent Cloud (Experimental / WIP)",
+		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan` (Experimental / WIP). " +
+			"The plan provides technical recommendations on target cluster sizing, networking, authentication, and migration approach for each source cluster, and surfaces open questions to capture your intent so the generated plan fits your use case.\n\n" +
 			"**Output:** writes `plan.md` and/or `plan.json` to `--output-dir` (default `./plan-output`).",
 		Example: `  # Minimal: state file in, plan.md/plan.json out
   kcp report plan --state-file kcp-state.json
 
-  # With customer overrides
+  # With your overrides
   kcp report plan --state-file kcp-state.json --plan-inputs plan-inputs.yaml
 
   # JSON only
@@ -48,17 +48,18 @@ func NewReportPlanCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to the kcp state file written by `kcp discover` + `kcp scan ...`.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan).")
 	reportPlanCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with per-customer overrides. All fields optional.")
+	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides. All fields optional.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "./plan-output", "Directory to write plan.md / plan.json into.")
 	optionalFlags.StringVar(&output, "output", "md,json", "Comma-separated output formats: md, json, or both.")
 	optionalFlags.StringVar(&configPath, "config", "", "Path to a plan-config.yaml override. Embedded config is the default.")
 	reportPlanCmd.Flags().AddFlagSet(optionalFlags)
+	_ = reportPlanCmd.Flags().MarkHidden("config")
 	groups[optionalFlags] = "Optional Flags"
 
 	reportPlanCmd.SetUsageFunc(func(c *cobra.Command) error {
