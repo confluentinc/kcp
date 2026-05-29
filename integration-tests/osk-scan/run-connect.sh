@@ -40,9 +40,25 @@ if [ $WAIT_TIME -ge $MAX_WAIT ]; then
     exit 1
 fi
 
-# Additional wait for Connect to fully initialize
-echo "Waiting for Connect to fully initialize..."
-sleep 5
+# Wait for the test connector to be registered (created inside the container startup)
+echo "Waiting for test connector to be registered..."
+CONN_WAIT=0
+CONN_MAX=60
+while [ $CONN_WAIT -lt $CONN_MAX ]; do
+    CONN_COUNT=$(curl -s http://localhost:8083/connectors 2>/dev/null | jq 'length // 0' 2>/dev/null || echo 0)
+    if [ "$CONN_COUNT" -gt 0 ]; then
+        echo "Connector registered! ($CONN_COUNT connector(s) found)"
+        break
+    fi
+    sleep 2
+    CONN_WAIT=$((CONN_WAIT + 2))
+done
+
+if [ $CONN_WAIT -ge $CONN_MAX ]; then
+    echo "ERROR: No connectors registered within ${CONN_MAX}s"
+    echo "Connect REST response: $(curl -s http://localhost:8083/connectors 2>/dev/null)"
+    exit 1
+fi
 
 # Create a state file for the test
 STATE="test-state-kafka-connect.json"
@@ -80,6 +96,48 @@ if [ "$CONNECTOR_HOST_COUNT" -le 0 ]; then
     echo "ERROR: connectors are present but none have connect_host populated; the UI's per-Connect-host grouping will break"
     exit 1
 fi
+echo ""
+
+# ---- Connect metrics collection via Jolokia ----
+echo ""
+echo "Testing Connect metrics collection via Jolokia..."
+
+# Wait for Jolokia to be ready on the Connect worker
+echo "Waiting for Jolokia on Connect worker (port 8781)..."
+JOLOKIA_WAIT=0
+JOLOKIA_MAX=30
+while [ $JOLOKIA_WAIT -lt $JOLOKIA_MAX ]; do
+    if curl -s http://localhost:8781/jolokia/version > /dev/null 2>&1; then
+        echo "Jolokia is ready on Connect worker!"
+        break
+    fi
+    sleep 2
+    JOLOKIA_WAIT=$((JOLOKIA_WAIT + 2))
+done
+
+if [ $JOLOKIA_WAIT -ge $JOLOKIA_MAX ]; then
+    echo "WARNING: Jolokia not ready on Connect worker within ${JOLOKIA_MAX}s, skipping metrics test"
+else
+    echo "Running: ./kcp scan self-managed-connectors with --metrics jolokia"
+    ./kcp scan self-managed-connectors \
+        --state-file "$STATE" \
+        --connect-rest-url http://localhost:8083 \
+        --cluster-id osk-kafka \
+        --use-unauthenticated \
+        --metrics jolokia \
+        --metrics-duration 30s \
+        --metrics-interval 10s \
+        --credentials-file integration-tests/osk-scan/credentials/connect-jolokia.yaml
+
+    METRICS_COUNT=$(jq '.osk_sources.clusters[0].kafka_admin_client_information.self_managed_connectors.metrics.results | length // 0' "$STATE")
+    echo "  Connect metrics data points: $METRICS_COUNT"
+    if [ "$METRICS_COUNT" -le 0 ]; then
+        echo "ERROR: expected at least one Connect metrics data point, found $METRICS_COUNT"
+        exit 1
+    fi
+    echo "  Connect metrics collection test passed!"
+fi
+
 echo ""
 
 # Clean up Connect (leave base Kafka running for potential other tests)

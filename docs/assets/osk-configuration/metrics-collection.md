@@ -8,6 +8,13 @@ For MSK, `kcp discover` pulls cluster metrics straight from CloudWatch. OSK
 clusters do not have an equivalent metrics surface, so [`kcp scan clusters`](../command-reference/scan/clusters.md)
 supports two collection backends, selected with `--metrics <source>`:
 
+> [!TIP]
+> **Connect cluster metrics**
+>
+> For collecting metrics from Kafka Connect workers (connector count, task
+> throughput, byte rates), see
+> [Connect metrics collection](connect-metrics-collection.md).
+
 | Backend      | Mode                  | Required flags                                                  | Required `osk-credentials.yaml` block |
 | ------------ | --------------------- | --------------------------------------------------------------- | ------------------------------------- |
 | `jolokia`    | Live polling          | `--metrics jolokia` + `--metrics-duration` (`--metrics-interval` optional, default `10s`) | [`jolokia:`](osk-credentials.md) |
@@ -137,6 +144,13 @@ These metric names (`kafka_server_brokertopicmetrics_*`,
 Prometheus JMX Exporter with a standard Kafka configuration. If your exporter
 uses custom relabelling rules that rename these metrics, the queries will return
 empty results.
+
+## Filtering by cluster (Prometheus)
+
+When a single Prometheus instance scrapes multiple Kafka clusters, use
+`filter.labels` in `osk-credentials.yaml` to scope queries to a specific
+cluster. See the [`prometheus` field reference](osk-credentials.md#prometheus--optional-for-historical-metrics)
+for details.
 
 ## Worked examples
 
