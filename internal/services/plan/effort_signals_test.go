@@ -23,12 +23,12 @@ func findSignal(t *testing.T, section *types.EffortSignalsSection, id string) ty
 }
 
 // Signal 1: IAM → SCRAM client count. Counts discovered_clients whose
-// Auth == "AWS_MSK_IAM" across the fleet.
+// Auth == "IAM" across the fleet (matches the scanner-emitted token).
 func TestEffortSignal_IAMClientCount(t *testing.T) {
 	c := redFlagCluster("iam-cluster", "3.5.0", "", "")
 	c.DiscoveredClients = []types.DiscoveredClient{
-		{ClientId: "app-a", Auth: "AWS_MSK_IAM", Topic: "orders"},
-		{ClientId: "app-b", Auth: "AWS_MSK_IAM", Topic: "events"},
+		{ClientId: "app-a", Auth: DiscoveredClientAuthIAM, Topic: "orders"},
+		{ClientId: "app-b", Auth: DiscoveredClientAuthIAM, Topic: "events"},
 		{ClientId: "app-c", Auth: "SASL_SCRAM", Topic: "orders"},
 	}
 	state := wrapClusters(c)

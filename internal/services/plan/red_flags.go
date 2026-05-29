@@ -45,7 +45,7 @@ var broadTopicPatterns = []struct {
 }{
 	{label: "MM2 active replication (`mm2-` prefix)", re: regexp.MustCompile(`^mm2-`)},
 	{label: "MM2 active replication (`.replica` suffix)", re: regexp.MustCompile(`\.replica$`)},
-	{label: "Connect fleet (`-connect-(configs|offsets|status)`)", re: regexp.MustCompile(`-connect-(configs|offsets|status)$`)},
+	{label: "Connect fleet (`connect-(configs|offsets|status)`, with or without a prefix)", re: regexp.MustCompile(`(^|-)connect-(configs|offsets|status)$`)},
 	{label: "Kafka Streams changelog (`-changelog`)", re: regexp.MustCompile(`-changelog$`)},
 	{label: "Kafka Streams repartition (`-repartition`)", re: regexp.MustCompile(`-repartition$`)},
 	{label: "Kafka transactions (`__transaction_state`)", re: regexp.MustCompile(`^__transaction_state$`)},
@@ -110,7 +110,7 @@ func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) typ
 	strategy := inputs.SchemaStrategy
 	if strategy == "" || strategy == SchemaStrategyUnknown {
 		rf.Status = types.RedFlagUnknown
-		rf.Evidence = "`schema_strategy` not yet declared — suppress until the customer chooses an intent"
+		rf.Evidence = "`schema_strategy` not yet declared — set it in `plan-inputs.yaml` to evaluate this row"
 		return rf
 	}
 	if plan.Schema == nil || plan.Schema.Source == types.SchemaSourceNone {
@@ -303,7 +303,7 @@ func evalSelfManagedConnectPresent(clusters []types.ProcessedCluster) types.RedF
 			// nil — scan didn't run. Cross-check topic patterns for
 			// `connect-(configs|offsets|status)` so a stale state file
 			// doesn't suppress a real fleet.
-			if patternHit, _ := topicPatternFound(c, regexp.MustCompile(`-connect-(configs|offsets|status)$`)); patternHit {
+			if patternHit, _ := topicPatternFound(c, regexp.MustCompile(`(^|-)connect-(configs|offsets|status)$`)); patternHit {
 				triggered = append(triggered, c.Name+" (Connect topic pattern detected; SelfManagedConnectors scan didn't run)")
 			} else {
 				unscanned = append(unscanned, c.Name)
@@ -355,6 +355,11 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 // the auth/authz model), but a non-IAM cluster with zero ACLs may be
 // a scan gap — the row fires only when IAM is present AND the
 // ACL-list disambiguation says "actually zero".
+//
+// Delegates the nil-vs-empty disambiguation to `aclScanRan` (see
+// cluster_signals.go) so semantics stay in lockstep with V1 — when
+// `aclScanRan` returns true the scan succeeded; an empty slice in
+// that case is "actually zero", not "scan didn't run".
 func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDZeroACLsWithIAM, Title: "Zero ACLs with IAM auth enabled — verify SE expected behavior"}
 	var hits []string
@@ -369,10 +374,7 @@ func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
 		if !iam {
 			continue
 		}
-		// Reuse aclScanRan's logic: nil ACL slice on PROVISIONED is
-		// ambiguous; treat as zero only when the slice is non-nil and
-		// empty.
-		if c.KafkaAdminClientInformation.Acls != nil && len(c.KafkaAdminClientInformation.Acls) == 0 && !isServerless(c) {
+		if aclScanRan(c) && len(c.KafkaAdminClientInformation.Acls) == 0 {
 			hits = append(hits, c.Name)
 		}
 	}
@@ -462,18 +464,6 @@ func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 	return rf
 }
 
-// clusterStorageMode returns the cluster's StorageMode enum
-// (`LOCAL` / `TIERED` / empty). Helper kept here vs cluster_signals.go
-// because the storage-mode signal is currently only consumed by
-// V2 detectors.
-func clusterStorageMode(c types.ProcessedCluster) kafkatypes.StorageMode {
-	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
-	if prov == nil {
-		return ""
-	}
-	return prov.StorageMode
-}
-
 // ----- Row 13: exactly-once / Kafka transactions in use -----
 
 // No state signal exists for EOS / transactions; returns Unknown
@@ -522,8 +512,14 @@ func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanI
 		rf.Evidence = "Streams topic pattern detected on: " + strings.Join(hits, ", ")
 		return rf
 	}
-	if inputs.KafkaStreamsInUse != nil {
-		rf.Status = types.RedFlagNotTriggered
+	// No topic-pattern hits AND no customer declaration → Unknown,
+	// matching the row-13 EOS shape: there is no state signal that
+	// definitively rules out Streams when topic names use custom
+	// suffixes. Customer declaration of `kafka_streams_in_use: false`
+	// flips this to NotTriggered explicitly.
+	if inputs.KafkaStreamsInUse == nil {
+		rf.Status = types.RedFlagUnknown
+		rf.Evidence = "no state signal — declare `kafka_streams_in_use: true|false` in `plan-inputs.yaml` if you know"
 		return rf
 	}
 	rf.Status = types.RedFlagNotTriggered
@@ -563,29 +559,20 @@ func evalBroadTopicPatternMatch(clusters []types.ProcessedCluster) types.RedFlag
 		if len(hits) == 0 {
 			continue
 		}
-		if len(hits) > 3 {
-			hits = append(hits[:3], fmt.Sprintf("(+%d more)", len(hitsByPattern[p.label])-3))
+		// Take the first 3 into a fresh slice so the "(+N more)"
+		// suffix doesn't clobber the underlying backing array of
+		// hitsByPattern[p.label]. The previous `append(hits[:3], …)`
+		// form was an aliasing trap — single-iteration read meant it
+		// didn't fire in practice today, but future re-reads would
+		// see corrupted lengths.
+		const sample = 3
+		shown := hits
+		if len(hits) > sample {
+			shown = append(append([]string(nil), hits[:sample]...), fmt.Sprintf("(+%d more)", len(hits)-sample))
 		}
-		parts = append(parts, fmt.Sprintf("%s — %s", p.label, strings.Join(hits, ", ")))
+		parts = append(parts, fmt.Sprintf("%s — %s", p.label, strings.Join(shown, ", ")))
 	}
 	rf.Status = types.RedFlagTriggered
 	rf.Evidence = strings.Join(parts, "; ")
 	return rf
-}
-
-// topicPatternFound reports whether any topic on `c` matches `re`,
-// and returns the matched topic name so callers can surface
-// evidence. Topics scan must have populated the Details slice —
-// otherwise the function returns false (the upstream
-// `topic_inventory_empty` OQ already surfaces the gap).
-func topicPatternFound(c types.ProcessedCluster, re *regexp.Regexp) (bool, string) {
-	if c.KafkaAdminClientInformation.Topics == nil {
-		return false, ""
-	}
-	for _, td := range c.KafkaAdminClientInformation.Topics.Details {
-		if re.MatchString(td.Name) {
-			return true, td.Name
-		}
-	}
-	return false, ""
 }

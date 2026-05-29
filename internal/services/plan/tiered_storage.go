@@ -52,15 +52,27 @@ func DetectTieredStorage(state types.ProcessedState, inputs types.PlanInputsReso
 }
 
 // remoteLogSizeBytesOf reads the CloudWatch `RemoteLogSizeBytes`
-// aggregate (Average) for the cluster. Returns 0 when the metric
-// wasn't collected — informational only, not the basis for a dollar
+// peak (Maximum) for the cluster. Returns 0 when the metric wasn't
+// collected — informational only, not the basis for a dollar
 // estimate.
+//
+// Maximum is the right aggregate for a monotonically-accumulating
+// gauge like RemoteLogSize: it surfaces the peak observed footprint,
+// whereas Average over a 30-day window for a fixed 7-day retention
+// would report ~half the real current footprint. Falls back to
+// Average when Maximum isn't populated.
 func remoteLogSizeBytesOf(c types.ProcessedCluster) float64 {
 	agg, ok := c.ClusterMetrics.Aggregates["RemoteLogSizeBytes"]
-	if !ok || agg.Average == nil {
+	if !ok {
 		return 0
 	}
-	return *agg.Average
+	if agg.Maximum != nil {
+		return *agg.Maximum
+	}
+	if agg.Average != nil {
+		return *agg.Average
+	}
+	return 0
 }
 
 // defaultedConsumerHistory normalizes the customer's
@@ -126,10 +138,13 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 			HowToClose: "Set `historical_data_strategy` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
 		})
 	}
-	// Strategy undeclared AND consumer-history requires backfill →
-	// prompt the customer to pick.
+	// Strategy undeclared AND the customer either hasn't expressed a
+	// consumer-history preference OR explicitly said `unknown` →
+	// prompt them to pick. The `not_required` cascade auto-defaults
+	// the strategy to `defer_to_account_team` upstream, so this OQ
+	// stays quiet on that branch.
 	consumerHistory := defaultedConsumerHistory(inputs.ConsumerHistoryRequirement)
-	if section.HistoricalDataStrategy == "" && consumerHistory == ConsumerHistoryRequired {
+	if section.HistoricalDataStrategy == "" && consumerHistory != ConsumerHistoryNotRequired {
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "tiered_strategy_undeclared",
 			Title:      "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",

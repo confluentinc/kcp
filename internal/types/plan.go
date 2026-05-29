@@ -72,11 +72,12 @@ type PlanHeader struct {
 	// for negative-evidence claims like "0 ACLs" in Appendix A2.
 	StateGeneratedAt time.Time `json:"state_generated_at,omitempty"`
 
-	// PlanSchemaVersion is a string while the JSON shape is still
-	// shifting: top-level keys (auth_approach, switchover_approach,
-	// red_flags, …) are landing in follow-up PRs. Hub consumers should
-	// treat "1-experimental" as "additive changes only; renames may
-	// happen". Bumps to "1" once §4 of the design ships in full.
+	// PlanSchemaVersion identifies the JSON shape of the Plan. Stable
+	// at "1" now that the full deterministic decision set ships
+	// (sizing / cluster type / networking / cutover / auth / schema /
+	// red flags / effort signals / tiered storage / cost
+	// reconciliation). Additive top-level keys at this version are
+	// allowed; renames or removals require a version bump.
 	PlanSchemaVersion string `json:"plan_schema_version"`
 }
 

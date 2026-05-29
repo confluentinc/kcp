@@ -1478,48 +1478,104 @@ func writeRedFlags(b *bytes.Buffer, section *types.RedFlagsSection, n int) {
 		for _, r := range notTriggered {
 			labels = append(labels, r.Title)
 		}
-		fmt.Fprintf(b, "_Not triggered (%d): %s._\n\n", len(notTriggered), strings.Join(labels, "; "))
+		// Inline comma list reads fine for short tails; once the
+		// list outgrows the screen (≥ 6 items) hide it behind
+		// <details> so the rendered Plan stays scannable.
+		const inlineThreshold = 5
+		if len(labels) <= inlineThreshold {
+			fmt.Fprintf(b, "_Not triggered (%d): %s._\n\n", len(labels), strings.Join(labels, "; "))
+		} else {
+			fmt.Fprintf(b, "<details><summary><em>Not triggered (%d) — expand</em></summary>\n\n", len(labels))
+			for _, l := range labels {
+				fmt.Fprintf(b, "- %s\n", l)
+			}
+			b.WriteString("\n</details>\n\n")
+		}
 	}
 }
 
 // ----- §effort signals -----
 
 // writeEffortSignals renders the fleet-wide list of quantitative
-// effort inputs. One bullet per signal; the customer's PM uses these
-// counts (combined with their team's velocity) to scope days of
-// work — kcp doesn't ship a day-count estimate itself.
+// effort inputs. The customer's PM uses these counts (combined with
+// their team's velocity) to scope days of work — kcp doesn't ship a
+// day-count estimate itself.
+//
+// Rendering rules:
+//   - When every signal is zero, collapse to a one-liner. The full
+//     table-of-zeros + caveat block was noise — most scenarios hit
+//     that case and the reader's eyes glaze.
+//   - Non-zero counts render in a table; caveats sit inline as
+//     superscript-referenced footnotes only for rows that have them.
+//     Verbose label-repeating bullets dropped.
+//   - Structurally-unobservable zero (e.g. IAM client count when the
+//     client-inventory scan didn't run) renders as `_unknown_`
+//     instead of `0` so the customer doesn't read it as "no work".
 func writeEffortSignals(b *bytes.Buffer, section *types.EffortSignalsSection, n int) {
 	if section == nil || len(section.Signals) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "## %d. Effort Signals\n\n", n)
 	b.WriteString("Quantitative inputs your PM consumes to scope migration effort. kcp doesn't ship a day-count — these counts plus your team's velocity produce the estimate.\n\n")
-	b.WriteString("| Count | Signal |\n")
-	b.WriteString("|---:|---|\n")
+	allZero := true
 	for _, s := range section.Signals {
-		fmt.Fprintf(b, "| %d | %s |\n", s.Count, s.Label)
-	}
-	b.WriteString("\n")
-	// Notes / caveats below the table — each signal that has a Note
-	// renders one bullet so the reader can scan caveats without
-	// hunting through the table cells.
-	hasNotes := false
-	for _, s := range section.Signals {
-		if s.Note != "" {
-			hasNotes = true
+		if s.Count > 0 {
+			allZero = false
 			break
 		}
 	}
-	if hasNotes {
-		b.WriteString("**Caveats:**\n\n")
-		for _, s := range section.Signals {
-			if s.Note == "" {
-				continue
-			}
-			fmt.Fprintf(b, "- _%s_ — %s\n", s.Label, s.Note)
+	if allZero {
+		b.WriteString("_No effort signals triggered — every signal returned zero. (Empty client inventory or pattern-free topic names can also produce zero counts; if you have IAM clients, Connect fleets, or Glue schemas you'd expect to see, re-run the matching `kcp scan ...` subcommand.)_\n\n")
+		return
+	}
+	footnotes := map[int]string{}
+	footnoteFor := map[int]int{}
+	for i, s := range section.Signals {
+		if s.Note == "" {
+			continue
+		}
+		idx := len(footnotes) + 1
+		footnotes[idx] = s.Note
+		footnoteFor[i] = idx
+	}
+	b.WriteString("| Count | Signal |\n")
+	b.WriteString("|---:|---|\n")
+	for i, s := range section.Signals {
+		label := s.Label
+		if idx, ok := footnoteFor[i]; ok {
+			label += effortSignalSuperscript(idx)
+		}
+		fmt.Fprintf(b, "| %s | %s |\n", effortSignalCountCell(s), label)
+	}
+	b.WriteString("\n")
+	if len(footnotes) > 0 {
+		b.WriteString("**Notes:**\n\n")
+		for i := 1; i <= len(footnotes); i++ {
+			fmt.Fprintf(b, "%s %s\n", effortSignalSuperscript(i), footnotes[i])
 		}
 		b.WriteString("\n")
 	}
+}
+
+// effortSignalCountCell renders the count column with `_unknown_`
+// when the underlying signal is structurally unobservable. Currently
+// only the IAM-client-count signal falls into this case — a 0 count
+// there can mean "no IAM clients" or "client-inventory didn't run";
+// the Note column carries the disambiguation.
+func effortSignalCountCell(s types.EffortSignal) string {
+	if s.Count == 0 && s.ID == EffortSignalIDIAMClientCount && strings.Contains(s.Note, "inventory may be incomplete") {
+		return "_unknown_"
+	}
+	return fmt.Sprintf("%d", s.Count)
+}
+
+// effortSignalSuperscript returns the Unicode superscript glyph for
+// n in 1..9. Falls back to `^n` for n > 9.
+func effortSignalSuperscript(n int) string {
+	if n < 1 || n > 9 {
+		return fmt.Sprintf("^%d", n)
+	}
+	return []string{"¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"}[n-1]
 }
 
 // ----- §tiered storage -----
@@ -1538,31 +1594,32 @@ func writeTieredStorage(b *bytes.Buffer, section *types.TieredStorageSection, n 
 
 	// Per-cluster header
 	b.WriteString("**Clusters with tiered storage enabled:**\n\n")
-	b.WriteString("| Cluster | Storage mode | Remote log size (avg) |\n")
+	b.WriteString("| Cluster | Storage mode | Remote log size (peak) |\n")
 	b.WriteString("|---|---|---:|\n")
 	for _, c := range section.Clusters {
 		fmt.Fprintf(b, "| %s | `%s` | %s |\n", c.ClusterID, c.StorageMode, formatBytesHuman(c.RemoteLogSizeBytes))
 	}
 	b.WriteString("\n")
 
-	// 3-dimension table
+	// Three dimensions as a bullet list — matches §Cutover's rhythm.
+	// A 3-row "Dimension / What it is" table was visually heavier
+	// than the content warranted (the rows are a glossary, not a
+	// comparison).
 	b.WriteString("**Three dimensions of the trade-off:**\n\n")
-	b.WriteString("| Dimension | What it is |\n")
-	b.WriteString("|---|---|\n")
-	b.WriteString("| **Mechanism — S3 re-fetch** | Backfilling means re-reading from MSK tiered storage (S3) and re-publishing into CC. Cluster Linking does not carry historical tiered data forward; some external tool (or extended dual-run) re-fetches it. |\n")
-	b.WriteString("| **Duration — backfill time** | Time-to-complete is a function of GB volume and ingest rate. Large historical volumes can take days or weeks to backfill. |\n")
-	b.WriteString("| **Cost direction — backfill $** | S3 GET / data-transfer-out charges on MSK, plus extra CC ingest. kcp does not estimate dollars; pull the AWS unit prices from your account team. |\n")
+	b.WriteString("- **Mechanism — S3 re-fetch.** Backfilling means re-reading from MSK tiered storage (S3) and re-publishing into CC. Cluster Linking does not carry historical tiered data forward; some external tool (or extended dual-run) re-fetches it.\n")
+	b.WriteString("- **Duration — backfill time.** Time-to-complete is a function of GB volume and ingest rate. Large historical volumes can take days or weeks to backfill.\n")
+	b.WriteString("- **Cost direction — backfill $.** S3 GET / data-transfer-out charges on MSK, plus extra CC ingest. kcp does not estimate dollars; pull the AWS unit prices from your account team.\n")
 	b.WriteString("\n")
 
 	// Customer declarations
 	fmt.Fprintf(b, "- **Consumer history requirement (declared):** `%s`\n", section.ConsumerHistoryRequirement)
 	strategy := section.HistoricalDataStrategy
 	if strategy == "" {
-		strategy = "_undeclared — see §Actions Needed_"
-		fmt.Fprintf(b, "- **Historical data strategy:** %s\n", strategy)
+		fmt.Fprintf(b, "- **Historical data strategy:** _undeclared — see §Actions Needed_\n")
 	} else {
 		fmt.Fprintf(b, "- **Historical data strategy:** `%s`\n", strategy)
 	}
+	b.WriteString("\n")
 }
 
 // formatBytesHuman renders a byte count as KB / MB / GB / TB with a
@@ -1603,12 +1660,44 @@ func writeCostReconciliation(b *bytes.Buffer, section *types.CostReconciliationS
 	}
 	fmt.Fprintf(b, "## %d. Cost vs Inventory Reconciliation\n\n", n)
 	b.WriteString("MSK instance types that show up in the AWS cost report but were NOT discovered by `kcp discover`. Sorted by spend descending — no materiality threshold; the customer (FinOps / cloud lead) decides what's real vs. decommissioned-but-still-billed.\n\n")
-	b.WriteString("| Region | Instance type | Total spend (USD) | Months observed | Days observed |\n")
-	b.WriteString("|---|---|---:|---:|---:|\n")
+	b.WriteString("| Region | Instance type | Total spend (USD) | Window (months / days) |\n")
+	b.WriteString("|---|---|---:|---:|\n")
 	for _, c := range section.Candidates {
-		fmt.Fprintf(b, "| %s | `%s` | $%.2f | %d | %d |\n",
-			c.Region, c.InstanceType, c.TotalSpend, c.MonthsObserved, c.DaysObserved)
+		fmt.Fprintf(b, "| %s | `%s` | $%s | %d / %d |\n",
+			c.Region, c.InstanceType, formatUSDWithCommas(c.TotalSpend), c.MonthsObserved, c.DaysObserved)
 	}
 	b.WriteString("\n")
 	b.WriteString("_Cross-reference each candidate with your AWS console; common causes: a cluster intentionally excluded from `kcp discover` scope, a decommissioned cluster still showing up on the bill, or a cross-account cluster the scanner's IAM role can't see._\n\n")
+}
+
+// formatUSDWithCommas renders a dollar amount with thousands
+// separators and 2 decimal places (`1234567.89` → `1,234,567.89`).
+// Keeps amounts in §Cost Reconciliation scannable at a glance.
+func formatUSDWithCommas(v float64) string {
+	whole := int64(v)
+	frac := v - float64(whole)
+	if frac < 0 {
+		frac = -frac
+	}
+	wholeStr := fmt.Sprintf("%d", whole)
+	// Insert commas every 3 digits from the right.
+	if len(wholeStr) > 3 {
+		neg := strings.HasPrefix(wholeStr, "-")
+		if neg {
+			wholeStr = wholeStr[1:]
+		}
+		var grouped []string
+		for i := len(wholeStr); i > 0; i -= 3 {
+			lo := i - 3
+			if lo < 0 {
+				lo = 0
+			}
+			grouped = append([]string{wholeStr[lo:i]}, grouped...)
+		}
+		wholeStr = strings.Join(grouped, ",")
+		if neg {
+			wholeStr = "-" + wholeStr
+		}
+	}
+	return fmt.Sprintf("%s.%02d", wholeStr, int(frac*100+0.5))
 }

@@ -24,12 +24,22 @@ type PlanConfig struct {
 	LastVerified             string `yaml:"last_verified"`
 	KCPVersionAtVerification string `yaml:"kcp_version_at_verification"`
 
-	EnterpriseCaps    EnterpriseCaps         `yaml:"enterprise_caps"`
-	ClusterLinking    ClusterLinking         `yaml:"cluster_linking"`
-	SchemaLinking     SchemaLinking          `yaml:"schema_linking"`
-	PlanInputDefaults PlanInputDefaults      `yaml:"plan_input_defaults"`
-	AuthMapping       map[string]AuthMapping `yaml:"auth_mapping"`
-	Thresholds        Thresholds             `yaml:"thresholds"`
+	EnterpriseCaps     EnterpriseCaps         `yaml:"enterprise_caps"`
+	ClusterLinking     ClusterLinking         `yaml:"cluster_linking"`
+	SchemaLinking      SchemaLinking          `yaml:"schema_linking"`
+	PlanInputDefaults  PlanInputDefaults      `yaml:"plan_input_defaults"`
+	AuthMapping        map[string]AuthMapping `yaml:"auth_mapping"`
+	Thresholds         Thresholds             `yaml:"thresholds"`
+	CostReconciliation CostReconciliationCfg  `yaml:"cost_reconciliation"`
+}
+
+// CostReconciliationCfg pins the AWS Cost Explorer usage-string
+// families that count as MSK broker spend. Today AWS bills MSK
+// under `Kafka.*` and `Express.*`; new broker tiers will land as
+// new family tokens. Admins extend this list when a new tier ships
+// without waiting for a kcp release.
+type CostReconciliationCfg struct {
+	UsageFamilies []string `yaml:"usage_families"`
 }
 
 // Thresholds collects numeric cutoffs that the rule engine and the
@@ -202,6 +212,9 @@ func (c *PlanConfig) Validate() error {
 	}
 	if c.Thresholds.PNIGatewayBreakeven < 1 {
 		return fmt.Errorf("plan-config thresholds.pni_gateway_breakeven must be >= 1 (got %v)", c.Thresholds.PNIGatewayBreakeven)
+	}
+	if len(c.CostReconciliation.UsageFamilies) == 0 {
+		return fmt.Errorf("plan-config cost_reconciliation.usage_families must be non-empty (the cost-explorer parser uses this list to identify MSK broker usage strings)")
 	}
 	// Every auth_mapping entry MUST carry Target + provenance (Source +
 	// LastVerified). The fields exist so the rendered Plan can audit

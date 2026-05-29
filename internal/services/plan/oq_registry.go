@@ -57,6 +57,8 @@ const PriorityUnknown = 1000
 //	400s  — Cutover
 //	500s  — Auth
 //	600s  — Schema
+//	700s  — Tiered Storage
+//	800s  — Cost Reconciliation
 //	900s  — Fleet / state-file (cross-cutting)
 //
 // Within a band, 10-unit spacing leaves room for an inserted OQ to

@@ -9,18 +9,30 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// mskUsageTypePattern parses the AWS Cost Explorer usage strings the
-// MSK service emits. Examples:
+// mskUsageTypeRegex compiles a usage-string regex from the
+// configured `cost_reconciliation.usage_families` list. The shape:
+//
+//	^<REGION_PREFIX>-<FAMILY>.<INSTANCE_OR_TIER>$
+//
+// Examples covered by the default config (`Kafka`, `Express`):
 //
 //	USE1-Kafka.m5.large
 //	APN1-Express.m7g.large
 //	EU-Kafka.kraft.t3.small
+//	USE1-Kafka.Serverless-Hours       (MSK Serverless)
+//	USW2-AZ1-Kafka.m5.large           (AZ-suffixed region prefix)
 //
-// Capture groups: [1] family (Kafka | Express), [2] instance type
-// (m5.large, m7g.large, kraft.t3.small). The leading region prefix
-// (USE1 / APN1 / EU / …) is intentionally not captured — the cost
-// record's own `Region` field is the source of truth for region.
-var mskUsageTypePattern = regexp.MustCompile(`^[A-Z0-9]+-((?:Kafka|Express))\.([a-z0-9.]+)$`)
+// Capture groups: [1] family, [2] instance-type or tier descriptor.
+// The region prefix isn't captured — the cost record's `Region`
+// field is the source of truth.
+func mskUsageTypeRegex(cfg *PlanConfig) *regexp.Regexp {
+	families := cfg.CostReconciliation.UsageFamilies
+	if len(families) == 0 {
+		families = []string{"Kafka", "Express"}
+	}
+	familyAlt := strings.Join(families, "|")
+	return regexp.MustCompile(`^[A-Z0-9-]+?-((?:` + familyAlt + `))\.([A-Za-z0-9.\-]+)$`)
+}
 
 // DetectCostReconciliation produces the per-region diff between MSK
 // instance types in the AWS cost report and instance types that
@@ -28,7 +40,8 @@ var mskUsageTypePattern = regexp.MustCompile(`^[A-Z0-9]+-((?:Kafka|Express))\.([
 // desc; no materiality threshold (the customer decides what's
 // "real"). Returns nil when there are no candidates or no MSK source
 // data — the renderer omits the section in that case.
-func DetectCostReconciliation(state types.ProcessedState) *types.CostReconciliationSection {
+func DetectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *types.CostReconciliationSection {
+	re := mskUsageTypeRegex(cfg)
 	var candidates []types.HiddenClusterCandidate
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
@@ -36,7 +49,7 @@ func DetectCostReconciliation(state types.ProcessedState) *types.CostReconciliat
 		}
 		for _, region := range src.MSKData.Regions {
 			inventory := inventoryInstanceTypes(region)
-			byType := aggregateCostByInstanceType(region.Costs)
+			byType := aggregateCostByInstanceType(region.Costs, re)
 			for instType, agg := range byType {
 				if _, present := inventory[instType]; present {
 					continue
@@ -96,10 +109,10 @@ type costAgg struct {
 	daysObserved   int
 }
 
-func aggregateCostByInstanceType(costs types.ProcessedRegionCosts) map[string]*costAgg {
+func aggregateCostByInstanceType(costs types.ProcessedRegionCosts, re *regexp.Regexp) map[string]*costAgg {
 	out := map[string]*costAgg{}
 	for _, r := range costs.Results {
-		instType := parseMSKInstanceType(r.UsageType)
+		instType := parseMSKInstanceType(r.UsageType, re)
 		if instType == "" {
 			continue
 		}
@@ -133,18 +146,20 @@ func aggregateCostByInstanceType(costs types.ProcessedRegionCosts) map[string]*c
 }
 
 // parseMSKInstanceType extracts the MSK instance type from an AWS
-// Cost Explorer usage string. Returns empty when the string isn't an
-// MSK usage type (Cost Explorer mixes data-transfer / EBS / etc.
-// rows into the MSK service's results — we only care about broker
-// instance rows for the diff).
-func parseMSKInstanceType(usageType string) string {
-	m := mskUsageTypePattern.FindStringSubmatch(usageType)
+// Cost Explorer usage string against a pre-compiled regex (built
+// from `cfg.CostReconciliation.UsageFamilies`). Returns empty when
+// the string isn't an MSK broker usage type — Cost Explorer mixes
+// data-transfer / EBS / etc. rows into the MSK service's results,
+// and only broker rows belong in the diff.
+func parseMSKInstanceType(usageType string, re *regexp.Regexp) string {
+	m := re.FindStringSubmatch(usageType)
 	if m == nil {
 		return ""
 	}
-	// m[1] = Kafka | Express, m[2] = instance type (e.g. m5.large).
-	// The rendered shape ("kafka.m5.large" / "express.m7g.large")
-	// mirrors what BrokerNodeGroupInfo.InstanceType actually carries.
+	// m[1] = family (Kafka | Express | ...), m[2] = instance/tier
+	// (e.g. m5.large, Serverless-Hours). Rendered as
+	// `<lowercase-family>.<m2>` to mirror the shape of
+	// BrokerNodeGroupInfo.InstanceType in the inventory diff.
 	return strings.ToLower(m[1]) + "." + m[2]
 }
 

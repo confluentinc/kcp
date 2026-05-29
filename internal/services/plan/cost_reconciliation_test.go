@@ -23,7 +23,7 @@ func TestParseMSKInstanceType(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
-			assert.Equal(t, c.want, parseMSKInstanceType(c.in))
+			assert.Equal(t, c.want, parseMSKInstanceType(c.in, mskUsageTypeRegex(defaultCfg(t))))
 		})
 	}
 }
@@ -40,7 +40,7 @@ func TestDetectCostReconciliation_DiffSurfacesHiddenType(t *testing.T) {
 			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.75}},
 		},
 	}
-	section := DetectCostReconciliation(state)
+	section := DetectCostReconciliation(state, defaultCfg(t))
 	require.NotNil(t, section)
 	require.Len(t, section.Candidates, 1, "only the hidden type appears as a candidate")
 	assert.Equal(t, "kafka.m7g.large", section.Candidates[0].InstanceType)
@@ -58,7 +58,7 @@ func TestDetectCostReconciliation_SortedByTotalSpendDesc(t *testing.T) {
 			{Start: "2026-04-01", UsageType: "USE1-Express.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.0}},
 		},
 	}
-	section := DetectCostReconciliation(state)
+	section := DetectCostReconciliation(state, defaultCfg(t))
 	require.NotNil(t, section)
 	require.Len(t, section.Candidates, 3)
 	assert.Equal(t, "kafka.m7g.large", section.Candidates[0].InstanceType, "highest-spend first")
@@ -71,7 +71,7 @@ func TestDetectCostReconciliation_SortedByTotalSpendDesc(t *testing.T) {
 func TestDetectCostReconciliation_EmptyCostDataEmitsOQ(t *testing.T) {
 	state := wrapClusters(redFlagCluster("only-known", "3.5.0", "kafka.t3.small", ""))
 	// No cost data attached.
-	assert.Nil(t, DetectCostReconciliation(state))
+	assert.Nil(t, DetectCostReconciliation(state, defaultCfg(t)))
 	oqs := detectCostReconciliationOpenQuestions(state)
 	require.Len(t, oqs, 1)
 	assert.Equal(t, "cost_data_not_collected", oqs[0].ID)
@@ -87,7 +87,7 @@ func TestDetectCostReconciliation_NonBrokerRowsIgnored(t *testing.T) {
 			{Start: "2026-04-01", UsageType: "USE1-EBS:VolumeUsage.gp3", Values: types.ProcessedCostBreakdown{UnblendedCost: 200.0}},
 		},
 	}
-	section := DetectCostReconciliation(state)
+	section := DetectCostReconciliation(state, defaultCfg(t))
 	assert.Nil(t, section, "non-broker rows must not generate candidates")
 }
 
@@ -102,7 +102,7 @@ func TestDetectCostReconciliation_ObservationCounts(t *testing.T) {
 			{Start: "2026-05-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.0}},
 		},
 	}
-	section := DetectCostReconciliation(state)
+	section := DetectCostReconciliation(state, defaultCfg(t))
 	require.NotNil(t, section)
 	require.Len(t, section.Candidates, 1)
 	assert.Equal(t, 2, section.Candidates[0].MonthsObserved, "April + May")

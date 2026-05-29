@@ -54,7 +54,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 			KCPVersion:        build_info.Version,
 			GeneratedAt:       s.now().UTC(),
 			StateGeneratedAt:  state.Timestamp.UTC(),
-			PlanSchemaVersion: "1-experimental",
+			PlanSchemaVersion: "1",
 		},
 		Inputs: inputs,
 	}
@@ -144,7 +144,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	// the AWS cost report that `kcp discover` didn't surface. Sorted
 	// by spend desc; no materiality threshold (the customer judges
 	// what's real). Emits an OQ when cost data is empty.
-	plan.CostReconciliation = DetectCostReconciliation(state)
+	plan.CostReconciliation = DetectCostReconciliation(state, s.cfg)
 	plan.OpenQuestions = append(plan.OpenQuestions, detectCostReconciliationOpenQuestions(state)...)
 
 	// Stale-state OQ: surface a fleet-wide accuracy warning when the

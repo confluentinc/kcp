@@ -42,7 +42,7 @@ func TestPlanServiceBuild_BasicShape(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "Amazon MSK", p.Header.Source)
-	assert.Equal(t, "1-experimental", p.Header.PlanSchemaVersion)
+	assert.Equal(t, "1", p.Header.PlanSchemaVersion)
 	assert.Equal(t, "kcp-state.json", p.Header.StateFilePath)
 	assert.Equal(t, 1, p.SourceEnvironment.TotalRegions)
 	assert.Len(t, p.Sizing, 2)

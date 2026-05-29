@@ -139,3 +139,12 @@ thresholds:
   # recommendation flips from PNI to PrivateLink. 2 = first additional
   # gateway crosses the cost line.
   pni_gateway_breakeven: 2
+
+# Cost-explorer usage-string families that count as MSK broker spend.
+# AWS bills MSK under `Kafka.*` and `Express.*` today; new broker
+# tiers ship as new family tokens. Extend this list when a new tier
+# lands without waiting for a kcp release.
+cost_reconciliation:
+  usage_families:
+    - Kafka
+    - Express
