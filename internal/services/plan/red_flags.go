@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -45,7 +46,7 @@ var broadTopicPatterns = []struct {
 }{
 	{label: "MM2 active replication (`mm2-` prefix)", re: regexp.MustCompile(`^mm2-`)},
 	{label: "MM2 active replication (`.replica` suffix)", re: regexp.MustCompile(`\.replica$`)},
-	{label: "Connect fleet (`connect-(configs|offsets|status)`, with or without a prefix)", re: regexp.MustCompile(`(^|-)connect-(configs|offsets|status)$`)},
+	{label: "Connect fleet (`connect-(configs|offsets|status)`, with or without a prefix)", re: connectInternalTopicPattern},
 	{label: "Kafka Streams changelog (`-changelog`)", re: regexp.MustCompile(`-changelog$`)},
 	{label: "Kafka Streams repartition (`-repartition`)", re: regexp.MustCompile(`-repartition$`)},
 	{label: "Kafka transactions (`__transaction_state`)", re: regexp.MustCompile(`^__transaction_state$`)},
@@ -131,7 +132,12 @@ func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) typ
 func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConfig) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDKafkaVersionBelowCLFloor, Title: "Kafka version below the Cluster Linking floor"}
 	floor := cfg.ClusterLinking.SourceMinKafkaVersion
-	var belowFloor []string
+	type versionHit struct {
+		Cluster string `json:"cluster"`
+		Version string `json:"version"`
+	}
+	var below []versionHit
+	var belowStrs []string
 	var unparseable []string
 	for _, c := range clusters {
 		v := kafkaVersionOf(c)
@@ -140,13 +146,18 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 			continue
 		}
 		if !versionAtLeast(v, floor) {
-			belowFloor = append(belowFloor, fmt.Sprintf("%s=%s", c.Name, v))
+			below = append(below, versionHit{Cluster: c.Name, Version: v})
+			belowStrs = append(belowStrs, fmt.Sprintf("%s=%s", c.Name, v))
 		}
 	}
 	switch {
-	case len(belowFloor) > 0:
+	case len(below) > 0:
 		rf.Status = types.RedFlagTriggered
-		rf.Evidence = fmt.Sprintf("clusters below floor `%s`: %s", floor, strings.Join(belowFloor, ", "))
+		rf.Evidence = fmt.Sprintf("clusters below floor `%s`: %s", floor, strings.Join(belowStrs, ", "))
+		rf.EvidenceFields = map[string]any{
+			"floor":    floor,
+			"clusters": below,
+		}
 	case len(unparseable) > 0:
 		rf.Status = types.RedFlagUnknown
 		rf.Evidence = fmt.Sprintf("kafka_version missing for: %s — re-run `kcp discover`", strings.Join(unparseable, ", "))
@@ -303,7 +314,7 @@ func evalSelfManagedConnectPresent(clusters []types.ProcessedCluster) types.RedF
 			// nil — scan didn't run. Cross-check topic patterns for
 			// `connect-(configs|offsets|status)` so a stale state file
 			// doesn't suppress a real fleet.
-			if patternHit, _ := topicPatternFound(c, regexp.MustCompile(`(^|-)connect-(configs|offsets|status)$`)); patternHit {
+			if patternHit, _ := topicPatternFound(c, connectInternalTopicPattern); patternHit {
 				triggered = append(triggered, c.Name+" (Connect topic pattern detected; SelfManagedConnectors scan didn't run)")
 			} else {
 				unscanned = append(unscanned, c.Name)
@@ -341,8 +352,18 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 		for r := range regions {
 			names = append(names, r)
 		}
+		// Sort: map iteration is randomized in Go, so without this
+		// two consecutive `kcp report plan` runs produce different
+		// evidence-string orderings. Deterministic output is
+		// load-bearing for the "same state file + same plan-inputs
+		// → byte-identical plan" guarantee.
+		sort.Strings(names)
 		rf.Status = types.RedFlagTriggered
 		rf.Evidence = fmt.Sprintf("%d regions: %s", len(regions), strings.Join(names, ", "))
+		rf.EvidenceFields = map[string]any{
+			"region_count": len(names),
+			"regions":      names,
+		}
 		return rf
 	}
 	rf.Status = types.RedFlagNotTriggered
@@ -415,7 +436,12 @@ func evalClientInventoryGap(clusters []types.ProcessedCluster) types.RedFlag {
 
 func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDMSKExpressBrokerTier, Title: "MSK Express broker tier in use"}
-	var hits []string
+	type expressHit struct {
+		Cluster      string `json:"cluster"`
+		InstanceType string `json:"instance_type"`
+	}
+	var hits []expressHit
+	var hitStrs []string
 	for _, c := range clusters {
 		instType := brokerInstanceType(c)
 		if instType == "" {
@@ -423,14 +449,16 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 		}
 		for _, family := range expressInstanceFamilies {
 			if strings.HasPrefix(instType, family) {
-				hits = append(hits, fmt.Sprintf("%s=%s", c.Name, instType))
+				hits = append(hits, expressHit{Cluster: c.Name, InstanceType: instType})
+				hitStrs = append(hitStrs, fmt.Sprintf("%s=%s", c.Name, instType))
 				break
 			}
 		}
 	}
 	if len(hits) > 0 {
 		rf.Status = types.RedFlagTriggered
-		rf.Evidence = "Express tier on: " + strings.Join(hits, ", ")
+		rf.Evidence = "Express tier on: " + strings.Join(hitStrs, ", ")
+		rf.EvidenceFields = map[string]any{"clusters": hits}
 		return rf
 	}
 	rf.Status = types.RedFlagNotTriggered
@@ -458,6 +486,7 @@ func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 	if len(hits) > 0 {
 		rf.Status = types.RedFlagTriggered
 		rf.Evidence = "TIERED on: " + strings.Join(hits, ", ") + " — Cluster Linking does NOT carry historical tiered data forward; see Tiered Storage section"
+		rf.EvidenceFields = map[string]any{"clusters": hits}
 		return rf
 	}
 	rf.Status = types.RedFlagNotTriggered

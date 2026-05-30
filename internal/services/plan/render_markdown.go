@@ -3,6 +3,7 @@ package plan
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -411,19 +412,36 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 		fmt.Fprintf(b, "> ℹ **Cost direction (fleet):** %d clusters land on Dedicated because of state-derived hard-limit rules — i.e. the cluster as scanned hit a cap that Enterprise can't carry. The escalation isn't recoverable by editing `plan-inputs.yaml`; confirm with your Confluent account team that the scanned capacity reflects each cluster's actual workload before committing. Dedicated has a higher monthly cost than Enterprise.\n\n",
 			stateDerivedDedicatedCount)
 	}
+	// First pass: compute each cluster's rationale prose + whether it
+	// has per-cluster extras (InputsMissing, customer-declared cost
+	// callout, SZ tradeoff, spiky note, state-derived cost note).
+	// Clusters WITHOUT extras AND with identical rationale collapse
+	// into one bullet with a cluster-list affix — at 30 clusters with
+	// the same verdict, repeating the same paragraph 30 times was
+	// the §2 reader-hostile bottleneck.
+	type rationaleBucket struct {
+		rationale string
+		clusters  []string
+		order     int
+	}
+	bucketByRationale := map[string]*rationaleBucket{}
+	var bucketOrder []*rationaleBucket
+	standaloneRows := []string{} // pre-formatted bullets for clusters with extras
+
 	for _, s := range p.Sizing {
 		ct := ctByID[s.ClusterID]
 		unit := finalSizeUnit(ct)
 		src := srcByID[s.ClusterID]
 		if s.Degraded {
-			// Metrics-degraded clusters get a symptom-only line here;
-			// the action lives in Actions Needed (so the symptom isn't
-			// duplicated across two surfaces).
+			// Degraded rows always render standalone — the reason
+			// string is per-cluster.
+			var line string
 			if src.IsServerless {
-				fmt.Fprintf(b, "- **%s** — **MSK Serverless source**; broker count is N/A by design and the CloudWatch metrics path differs from Provisioned. Final %s defaults to the SLA floor (%d) until throughput is supplied. See Actions Needed below.\n", s.ClusterID, unit, s.FinalECKU)
+				line = fmt.Sprintf("- **%s** — **MSK Serverless source**; broker count is N/A by design and the CloudWatch metrics path differs from Provisioned. Final %s defaults to the SLA floor (%d) until throughput is supplied. See Actions Needed below.", s.ClusterID, unit, s.FinalECKU)
 			} else {
-				fmt.Fprintf(b, "- **%s** — metrics missing (%s). Final %s defaults to the SLA floor (%d). See Actions Needed below.\n", s.ClusterID, s.DegradedReason, unit, s.FinalECKU)
+				line = fmt.Sprintf("- **%s** — metrics missing (%s). Final %s defaults to the SLA floor (%d). See Actions Needed below.", s.ClusterID, s.DegradedReason, unit, s.FinalECKU)
 			}
+			standaloneRows = append(standaloneRows, line+"\n")
 			continue
 		}
 		var pieces []string
@@ -448,43 +466,60 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 		if n, ok := netByID[s.ClusterID]; ok {
 			pieces = append(pieces, fmt.Sprintf("Networking **%s** — %s", n.Verdict, n.Reason))
 		}
-		fmt.Fprintf(b, "- **%s** — %s.\n", s.ClusterID, strings.Join(pieces, ". "))
+		rationale := strings.Join(pieces, ". ")
+
+		// Compute per-cluster extras (rendered below the bullet).
+		var extras bytes.Buffer
 		if len(s.InputsMissing) > 0 {
-			fmt.Fprintf(b, "  - _Inputs missing: %s — sizing math is provisional until the scan is re-run; the verdict above resolves on the rules that could still evaluate. See Actions Needed below for the next command._\n", strings.Join(s.InputsMissing, ", "))
+			fmt.Fprintf(&extras, "  - _Inputs missing: %s — sizing math is provisional until the scan is re-run; the verdict above resolves on the rules that could still evaluate. See Actions Needed below for the next command._\n", strings.Join(s.InputsMissing, ", "))
 		}
-		// Per-cluster cost callout: only render triggers that didn't
-		// already fire as global (those got the one-time banner up top).
 		perClusterTriggers := filterNonGlobalTriggers(customerDeclaredTriggers, globalCustomerTriggers)
 		if len(perClusterTriggers) > 0 {
-			writeCostCallout(b, perClusterTriggers, calloutPerCluster)
+			writeCostCallout(&extras, perClusterTriggers, calloutPerCluster)
 		}
-		// State-derived Dedicated cost note: when the verdict is
-		// Dedicated and none of the firing rules are customer-declared
-		// (so the customer-callout above didn't fire), surface a
-		// shorter note so the cost direction is visible. Recovery isn't
-		// "flip a flag" here — the fleet's state forced the escalation
-		// — but the cost-direction signal is the same. Suppressed when
-		// the fleet-level banner above already covers it.
 		if !hoistStateDerivedBanner && ct.Verdict == types.ClusterTypeDedicated && len(customerDeclaredTriggers) == 0 && len(ct.Triggers) > 0 {
-			b.WriteString("  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.\n")
+			extras.WriteString("  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.\n")
 		}
-		// Single-Zone resilience tradeoff: skipped when the SZ trigger
-		// fired globally (banner already covered it); otherwise emit
-		// inline so the per-cluster reader sees the failure-domain
-		// note next to the verdict.
 		if ct.Verdict == types.ClusterTypeDedicated && ct.Topology == types.TopologySingleZone && !szIsGlobal(globalCustomerTriggers) {
-			writeSZTradeoff(b, cfg, calloutPerCluster)
+			writeSZTradeoff(&extras, cfg, calloutPerCluster)
 		}
-		// Spiky-workload note (FYI only — sizing already absorbs the spike).
-		// Suppress when sizing landed on the SLA floor: the spike couldn't
-		// have pushed the cluster larger anyway (floor binds first), so
-		// the hint to flip `sizing_percentile: p99` would be misleading.
 		if (s.SpikyIngress || s.SpikyEgress) && s.FinalECKU > s.SLAFloorECKU {
 			absorbed := "Enterprise elasticity absorbs"
 			if ct.Verdict == types.ClusterTypeDedicated {
 				absorbed = "the sized Dedicated capacity absorbs"
 			}
-			fmt.Fprintf(b, "  - _Note: %s. Sizing is P95-based and %s the spike; set `sizing_percentile: p99` in `plan-inputs.yaml` if you'd rather size to the peak._\n", spikyDescription(s), absorbed)
+			fmt.Fprintf(&extras, "  - _Note: %s. Sizing is P95-based and %s the spike; set `sizing_percentile: p99` in `plan-inputs.yaml` if you'd rather size to the peak._\n", spikyDescription(s), absorbed)
+		}
+
+		if extras.Len() > 0 {
+			// Per-cluster extras present — render standalone.
+			standaloneRows = append(standaloneRows, fmt.Sprintf("- **%s** — %s.\n%s", s.ClusterID, rationale, extras.String()))
+			continue
+		}
+		// No extras and identical rationale → bucket.
+		bucket, ok := bucketByRationale[rationale]
+		if !ok {
+			bucket = &rationaleBucket{rationale: rationale, order: len(bucketOrder)}
+			bucketByRationale[rationale] = bucket
+			bucketOrder = append(bucketOrder, bucket)
+		}
+		bucket.clusters = append(bucket.clusters, s.ClusterID)
+	}
+
+	// Render in two passes: (1) standalone rows (in original Sizing
+	// order they appeared), (2) buckets — each bucket rendered once
+	// with its cluster-list lead. Order across (1) + (2) follows the
+	// first-appearance order in Sizing, but for simplicity we render
+	// standalones first then buckets — at fleet scale this preserves
+	// scannability (the special cases lead, then "everything else").
+	for _, row := range standaloneRows {
+		b.WriteString(row)
+	}
+	for _, bucket := range bucketOrder {
+		if len(bucket.clusters) == 1 {
+			fmt.Fprintf(b, "- **%s** — %s.\n", bucket.clusters[0], bucket.rationale)
+		} else {
+			fmt.Fprintf(b, "- **%s** (%d clusters) — %s.\n", strings.Join(bucket.clusters, ", "), len(bucket.clusters), bucket.rationale)
 		}
 	}
 	b.WriteString("\n")
@@ -918,7 +953,9 @@ func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, cfg *PlanConfig, se
 	}
 	writeCutoverAlternatives(b, c.AlternativesShown)
 	writeCutoverPrereqs(b, c.Prereqs)
-	b.WriteString("\n")
+	// (writeCutoverPrereqs already emits a trailing blank line; do
+	// NOT add another one here — the prior extra `\n` produced a
+	// double blank before §4 across every plan.)
 	// Blue/Green is customer-designed — kcp doesn't generate the
 	// orchestration. Promote the runbook hint to its own sub-heading
 	// so the multi-sentence content reads as a separate concern, not
@@ -1090,27 +1127,17 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 	}
 	fmt.Fprintf(b, "## %d. Client Auth Migration\n\n", section)
 	b.WriteString("Per-cluster source→target mapping. Each source-auth method on every cluster maps to a recommended Confluent Cloud auth — the recommendation can be overridden globally via `target_auth_method` or per-cluster via `clusters[<name>].target_auth_method`. The **Works via CC Gateway** column describes whether this auth method *could* flow through the CC Gateway when the gateway path is in use — it's a property of the auth mapping, not a statement about which path §3 picked.\n\n")
-	// Notes column carries non-empty values only on rows where the
-	// auth_mapping row has something specific to say (IAM blocker,
-	// mTLS auth-swap detail, unauth review hint). All-empty notes
-	// across the entire table drop the column entirely.
-	notesUseful := anyNotesPresent(auths)
-	if notesUseful {
-		b.WriteString("| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway | Notes |\n")
-		b.WriteString("|---|---|---|---|---|\n")
-	} else {
-		b.WriteString("| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway |\n")
-		b.WriteString("|---|---|---|---|\n")
-	}
+	// Notes column always renders (`—` placeholder for empty cells)
+	// so the §Auth table has identical column structure across all
+	// plans. Earlier optimization that dropped the column when no
+	// row had a note caused 4-col vs 5-col drift between scenarios
+	// — a customer comparing two plans saw inconsistent layouts.
+	b.WriteString("| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway | Notes |\n")
+	b.WriteString("|---|---|---|---|---|\n")
 	for _, a := range auths {
 		if len(a.TargetMappings) == 0 {
-			if notesUseful {
-				fmt.Fprintf(b, "| %s | _none detected_ | _n/a_ | _n/a_ | _Source auth posture unknown — see Actions Needed._ |\n",
-					escapeMarkdownTableCell(a.ClusterID))
-			} else {
-				fmt.Fprintf(b, "| %s | _none detected_ | _n/a_ | _n/a_ |\n",
-					escapeMarkdownTableCell(a.ClusterID))
-			}
+			fmt.Fprintf(b, "| %s | _none detected_ | _n/a_ | _n/a_ | _Source auth posture unknown — see Actions Needed._ |\n",
+				escapeMarkdownTableCell(a.ClusterID))
 			continue
 		}
 		for i, row := range a.TargetMappings {
@@ -1122,16 +1149,10 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 			if noteCell == "" {
 				noteCell = "—"
 			}
-			if notesUseful {
-				fmt.Fprintf(b, "| %s | `%s` | `%s` | %s | %s |\n",
-					cluster, row.SourceAuth, row.EffectiveTarget,
-					gatewayCompatibleLabel(row.GatewayCompatible, row.TransparentSwap),
-					escapeMarkdownTableCell(noteCell))
-			} else {
-				fmt.Fprintf(b, "| %s | `%s` | `%s` | %s |\n",
-					cluster, row.SourceAuth, row.EffectiveTarget,
-					gatewayCompatibleLabel(row.GatewayCompatible, row.TransparentSwap))
-			}
+			fmt.Fprintf(b, "| %s | `%s` | `%s` | %s | %s |\n",
+				cluster, row.SourceAuth, row.EffectiveTarget,
+				gatewayCompatibleLabel(row.GatewayCompatible, row.TransparentSwap),
+				escapeMarkdownTableCell(noteCell))
 		}
 	}
 	// IAM-transition footnote — when prereq is `complete` and
@@ -1185,20 +1206,6 @@ func writeAuthMappingProvenance(b *bytes.Buffer, auths []types.AuthDecision) {
 		fmt.Fprintf(b, "- `%s` mapping → %s (last verified %s)\n",
 			r.sourceAuth, r.source, r.lastVerified)
 	}
-}
-
-// anyNotesPresent reports whether any auth-mapping row across the
-// fleet has a non-empty Note. Drives the §4 Notes-column drop when
-// nothing in the column would carry information.
-func anyNotesPresent(auths []types.AuthDecision) bool {
-	for _, a := range auths {
-		for _, row := range a.TargetMappings {
-			if strings.TrimSpace(row.Note) != "" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // gatewayCompatibleLabel renders the Gateway-compatible cell.
@@ -1436,14 +1443,14 @@ func quoteAll(values []string) []string {
 // and Unknown rows collapse into a tail summary (count + comma list)
 // so the customer can scan triggered items in one screenful even on
 // a 15-row table.
-func writeRedFlags(b *bytes.Buffer, section *types.RedFlagsSection, n int) {
-	if section == nil || len(section.Rows) == 0 {
+func writeRedFlags(b *bytes.Buffer, rf *types.RedFlagsSection, section int) {
+	if rf == nil || len(rf.Rows) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "## %d. Red Flags\n\n", n)
+	fmt.Fprintf(b, "## %d. Red Flags\n\n", section)
 	b.WriteString("Items below aren't blockers — they're things to discuss with your Confluent SE. Each row's evidence is the field path + value from the scan so the conversation grounds in scan facts, not inference.\n\n")
 	var triggered, unknown, notTriggered []types.RedFlag
-	for _, r := range section.Rows {
+	for _, r := range rf.Rows {
 		switch r.Status {
 		case types.RedFlagTriggered:
 			triggered = append(triggered, r)
@@ -1511,62 +1518,82 @@ func writeRedFlags(b *bytes.Buffer, section *types.RedFlagsSection, n int) {
 //   - Structurally-unobservable zero (e.g. IAM client count when the
 //     client-inventory scan didn't run) renders as `_unknown_`
 //     instead of `0` so the customer doesn't read it as "no work".
-func writeEffortSignals(b *bytes.Buffer, section *types.EffortSignalsSection, n int) {
-	if section == nil || len(section.Signals) == 0 {
+func writeEffortSignals(b *bytes.Buffer, es *types.EffortSignalsSection, section int) {
+	if es == nil || len(es.Signals) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "## %d. Effort Signals\n\n", n)
+	fmt.Fprintf(b, "## %d. Effort Signals\n\n", section)
 	b.WriteString("Quantitative inputs your PM consumes to scope migration effort. kcp doesn't ship a day-count — these counts plus your team's velocity produce the estimate.\n\n")
-	allZero := true
-	for _, s := range section.Signals {
-		if s.Count > 0 {
-			allZero = false
+	// "All-zero" carve-out: only collapse when EVERY signal has a
+	// concrete Count of 0 (the scan ran AND returned zero). A `nil`
+	// Count means "scan didn't run / unobservable" — that's a
+	// surface-worthy state, not a collapse trigger. Without this
+	// carve-out the IAM-unknown signal silently disappeared.
+	allConcreteZero := true
+	for _, s := range es.Signals {
+		if s.Count == nil || *s.Count > 0 {
+			allConcreteZero = false
 			break
 		}
 	}
-	if allZero {
-		b.WriteString("_No effort signals triggered — every signal returned zero. (Empty client inventory or pattern-free topic names can also produce zero counts; if you have IAM clients, Connect fleets, or Glue schemas you'd expect to see, re-run the matching `kcp scan ...` subcommand.)_\n\n")
+	if allConcreteZero {
+		b.WriteString("_No effort signals triggered — every signal returned zero. (Pattern-free topic names can also produce zero counts; if you have IAM clients, Connect fleets, or Glue schemas you'd expect to see, re-run the matching `kcp scan ...` subcommand.)_\n\n")
 		return
 	}
-	footnotes := map[int]string{}
-	footnoteFor := map[int]int{}
-	for i, s := range section.Signals {
+	// Footnote markers are assigned by ROW POSITION, not by "has a
+	// note today". This keeps marker numbers stable across plans
+	// even when some rows are unknown vs zero — a reader comparing
+	// two plans sees the same signal referenced by the same `¹` /
+	// `²` regardless of state. Rows without a note get no marker.
+	footnoteFor := make([]int, len(es.Signals))
+	footnoteForIdx := 0
+	for i, s := range es.Signals {
+		footnoteForIdx++
 		if s.Note == "" {
+			footnoteFor[i] = 0
 			continue
 		}
-		idx := len(footnotes) + 1
-		footnotes[idx] = s.Note
-		footnoteFor[i] = idx
+		footnoteFor[i] = footnoteForIdx
 	}
 	b.WriteString("| Count | Signal |\n")
 	b.WriteString("|---:|---|\n")
-	for i, s := range section.Signals {
+	for i, s := range es.Signals {
 		label := s.Label
-		if idx, ok := footnoteFor[i]; ok {
-			label += effortSignalSuperscript(idx)
+		if footnoteFor[i] > 0 {
+			label += effortSignalSuperscript(footnoteFor[i])
 		}
 		fmt.Fprintf(b, "| %s | %s |\n", effortSignalCountCell(s), label)
 	}
 	b.WriteString("\n")
-	if len(footnotes) > 0 {
+	hasAnyNote := false
+	for _, s := range es.Signals {
+		if s.Note != "" {
+			hasAnyNote = true
+			break
+		}
+	}
+	if hasAnyNote {
 		b.WriteString("**Notes:**\n\n")
-		for i := 1; i <= len(footnotes); i++ {
-			fmt.Fprintf(b, "%s %s\n", effortSignalSuperscript(i), footnotes[i])
+		for i, s := range es.Signals {
+			if s.Note == "" {
+				continue
+			}
+			fmt.Fprintf(b, "%s %s\n", effortSignalSuperscript(footnoteFor[i]), s.Note)
 		}
 		b.WriteString("\n")
 	}
 }
 
-// effortSignalCountCell renders the count column with `_unknown_`
-// when the underlying signal is structurally unobservable. Currently
-// only the IAM-client-count signal falls into this case — a 0 count
-// there can mean "no IAM clients" or "client-inventory didn't run";
-// the Note column carries the disambiguation.
+// effortSignalCountCell renders the count column. `nil` Count is the
+// signal's structurally-unobservable state (the upstream scan didn't
+// run); render it as `_unknown_` so the customer doesn't read it as
+// "no work". Concrete 0 stays as `0` — the scan ran and returned
+// zero hits.
 func effortSignalCountCell(s types.EffortSignal) string {
-	if s.Count == 0 && s.ID == EffortSignalIDIAMClientCount && strings.Contains(s.Note, "inventory may be incomplete") {
+	if s.Count == nil {
 		return "_unknown_"
 	}
-	return fmt.Sprintf("%d", s.Count)
+	return fmt.Sprintf("%d", *s.Count)
 }
 
 // effortSignalSuperscript returns the Unicode superscript glyph for
@@ -1585,19 +1612,26 @@ func effortSignalSuperscript(n int) string {
 // dollar estimate, no recommendation — kcp surfaces the mechanism /
 // duration / cost-direction so the customer (and account team) can
 // decide whether the cold data is worth re-fetching.
-func writeTieredStorage(b *bytes.Buffer, section *types.TieredStorageSection, n int) {
-	if section == nil || len(section.Clusters) == 0 {
+func writeTieredStorage(b *bytes.Buffer, ts *types.TieredStorageSection, section int) {
+	if ts == nil || len(ts.Clusters) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "## %d. Tiered Storage\n\n", n)
+	fmt.Fprintf(b, "## %d. Tiered Storage\n\n", section)
 	b.WriteString("Cluster Linking does **not** carry historical tiered data forward. This section names the three dimensions of the trade-off (mechanism / duration / cost direction) so you can decide whether the cold data is worth re-fetching.\n\n")
 
 	// Per-cluster header
 	b.WriteString("**Clusters with tiered storage enabled:**\n\n")
 	b.WriteString("| Cluster | Storage mode | Remote log size (peak) |\n")
 	b.WriteString("|---|---|---:|\n")
-	for _, c := range section.Clusters {
+	missingMetric := false
+	for _, c := range ts.Clusters {
+		if c.RemoteLogSizeBytes <= 0 {
+			missingMetric = true
+		}
 		fmt.Fprintf(b, "| %s | `%s` | %s |\n", c.ClusterID, c.StorageMode, formatBytesHuman(c.RemoteLogSizeBytes))
+	}
+	if missingMetric {
+		b.WriteString("\n_`_not collected_` means CloudWatch's `RemoteLogSizeBytes` aggregate is absent from the state file's metric window — re-run `kcp discover` with metrics enabled to populate it. The Trade-off framing below applies regardless._\n")
 	}
 	b.WriteString("\n")
 
@@ -1612,8 +1646,8 @@ func writeTieredStorage(b *bytes.Buffer, section *types.TieredStorageSection, n 
 	b.WriteString("\n")
 
 	// Customer declarations
-	fmt.Fprintf(b, "- **Consumer history requirement (declared):** `%s`\n", section.ConsumerHistoryRequirement)
-	strategy := section.HistoricalDataStrategy
+	fmt.Fprintf(b, "- **Consumer history requirement (declared):** `%s`\n", ts.ConsumerHistoryRequirement)
+	strategy := ts.HistoricalDataStrategy
 	if strategy == "" {
 		fmt.Fprintf(b, "- **Historical data strategy:** _undeclared — see §Actions Needed_\n")
 	} else {
@@ -1654,15 +1688,15 @@ func formatBytesHuman(v float64) string {
 // No materiality threshold — the customer (FinOps / cloud lead /
 // platform engineer) decides which candidates are "real" hidden
 // clusters vs. decommissioned-but-still-billed ones.
-func writeCostReconciliation(b *bytes.Buffer, section *types.CostReconciliationSection, n int) {
-	if section == nil || len(section.Candidates) == 0 {
+func writeCostReconciliation(b *bytes.Buffer, cr *types.CostReconciliationSection, section int) {
+	if cr == nil || len(cr.Candidates) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "## %d. Cost vs Inventory Reconciliation\n\n", n)
+	fmt.Fprintf(b, "## %d. Cost vs Inventory Reconciliation\n\n", section)
 	b.WriteString("MSK instance types that show up in the AWS cost report but were NOT discovered by `kcp discover`. Sorted by spend descending — no materiality threshold; the customer (FinOps / cloud lead) decides what's real vs. decommissioned-but-still-billed.\n\n")
-	b.WriteString("| Region | Instance type | Total spend (USD) | Window (months / days) |\n")
+	b.WriteString("| Region | Instance type | Total spend (USD) | Billing window (months observed / days observed) |\n")
 	b.WriteString("|---|---|---:|---:|\n")
-	for _, c := range section.Candidates {
+	for _, c := range cr.Candidates {
 		fmt.Fprintf(b, "| %s | `%s` | $%s | %d / %d |\n",
 			c.Region, c.InstanceType, formatUSDWithCommas(c.TotalSpend), c.MonthsObserved, c.DaysObserved)
 	}
@@ -1673,19 +1707,29 @@ func writeCostReconciliation(b *bytes.Buffer, section *types.CostReconciliationS
 // formatUSDWithCommas renders a dollar amount with thousands
 // separators and 2 decimal places (`1234567.89` → `1,234,567.89`).
 // Keeps amounts in §Cost Reconciliation scannable at a glance.
+//
+// Two non-obvious cases the old implementation got wrong:
+//   - **Negative values in (-1, 0)** (e.g. AWS credit of $-0.99):
+//     `int64(-0.99) == 0` and `"0"` has len ≤ 3, so the
+//     neg-prefix branch was skipped. Tracking `neg` from the float
+//     itself fixes this.
+//   - **Fractional carry** (e.g. `v = 1.999`): rounding the fraction
+//     separately to `100` cents produced `"1.100"`. Rounding the
+//     whole value with `math.Round(v*100)` first, then splitting
+//     into whole + cents, avoids the carry hole.
 func formatUSDWithCommas(v float64) string {
-	whole := int64(v)
-	frac := v - float64(whole)
-	if frac < 0 {
-		frac = -frac
+	neg := v < 0
+	abs := v
+	if neg {
+		abs = -abs
 	}
+	cents := int64(math.Round(abs * 100))
+	whole := cents / 100
+	frac := cents % 100
 	wholeStr := fmt.Sprintf("%d", whole)
-	// Insert commas every 3 digits from the right.
+	// Insert commas every 3 digits from the right when the whole part
+	// is large enough to need them.
 	if len(wholeStr) > 3 {
-		neg := strings.HasPrefix(wholeStr, "-")
-		if neg {
-			wholeStr = wholeStr[1:]
-		}
 		var grouped []string
 		for i := len(wholeStr); i > 0; i -= 3 {
 			lo := i - 3
@@ -1695,9 +1739,9 @@ func formatUSDWithCommas(v float64) string {
 			grouped = append([]string{wholeStr[lo:i]}, grouped...)
 		}
 		wholeStr = strings.Join(grouped, ",")
-		if neg {
-			wholeStr = "-" + wholeStr
-		}
 	}
-	return fmt.Sprintf("%s.%02d", wholeStr, int(frac*100+0.5))
+	if neg {
+		wholeStr = "-" + wholeStr
+	}
+	return fmt.Sprintf("%s.%02d", wholeStr, frac)
 }

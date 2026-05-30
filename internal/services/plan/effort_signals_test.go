@@ -34,7 +34,8 @@ func TestEffortSignal_IAMClientCount(t *testing.T) {
 	state := wrapClusters(c)
 	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
 	sig := findSignal(t, plan.EffortSignals, EffortSignalIDIAMClientCount)
-	assert.Equal(t, 2, sig.Count, "two IAM-auth clients, one SCRAM client")
+	require.NotNil(t, sig.Count)
+	assert.Equal(t, 2, *sig.Count, "two IAM-auth clients, one SCRAM client")
 }
 
 // Signal 2: MM2 checkpoint topics. Matches `*.checkpoints.internal`.
@@ -48,7 +49,8 @@ func TestEffortSignal_MM2CheckpointTopics(t *testing.T) {
 	state := wrapClusters(c)
 	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
 	sig := findSignal(t, plan.EffortSignals, EffortSignalIDMM2CheckpointTopics)
-	assert.Equal(t, 2, sig.Count)
+	require.NotNil(t, sig.Count)
+	assert.Equal(t, 2, *sig.Count)
 	assert.Contains(t, sig.Note, "IdentityReplicationPolicy")
 }
 
@@ -69,7 +71,8 @@ func TestEffortSignal_SelfManagedConnectFleets(t *testing.T) {
 	}}
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
 	sig := findSignal(t, plan.EffortSignals, EffortSignalIDSelfManagedConnectFleets)
-	assert.Equal(t, 2, sig.Count, "fleet A + fleet B; fleet C has only configs")
+	require.NotNil(t, sig.Count)
+	assert.Equal(t, 2, *sig.Count, "fleet A + fleet B; fleet C has only configs")
 }
 
 // Signal 4: Glue → CC SR client serializer migration count. Counts
@@ -95,7 +98,8 @@ func TestEffortSignal_GlueSerializerMigration(t *testing.T) {
 	}
 	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
 	sig := findSignal(t, plan.EffortSignals, EffortSignalIDGlueSerializerMigration)
-	assert.Equal(t, 2, sig.Count)
+	require.NotNil(t, sig.Count)
+	assert.Equal(t, 2, *sig.Count)
 }
 
 // Glue absent → signal still surfaces but with count 0 and an
@@ -104,12 +108,13 @@ func TestEffortSignal_GlueAbsent_ZeroWithNote(t *testing.T) {
 	state := wrapClusters(redFlagCluster("plain-cluster", "3.5.0", "", ""))
 	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
 	sig := findSignal(t, plan.EffortSignals, EffortSignalIDGlueSerializerMigration)
-	assert.Equal(t, 0, sig.Count)
+	require.NotNil(t, sig.Count)
+	assert.Equal(t, 0, *sig.Count)
 	assert.Contains(t, sig.Note, "no Glue Schema Registry detected")
 }
 
 // DetectEffortSignals returns nil on an empty fleet so the renderer
 // omits §Effort Signals.
 func TestDetectEffortSignals_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, DetectEffortSignals(types.ProcessedState{}, &types.Plan{}))
+	assert.Nil(t, DetectEffortSignals(types.ProcessedState{}))
 }

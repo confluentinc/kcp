@@ -12,14 +12,44 @@ import (
 // truth — multiple files inferring "what does a Connect fleet topic
 // look like?" is the kind of drift that bit V2 review round 1.
 
-// Connect internal topic. Captures `(prefix, full-suffix, suffix-kind)`
-// where prefix may be empty (vanilla Connect deployment uses
-// `connect-configs` / `-offsets` / `-status` without a prefix). The
-// effort-signals counter groups by (cluster, prefix); the red-flags
-// detector uses the same regex for the row-7 cross-check, and the
-// row-15 broad-pattern scan re-uses it via the broadTopicPatterns
-// table.
-var connectInternalTopicPattern = regexp.MustCompile(`^(.*?)(connect-(configs|offsets|status))$`)
+// Connect internal topic — boundary-required form. The leading
+// `(^|-)` anchor stops a topic like "disconnect-configs" from
+// matching while still permitting both an empty prefix
+// (`connect-configs`) and any dash-suffixed prefix
+// (`team-a-connect-configs`). Used by the red-flags row 7
+// cross-check, the row-15 broad-pattern scan, and the
+// effort-signals self-managed Connect fleet counter.
+//
+// Capture groups in this anchored form:
+//
+//	[1] = "" or "-" (the boundary that matched)
+//	[2] = the kind suffix (configs | offsets | status)
+//
+// Use `connectInternalTopicPrefix(topic)` (below) to extract the
+// fleet prefix — it folds out the boundary character so callers
+// don't have to.
+var connectInternalTopicPattern = regexp.MustCompile(`(?:^|-)connect-(configs|offsets|status)$`)
+
+// connectInternalTopicPrefix returns the fleet prefix portion of a
+// Connect internal topic name plus the kind suffix
+// (configs|offsets|status), or ("", "", false) when the name doesn't
+// match. The prefix is what precedes `-connect-…` (empty for the
+// unprefixed default case). Callers use the prefix to group topics
+// into fleets without re-implementing the regex.
+func connectInternalTopicPrefix(topic string) (prefix, kind string, ok bool) {
+	m := connectInternalTopicPattern.FindStringSubmatchIndex(topic)
+	if m == nil {
+		return "", "", false
+	}
+	// m[0] = match start, m[2..3] = group 1 (configs|offsets|status).
+	// The fleet prefix is everything before the match start; when the
+	// match starts at offset 0, the prefix is empty.
+	if m[0] > 0 {
+		prefix = topic[:m[0]]
+	}
+	kind = topic[m[2]:m[3]]
+	return prefix, kind, true
+}
 
 // MM2 checkpoint topic. `<source-alias>.checkpoints.internal` is the
 // MM2 default naming convention; deployments using

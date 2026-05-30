@@ -20,7 +20,7 @@ const (
 //
 // Returns nil when there are no MSK clusters to evaluate (renderer
 // omits the section).
-func DetectEffortSignals(state types.ProcessedState, plan *types.Plan) *types.EffortSignalsSection {
+func DetectEffortSignals(state types.ProcessedState) *types.EffortSignalsSection {
 	clusters := collectMSKClusters(state)
 	if len(clusters) == 0 {
 		return nil
@@ -33,6 +33,11 @@ func DetectEffortSignals(state types.ProcessedState, plan *types.Plan) *types.Ef
 	}
 	return &types.EffortSignalsSection{Signals: signals}
 }
+
+// intPtr is a tiny constructor for Effort-Signal Counts. nil means
+// "unobservable" (e.g. client-inventory scan didn't run); a pointer
+// to 0 means "scan ran, returned zero".
+func intPtr(n int) *int { return &n }
 
 // ----- Signal 1: IAM → SCRAM workstream size -----
 
@@ -47,8 +52,17 @@ func DetectEffortSignals(state types.ProcessedState, plan *types.Plan) *types.Ef
 // that constant resolves to "SASL/IAM" and would silently mismatch
 // every real state file.
 func signalIAMClientCount(clusters []types.ProcessedCluster) types.EffortSignal {
+	// Distinguish "scan ran, found 0 IAM clients" from "scan didn't
+	// run at all": if no cluster has any discovered_clients populated,
+	// the count is structurally unobservable → return nil. Otherwise
+	// the count is concrete (including 0 if every detected client
+	// uses non-IAM auth).
+	scanRan := false
 	count := 0
 	for _, c := range clusters {
+		if len(c.DiscoveredClients) > 0 {
+			scanRan = true
+		}
 		for _, dc := range c.DiscoveredClients {
 			if dc.Auth == DiscoveredClientAuthIAM {
 				count++
@@ -58,10 +72,14 @@ func signalIAMClientCount(clusters []types.ProcessedCluster) types.EffortSignal 
 	sig := types.EffortSignal{
 		ID:    EffortSignalIDIAMClientCount,
 		Label: "IAM → SCRAM workstream size — clients that need re-credentialing before the CC Gateway path",
-		Count: count,
 	}
+	if !scanRan {
+		sig.Note = "`kcp scan client-inventory` hasn't been run on any cluster (see §Red Flags → \"Client inventory not populated\") — re-run it to enumerate IAM clients before the CC Gateway path is scoped"
+		return sig
+	}
+	sig.Count = intPtr(count)
 	if count == 0 {
-		sig.Note = "no clients with `IAM` auth detected by `kcp scan client-inventory`; if you have IAM clients, the inventory may be incomplete or hasn't been run"
+		sig.Note = "scan returned zero clients with `IAM` auth"
 	}
 	return sig
 }
@@ -92,7 +110,7 @@ func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) types.EffortSi
 	sig := types.EffortSignal{
 		ID:    EffortSignalIDMM2CheckpointTopics,
 		Label: "MirrorMaker 2 checkpoint topics — replication fleets to enumerate",
-		Count: count,
+		Count: intPtr(count),
 		Note:  "Counts topics matching `*.checkpoints.internal`. MM2 deployments using `IdentityReplicationPolicy` (Confluent-recommended best practice) suppress the prefix entirely and won't be counted here; cross-check with consumer-group naming patterns.",
 	}
 	return sig
@@ -119,16 +137,19 @@ func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) types.Eff
 			continue
 		}
 		for _, td := range c.KafkaAdminClientInformation.Topics.Details {
-			m := connectInternalTopicPattern.FindStringSubmatch(td.Name)
-			if m == nil {
+			prefix, kind, ok := connectInternalTopicPrefix(td.Name)
+			if !ok {
 				continue
 			}
-			key := fleetKey{cluster: c.Name, prefix: m[1]}
-			suffix := m[3] // configs | offsets | status
-			if _, ok := prefixSuffixes[key]; !ok {
+			// Strip the trailing `-` from non-empty prefixes so
+			// `team-a-connect-configs` and `team-a-` group identically
+			// regardless of which boundary char the regex captured.
+			prefix = strings.TrimSuffix(prefix, "-")
+			key := fleetKey{cluster: c.Name, prefix: prefix}
+			if _, exists := prefixSuffixes[key]; !exists {
 				prefixSuffixes[key] = map[string]struct{}{}
 			}
-			prefixSuffixes[key][suffix] = struct{}{}
+			prefixSuffixes[key][kind] = struct{}{}
 		}
 	}
 	fleetsByTopic := 0
@@ -162,7 +183,7 @@ func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) types.Eff
 	return types.EffortSignal{
 		ID:    EffortSignalIDSelfManagedConnectFleets,
 		Label: "Self-managed Connect fleets — review surface area beyond what kcp can describe",
-		Count: count,
+		Count: intPtr(count),
 		Note:  "Counts distinct `(cluster, prefix)` pairs with `connect-configs` AND `connect-status` topics (the two-of-three triad). Cross-references with `kcp scan self-managed-connectors` output (counted as connectors, not fleets) and surfaces whichever is larger — treat the count as a rough floor. Fleets with entirely custom internal-topic naming may not be counted.",
 	}
 }
@@ -181,7 +202,7 @@ func signalGlueSerializerMigration(state types.ProcessedState, clusters []types.
 		Label: "Glue → CC SR client serializer migration size — clients that need `AWSKafkaAvroSerializer` → `KafkaAvroSerializer`",
 	}
 	if state.SchemaRegistries == nil || len(state.SchemaRegistries.AWSGlue) == 0 {
-		sig.Count = 0
+		sig.Count = intPtr(0)
 		sig.Note = "no Glue Schema Registry detected; signal not applicable"
 		return sig
 	}
@@ -193,16 +214,30 @@ func signalGlueSerializerMigration(state types.ProcessedState, clusters []types.
 			glueSubjects[gs.SchemaName] = struct{}{}
 		}
 	}
-	count := 0
+	// De-dupe by ClientId so one app producing/consuming N Glue-backed
+	// topics counts as a single workstream, not N. The label is "clients
+	// that need re-serializing" — one client app re-builds its
+	// serializer once regardless of how many topics it touches. Fall
+	// back to the ClientId+Role+Principal composite when ClientId is
+	// empty (rare).
+	seen := map[string]struct{}{}
 	for _, c := range clusters {
 		for _, dc := range c.DiscoveredClients {
-			if matchesGlueSubject(dc.Topic, glueSubjects) {
-				count++
+			if !matchesGlueSubject(dc.Topic, glueSubjects) {
+				continue
 			}
+			key := dc.ClientId
+			if key == "" {
+				key = dc.CompositeKey
+			}
+			if key == "" {
+				key = dc.Principal
+			}
+			seen[key] = struct{}{}
 		}
 	}
-	sig.Count = count
-	sig.Note = "Cross-references `discovered_clients[].topic` against Glue `schema_name` (direct match + standard `-value` / `-key` subject suffix variants). Custom subject-name strategies may not match."
+	sig.Count = intPtr(len(seen))
+	sig.Note = "Cross-references `discovered_clients[].topic` against Glue `schema_name` (direct match + standard `-value` / `-key` subject suffix variants); de-duped by `ClientId` so one app touching N Glue topics counts as 1. Custom subject-name strategies may not match."
 	return sig
 }
 

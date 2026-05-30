@@ -131,7 +131,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 
 	// Effort Signals — quantitative inputs the customer's PM consumes
 	// to scope migration effort. Counts only; no day-estimate.
-	plan.EffortSignals = DetectEffortSignals(state, plan)
+	plan.EffortSignals = DetectEffortSignals(state)
 
 	// Tiered Storage — per-cluster trade-off framing for fleets with
 	// MSK tiered storage enabled. Customer-decision shaped; kcp

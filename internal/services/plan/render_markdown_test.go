@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -394,4 +395,28 @@ func TestDetectGlobalCustomerTriggers_PartialFireKeepsInline(t *testing.T) {
 	assert.Equal(t, 0, bannerCount, "partial fire (2 of 3) must NOT collapse to a global banner")
 	assert.Equal(t, 2, perClusterCount, "each firing cluster must keep its inline cost callout when scope is partial")
 	assert.Equal(t, 2, szTradeoffCount, "each SZ cluster must keep its inline resilience tradeoff when scope is partial")
+}
+
+// formatUSDWithCommas handles the edge cases that broke the prior
+// implementation: small-magnitude negatives losing their sign, and
+// fractional carry on values just below an integer boundary.
+func TestFormatUSDWithCommas(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0.00"},
+		{0.5, "0.50"},
+		{1.999, "2.00"},      // fractional carry
+		{-0.99, "-0.99"},     // small-magnitude negative kept its sign
+		{1234.5, "1,234.50"}, // thousands separator
+		{1234567.89, "1,234,567.89"},
+		{-1234567.89, "-1,234,567.89"},
+		{1795.75, "1,795.75"}, // the canonical §Cost Reconciliation amount
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%v", c.in), func(t *testing.T) {
+			assert.Equal(t, c.want, formatUSDWithCommas(c.in))
+		})
+	}
 }

@@ -30,7 +30,8 @@ func TestDetectTieredStorage_NoTieredFleetReturnsNil(t *testing.T) {
 	assert.Nil(t, DetectTieredStorage(state, defaultInputs()))
 }
 
-// RemoteLogSizeBytes from CloudWatch aggregates is plumbed through.
+// RemoteLogSizeBytes from CloudWatch aggregates is plumbed through;
+// falls back to Average when Maximum is absent.
 func TestDetectTieredStorage_RemoteLogSizeBytes(t *testing.T) {
 	tiered := redFlagCluster("tiered-cluster", "3.5.0", "", string(kafkatypes.StorageModeTiered))
 	v := 1024.0 * 1024 * 1024 * 50 // 50 GB
@@ -42,6 +43,25 @@ func TestDetectTieredStorage_RemoteLogSizeBytes(t *testing.T) {
 	require.NotNil(t, section)
 	require.Len(t, section.Clusters, 1)
 	assert.InDelta(t, v, section.Clusters[0].RemoteLogSizeBytes, 0.1)
+}
+
+// When CloudWatch publishes both Maximum and Average for
+// RemoteLogSizeBytes, the renderer reads Maximum (peak observed
+// footprint) rather than Average — Average over a 30-day window
+// for a fixed 7-day retention would report ~half the real current
+// footprint, which is misleading for the trade-off framing.
+func TestDetectTieredStorage_RemoteLogSizeBytes_MaximumWinsOverAverage(t *testing.T) {
+	tiered := redFlagCluster("tiered-cluster", "3.5.0", "", string(kafkatypes.StorageModeTiered))
+	avg := 1024.0 * 1024 * 1024 * 20 // 20 GB avg
+	max := 1024.0 * 1024 * 1024 * 50 // 50 GB peak
+	tiered.ClusterMetrics.Aggregates = map[string]types.MetricAggregate{
+		"RemoteLogSizeBytes": {Average: &avg, Maximum: &max},
+	}
+	state := wrapClusters(tiered)
+	section := DetectTieredStorage(state, defaultInputs())
+	require.NotNil(t, section)
+	require.Len(t, section.Clusters, 1)
+	assert.InDelta(t, max, section.Clusters[0].RemoteLogSizeBytes, 0.1, "Maximum must win when both aggregates are present")
 }
 
 // consumer_history_requirement defaults to `required` when undeclared.

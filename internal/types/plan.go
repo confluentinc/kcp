@@ -601,11 +601,20 @@ const (
 // populated only for per-cluster rows; fleet-level rows leave it
 // empty.
 type RedFlag struct {
-	ID        string        `json:"id"`
-	Title     string        `json:"title"`
-	Status    RedFlagStatus `json:"status"`
-	Evidence  string        `json:"evidence,omitempty"`
-	ClusterID string        `json:"cluster_id,omitempty"`
+	ID     string        `json:"id"`
+	Title  string        `json:"title"`
+	Status RedFlagStatus `json:"status"`
+	// Evidence is the human-readable prose surfaced in the rendered
+	// Plan. Keep it under control of the row's evaluator so a reader
+	// can tell at a glance WHY the row fired.
+	Evidence string `json:"evidence,omitempty"`
+	// EvidenceFields carries the structured signals the evaluator
+	// computed: scalar counts, cluster lists, version strings, etc.
+	// Downstream JSON consumers branch on these instead of parsing
+	// `Evidence`. Stable shape (additive only) at
+	// `plan_schema_version: "1"`.
+	EvidenceFields map[string]any `json:"evidence_fields,omitempty"`
+	ClusterID      string         `json:"cluster_id,omitempty"`
 }
 
 // RedFlagsSection is the fleet-wide Red Flags decision output. Rows is
@@ -618,15 +627,20 @@ type RedFlagsSection struct {
 
 // ----- effort signals -----
 
-// EffortSignal is one quantitative input the customer's PM consumes to
-// scope migration effort. Count is the raw integer the signal
-// produced (e.g. number of IAM-auth clients). Note carries any caveat
-// the spec calls out (e.g. MM2 `IdentityReplicationPolicy` undercounts
-// checkpoint topics).
+// EffortSignal is one quantitative input the customer's PM consumes
+// to scope migration effort. Count is the raw integer the signal
+// produced (e.g. number of IAM-auth clients). Count is `*int` (nil
+// = unobservable) so a missing client-inventory scan reads as
+// "unknown", not "zero". Note carries any caveat the spec calls out
+// (e.g. MM2 `IdentityReplicationPolicy` undercounts checkpoint
+// topics).
 type EffortSignal struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
-	Count int    `json:"count"`
+	// Count is the integer signal value. `nil` means the signal is
+	// structurally unobservable (the upstream scan didn't run);
+	// `0` means the scan ran and returned zero hits.
+	Count *int   `json:"count"`
 	Note  string `json:"note,omitempty"`
 }
 
@@ -638,17 +652,19 @@ type EffortSignalsSection struct {
 // ----- tiered storage -----
 
 // TieredStorageCluster is the per-cluster tiered-storage view: which
-// cluster has TIERED storage, the GB volume from CloudWatch
-// (`RemoteLogSizeBytes` average — informational, not the basis for a
+// cluster has TIERED storage, the peak GB volume from CloudWatch
+// (`RemoteLogSizeBytes` Maximum — informational, not the basis for a
 // dollar estimate), and whether the customer's
 // `consumer_history_requirement` indicates the data must be carried
 // forward.
 type TieredStorageCluster struct {
 	ClusterID   string `json:"cluster_id"`
 	StorageMode string `json:"storage_mode"`
-	// RemoteLogSizeBytes is the average from CloudWatch metrics. Zero
-	// when the metric wasn't collected or the cluster doesn't have
-	// tiered data yet.
+	// RemoteLogSizeBytes is the peak observed footprint (CloudWatch
+	// Maximum aggregate) — appropriate for a monotonically-
+	// accumulating gauge. Falls back to Average when Max isn't
+	// populated. Zero when the metric wasn't collected or the
+	// cluster doesn't have tiered data yet.
 	RemoteLogSizeBytes float64 `json:"remote_log_size_bytes,omitempty"`
 }
 
