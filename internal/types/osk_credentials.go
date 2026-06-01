@@ -53,9 +53,16 @@ type JolokiaTLSConfig struct {
 
 // PrometheusConfig holds Prometheus connection details for metrics queries
 type PrometheusConfig struct {
-	URL  string                `yaml:"url"`
-	Auth *PrometheusAuthConfig `yaml:"auth,omitempty"`
-	TLS  *PrometheusTLSConfig  `yaml:"tls,omitempty"`
+	URL    string                  `yaml:"url"`
+	Auth   *PrometheusAuthConfig   `yaml:"auth,omitempty"`
+	TLS    *PrometheusTLSConfig    `yaml:"tls,omitempty"`
+	Filter *PrometheusFilterConfig `yaml:"filter,omitempty"`
+}
+
+// PrometheusFilterConfig holds label selectors to scope Prometheus queries to a specific target.
+// When set, label selectors are appended to all PromQL queries (e.g. {job="confluent/connect-jmx-exporter"}).
+type PrometheusFilterConfig struct {
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // PrometheusAuthConfig holds HTTP basic auth credentials for Prometheus
