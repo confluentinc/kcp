@@ -3,10 +3,29 @@ package types
 import "time"
 
 // Plan is the deterministic Migration Plan emitted by `kcp report plan`.
-// Current scope: source-environment summary, sizing, cluster-type,
-// networking, cutover (fleet-wide), and auth (per-cluster). Red flags,
-// tiered storage, cost reconciliation, and the rest of the design-doc
-// surface land in follow-up PRs.
+// Scope: source-environment summary, sizing, cluster-type, networking,
+// cutover, auth (per-cluster), schema migration, red flags, effort
+// signals, tiered storage, and cost-vs-inventory reconciliation. Each
+// section is optional in the JSON and the renderer skips empty ones.
+//
+// Empty-section conventions across the struct:
+//
+//   - Per-cluster slices (`Sizing`, `ClusterTypeDecision`,
+//     `NetworkingDecision`, `Auth`, `CutoverOverrides`) — empty slice
+//     means "no clusters / no overrides"; the renderer either skips
+//     them or emits an empty table. JSON serialises as `[]` when empty
+//     (no `omitempty`) so consumers can tell "no clusters" from "the
+//     field is missing".
+//
+//   - Fleet-wide pointer sections (`Cutover`, `Schema`, `RedFlags`,
+//     `EffortSignals`, `TieredStorage`, `CostReconciliation`) — nil
+//     means "section omitted entirely" (no source data, or the path is
+//     intentionally skipped, e.g. schemaless). JSON uses `omitempty`
+//     so the key disappears from the output.
+//
+//   - `OpenQuestions` and `SizingAppendix` always render in the JSON
+//     (empty slice if there are none); the renderer hides the
+//     corresponding §section when the slice is empty.
 type Plan struct {
 	Header              PlanHeader            `json:"header"`
 	Inputs              PlanInputsResolved    `json:"inputs"`
@@ -14,9 +33,18 @@ type Plan struct {
 	Sizing              []ClusterSizing       `json:"sizing"`
 	ClusterTypeDecision []ClusterTypeDecision `json:"cluster_type_decision"`
 	NetworkingDecision  []NetworkingDecision  `json:"networking_decision"`
-	// Cutover is fleet-wide — one Plan can't ship two cutover styles.
-	// Nil when no clusters were found in the state file.
+	// Cutover is the fleet-wide cutover decision — the default style
+	// applied to every cluster that doesn't carry a per-cluster
+	// override in CutoverOverrides. Nil when no clusters were found in
+	// the state file.
 	Cutover *CutoverDecision `json:"cutover,omitempty"`
+	// CutoverOverrides carries clusters whose resolved
+	// `downtime_tolerance` (or `sub_pattern`) differs from the fleet
+	// — only the clusters that diverge appear here, so an
+	// all-homogeneous fleet keeps this slice empty. Heterogeneous
+	// fleets previously had to slice the state file and run kcp once
+	// per subset; per-cluster overrides remove that workaround.
+	CutoverOverrides []ClusterCutoverOverride `json:"cutover_overrides,omitempty"`
 	// Auth is per-cluster — source auth methods differ across MSK clusters
 	// in the same fleet, so each gets its own source→target mapping.
 	Auth []AuthDecision `json:"auth,omitempty"`
@@ -445,7 +473,8 @@ type Prereq struct {
 	Status      PrereqStatus `json:"status"`
 }
 
-// CutoverDecision is the fleet-wide cutover plan.
+// CutoverDecision is the fleet-wide cutover plan — applied to every
+// cluster that doesn't carry a per-cluster override.
 type CutoverDecision struct {
 	Style                CutoverStyle         `json:"style"`
 	SubPattern           CutoverSubPattern    `json:"sub_pattern,omitempty"` // only when Style == StopRestartRepeat
@@ -458,6 +487,25 @@ type CutoverDecision struct {
 	Prereqs           []Prereq       `json:"prereqs,omitempty"`
 }
 
+// ClusterCutoverOverride captures a single cluster that resolves to a
+// different cutover style than the fleet-wide default. Only the fields
+// that can differ from the fleet decision are carried — alternatives
+// and prereqs come from the fleet entry.
+//
+// OverrideRejected mirrors AuthDecision's same-named field — set when
+// the customer supplied a per-cluster `downtime_tolerance` (or
+// `sub_pattern`) value that wasn't in the recognised enum. JSON
+// consumers can detect rejected per-cluster overrides structurally
+// without scanning OpenQuestion titles.
+type ClusterCutoverOverride struct {
+	ClusterID             string            `json:"cluster_id"`
+	Style                 CutoverStyle      `json:"style"`
+	SubPattern            CutoverSubPattern `json:"sub_pattern,omitempty"`
+	GatewayMediated       GatewayMediated   `json:"gateway_mediated"`
+	OverrideRejected      bool              `json:"override_rejected,omitempty"`
+	RejectedOverrideValue string            `json:"rejected_override_value,omitempty"`
+}
+
 // ----- auth -----
 
 // AuthDecision is the per-cluster source→target auth mapping.
@@ -468,6 +516,18 @@ type AuthDecision struct {
 	ClusterID      string           `json:"cluster_id"`
 	SourceAuths    []string         `json:"source_auths_detected"`
 	TargetMappings []AuthMappingRow `json:"target_mappings,omitempty"`
+	// OverrideRejected is true when the (cluster-scoped or global)
+	// `target_auth_method` override was set to a value outside the
+	// recognised enum — the row's `effective_target` reflects the per-
+	// source default. The renderer surfaces an inline marker in §4 so
+	// a reader scanning the table sees why this cluster's target
+	// differs from peers without scrolling to the Actions Needed
+	// section to read the typo OQ.
+	OverrideRejected bool `json:"override_rejected,omitempty"`
+	// RejectedOverrideValue is the customer-supplied invalid value;
+	// surfaced in the renderer footnote so the reader recognises the
+	// typo at a glance.
+	RejectedOverrideValue string `json:"rejected_override_value,omitempty"`
 }
 
 // ----- schema -----

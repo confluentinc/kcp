@@ -19,7 +19,7 @@ const (
 	HistoricalDeferToAccount = "defer_to_account_team"
 )
 
-// DetectTieredStorage produces the per-cluster tiered-storage view.
+// detectTieredStorage produces the per-cluster tiered-storage view.
 // Returns nil when no source cluster has tiered storage enabled —
 // section is omitted entirely in that case (most fleets won't use it).
 //
@@ -28,8 +28,8 @@ const (
 // trade-off (mechanism / duration / cost direction) so the customer
 // (and account team) can decide whether the cold data is worth
 // re-fetching.
-func DetectTieredStorage(state types.ProcessedState, inputs types.PlanInputsResolved) *types.TieredStorageSection {
-	clusters := collectMSKClusters(state)
+func detectTieredStorage(state types.ProcessedState, inputs types.PlanInputsResolved) *types.TieredStorageSection {
+	clusters := collectClusters(state)
 	var tiered []types.TieredStorageCluster
 	for _, c := range clusters {
 		if clusterStorageMode(c) != kafkatypes.StorageModeTiered {

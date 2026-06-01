@@ -47,20 +47,20 @@ var broadTopicPatterns = []struct {
 	{label: "MM2 active replication (`mm2-` prefix)", re: regexp.MustCompile(`^mm2-`)},
 	{label: "MM2 active replication (`.replica` suffix)", re: regexp.MustCompile(`\.replica$`)},
 	{label: "Connect fleet (`connect-(configs|offsets|status)`, with or without a prefix)", re: connectInternalTopicPattern},
-	{label: "Kafka Streams changelog (`-changelog`)", re: regexp.MustCompile(`-changelog$`)},
-	{label: "Kafka Streams repartition (`-repartition`)", re: regexp.MustCompile(`-repartition$`)},
+	{label: "Kafka Streams changelog (`-changelog`)", re: kafkaStreamsChangelogPattern},
+	{label: "Kafka Streams repartition (`-repartition`)", re: kafkaStreamsRepartitionPattern},
 	{label: "Kafka transactions (`__transaction_state`)", re: regexp.MustCompile(`^__transaction_state$`)},
 	{label: "Connector heartbeats (`-heartbeats`)", re: regexp.MustCompile(`-heartbeats$`)},
 }
 
-// DetectRedFlags evaluates the 15 boolean trigger rows from the spec.
+// detectRedFlags evaluates the 15 boolean trigger rows from the spec.
 // Returns nil when there are no clusters in the state file (the
 // renderer omits the section in that case). Each row is evaluated
 // independently and produces a {Status, Evidence} pair — Triggered
 // rows render at the top of §Red Flags, with NotTriggered / Unknown
 // collapsed into a tail summary.
-func DetectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.RedFlagsSection {
-	clusters := collectMSKClusters(state)
+func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.RedFlagsSection {
+	clusters := collectClusters(state)
 	if len(clusters) == 0 {
 		return nil
 	}
@@ -84,23 +84,6 @@ func DetectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfi
 	return &types.RedFlagsSection{Rows: rows}
 }
 
-// collectMSKClusters flattens ProcessedState into the per-cluster
-// view the rule evaluators want — same shape collectClusters in
-// plan_service.go uses, but kept private here so the V2 module isn't
-// coupled to the orchestrator's internal helper.
-func collectMSKClusters(state types.ProcessedState) []types.ProcessedCluster {
-	var out []types.ProcessedCluster
-	for _, src := range state.Sources {
-		if src.MSKData == nil {
-			continue
-		}
-		for _, region := range src.MSKData.Regions {
-			out = append(out, region.Clusters...)
-		}
-	}
-	return out
-}
-
 // ----- Row 1: schemaless source -----
 
 // Triggered when no Schema Registry was detected AND the customer
@@ -114,7 +97,19 @@ func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) typ
 		rf.Evidence = "`schema_strategy` not yet declared — set it in `plan-inputs.yaml` to evaluate this row"
 		return rf
 	}
-	if plan.Schema == nil || plan.Schema.Source == types.SchemaSourceNone {
+	// When the customer DECLARED they have an SR but the scan didn't
+	// find one, §5 already surfaces this as a "Scan gap" with a
+	// rescan / correct-strategy action. Firing this Red Flag too
+	// would double-count the same fact under contradictory framings
+	// (§5 says "you have an SR but we couldn't see it"; §6 would
+	// say "you don't have an SR"). Resolve as NotTriggered so the
+	// scan-gap copy in §5 is the single source of truth.
+	noScanSource := plan.Schema == nil || plan.Schema.Source == types.SchemaSourceNone
+	if noScanSource && strategy == SchemaStrategyMigrateExistingSchemaRegistry {
+		rf.Status = types.RedFlagNotTriggered
+		return rf
+	}
+	if noScanSource {
 		rf.Status = types.RedFlagTriggered
 		rf.Evidence = fmt.Sprintf("`schema_strategy: %s`, no Schema Registry detected by `kcp scan schema-registry` / `kcp scan glue-schema-registry`", strategy)
 		return rf
@@ -206,7 +201,7 @@ func evalGlueSRInUse(plan *types.Plan) types.RedFlag {
 		rf.Evidence = "schema migration verdict unavailable"
 		return rf
 	}
-	if HasPath(plan.Schema, types.SchemaPathMigrateGlue) ||
+	if hasPath(plan.Schema, types.SchemaPathMigrateGlue) ||
 		plan.Schema.Source == types.SchemaSourceGlue ||
 		plan.Schema.Source == types.SchemaSourceConfluentAndGlue {
 		rf.Status = types.RedFlagTriggered
@@ -235,7 +230,7 @@ func evalPartitionApproachingCap(plan *types.Plan, cfg *PlanConfig) types.RedFla
 		if s.FinalECKU <= 0 || s.UserPartitions <= 0 {
 			continue
 		}
-		threshold := 0.30 * float64(cfg.EnterpriseCaps.PerECKUPartitionRate) * float64(s.FinalECKU)
+		threshold := cfg.Thresholds.PartitionApproachingFraction * float64(cfg.EnterpriseCaps.PerECKUPartitionRate) * float64(s.FinalECKU)
 		if float64(s.UserPartitions) > threshold {
 			hits = append(hits, fmt.Sprintf("%s=%d partitions (%.0f%% of %d eCKU sized capacity)",
 				s.ClusterID, s.UserPartitions,
@@ -526,12 +521,10 @@ func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanI
 		rf.Evidence = "`kafka_streams_in_use: true` declared in plan-inputs"
 		return rf
 	}
-	changelog := regexp.MustCompile(`-changelog$`)
-	repartition := regexp.MustCompile(`-repartition$`)
 	var hits []string
 	for _, c := range clusters {
-		clHit, _ := topicPatternFound(c, changelog)
-		rpHit, _ := topicPatternFound(c, repartition)
+		clHit, _ := topicPatternFound(c, kafkaStreamsChangelogPattern)
+		rpHit, _ := topicPatternFound(c, kafkaStreamsRepartitionPattern)
 		if clHit || rpHit {
 			hits = append(hits, c.Name)
 		}

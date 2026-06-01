@@ -14,14 +14,14 @@ const (
 	EffortSignalIDGlueSerializerMigration  = "glue_serializer_migration_count"
 )
 
-// DetectEffortSignals produces the per-fleet effort signals — the
+// detectEffortSignals produces the per-fleet effort signals — the
 // four quantitative inputs the customer's PM consumes to scope
 // migration effort. Counts only; no day-estimate.
 //
 // Returns nil when there are no MSK clusters to evaluate (renderer
 // omits the section).
-func DetectEffortSignals(state types.ProcessedState) *types.EffortSignalsSection {
-	clusters := collectMSKClusters(state)
+func detectEffortSignals(state types.ProcessedState) *types.EffortSignalsSection {
+	clusters := collectClusters(state)
 	if len(clusters) == 0 {
 		return nil
 	}

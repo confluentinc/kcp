@@ -48,7 +48,7 @@ func privateLinkSizingExceedsCap(sizing types.ClusterSizing, ct types.ClusterTyp
 	return sizing.FinalECKU > cfg.EnterpriseCaps.PrivateLinkMaxECKU
 }
 
-// DecideNetworking picks the Confluent Cloud networking product for one
+// decideNetworking picks the Confluent Cloud networking product for one
 // cluster.
 //
 //	Dedicated + target_cloud != "aws"                        → PrivateLink (PNI / TGW / VPC Peering are AWS-only)
@@ -62,7 +62,7 @@ func privateLinkSizingExceedsCap(sizing types.ClusterSizing, ct types.ClusterTyp
 //
 // `existing_vpc_connectivity` is only honored on the AWS-Dedicated path —
 // Transit Gateway and VPC Peering are Dedicated-only AWS products.
-func DecideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) types.NetworkingDecision {
+func decideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) types.NetworkingDecision {
 	target := targetCloud(inputs)
 
 	if ct.Verdict == types.ClusterTypeDedicated {

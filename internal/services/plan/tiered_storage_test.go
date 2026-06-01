@@ -17,7 +17,7 @@ func TestDetectTieredStorage_TieredClusterSurfaces(t *testing.T) {
 	local := redFlagCluster("local-cluster", "3.5.0", "", string(kafkatypes.StorageModeLocal))
 	state := wrapClusters(tiered, local)
 
-	section := DetectTieredStorage(state, defaultInputs())
+	section := detectTieredStorage(state, defaultInputs())
 	require.NotNil(t, section)
 	require.Len(t, section.Clusters, 1)
 	assert.Equal(t, "tiered-cluster", section.Clusters[0].ClusterID)
@@ -27,7 +27,7 @@ func TestDetectTieredStorage_TieredClusterSurfaces(t *testing.T) {
 func TestDetectTieredStorage_NoTieredFleetReturnsNil(t *testing.T) {
 	local := redFlagCluster("local-cluster", "3.5.0", "", string(kafkatypes.StorageModeLocal))
 	state := wrapClusters(local)
-	assert.Nil(t, DetectTieredStorage(state, defaultInputs()))
+	assert.Nil(t, detectTieredStorage(state, defaultInputs()))
 }
 
 // RemoteLogSizeBytes from CloudWatch aggregates is plumbed through;
@@ -39,7 +39,7 @@ func TestDetectTieredStorage_RemoteLogSizeBytes(t *testing.T) {
 		"RemoteLogSizeBytes": {Average: &v},
 	}
 	state := wrapClusters(tiered)
-	section := DetectTieredStorage(state, defaultInputs())
+	section := detectTieredStorage(state, defaultInputs())
 	require.NotNil(t, section)
 	require.Len(t, section.Clusters, 1)
 	assert.InDelta(t, v, section.Clusters[0].RemoteLogSizeBytes, 0.1)
@@ -58,7 +58,7 @@ func TestDetectTieredStorage_RemoteLogSizeBytes_MaximumWinsOverAverage(t *testin
 		"RemoteLogSizeBytes": {Average: &avg, Maximum: &max},
 	}
 	state := wrapClusters(tiered)
-	section := DetectTieredStorage(state, defaultInputs())
+	section := detectTieredStorage(state, defaultInputs())
 	require.NotNil(t, section)
 	require.Len(t, section.Clusters, 1)
 	assert.InDelta(t, max, section.Clusters[0].RemoteLogSizeBytes, 0.1, "Maximum must win when both aggregates are present")
@@ -73,7 +73,7 @@ func TestDetectTieredStorage_StrategyCascade(t *testing.T) {
 	state := wrapClusters(tiered)
 
 	// Default — required + undeclared strategy.
-	section := DetectTieredStorage(state, defaultInputs())
+	section := detectTieredStorage(state, defaultInputs())
 	require.NotNil(t, section)
 	assert.Equal(t, ConsumerHistoryRequired, section.ConsumerHistoryRequirement)
 	assert.Equal(t, "", section.HistoricalDataStrategy, "default empty strategy when history is required")
@@ -81,13 +81,13 @@ func TestDetectTieredStorage_StrategyCascade(t *testing.T) {
 	// not_required → defer_to_account_team cascade.
 	inputs := defaultInputs()
 	inputs.ConsumerHistoryRequirement = ConsumerHistoryNotRequired
-	section = DetectTieredStorage(state, inputs)
+	section = detectTieredStorage(state, inputs)
 	require.NotNil(t, section)
 	assert.Equal(t, HistoricalDeferToAccount, section.HistoricalDataStrategy, "cascade defaults to defer when history not required")
 
 	// Explicit strategy declared → respected.
 	inputs.HistoricalDataStrategy = HistoricalBulkLoadExtern
-	section = DetectTieredStorage(state, inputs)
+	section = detectTieredStorage(state, inputs)
 	require.NotNil(t, section)
 	assert.Equal(t, HistoricalBulkLoadExtern, section.HistoricalDataStrategy)
 }
@@ -98,7 +98,7 @@ func TestDetectTieredStorage_StrategyCascade(t *testing.T) {
 func TestDetectTieredStorageOQ_StrategyUndeclared(t *testing.T) {
 	tiered := redFlagCluster("tiered-cluster", "3.5.0", "", string(kafkatypes.StorageModeTiered))
 	state := wrapClusters(tiered)
-	section := DetectTieredStorage(state, defaultInputs())
+	section := detectTieredStorage(state, defaultInputs())
 
 	oqs := detectTieredStorageOpenQuestions(section, defaultInputs())
 	require.Len(t, oqs, 1)
@@ -111,7 +111,7 @@ func TestDetectTieredStorageOQ_ConsumerHistoryTypo(t *testing.T) {
 	state := wrapClusters(tiered)
 	inputs := defaultInputs()
 	inputs.ConsumerHistoryRequirement = "requiredd" // typo
-	section := DetectTieredStorage(state, inputs)
+	section := detectTieredStorage(state, inputs)
 
 	oqs := detectTieredStorageOpenQuestions(section, inputs)
 	found := false

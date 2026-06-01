@@ -211,5 +211,11 @@ func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, cl
 	if override.TargetAuthMethod != nil {
 		out.TargetAuthMethod = *override.TargetAuthMethod
 	}
+	if override.DowntimeTolerance != nil {
+		out.DowntimeTolerance = *override.DowntimeTolerance
+	}
+	if override.SubPattern != nil {
+		out.SubPattern = *override.SubPattern
+	}
 	return out
 }

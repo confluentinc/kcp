@@ -108,7 +108,7 @@ auth_mapping:
     target: confluent_cloud_api_keys
     gateway_compatible: false   # IAM clients cannot connect to the gateway
     transparent_swap: false
-    note: "IAM clients cannot connect to the CC Gateway. Pre-migrate to SCRAM or mTLS first."
+    note: "Source-side IAM clients can't traverse the CC Gateway — the gateway barrier is on the MSK side, independent of which target auth you pick. Pre-migrate source clients to SCRAM or mTLS first."
     source: https://github.com/confluentinc/kcp/blob/main/docs/assets/getting-started-with-zero-cut-migrations.md
     last_verified: "2026-05-20"
   mtls:
@@ -139,6 +139,12 @@ thresholds:
   # recommendation flips from PNI to PrivateLink. 2 = first additional
   # gateway crosses the cost line.
   pni_gateway_breakeven: 2
+  # Red Flag row 5 (partition_approaching_cap) fires when user-topic
+  # partitions exceed this fraction of the cluster's sized eCKU
+  # capacity (per_eCKU_partition_rate * FinalECKU). 0.30 = "fire at
+  # 30% of sized capacity" — early enough that a discussion with the
+  # SE has time to consider headroom or a sizing bump.
+  partition_approaching_fraction: 0.30
 
 # Cost-explorer usage-string families that count as MSK broker spend.
 # AWS bills MSK under `Kafka.*` and `Express.*` today; new broker

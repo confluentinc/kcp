@@ -54,8 +54,11 @@ func versionAtLeast(have, floor string) bool {
 
 // parseVersionSegments splits a dotted version into integer segments,
 // dropping any pre-release / build suffix introduced by '-' or '+'.
-// Returns nil on any non-integer or negative segment so the caller's
-// fallback path can fire safely.
+// The first segment must be numeric; non-numeric trailing segments are
+// treated as 0 to tolerate AWS MSK strings like "3.8.x", "4.0.x.kraft"
+// and similar vendor-specific suffixes. Returns nil if the first
+// segment isn't numeric (entirely-non-version input) or any segment is
+// negative.
 func parseVersionSegments(s string) []int {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -66,9 +69,20 @@ func parseVersionSegments(s string) []int {
 	}
 	parts := strings.Split(s, ".")
 	out := make([]int, 0, len(parts))
-	for _, p := range parts {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil || n < 0 {
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			if i == 0 {
+				return nil
+			}
+			out = append(out, 0)
+			continue
+		}
+		if n < 0 {
 			return nil
 		}
 		out = append(out, n)

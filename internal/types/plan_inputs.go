@@ -182,4 +182,14 @@ type ClusterPlanInputs struct {
 	// TargetAuthMethod is the per-cluster override for the target
 	// auth verdict. Same enum as the global field.
 	TargetAuthMethod *string `yaml:"target_auth_method,omitempty" json:"target_auth_method,omitempty"`
+	// DowntimeTolerance is the per-cluster override for the cutover
+	// style. Same enum as the global field. Use when heterogeneous
+	// fleets need different cutover styles per cluster — e.g. a
+	// latency-sensitive service on Blue/Green while batch jobs run
+	// Stop-Restart-Repeat. Without this, the customer would have to
+	// slice the state file and run kcp once per cluster subset.
+	DowntimeTolerance *string `yaml:"downtime_tolerance,omitempty" json:"downtime_tolerance,omitempty"`
+	// SubPattern is the per-cluster override; only meaningful when the
+	// resolved style is Stop-Restart-Repeat. Mirrors the global field.
+	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
 }

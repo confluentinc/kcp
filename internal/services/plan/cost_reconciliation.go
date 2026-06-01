@@ -34,13 +34,13 @@ func mskUsageTypeRegex(cfg *PlanConfig) *regexp.Regexp {
 	return regexp.MustCompile(`^[A-Z0-9-]+?-((?:` + familyAlt + `))\.([A-Za-z0-9.\-]+)$`)
 }
 
-// DetectCostReconciliation produces the per-region diff between MSK
+// detectCostReconciliation produces the per-region diff between MSK
 // instance types in the AWS cost report and instance types that
 // `kcp discover` actually found in the inventory. Sorted by spend
 // desc; no materiality threshold (the customer decides what's
 // "real"). Returns nil when there are no candidates or no MSK source
 // data — the renderer omits the section in that case.
-func DetectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *types.CostReconciliationSection {
+func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *types.CostReconciliationSection {
 	re := mskUsageTypeRegex(cfg)
 	var candidates []types.HiddenClusterCandidate
 	for _, src := range state.Sources {

@@ -11,9 +11,9 @@ import (
 //go:embed plan-config.yaml
 var embeddedPlanConfig []byte
 
-// ExpectedSchemaVersion is the schema_version this loader understands.
+// expectedSchemaVersion is the schema_version this loader understands.
 // Bump in lockstep with breaking YAML structure changes.
-const ExpectedSchemaVersion = 1
+const expectedSchemaVersion = 1
 
 // PlanConfig is the deserialized plan-config.yaml. The embedded copy is
 // the default; an admin-supplied override file replaces only the fields
@@ -53,6 +53,12 @@ type Thresholds struct {
 	// PNIGatewayBreakeven — projected PNI gateway count at or above
 	// which the recommendation flips from PNI to PrivateLink.
 	PNIGatewayBreakeven int `yaml:"pni_gateway_breakeven"`
+	// PartitionApproachingFraction — Red Flag row 5 fires when
+	// user-topic partitions exceed this fraction of the cluster's
+	// sized eCKU capacity (per_eCKU_partition_rate * FinalECKU).
+	// 0.30 means "fire at 30% of sized capacity"; pre-fix this was
+	// hardcoded in red_flags.go.
+	PartitionApproachingFraction float64 `yaml:"partition_approaching_fraction"`
 }
 
 // AuthMapping is one row in the source→target auth lookup table
@@ -164,8 +170,8 @@ func LoadPlanConfig(overridePath string) (*PlanConfig, error) {
 }
 
 func (c *PlanConfig) Validate() error {
-	if c.SchemaVersion != ExpectedSchemaVersion {
-		return fmt.Errorf("plan-config schema_version %d does not match expected %d", c.SchemaVersion, ExpectedSchemaVersion)
+	if c.SchemaVersion != expectedSchemaVersion {
+		return fmt.Errorf("plan-config schema_version %d does not match expected %d", c.SchemaVersion, expectedSchemaVersion)
 	}
 	caps := c.EnterpriseCaps
 	if caps.PerECKUIngressMBps <= 0 {
@@ -212,6 +218,9 @@ func (c *PlanConfig) Validate() error {
 	}
 	if c.Thresholds.PNIGatewayBreakeven < 1 {
 		return fmt.Errorf("plan-config thresholds.pni_gateway_breakeven must be >= 1 (got %v)", c.Thresholds.PNIGatewayBreakeven)
+	}
+	if c.Thresholds.PartitionApproachingFraction <= 0 || c.Thresholds.PartitionApproachingFraction >= 1 {
+		return fmt.Errorf("plan-config thresholds.partition_approaching_fraction must be in (0, 1) (got %v)", c.Thresholds.PartitionApproachingFraction)
 	}
 	if len(c.CostReconciliation.UsageFamilies) == 0 {
 		return fmt.Errorf("plan-config cost_reconciliation.usage_families must be non-empty (the cost-explorer parser uses this list to identify MSK broker usage strings)")

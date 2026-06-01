@@ -113,8 +113,8 @@ func TestEffortSignal_GlueAbsent_ZeroWithNote(t *testing.T) {
 	assert.Contains(t, sig.Note, "no Glue Schema Registry detected")
 }
 
-// DetectEffortSignals returns nil on an empty fleet so the renderer
+// detectEffortSignals returns nil on an empty fleet so the renderer
 // omits §Effort Signals.
 func TestDetectEffortSignals_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, DetectEffortSignals(types.ProcessedState{}))
+	assert.Nil(t, detectEffortSignals(types.ProcessedState{}))
 }

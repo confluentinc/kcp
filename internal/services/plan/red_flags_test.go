@@ -27,7 +27,7 @@ func findRow(t *testing.T, section *types.RedFlagsSection, id string) types.RedF
 // Row 1 — schemaless source. Suppressed when `schema_strategy` is
 // unknown; fires when a strategy is declared AND no SR was scanned.
 func TestRedFlags_SchemalessSource(t *testing.T) {
-	// Need at least one MSK cluster — DetectRedFlags returns nil on
+	// Need at least one MSK cluster — detectRedFlags returns nil on
 	// empty fleets so §Red Flags can be omitted cleanly. The cluster
 	// itself doesn't carry an SR; the schemaless verdict comes from
 	// the absence of a SchemaRegistriesState on the state file.
@@ -120,10 +120,10 @@ func TestRedFlags_BroadTopicPatternMatch(t *testing.T) {
 	assert.Contains(t, row.Evidence, "events-changelog")
 }
 
-// Empty fleet (no MSK clusters) → DetectRedFlags returns nil so the
+// Empty fleet (no MSK clusters) → detectRedFlags returns nil so the
 // renderer omits the §Red Flags section entirely.
 func TestDetectRedFlags_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, DetectRedFlags(types.ProcessedState{}, &types.Plan{}, defaultCfg(t), defaultInputs()))
+	assert.Nil(t, detectRedFlags(types.ProcessedState{}, &types.Plan{}, defaultCfg(t), defaultInputs()))
 }
 
 // ----- helpers -----
@@ -166,7 +166,7 @@ func wrapClusters(clusters ...types.ProcessedCluster) types.ProcessedState {
 
 // buildPlanForRedFlags runs PlanService.Build so the test exercises
 // the full integration (V2 detector + V1 plumbing) rather than
-// calling DetectRedFlags in isolation. Same default time / cfg used
+// calling detectRedFlags in isolation. Same default time / cfg used
 // by the rest of the plan tests.
 func buildPlanForRedFlags(t *testing.T, state types.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.Plan {
 	t.Helper()

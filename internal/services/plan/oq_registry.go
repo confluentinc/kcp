@@ -1,6 +1,6 @@
 package plan
 
-// OQMeta describes how one Open-Question ID should render: its
+// oqMeta describes how one Open-Question ID should render: its
 // priority for sort-order, its base severity prefix, and an optional
 // promoted severity + title when a sibling OQ co-fires.
 //
@@ -9,10 +9,10 @@ package plan
 // emitting the ID, an iota priority constant, a priority-lookup
 // switch, a severity-lookup switch, and a sibling-aware promotion
 // override). New OQ = one new entry in `oqRegistry`.
-type OQMeta struct {
+type oqMeta struct {
 	// Priority controls the Actions Needed sort order — lower
 	// priority renders first. IDs missing from the registry fall
-	// through to PriorityUnknown and sort last. (Actions Needed's
+	// through to priorityUnknown and sort last. (Actions Needed's
 	// section number is computed dynamically by RenderMarkdown
 	// based on which sections fired; the registry only orders the
 	// items within it.)
@@ -43,9 +43,9 @@ type OQMeta struct {
 	PromotedTitle string
 }
 
-// PriorityUnknown is the sort-last fallback. Anchor at a high value
+// priorityUnknown is the sort-last fallback. Anchor at a high value
 // so adding a new low-priority OQ doesn't accidentally outrank it.
-const PriorityUnknown = 1000
+const priorityUnknown = 1000
 
 // oqRegistry holds every OQ ID emitted by the detectors. Priority is
 // sparse + grouped by concern so new IDs land between siblings
@@ -63,7 +63,7 @@ const PriorityUnknown = 1000
 //
 // Within a band, 10-unit spacing leaves room for an inserted OQ to
 // slot between existing entries without a shuffle.
-var oqRegistry = map[string]OQMeta{
+var oqRegistry = map[string]oqMeta{
 	// Networking
 	"networking_privatelink_over_cap": {
 		Priority: 310,
@@ -78,6 +78,10 @@ var oqRegistry = map[string]OQMeta{
 	"downtime_tolerance_unknown": {
 		Priority: 420,
 		Severity: "🔴",
+	},
+	"sub_pattern_unknown": {
+		Priority: 425,
+		Severity: "🟡",
 	},
 	"gateway_prereqs_pending": {
 		Priority:         430,
@@ -171,25 +175,29 @@ var oqRegistry = map[string]OQMeta{
 		Priority: 950,
 		Severity: "🟡",
 	},
+	"cluster_override_unknown_cluster": {
+		Priority: 960,
+		Severity: "🟡",
+	},
 }
 
 // oqMetaFor returns the registry entry for an OQ ID, or a sentinel
-// (Priority: PriorityUnknown, Severity: 🟡) when the ID is unknown.
+// (Priority: priorityUnknown, Severity: 🟡) when the ID is unknown.
 // 🟡 is the safe default for accuracy-class signals; an unknown ID
 // indicates a missed registry entry — surfacing it as 🟡 keeps it
 // visible without falsely claiming blocker status.
-func oqMetaFor(id string) OQMeta {
+func oqMetaFor(id string) oqMeta {
 	if m, ok := oqRegistry[id]; ok {
 		return m
 	}
-	return OQMeta{Priority: PriorityUnknown, Severity: "🟡"}
+	return oqMeta{Priority: priorityUnknown, Severity: "🟡"}
 }
 
 // promoteSeverity applies the sibling-aware promotion rule: if any
 // of `meta.PromoteWhen` is in `siblings`, returns the promoted
 // severity + title; otherwise returns the base severity + the
 // original title.
-func promoteSeverity(meta OQMeta, originalTitle string, siblings map[string]bool) (severity, title string) {
+func promoteSeverity(meta oqMeta, originalTitle string, siblings map[string]bool) (severity, title string) {
 	for _, trigger := range meta.PromoteWhen {
 		if siblings[trigger] {
 			sev := meta.PromotedSeverity

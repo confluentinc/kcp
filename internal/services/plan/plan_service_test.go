@@ -358,7 +358,7 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 
 	t.Run("nil-Acls PROVISIONED: skipped rule has SkipReason", func(t *testing.T) {
 		c := provisionedClusterWithScan("nil-acls", nil)
-		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		require.Len(t, d.EvaluatedRules, len(hardLimitCatalog), "EvaluatedRules must carry every catalog entry")
 		for _, r := range d.EvaluatedRules {
 			if r.RowID == ruleACLCountExceedsCap {
@@ -372,7 +372,7 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 	})
 	t.Run("non-fired rule carries negative evidence", func(t *testing.T) {
 		c := provisionedClusterWithScan("ok", []types.Acls{})
-		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		for _, r := range d.EvaluatedRules {
 			if r.RowID == ruleACLCountExceedsCap {
 				assert.Equal(t, types.RuleNotFired, r.Outcome)
@@ -386,7 +386,7 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 		c := provisionedClusterWithScan("schema-cluster", []types.Acls{})
 		in := defaultInputs()
 		in.EnforceSchemasAtTheBroker = true
-		d := DecideClusterType(c, sizing, cfg, in)
+		d := decideClusterType(c, sizing, cfg, in)
 		var found bool
 		for _, r := range d.EvaluatedRules {
 			if r.RowID == ruleBrokerSideSchemaValidation {
@@ -504,17 +504,17 @@ func TestDetectStaleStateOQ_HonorsThreshold(t *testing.T) {
 // values + the empty default.
 func TestDetectAuthFleetOpenQuestions_TargetAuthMethodTypo(t *testing.T) {
 	resolved := types.PlanInputsResolved{TargetAuthMethod: "oauthhh"}
-	oqs := detectAuthFleetOpenQuestions(resolved)
+	oqs := detectAuthFleetOpenQuestions(nil, resolved)
 	require.Len(t, oqs, 1)
 	assert.Equal(t, "target_auth_method_unknown", oqs[0].ID)
 	assert.Contains(t, oqs[0].Title, "oauthhh")
 
 	// Recognised value → silent.
 	resolved.TargetAuthMethod = TargetAuthOAuth
-	assert.Empty(t, detectAuthFleetOpenQuestions(resolved))
+	assert.Empty(t, detectAuthFleetOpenQuestions(nil, resolved))
 	// Empty (default) → silent.
 	resolved.TargetAuthMethod = ""
-	assert.Empty(t, detectAuthFleetOpenQuestions(resolved))
+	assert.Empty(t, detectAuthFleetOpenQuestions(nil, resolved))
 }
 
 // Per-cluster target_auth_method typos surface as cluster-scoped OQs
@@ -529,8 +529,9 @@ func TestDetectAuthFleetOpenQuestions_PerClusterTargetAuthTypo(t *testing.T) {
 			"bravo": {TargetAuthMethod: &good},
 		},
 	}
+	clusters := []types.ProcessedCluster{{Name: "alpha"}, {Name: "bravo"}}
 	resolved := types.PlanInputsResolved{Raw: raw}
-	oqs := detectAuthFleetOpenQuestions(resolved)
+	oqs := detectAuthFleetOpenQuestions(clusters, resolved)
 	require.Len(t, oqs, 1, "only the typo cluster should emit an OQ")
 	assert.Equal(t, "target_auth_method_unknown", oqs[0].ID)
 	assert.Equal(t, "alpha", oqs[0].ClusterID)
@@ -590,7 +591,7 @@ func TestSeverityLegend_OnlyPresent(t *testing.T) {
 }
 
 // attachAuth gives a fixture cluster a SCRAM (or other) source auth so
-// it surfaces in DecideAuth output. Mirrors withSourceAuth in
+// it surfaces in decideAuth output. Mirrors withSourceAuth in
 // cutover_test.go but layers on top of an existing fixtureCluster.
 func attachAuth(c types.ProcessedCluster, sourceAuth string) types.ProcessedCluster {
 	enabled := true

@@ -4,12 +4,23 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
 )
+
+// regionFlagToken matches the inline `--region <value>` flag that
+// per-cluster HowToClose strings embed. Used by `groupOpenQuestions`
+// to normalize the flag for grouping so OQs identical except for
+// region collapse to one entry, and by the renderer to swap the
+// concrete region for a `<region>` placeholder when the collapsed
+// group spans multiple regions. Restricted to the AWS region-name
+// character class (`[a-z0-9-]`) so a literal `--region <region>`
+// placeholder embedded in a template never accidentally matches.
+var regionFlagToken = regexp.MustCompile(`--region\s+[a-zA-Z0-9-]+`)
 
 // RenderMarkdown emits the human-readable Plan: Source Environment,
 // Sizing & Cluster Decisions, Actions Needed, and collapsed appendices.
@@ -43,7 +54,7 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	writeSizingAndDecisions(&b, p, cfg, section)
 	section++
 	if p.Cutover != nil {
-		writeCutover(&b, p.Cutover, cfg, section)
+		writeCutover(&b, p.Cutover, p.CutoverOverrides, cfg, section)
 		section++
 	}
 	if len(p.Auth) > 0 {
@@ -113,8 +124,16 @@ func writeOpenQuestions(b *bytes.Buffer, p *types.Plan, section int) {
 		if g.oq.Body != "" {
 			fmt.Fprintf(b, "   - %s\n", indentMultiline(g.oq.Body, "     "))
 		}
-		if g.oq.HowToClose != "" {
-			fmt.Fprintf(b, "   - _How to close:_ %s\n", indentMultiline(g.oq.HowToClose, "     "))
+		howToClose := g.oq.HowToClose
+		// When a group spans multiple source regions, swap the inline
+		// `--region <X>` from the first-seen OQ for a `<region>`
+		// placeholder so the rendered command reads generically and
+		// the reader knows to map it per cluster from §1 inventory.
+		if len(g.regions) > 1 {
+			howToClose = regionFlagToken.ReplaceAllString(howToClose, "--region <region>")
+		}
+		if howToClose != "" {
+			fmt.Fprintf(b, "   - _How to close:_ %s\n", indentMultiline(howToClose, "     "))
 		}
 	}
 	b.WriteString("\n")
@@ -155,12 +174,16 @@ func oqIDSet(oqs []types.OpenQuestion) map[string]bool {
 }
 
 // oqGroup collapses OQs that render identically (same ID + Body +
-// HowToClose) into one entry with an `Affects:` line. Plan-level OQs
-// (empty ClusterID) never merge with per-cluster OQs; OQs whose
-// HowToClose differs (e.g. per-region commands) stay distinct.
+// normalized HowToClose) into one entry with an `Affects:` line.
+// Plan-level OQs (empty ClusterID) never merge with per-cluster OQs.
+// Per-cluster OQs whose only HowToClose difference is the embedded
+// `--region <X>` flag DO merge — the renderer swaps the concrete
+// region for a `<region>` placeholder when the collapsed group spans
+// multiple regions, since each cluster lives in exactly one region.
 type oqGroup struct {
 	oq       types.OpenQuestion
 	clusters []string
+	regions  map[string]struct{}
 }
 
 // groupOpenQuestions returns first-seen-order groups; callers must pass
@@ -175,22 +198,29 @@ func groupOpenQuestions(oqs []types.OpenQuestion) []oqGroup {
 			// Plan-level — never merge with per-cluster OQs.
 			key = "plan-level\x00" + oq.ID + "\x00" + oq.Title
 		case oq.ID != "":
-			// Per-cluster grouping: include Body + HowToClose so two
-			// clusters whose rendered text differs (e.g. per-region
-			// commands) stay as separate items.
-			key = "cluster\x00" + oq.ID + "\x00" + oq.Body + "\x00" + oq.HowToClose
+			// Per-cluster grouping: include Body + region-normalized
+			// HowToClose so two OQs identical except for `--region <X>`
+			// collapse to one entry. Other HowToClose differences keep
+			// the items distinct.
+			normalized := regionFlagToken.ReplaceAllString(oq.HowToClose, "--region <region>")
+			key = "cluster\x00" + oq.ID + "\x00" + oq.Body + "\x00" + normalized
 		default:
 			// No ID and a ClusterID — can't safely group; keep distinct.
 			key = "cluster\x00\x00" + oq.Title + "\x00" + oq.ClusterID
 		}
 		idx, ok := byKey[key]
 		if !ok {
-			groups = append(groups, oqGroup{oq: oq})
+			groups = append(groups, oqGroup{oq: oq, regions: map[string]struct{}{}})
 			idx = len(groups) - 1
 			byKey[key] = idx
 		}
 		if oq.ClusterID != "" {
 			groups[idx].clusters = append(groups[idx].clusters, oq.ClusterID)
+		}
+		// Track distinct regions seen across collapsed OQs so the
+		// renderer can swap to a `<region>` placeholder when >1.
+		if m := regionFlagToken.FindString(oq.HowToClose); m != "" {
+			groups[idx].regions[m] = struct{}{}
 		}
 	}
 	return groups
@@ -412,21 +442,26 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 		fmt.Fprintf(b, "> ℹ **Cost direction (fleet):** %d clusters land on Dedicated because of state-derived hard-limit rules — i.e. the cluster as scanned hit a cap that Enterprise can't carry. The escalation isn't recoverable by editing `plan-inputs.yaml`; confirm with your Confluent account team that the scanned capacity reflects each cluster's actual workload before committing. Dedicated has a higher monthly cost than Enterprise.\n\n",
 			stateDerivedDedicatedCount)
 	}
-	// First pass: compute each cluster's rationale prose + whether it
-	// has per-cluster extras (InputsMissing, customer-declared cost
-	// callout, SZ tradeoff, spiky note, state-derived cost note).
-	// Clusters WITHOUT extras AND with identical rationale collapse
-	// into one bullet with a cluster-list affix — at 30 clusters with
-	// the same verdict, repeating the same paragraph 30 times was
-	// the §2 reader-hostile bottleneck.
+	// First pass: compute each cluster's rationale prose + per-cluster
+	// extras (InputsMissing, customer-declared cost callout, SZ
+	// tradeoff, spiky note, state-derived cost note). Bucket clusters
+	// by (rationale + extras) — clusters sharing BOTH the same verdict
+	// and the same extras paragraph collapse into one bullet with a
+	// cluster-list affix. Spiky FYI notes embed per-cluster numeric
+	// values so those clusters bucket alone naturally; structural
+	// extras like "Inputs missing: acls" collapse across the fleet (the
+	// prior version only collapsed when extras were empty, so real
+	// scans missing ACLs spammed the paragraph per cluster). Degraded
+	// rows always stay standalone.
 	type rationaleBucket struct {
 		rationale string
+		extras    string
 		clusters  []string
 		order     int
 	}
-	bucketByRationale := map[string]*rationaleBucket{}
+	bucketByKey := map[string]*rationaleBucket{}
 	var bucketOrder []*rationaleBucket
-	standaloneRows := []string{} // pre-formatted bullets for clusters with extras
+	standaloneRows := []string{} // pre-formatted bullets for degraded rows only
 
 	for _, s := range p.Sizing {
 		ct := ctByID[s.ClusterID]
@@ -491,16 +526,15 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 			fmt.Fprintf(&extras, "  - _Note: %s. Sizing is P95-based and %s the spike; set `sizing_percentile: p99` in `plan-inputs.yaml` if you'd rather size to the peak._\n", spikyDescription(s), absorbed)
 		}
 
-		if extras.Len() > 0 {
-			// Per-cluster extras present — render standalone.
-			standaloneRows = append(standaloneRows, fmt.Sprintf("- **%s** — %s.\n%s", s.ClusterID, rationale, extras.String()))
-			continue
-		}
-		// No extras and identical rationale → bucket.
-		bucket, ok := bucketByRationale[rationale]
+		// Bucket by (rationale + extras). Identical extras paragraphs
+		// collapse to one entry with a cluster-list affix; differing
+		// extras keep clusters in separate buckets.
+		extrasStr := extras.String()
+		key := rationale + "\x00" + extrasStr
+		bucket, ok := bucketByKey[key]
 		if !ok {
-			bucket = &rationaleBucket{rationale: rationale, order: len(bucketOrder)}
-			bucketByRationale[rationale] = bucket
+			bucket = &rationaleBucket{rationale: rationale, extras: extrasStr, order: len(bucketOrder)}
+			bucketByKey[key] = bucket
 			bucketOrder = append(bucketOrder, bucket)
 		}
 		bucket.clusters = append(bucket.clusters, s.ClusterID)
@@ -520,6 +554,9 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 			fmt.Fprintf(b, "- **%s** — %s.\n", bucket.clusters[0], bucket.rationale)
 		} else {
 			fmt.Fprintf(b, "- **%s** (%d clusters) — %s.\n", strings.Join(bucket.clusters, ", "), len(bucket.clusters), bucket.rationale)
+		}
+		if bucket.extras != "" {
+			b.WriteString(bucket.extras)
 		}
 	}
 	b.WriteString("\n")
@@ -822,7 +859,7 @@ func detectGlobalCustomerTriggers(decisions []types.ClusterTypeDecision) []types
 	}
 	// Count occurrences per customer-declared RowID across all clusters.
 	// Use a per-cluster `seen` set so a duplicate RowID inside one
-	// cluster's Triggers (defensive — DecideClusterType today emits at
+	// cluster's Triggers (defensive — decideClusterType today emits at
 	// most once) doesn't inflate the count past `len(decisions)` and
 	// fool the "fires on every cluster" check.
 	count := make(map[string]int)
@@ -938,14 +975,16 @@ func formatSizeCell(finalECKU int, ct types.ClusterTypeDecision, degraded bool) 
 
 // writeCutover renders the fleet-wide cutover recommendation: chosen
 // style, gateway mediation status with degraded markers, alternatives
-// shown for trust, and the gateway prereq table. Skips the section
-// entirely when there's no cutover decision (empty fleet).
-func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, cfg *PlanConfig, section int) {
+// shown for trust, and the gateway prereq table. `overrides` carries
+// per-cluster exceptions — clusters whose resolved style differs from
+// the fleet default. Skips the section entirely when there's no
+// cutover decision (empty fleet).
+func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, overrides []types.ClusterCutoverOverride, cfg *PlanConfig, section int) {
 	if c == nil {
 		return
 	}
 	fmt.Fprintf(b, "## %d. Cutover Approach\n\n", section)
-	b.WriteString("_The cutover style below applies to the **entire fleet**. Per-cluster cutover overrides aren't supported in this kcp version (planned for a follow-up). Heterogeneous fleets can run kcp against a state-file subset that contains only the clusters sharing a style — re-run for each subset and combine the recommendations manually._\n\n")
+	b.WriteString("_The style below is the **fleet default** — applied to every cluster that doesn't carry a per-cluster override (`clusters[<name>].downtime_tolerance`). Any cluster-specific overrides land in the **Per-cluster overrides** sub-list below the fleet block._\n\n")
 	fmt.Fprintf(b, "- **Style:** %s\n", cutoverStyleLabel(c.Style, c.SubPattern))
 	fmt.Fprintf(b, "- **Gateway mediation:** %s\n", cutoverGatewayLabel(c.GatewayMediated, c.RecommendationStatus))
 	if marker := recommendationStatusMarker(c.RecommendationStatus); marker != "" {
@@ -953,6 +992,7 @@ func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, cfg *PlanConfig, se
 	}
 	writeCutoverAlternatives(b, c.AlternativesShown)
 	writeCutoverPrereqs(b, c.Prereqs)
+	writeCutoverOverrides(b, overrides)
 	// (writeCutoverPrereqs already emits a trailing blank line; do
 	// NOT add another one here — the prior extra `\n` produced a
 	// double blank before §4 across every plan.)
@@ -1096,6 +1136,37 @@ func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
 	b.WriteString("\n")
 }
 
+// writeCutoverOverrides renders one bullet per cluster that resolves
+// to a different cutover style than the fleet default. Empty slice =
+// homogeneous fleet → nothing emitted. Rejected overrides carry a `*`
+// marker + footnote (mirrors §4 Auth's OverrideRejected handling).
+func writeCutoverOverrides(b *bytes.Buffer, overrides []types.ClusterCutoverOverride) {
+	if len(overrides) == 0 {
+		return
+	}
+	b.WriteString("- **Per-cluster overrides:**\n")
+	anyRejected := false
+	for _, o := range overrides {
+		marker := ""
+		if o.OverrideRejected {
+			marker = " *"
+			anyRejected = true
+		}
+		fmt.Fprintf(b, "  - `%s` → %s%s", o.ClusterID, cutoverStyleLabel(o.Style, o.SubPattern), marker)
+		switch o.GatewayMediated {
+		case types.GatewayMediatedTrue:
+			b.WriteString(" (gateway-mediated)")
+		case types.GatewayMediatedNotApplicable:
+			b.WriteString(" (gateway N/A for this style)")
+		}
+		b.WriteString("\n")
+	}
+	if anyRejected {
+		b.WriteString("\n  `*` = the per-cluster `downtime_tolerance` / `sub_pattern` override wasn't a recognised value, so the cluster fell through to a default. See Actions Needed for the exact typo.\n")
+	}
+	b.WriteString("\n")
+}
+
 func prereqStatusLabel(s types.PrereqStatus) string {
 	switch s {
 	case types.PrereqMet:
@@ -1134,26 +1205,37 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 	// — a customer comparing two plans saw inconsistent layouts.
 	b.WriteString("| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway | Notes |\n")
 	b.WriteString("|---|---|---|---|---|\n")
+	anyOverrideRejected := false
 	for _, a := range auths {
 		if len(a.TargetMappings) == 0 {
 			fmt.Fprintf(b, "| %s | _none detected_ | _n/a_ | _n/a_ | _Source auth posture unknown — see Actions Needed._ |\n",
 				escapeMarkdownTableCell(a.ClusterID))
 			continue
 		}
+		if a.OverrideRejected {
+			anyOverrideRejected = true
+		}
 		for i, row := range a.TargetMappings {
 			cluster := escapeMarkdownTableCell(a.ClusterID)
 			if i > 0 {
 				cluster = ""
 			}
+			target := fmt.Sprintf("`%s`", row.EffectiveTarget)
+			if a.OverrideRejected {
+				target += " *"
+			}
 			noteCell := strings.TrimSpace(row.Note)
 			if noteCell == "" {
 				noteCell = "—"
 			}
-			fmt.Fprintf(b, "| %s | `%s` | `%s` | %s | %s |\n",
-				cluster, row.SourceAuth, row.EffectiveTarget,
+			fmt.Fprintf(b, "| %s | `%s` | %s | %s | %s |\n",
+				cluster, row.SourceAuth, target,
 				gatewayCompatibleLabel(row.GatewayCompatible, row.TransparentSwap),
 				escapeMarkdownTableCell(noteCell))
 		}
+	}
+	if anyOverrideRejected {
+		b.WriteString("\n`*` = a `target_auth_method` override was supplied but didn't match a recognised value, so the per-source default applies for that row; see Actions Needed for the exact typo.\n")
 	}
 	// IAM-transition footnote — when prereq is `complete` and
 	// gateway is in play, the IAM rows above are a pre-migration
@@ -1258,7 +1340,7 @@ func writeSchema(b *bytes.Buffer, dec *types.SchemaDecision, inputs types.PlanIn
 	// otherwise show all-❔ unknown to a reader who explicitly said
 	// they're not migrating schemas. The mismatch OQ carries the
 	// reconciliation prompt. Normalize "" → unknown here so the
-	// comparison matches DecideSchema's own normalization (schema.go).
+	// comparison matches decideSchema's own normalization (schema.go).
 	strategy := inputs.SchemaStrategy
 	if strategy == "" {
 		strategy = SchemaStrategyUnknown
@@ -1333,9 +1415,17 @@ func schemaPathsLabel(paths []types.SchemaPath) string {
 //     is Unknown but the underlying issue is the mismatch, not a
 //     missing input. Surface "Conflict" so the reader's eye lands on
 //     the contradiction rather than chasing a phantom missing field.
+//   - `migrate_existing_schema_registry` declared but the scan found
+//     nothing: the customer asserts they have an SR, kcp didn't see
+//     one. Don't render "Pending — declare the missing input" (the
+//     declaration is already complete); instead point the reader at
+//     re-running the scan or correcting the strategy.
 func schemaPathsLabelForContext(paths []types.SchemaPath, strategy string, source types.SchemaSource) string {
 	if strategy == SchemaStrategyNoSchemas && source != types.SchemaSourceNone {
 		return "**Conflict** — strategy declares `no_schemas` but the scan found a Schema Registry; see §Actions Needed for reconciliation"
+	}
+	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && source == types.SchemaSourceNone {
+		return "**Scan gap** — strategy declares `migrate_existing_schema_registry` but no SR was found in the state file; re-run `kcp scan schema-registry` / `kcp scan glue-schema-registry` against the source, OR correct `schema_strategy` if the source genuinely has no registry"
 	}
 	return schemaPathsLabel(paths)
 }
@@ -1350,6 +1440,12 @@ func schemaStrategyDeclaredLabel(strategy string, dec *types.SchemaDecision) str
 	}
 	if strategy == SchemaStrategyNoSchemas && dec.Source != types.SchemaSourceNone {
 		return fmt.Sprintf("`%s` ⚠ (scan found a Schema Registry)", strategy)
+	}
+	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && dec.Source == types.SchemaSourceNone {
+		return fmt.Sprintf("`%s` ⚠ (scan found no Schema Registry — re-scan or correct the strategy)", strategy)
+	}
+	if !knownSchemaStrategy(strategy) && strategy != SchemaStrategyUnknown {
+		return fmt.Sprintf("`%s` ⚠ (unrecognised value — see Actions Needed)", strategy)
 	}
 	return fmt.Sprintf("`%s`", strategy)
 }

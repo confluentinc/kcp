@@ -35,7 +35,7 @@ func knownSchemaCPEdition(value string) bool {
 	return knownEnum(value, SchemaCPEditionEnterprise, SchemaCPEditionCommunity)
 }
 
-// DecideSchema produces the fleet-wide schema migration recommendation.
+// decideSchema produces the fleet-wide schema migration recommendation.
 // The branches:
 //   - Glue detected                    → kcp_migrate_schemas_glue
 //   - Confluent + eligible             → schema_linking
@@ -50,7 +50,7 @@ func knownSchemaCPEdition(value string) bool {
 // The result's `Paths` slice carries every verdict that applies —
 // usually one entry, two for the dual-source case so JSON consumers
 // branching on a single slot don't miss the second arm.
-func DecideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.SchemaDecision {
+func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.SchemaDecision {
 	source, confluentURLs, glueNames := detectSchemaSource(state)
 	strategy := inputs.SchemaStrategy
 	if strategy == "" {
@@ -126,7 +126,7 @@ func DecideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.Plan
 }
 
 // confluentEligibilityPath maps the three-flag eligibility verdict
-// onto the corresponding SchemaPath. Extracted from DecideSchema so
+// onto the corresponding SchemaPath. Extracted from decideSchema so
 // both the pure-Confluent and the dual ConfluentAndGlue branches share
 // one rule.
 func confluentEligibilityPath(dec *types.SchemaDecision) types.SchemaPath {
@@ -143,7 +143,7 @@ func confluentEligibilityPath(dec *types.SchemaDecision) types.SchemaPath {
 // primaryPath returns the first Path on a SchemaDecision, or
 // SchemaPathUnknown if Paths is empty. Package-private — only test
 // assertions care about the leading verdict; production code uses
-// HasPath or reads `dec.Paths` directly.
+// hasPath or reads `dec.Paths` directly.
 func primaryPath(dec *types.SchemaDecision) types.SchemaPath {
 	if dec == nil || len(dec.Paths) == 0 {
 		return types.SchemaPathUnknown
@@ -159,10 +159,10 @@ func sourceTouchesConfluent(s types.SchemaSource) bool {
 	return s == types.SchemaSourceConfluent || s == types.SchemaSourceConfluentAndGlue
 }
 
-// HasPath reports whether a SchemaDecision's Paths slice contains `p`.
+// hasPath reports whether a SchemaDecision's Paths slice contains `p`.
 // Used by Build to decide whether to suppress the §Schema section
 // (schemaless) and by the renderer for path-specific rendering.
-func HasPath(dec *types.SchemaDecision, p types.SchemaPath) bool {
+func hasPath(dec *types.SchemaDecision, p types.SchemaPath) bool {
 	if dec == nil {
 		return false
 	}
@@ -253,7 +253,7 @@ func schemaLinkingEligibilityVerdict(dec *types.SchemaDecision) eligibilityVerdi
 
 // detectSchemaOpenQuestions surfaces what the customer must close
 // before the schema-migration verdict above is fully reliable. Called
-// after DecideSchema so the detector can read the verdict directly
+// after decideSchema so the detector can read the verdict directly
 // rather than recomputing eligibility flags. Takes `cfg` so the OQ
 // body can quote the configured CP-version floor + edition the same
 // way the rendered eligibility table does — keeps the two surfaces
