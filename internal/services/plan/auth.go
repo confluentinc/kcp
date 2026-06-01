@@ -20,7 +20,7 @@ func knownTargetAuthMethod(t string) bool {
 	return knownEnum(t, TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth)
 }
 
-// DecideAuth produces the per-cluster source→target auth mapping.
+// decideAuth produces the per-cluster source→target auth mapping.
 // Sources come from the MSK ClientAuthentication detection in
 // cluster_signals.go; per-source target defaults come from
 // `auth_mapping` in plan-config.yaml.
@@ -30,7 +30,7 @@ func knownTargetAuthMethod(t string) bool {
 // target across all source rows for that cluster — the renderer
 // surfaces the source/target pair and a `Note` so the customer can
 // see the trade-off.
-func DecideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.AuthDecision {
+func decideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.AuthDecision {
 	sources := sourceAuthsDetected(c)
 	out := types.AuthDecision{
 		ClusterID:   c.Name,
@@ -40,6 +40,10 @@ func DecideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInpu
 		return out
 	}
 	override := inputs.TargetAuthMethod
+	if override != "" && !knownTargetAuthMethod(override) {
+		out.OverrideRejected = true
+		out.RejectedOverrideValue = override
+	}
 	for _, src := range sources {
 		mapping, ok := cfg.AuthMapping[src]
 		if !ok {
