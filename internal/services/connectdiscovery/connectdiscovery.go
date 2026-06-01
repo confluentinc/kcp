@@ -120,6 +120,11 @@ func readTopic(ctx context.Context, consumer sarama.Consumer, topic string, out 
 
 	slog.Info("reading topic", "topic", topic, "partitions", len(partitions))
 
+	// TODO(perf): partitions (and topics, in extractFromConsumer) are drained
+	// sequentially, so every partition pays the full idleTimeout wait — an
+	// N-partition status topic takes ~N*idleTimeout even when empty. Draining
+	// partitions concurrently (errgroup writing into out/stats under a mutex)
+	// would bound this to ~idleTimeout. Deferred as MVP-grade; see PR #295.
 	for _, partition := range partitions {
 		pc, err := consumer.ConsumePartition(topic, partition, sarama.OffsetOldest)
 		if err != nil {
@@ -152,7 +157,12 @@ func readTopic(ctx context.Context, consumer sarama.Consumer, topic string, out 
 // partition consumer reports an error, or the context is cancelled.
 func consumePartition(ctx context.Context, pc sarama.PartitionConsumer, stats *TopicStats, out map[string]struct{}, overallTimeout, idleTimeout time.Duration) {
 	overall := time.After(overallTimeout)
-	lastMessage := time.Now()
+
+	// A single idle timer, reset on every message, rather than a fresh
+	// time.After per loop iteration. When it fires, idleTimeout has elapsed
+	// with no message — the signal that the partition is fully drained.
+	idle := time.NewTimer(idleTimeout)
+	defer idle.Stop()
 
 	for {
 		select {
@@ -162,7 +172,7 @@ func consumePartition(ctx context.Context, pc sarama.PartitionConsumer, stats *T
 			if msg == nil {
 				continue
 			}
-			lastMessage = time.Now()
+			idle.Reset(idleTimeout)
 			stats.MessagesRead++
 
 			workerID, ok := extractWorkerID(msg, stats)
@@ -178,10 +188,8 @@ func consumePartition(ctx context.Context, pc sarama.PartitionConsumer, stats *T
 			}
 		case <-overall:
 			return
-		case <-time.After(idleTimeout):
-			if time.Since(lastMessage) >= idleTimeout {
-				return
-			}
+		case <-idle.C:
+			return
 		}
 	}
 }
