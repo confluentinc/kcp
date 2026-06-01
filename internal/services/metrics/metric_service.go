@@ -83,7 +83,10 @@ func buildProvisionedMetadata(cluster kafkatypes.Cluster, timeWindow types.Cloud
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
 func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("🔍 processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+
+
+
+	slog.Info("🔍 processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime, "period", timeWindow.Period)
 
 	if cluster.Provisioned == nil {
 		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
@@ -225,9 +228,9 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 // Private Helper Functions - Query Building
 func (ms *MetricService) buildBrokerMetricQueries(clusterName string, period int32) ([]cloudwatchtypes.MetricDataQuery, []types.MetricQueryInfo) {
 	metricStatMap := map[string]string{
-		"BytesInPerSec":    "Average",
-		"BytesOutPerSec":   "Average",
-		"MessagesInPerSec": "Average",
+		"BytesInPerSec":    "Maximum",
+		"BytesOutPerSec":   "Maximum",
+		"MessagesInPerSec": "Maximum",
 		"PartitionCount":   "Maximum",
 	}
 

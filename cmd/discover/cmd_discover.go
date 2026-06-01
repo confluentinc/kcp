@@ -78,10 +78,11 @@ func discoverIAMAnnotation() string {
 }
 
 var (
-	regions     []string
-	skipCosts   bool
-	skipMetrics bool
-	skipTopics  bool
+	regions            []string
+	skipCosts          bool
+	skipMetrics        bool
+	skipTopics         bool
+	metricsGranularity string
 )
 
 func NewDiscoverCmd() *cobra.Command {
@@ -97,7 +98,23 @@ func NewDiscoverCmd() *cobra.Command {
   kcp discover --region us-east-1,eu-west-3
 
   # Skip topic/cost/metric discovery for faster runs or reduced IAM scope
-  kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics`,
+  kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics
+
+
+  # Specify metrics granularity (mutually exclusive with --skip-metrics)
+  kcp discover --region us-east-1 --metrics-granularity 60s
+  kcp discover --region us-east-1 --metrics-granularity 5m
+  kcp discover --region us-east-1 --metrics-granularity 1h
+  kcp discover --region us-east-1 --metrics-granularity 1d
+
+  The maximum time range for each granularity is:
+  - 60s = 15 days
+  - 5m = 63 days
+  - 1h = 365 days
+  - 1d = 365 days
+
+  The finer the granularity, the more detailed the metrics data, but also more data is stored in the state-file, resulting in state--file growth.  Coarser granularity is recommended for averaging workloads over longer time periods, but will smooth out spikes, while finer granularity is recommended for analyzing more bursty workloads and uncovering spikes over short time periods.
+  `,
 		Annotations: map[string]string{
 			iampolicy.AnnotationKey: discoverIAMAnnotation(),
 		},
@@ -120,8 +137,11 @@ func NewDiscoverCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skips the topic discovery through the AWS MSK API")
 	optionalFlags.BoolVar(&skipCosts, "skip-costs", false, "Skips the cost discovery through the AWS Cost Explorer API")
 	optionalFlags.BoolVar(&skipMetrics, "skip-metrics", false, "Skips the metrics discovery through the AWS CloudWatch API")
+	optionalFlags.StringVar(&metricsGranularity, "metrics-granularity", "1d", "The granularity for which to query for CloudWatch metrics. Valid values: 60s, 5m, 1h, 1d.  The maximum time range for each granularity is: 60s = 15 days, 5m = 63 days, 1h = 365 days, 1d = 365 days.")
 	discoverCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
+
+	discoverCmd.MarkFlagsMutuallyExclusive("skip-metrics", "metrics-granularity")
 
 	discoverCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
@@ -149,6 +169,11 @@ func NewDiscoverCmd() *cobra.Command {
 func preRunDiscover(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	// Validate source type if provided
+	if metricsGranularity != "60s" && metricsGranularity != "5m" && metricsGranularity != "1h" && metricsGranularity != "1d" {
+		return fmt.Errorf("invalid metrics-granularity '%s':  must be 60s, 5m, 1h or 1d", metricsGranularity)
 	}
 
 	return nil
@@ -207,6 +232,7 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		slog.Debug("using existing credentials file", "file", credentialsFileName)
 	}
 
+
 	return &DiscovererOpts{
 		Regions:     regions,
 		SkipCosts:   skipCosts,
@@ -214,5 +240,6 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		SkipTopics:  skipTopics,
 		State:       state,
 		Credentials: credentials,
+		MetricsGranularity: metricsGranularity,
 	}, nil
 }

@@ -26,6 +26,7 @@ type DiscovererOpts struct {
 	SkipTopics  bool
 	State       *types.State
 	Credentials *types.Credentials
+	MetricsGranularity string
 }
 
 type Discoverer struct {
@@ -35,6 +36,7 @@ type Discoverer struct {
 	skipTopics  bool
 	state       *types.State
 	credentials *types.Credentials
+	metricsGranularity string
 }
 
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
@@ -45,6 +47,7 @@ func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 		skipTopics:  opts.SkipTopics,
 		state:       opts.State,
 		credentials: opts.Credentials,
+		metricsGranularity: opts.MetricsGranularity,
 	}
 }
 
@@ -114,7 +117,7 @@ func (d *Discoverer) discoverRegions() error {
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		for _, clusterArn := range discoveredRegion.ClusterArns {
-			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics)
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics, d.metricsGranularity)
 			if err != nil {
 				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
