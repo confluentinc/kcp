@@ -179,6 +179,14 @@ var oqRegistry = map[string]oqMeta{
 		Priority: 960,
 		Severity: "🟡",
 	},
+	"osk_source_unsupported": {
+		Priority: 970,
+		Severity: "🟡",
+	},
+	"cluster_type_unrecognised": {
+		Priority: 980,
+		Severity: "🟡",
+	},
 }
 
 // oqMetaFor returns the registry entry for an OQ ID, or a sentinel
