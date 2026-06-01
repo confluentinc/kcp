@@ -219,6 +219,27 @@ func TestDetectOpenQuestions(t *testing.T) {
 		assertContainsOQ(t, oqs, "topic_inventory_empty", "kcp scan clusters")
 	})
 
+	t.Run("Serverless with nil Topics → scan-gap body, not 'Summary.Topics is 0'", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "srv-nil"}
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
+		c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
+			VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}}},
+		}
+		// Topics intentionally left nil.
+		auth := types.AuthDecision{ClusterID: "srv-nil", SourceAuths: []string{SourceAuthIAM}}
+		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "srv-nil", FinalECKU: 1}, ent, pniNet("srv-nil"), auth, cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		var topicOQ *types.OpenQuestion
+		for i, oq := range oqs {
+			if oq.ID == "topic_inventory_empty" {
+				topicOQ = &oqs[i]
+				break
+			}
+		}
+		require.NotNil(t, topicOQ, "Serverless + nil Topics must still fire topic_inventory_empty")
+		assert.Contains(t, topicOQ.Body, "is absent on this cluster", "nil Topics must use scan-gap wording")
+		assert.NotContains(t, topicOQ.Body, "Summary.Topics` is 0", "nil case must NOT use the 'Summary observed as 0' wording")
+	})
+
 	t.Run("PrivateLink trigger + sized > cap → networking_privatelink_over_cap OQ", func(t *testing.T) {
 		c := provisioned("overCap")
 		sizing := types.ClusterSizing{ClusterID: "overCap", FinalECKU: 15} // > 10 eCKU PL cap
@@ -333,6 +354,30 @@ func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
 func TestDetectOSKSourceOpenQuestion_NoOQWhenOSKAbsent(t *testing.T) {
 	state := types.ProcessedState{}
 	assert.Empty(t, detectOSKSourceOpenQuestion(state))
+}
+
+// Singular vs plural verb agreement in the OQ title.
+func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
+	t.Run("1 cluster → 'isn't' + singular noun", func(t *testing.T) {
+		state := types.ProcessedState{Sources: []types.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
+				Clusters: []types.ProcessedOSKCluster{{ID: "solo"}},
+			}},
+		}}
+		oqs := detectOSKSourceOpenQuestion(state)
+		require.Len(t, oqs, 1)
+		assert.Contains(t, oqs[0].Title, "1 on-prem Kafka cluster in the state file isn't")
+	})
+	t.Run("2 clusters → 'aren't' + plural noun", func(t *testing.T) {
+		state := types.ProcessedState{Sources: []types.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
+				Clusters: []types.ProcessedOSKCluster{{ID: "a"}, {ID: "b"}},
+			}},
+		}}
+		oqs := detectOSKSourceOpenQuestion(state)
+		require.Len(t, oqs, 1)
+		assert.Contains(t, oqs[0].Title, "2 on-prem Kafka clusters in the state file aren't")
+	})
 }
 
 // MskClusterConfig.ClusterType outside the recognised enum (empty or

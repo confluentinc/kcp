@@ -53,6 +53,12 @@ func NewPlanService(cfg *PlanConfig, now func() time.Time) *PlanService {
 // Each step is a pure function so the test surface is the orchestration,
 // not its parts.
 func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsResolved, stateFilePath string) (*types.Plan, error) {
+	// Backfill `ClusterMetrics.Aggregates` once, in-place, against the
+	// canonical state. Every downstream caller (the per-cluster Build
+	// loop, plus every fleet-wide detector that re-runs
+	// `collectClusters`) reads the same populated map without
+	// recomputing CalculateMetricsAggregates per call.
+	backfillAggregates(&state)
 	clusters := collectClusters(state)
 	// Stable sort by (Region, Name, Arn) so two clusters that share a name
 	// across regions still get a deterministic order.
@@ -286,12 +292,16 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		topicsField := c.KafkaAdminClientInformation.Topics
 		var body string
 		switch {
-		case isServerless(c):
-			// Fresh Serverless: legitimately 0 topics.
-			body = "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. For a Serverless cluster that's only plausible if the cluster has genuinely never been used; if apps are connected, the admin scan probably didn't run with credentials to enumerate topics."
 		case topicsField == nil:
-			// Provisioned but the Topics field itself is absent — scan didn't run.
+			// Topics field absent entirely — scan didn't run. Applies to
+			// both Provisioned and Serverless; the wording is shape-agnostic.
 			body = "`KafkaAdminClientInformation.Topics` is absent on this cluster — the admin scan that enumerates topics didn't run (or ran with `--skip-topics`)."
+		case isServerless(c):
+			// Topics field present but `Summary.Topics == 0`. For a
+			// fresh Serverless cluster that's plausible (no system
+			// topics on Serverless either); for an in-use one it's a
+			// scan-credentials gap.
+			body = "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. For a Serverless cluster that's only plausible if the cluster has genuinely never been used; if apps are connected, the admin scan probably didn't run with credentials to enumerate topics."
 		default:
 			body = "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero)."
 		}
@@ -345,23 +355,16 @@ func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestio
 	if oskCount == 0 {
 		return nil
 	}
+	noun, verb := "clusters", "aren't"
+	if oskCount == 1 {
+		noun, verb = "cluster", "isn't"
+	}
 	return []types.OpenQuestion{{
 		ID:         "osk_source_unsupported",
-		Title:      fmt.Sprintf("%d on-prem Kafka cluster%s in the state file aren't covered by `kcp report plan`", oskCount, pluralizeSimple("", oskCount)),
+		Title:      fmt.Sprintf("%d on-prem Kafka %s in the state file %s covered by `kcp report plan`", oskCount, noun, verb),
 		Body:       "The state file includes `osk_sources` clusters (open-source Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the OSK clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
 		HowToClose: "Plan the OSK clusters separately: run `kcp report plan` against a state file slice that only contains the OSK clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
 	}}
-}
-
-// pluralizeSimple is a one-shot pluralizer for OQ titles ("0 clusters",
-// "1 cluster", "5 clusters"). The plan package has a richer pluralizer
-// for table headers (`pluralize`), but it depends on a registered noun
-// list; this helper just appends "s" when n != 1.
-func pluralizeSimple(_ string, n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
 }
 
 // detectStaleStateOQ surfaces a fleet-wide OQ when the source state
@@ -737,6 +740,29 @@ func openQuestionPriority(id string) int {
 	return oqMetaFor(id).Priority
 }
 
+// backfillAggregates populates `ClusterMetrics.Aggregates` from raw
+// metric series in-place across every MSK cluster in `state`. Runs
+// once at the top of `Build` so `collectClusters` (and the fleet-wide
+// detectors that call it) read pre-populated maps without recomputing
+// CalculateMetricsAggregates per invocation. Skips clusters where
+// Aggregates is already populated (e.g. test fixtures that pre-set it)
+// or where there are no raw metrics to fold.
+func backfillAggregates(state *types.ProcessedState) {
+	for i := range state.Sources {
+		if state.Sources[i].MSKData == nil {
+			continue
+		}
+		for j := range state.Sources[i].MSKData.Regions {
+			for k := range state.Sources[i].MSKData.Regions[j].Clusters {
+				c := &state.Sources[i].MSKData.Regions[j].Clusters[k]
+				if len(c.ClusterMetrics.Aggregates) == 0 && len(c.ClusterMetrics.Metrics) > 0 {
+					c.ClusterMetrics.Aggregates = report.CalculateMetricsAggregates(c.ClusterMetrics.Metrics)
+				}
+			}
+		}
+	}
+}
+
 func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
 	var out []types.ProcessedCluster
 	for _, src := range state.Sources {
@@ -744,18 +770,7 @@ func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
 			continue
 		}
 		for _, region := range src.MSKData.Regions {
-			for _, c := range region.Clusters {
-				// ProcessState doesn't populate Aggregates on the
-				// top-level path — only per-subcommand helpers do.
-				// Backfill from raw metrics here so EVERY downstream
-				// consumer (sizing in the Build loop AND fleet-wide
-				// helpers like detectTieredStorage that re-call
-				// collectClusters) sees the same Aggregates map.
-				if len(c.ClusterMetrics.Aggregates) == 0 && len(c.ClusterMetrics.Metrics) > 0 {
-					c.ClusterMetrics.Aggregates = report.CalculateMetricsAggregates(c.ClusterMetrics.Metrics)
-				}
-				out = append(out, c)
-			}
+			out = append(out, region.Clusters...)
 		}
 	}
 	return out
