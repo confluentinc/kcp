@@ -175,3 +175,58 @@ func buildPlanForRedFlags(t *testing.T, state types.ProcessedState, cfg *PlanCon
 	require.NoError(t, err)
 	return p
 }
+
+// serverlessCluster builds a ProcessedCluster shaped like an MSK
+// Serverless cluster: ClusterType=Serverless, `Provisioned` left nil,
+// and the Serverless block carries the (IAM-only) ClientAuthentication.
+// Mirrors the JSON shape AWS returns — see PR #317 review by adrian-januzi.
+func serverlessCluster(name string) types.ProcessedCluster {
+	c := types.ProcessedCluster{Name: name, Region: "us-east-1"}
+	enabled := true
+	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
+	c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
+		ClientAuthentication: &kafkatypes.ServerlessClientAuthentication{
+			Sasl: &kafkatypes.ServerlessSasl{Iam: &kafkatypes.Iam{Enabled: &enabled}},
+		},
+	}
+	c.KafkaAdminClientInformation.Topics = &types.Topics{Details: []types.TopicDetails{{Name: name + "-topic"}}}
+	return c
+}
+
+// Serverless clusters must not trigger Provisioned-only Red Flag rows
+// (Kafka version below floor, Express tier, tiered storage) just
+// because their Provisioned-shaped fields are nil. Without the explicit
+// skips, the version row falsely reports "kafka_version missing" for
+// every Serverless cluster.
+func TestRedFlags_ServerlessSkipsProvisionedOnlyRows(t *testing.T) {
+	srv := serverlessCluster("serverless-only")
+	state := wrapClusters(srv)
+	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+
+	kafkaRow := findRow(t, plan.RedFlags, RedFlagIDKafkaVersionBelowCLFloor)
+	assert.Equal(t, types.RedFlagNotTriggered, kafkaRow.Status, "Serverless has no Kafka version — row must NOT fire Unknown")
+
+	expressRow := findRow(t, plan.RedFlags, RedFlagIDMSKExpressBrokerTier)
+	assert.Equal(t, types.RedFlagNotTriggered, expressRow.Status, "Serverless is a distinct tier from Express")
+
+	tieredRow := findRow(t, plan.RedFlags, RedFlagIDTieredStorageInUse)
+	assert.Equal(t, types.RedFlagNotTriggered, tieredRow.Status, "Serverless has no StorageMode concept")
+}
+
+// Mixed-fleet variant: Serverless cluster alongside a Provisioned
+// cluster with a real Kafka-version-below-floor hit. The Provisioned
+// hit must still fire; the Serverless cluster must NOT show up in
+// the row's evidence or trip the row to Unknown.
+func TestRedFlags_ServerlessDoesntPolluteVersionEvidence(t *testing.T) {
+	below := redFlagCluster("old-provisioned", "2.2.1", "", "")
+	srv := serverlessCluster("serverless-mixed")
+	state := wrapClusters(below, srv)
+	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+
+	row := findRow(t, plan.RedFlags, RedFlagIDKafkaVersionBelowCLFloor)
+	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Contains(t, row.Evidence, "old-provisioned")
+	assert.NotContains(t, row.Evidence, "serverless-mixed", "Serverless cluster must not appear in version-row evidence")
+}

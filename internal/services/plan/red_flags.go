@@ -135,6 +135,12 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 	var belowStrs []string
 	var unparseable []string
 	for _, c := range clusters {
+		// Serverless clusters don't expose a Kafka version — AWS
+		// manages the version transparently. Skip rather than
+		// surfacing a spurious "kafka_version missing" Unknown.
+		if isServerless(c) {
+			continue
+		}
 		v := kafkaVersionOf(c)
 		if v == "" {
 			unparseable = append(unparseable, c.Name+" (no version recorded)")
@@ -162,6 +168,13 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 	return rf
 }
 
+// kafkaVersionOf returns the cluster's reported Kafka version, or
+// "" when it isn't recorded.
+//
+// Serverless clusters always return "" — AWS manages the Serverless
+// version transparently and never populates
+// `Provisioned.CurrentBrokerSoftwareInfo`. Callers MUST guard with
+// `isServerless` before interpreting "" as "scan didn't run".
 func kafkaVersionOf(c types.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.CurrentBrokerSoftwareInfo == nil || prov.CurrentBrokerSoftwareInfo.KafkaVersion == nil {
@@ -438,6 +451,14 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 	var hits []expressHit
 	var hitStrs []string
 	for _, c := range clusters {
+		// Serverless is a distinct tier from Express — it has no
+		// BrokerNodeGroupInfo at all (details live on the Serverless
+		// struct, not Provisioned). Skip explicitly so the empty
+		// brokerInstanceType return for Serverless can't be misread
+		// as "scan didn't run".
+		if isServerless(c) {
+			continue
+		}
 		instType := brokerInstanceType(c)
 		if instType == "" {
 			continue
@@ -460,6 +481,15 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 	return rf
 }
 
+// brokerInstanceType returns the cluster's broker EC2 instance-type
+// string, or "" when it isn't recorded.
+//
+// Serverless clusters always return "" — Serverless has no
+// BrokerNodeGroupInfo (its details live on `MskClusterConfig.Serverless`,
+// not `Provisioned`). Callers MUST guard with `isServerless` before
+// treating "" as "scan didn't run"; for Serverless inventory accounting,
+// see `inventoryInstanceTypes` (cost_reconciliation.go), which registers
+// Serverless clusters under the synthetic `Serverless-Hours` type.
 func brokerInstanceType(c types.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.BrokerNodeGroupInfo == nil || prov.BrokerNodeGroupInfo.InstanceType == nil {
@@ -474,6 +504,11 @@ func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDTieredStorageInUse, Title: "Tiered storage in use on the source"}
 	var hits []string
 	for _, c := range clusters {
+		// Serverless has no `StorageMode` concept — the elastic
+		// storage path differs from Provisioned tiered storage. Skip.
+		if isServerless(c) {
+			continue
+		}
 		if clusterStorageMode(c) == kafkatypes.StorageModeTiered {
 			hits = append(hits, c.Name)
 		}

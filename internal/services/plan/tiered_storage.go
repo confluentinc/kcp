@@ -32,6 +32,12 @@ func detectTieredStorage(state types.ProcessedState, inputs types.PlanInputsReso
 	clusters := collectClusters(state)
 	var tiered []types.TieredStorageCluster
 	for _, c := range clusters {
+		// Serverless has no `StorageMode` (Provisioned-only field).
+		// Skip explicitly so the empty `clusterStorageMode` return
+		// can't be misread if the helper semantics change.
+		if isServerless(c) {
+			continue
+		}
 		if clusterStorageMode(c) != kafkatypes.StorageModeTiered {
 			continue
 		}

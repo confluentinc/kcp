@@ -74,6 +74,12 @@ func brokerInventoryGap(c types.ProcessedCluster) bool {
 // per-cluster section — same MskClusterConfig pointer-chase as
 // `brokerInstanceType` / `kafkaVersionOf`, so it lives here next to
 // its peers.
+//
+// Serverless clusters always return empty — Provisioned is nil on
+// Serverless, and StorageMode is a Provisioned-only concept. Callers
+// that iterate clusters MUST also guard with `isServerless` if they
+// want to skip Serverless explicitly (recommended: silent fall-through
+// is fragile if helper semantics change later).
 func clusterStorageMode(c types.ProcessedCluster) kafkatypes.StorageMode {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil {

@@ -109,3 +109,26 @@ func TestDetectCostReconciliation_ObservationCounts(t *testing.T) {
 	assert.Equal(t, 3, section.Candidates[0].DaysObserved)
 	assert.InDelta(t, 300.0, section.Candidates[0].TotalSpend, 0.01)
 }
+
+// Discovered Serverless clusters must register in the inventory map
+// as `kafka.Serverless-Hours` so a matching `Kafka.Serverless-Hours`
+// cost line is recognised as a known cluster — not flagged as hidden.
+// Without this, every region with a discovered Serverless cluster
+// would emit a spurious cost-reconciliation candidate.
+func TestDetectCostReconciliation_ServerlessInventoryMatchesCostShape(t *testing.T) {
+	srv := serverlessCluster("srv-cluster")
+	state := wrapClusters(srv)
+	// Inject cost data: the Serverless-Hours line should match the
+	// inventory; the m7g.large line should still flag as hidden.
+	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+		Region: "us-east-1",
+		Results: []types.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.Serverless-Hours", Values: types.ProcessedCostBreakdown{UnblendedCost: 500.00}},
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.00}},
+		},
+	}
+	section := detectCostReconciliation(state, defaultCfg(t))
+	require.NotNil(t, section)
+	require.Len(t, section.Candidates, 1, "only the hidden m7g.large should flag — Serverless-Hours must match the discovered Serverless inventory")
+	assert.Equal(t, "kafka.m7g.large", section.Candidates[0].InstanceType)
+}
