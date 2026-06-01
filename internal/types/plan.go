@@ -3,10 +3,29 @@ package types
 import "time"
 
 // Plan is the deterministic Migration Plan emitted by `kcp report plan`.
-// Current scope: source-environment summary, sizing, cluster-type,
-// networking, cutover (fleet-wide), and auth (per-cluster). Red flags,
-// tiered storage, cost reconciliation, and the rest of the design-doc
-// surface land in follow-up PRs.
+// Scope: source-environment summary, sizing, cluster-type, networking,
+// cutover, auth (per-cluster), schema migration, red flags, effort
+// signals, tiered storage, and cost-vs-inventory reconciliation. Each
+// section is optional in the JSON and the renderer skips empty ones.
+//
+// Empty-section conventions across the struct:
+//
+//   - Per-cluster slices (`Sizing`, `ClusterTypeDecision`,
+//     `NetworkingDecision`, `Auth`, `CutoverOverrides`) — empty slice
+//     means "no clusters / no overrides"; the renderer either skips
+//     them or emits an empty table. JSON serialises as `[]` when empty
+//     (no `omitempty`) so consumers can tell "no clusters" from "the
+//     field is missing".
+//
+//   - Fleet-wide pointer sections (`Cutover`, `Schema`, `RedFlags`,
+//     `EffortSignals`, `TieredStorage`, `CostReconciliation`) — nil
+//     means "section omitted entirely" (no source data, or the path is
+//     intentionally skipped, e.g. schemaless). JSON uses `omitempty`
+//     so the key disappears from the output.
+//
+//   - `OpenQuestions` and `SizingAppendix` always render in the JSON
+//     (empty slice if there are none); the renderer hides the
+//     corresponding §section when the slice is empty.
 type Plan struct {
 	Header              PlanHeader            `json:"header"`
 	Inputs              PlanInputsResolved    `json:"inputs"`
@@ -14,9 +33,18 @@ type Plan struct {
 	Sizing              []ClusterSizing       `json:"sizing"`
 	ClusterTypeDecision []ClusterTypeDecision `json:"cluster_type_decision"`
 	NetworkingDecision  []NetworkingDecision  `json:"networking_decision"`
-	// Cutover is fleet-wide — one Plan can't ship two cutover styles.
-	// Nil when no clusters were found in the state file.
+	// Cutover is the fleet-wide cutover decision — the default style
+	// applied to every cluster that doesn't carry a per-cluster
+	// override in CutoverOverrides. Nil when no clusters were found in
+	// the state file.
 	Cutover *CutoverDecision `json:"cutover,omitempty"`
+	// CutoverOverrides carries clusters whose resolved
+	// `downtime_tolerance` (or `sub_pattern`) differs from the fleet
+	// — only the clusters that diverge appear here, so an
+	// all-homogeneous fleet keeps this slice empty. Heterogeneous
+	// fleets previously had to slice the state file and run kcp once
+	// per subset; per-cluster overrides remove that workaround.
+	CutoverOverrides []ClusterCutoverOverride `json:"cutover_overrides,omitempty"`
 	// Auth is per-cluster — source auth methods differ across MSK clusters
 	// in the same fleet, so each gets its own source→target mapping.
 	Auth []AuthDecision `json:"auth,omitempty"`
@@ -24,9 +52,28 @@ type Plan struct {
 	// not per-cluster). Nil when the section is omitted — currently the
 	// `schemaless` path (`sr_detected == none` AND
 	// `schema_strategy == no_schemas`).
-	Schema         *SchemaDecision    `json:"schema,omitempty"`
-	SizingAppendix []SizingMathDetail `json:"sizing_appendix"`
-	OpenQuestions  []OpenQuestion     `json:"open_questions,omitempty"`
+	Schema *SchemaDecision `json:"schema,omitempty"`
+	// RedFlags surfaces the boolean trigger rows over the Plan + state
+	// file. Triggered rows are items to discuss with the SE; each row
+	// carries its own evidence (field path + value) so the discussion
+	// is grounded in the scan, not on inference.
+	RedFlags *RedFlagsSection `json:"red_flags,omitempty"`
+	// EffortSignals is the list of quantitative signals the customer's
+	// PM consumes to scope migration effort. Counts only, no
+	// day-estimate.
+	EffortSignals *EffortSignalsSection `json:"effort_signals,omitempty"`
+	// TieredStorage is a per-cluster section describing the
+	// three-dimension trade-off (mechanism / duration / cost direction)
+	// for clusters with MSK tiered storage enabled. Nil when no source
+	// cluster has TIERED storage.
+	TieredStorage *TieredStorageSection `json:"tiered_storage,omitempty"`
+	// CostReconciliation lists MSK clusters that show up in the AWS
+	// cost report but were NOT discovered by `kcp discover`. Sorted by
+	// TotalSpend desc. Nil when cost data is empty or the diff is
+	// clean.
+	CostReconciliation *CostReconciliationSection `json:"cost_reconciliation,omitempty"`
+	SizingAppendix     []SizingMathDetail         `json:"sizing_appendix"`
+	OpenQuestions      []OpenQuestion             `json:"open_questions,omitempty"`
 }
 
 // OpenQuestion is a per-cluster (or plan-level) gap the customer needs
@@ -53,11 +100,12 @@ type PlanHeader struct {
 	// for negative-evidence claims like "0 ACLs" in Appendix A2.
 	StateGeneratedAt time.Time `json:"state_generated_at,omitempty"`
 
-	// PlanSchemaVersion is a string while the JSON shape is still
-	// shifting: top-level keys (auth_approach, switchover_approach,
-	// red_flags, …) are landing in follow-up PRs. Hub consumers should
-	// treat "1-experimental" as "additive changes only; renames may
-	// happen". Bumps to "1" once §4 of the design ships in full.
+	// PlanSchemaVersion identifies the JSON shape of the Plan. Stable
+	// at "1" now that the full deterministic decision set ships
+	// (sizing / cluster type / networking / cutover / auth / schema /
+	// red flags / effort signals / tiered storage / cost
+	// reconciliation). Additive top-level keys at this version are
+	// allowed; renames or removals require a version bump.
 	PlanSchemaVersion string `json:"plan_schema_version"`
 }
 
@@ -333,6 +381,16 @@ type PlanInputsResolved struct {
 	SourceSROutboundReachableToCC *bool  `json:"source_sr_outbound_reachable_to_cc,omitempty"`
 	ConfluentSRCPVersion          string `json:"confluent_sr_cp_version,omitempty"`
 	ConfluentSRCPEdition          string `json:"confluent_sr_cp_edition,omitempty"`
+
+	// Red Flags customer flags — nil tri-state.
+	ExactlyOnceTransactionsInUse *bool `json:"exactly_once_transactions_in_use,omitempty"`
+	KafkaStreamsInUse            *bool `json:"kafka_streams_in_use,omitempty"`
+
+	// Tiered Storage knobs. Strings normalized to lowercase tokens by
+	// the resolver; empty means "no preference declared" (treated as
+	// `unknown` by the detector so the section surfaces the OQ).
+	ConsumerHistoryRequirement string `json:"consumer_history_requirement,omitempty"`
+	HistoricalDataStrategy     string `json:"historical_data_strategy,omitempty"`
 }
 
 // ----- cutover -----
@@ -415,7 +473,8 @@ type Prereq struct {
 	Status      PrereqStatus `json:"status"`
 }
 
-// CutoverDecision is the fleet-wide cutover plan.
+// CutoverDecision is the fleet-wide cutover plan — applied to every
+// cluster that doesn't carry a per-cluster override.
 type CutoverDecision struct {
 	Style                CutoverStyle         `json:"style"`
 	SubPattern           CutoverSubPattern    `json:"sub_pattern,omitempty"` // only when Style == StopRestartRepeat
@@ -428,6 +487,25 @@ type CutoverDecision struct {
 	Prereqs           []Prereq       `json:"prereqs,omitempty"`
 }
 
+// ClusterCutoverOverride captures a single cluster that resolves to a
+// different cutover style than the fleet-wide default. Only the fields
+// that can differ from the fleet decision are carried — alternatives
+// and prereqs come from the fleet entry.
+//
+// OverrideRejected mirrors AuthDecision's same-named field — set when
+// the customer supplied a per-cluster `downtime_tolerance` (or
+// `sub_pattern`) value that wasn't in the recognised enum. JSON
+// consumers can detect rejected per-cluster overrides structurally
+// without scanning OpenQuestion titles.
+type ClusterCutoverOverride struct {
+	ClusterID             string            `json:"cluster_id"`
+	Style                 CutoverStyle      `json:"style"`
+	SubPattern            CutoverSubPattern `json:"sub_pattern,omitempty"`
+	GatewayMediated       GatewayMediated   `json:"gateway_mediated"`
+	OverrideRejected      bool              `json:"override_rejected,omitempty"`
+	RejectedOverrideValue string            `json:"rejected_override_value,omitempty"`
+}
+
 // ----- auth -----
 
 // AuthDecision is the per-cluster source→target auth mapping.
@@ -438,6 +516,18 @@ type AuthDecision struct {
 	ClusterID      string           `json:"cluster_id"`
 	SourceAuths    []string         `json:"source_auths_detected"`
 	TargetMappings []AuthMappingRow `json:"target_mappings,omitempty"`
+	// OverrideRejected is true when the (cluster-scoped or global)
+	// `target_auth_method` override was set to a value outside the
+	// recognised enum — the row's `effective_target` reflects the per-
+	// source default. The renderer surfaces an inline marker in §4 so
+	// a reader scanning the table sees why this cluster's target
+	// differs from peers without scrolling to the Actions Needed
+	// section to read the typo OQ.
+	OverrideRejected bool `json:"override_rejected,omitempty"`
+	// RejectedOverrideValue is the customer-supplied invalid value;
+	// surfaced in the renderer footnote so the reader recognises the
+	// typo at a glance.
+	RejectedOverrideValue string `json:"rejected_override_value,omitempty"`
 }
 
 // ----- schema -----
@@ -544,4 +634,128 @@ type AuthMappingRow struct {
 	// recommendation comes from.
 	Source       string `json:"source,omitempty"`
 	LastVerified string `json:"last_verified,omitempty"`
+}
+
+// ----- red flags -----
+
+// RedFlagStatus is the tri-state verdict for one Red Flag row:
+//
+//   - `triggered` — the boolean predicate over the state file is true.
+//   - `not_triggered` — the predicate is false and we have enough
+//     scan data to say so with confidence.
+//   - `unknown` — the underlying signal isn't available (scan didn't
+//     run, customer-declared flag wasn't set, etc.). The rendered
+//     Plan surfaces it as "not scanned" rather than silently
+//     defaulting to `not_triggered`.
+type RedFlagStatus string
+
+const (
+	RedFlagTriggered    RedFlagStatus = "triggered"
+	RedFlagNotTriggered RedFlagStatus = "not_triggered"
+	RedFlagUnknown      RedFlagStatus = "unknown"
+)
+
+// RedFlag is one row in §Red Flags. Title is the customer-facing
+// label; Evidence is the field path + value that drove the verdict so
+// the SE-customer discussion can ground in scan facts. ClusterID is
+// populated only for per-cluster rows; fleet-level rows leave it
+// empty.
+type RedFlag struct {
+	ID     string        `json:"id"`
+	Title  string        `json:"title"`
+	Status RedFlagStatus `json:"status"`
+	// Evidence is the human-readable prose surfaced in the rendered
+	// Plan. Keep it under control of the row's evaluator so a reader
+	// can tell at a glance WHY the row fired.
+	Evidence string `json:"evidence,omitempty"`
+	// EvidenceFields carries the structured signals the evaluator
+	// computed: scalar counts, cluster lists, version strings, etc.
+	// Downstream JSON consumers branch on these instead of parsing
+	// `Evidence`. Stable shape (additive only) at
+	// `plan_schema_version: "1"`.
+	EvidenceFields map[string]any `json:"evidence_fields,omitempty"`
+	ClusterID      string         `json:"cluster_id,omitempty"`
+}
+
+// RedFlagsSection is the fleet-wide Red Flags decision output. Rows is
+// the full set evaluated in row order; the renderer leads with
+// triggered rows and collapses not-triggered/unknown into a tail
+// summary.
+type RedFlagsSection struct {
+	Rows []RedFlag `json:"rows"`
+}
+
+// ----- effort signals -----
+
+// EffortSignal is one quantitative input the customer's PM consumes
+// to scope migration effort. Count is the raw integer the signal
+// produced (e.g. number of IAM-auth clients). Count is `*int` (nil
+// = unobservable) so a missing client-inventory scan reads as
+// "unknown", not "zero". Note carries any caveat the spec calls out
+// (e.g. MM2 `IdentityReplicationPolicy` undercounts checkpoint
+// topics).
+type EffortSignal struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Count is the integer signal value. `nil` means the signal is
+	// structurally unobservable (the upstream scan didn't run);
+	// `0` means the scan ran and returned zero hits.
+	Count *int   `json:"count"`
+	Note  string `json:"note,omitempty"`
+}
+
+// EffortSignalsSection is the fleet-wide list of effort signals.
+type EffortSignalsSection struct {
+	Signals []EffortSignal `json:"signals"`
+}
+
+// ----- tiered storage -----
+
+// TieredStorageCluster is the per-cluster tiered-storage view: which
+// cluster has TIERED storage, the peak GB volume from CloudWatch
+// (`RemoteLogSizeBytes` Maximum — informational, not the basis for a
+// dollar estimate), and whether the customer's
+// `consumer_history_requirement` indicates the data must be carried
+// forward.
+type TieredStorageCluster struct {
+	ClusterID   string `json:"cluster_id"`
+	StorageMode string `json:"storage_mode"`
+	// RemoteLogSizeBytes is the peak observed footprint (CloudWatch
+	// Maximum aggregate) — appropriate for a monotonically-
+	// accumulating gauge. Falls back to Average when Max isn't
+	// populated. Zero when the metric wasn't collected or the
+	// cluster doesn't have tiered data yet.
+	RemoteLogSizeBytes float64 `json:"remote_log_size_bytes,omitempty"`
+}
+
+// TieredStorageSection surfaces the three-dimension trade-off
+// (mechanism / duration / cost direction) for fleets with at least one
+// TIERED-storage cluster. Customer-decision shaped: kcp does not pick
+// a path, it makes the trade-off legible.
+type TieredStorageSection struct {
+	Clusters                   []TieredStorageCluster `json:"clusters"`
+	ConsumerHistoryRequirement string                 `json:"consumer_history_requirement"`
+	HistoricalDataStrategy     string                 `json:"historical_data_strategy"`
+}
+
+// ----- cost reconciliation -----
+
+// HiddenClusterCandidate is one MSK instance type that shows up in the
+// AWS cost report but was NOT discovered by `kcp discover`. Sorted by
+// TotalSpend desc; the customer (FinOps / cloud lead) decides which
+// candidates are real.
+type HiddenClusterCandidate struct {
+	Region         string  `json:"region"`
+	InstanceType   string  `json:"instance_type"`
+	TotalSpend     float64 `json:"total_spend"`
+	MonthsObserved int     `json:"months_observed,omitempty"`
+	DaysObserved   int     `json:"days_observed,omitempty"`
+}
+
+// CostReconciliationSection lists the candidate hidden MSK clusters
+// per region. Nil when cost data is empty or the diff is clean. When
+// cost data IS empty, the section nils and the detector emits an OQ
+// pointing at `kcp report costs`.
+type CostReconciliationSection struct {
+	Candidates []HiddenClusterCandidate `json:"candidates"`
 }

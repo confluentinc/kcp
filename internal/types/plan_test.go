@@ -26,7 +26,7 @@ func TestPlanJSONRoundTrip(t *testing.T) {
 				StateFilePath:     "kcp-state.json",
 				KCPVersion:        "0.7.2",
 				GeneratedAt:       time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
-				PlanSchemaVersion: "1-experimental",
+				PlanSchemaVersion: "1",
 			},
 			SourceEnvironment: SourceEnvironment{TotalRegions: 1, Clusters: []SourceClusterSummary{{ClusterID: "x", Region: "us-east-1"}}},
 			Sizing: []ClusterSizing{

@@ -68,6 +68,20 @@ func brokerInventoryGap(c types.ProcessedCluster) bool {
 	return len(c.AWSClientInformation.Nodes) == 0
 }
 
+// clusterStorageMode returns the cluster's StorageMode enum
+// (`LOCAL` / `TIERED` / empty). Consumed by both the Red Flag
+// "tiered_storage_in_use" detector and the Tiered Storage
+// per-cluster section — same MskClusterConfig pointer-chase as
+// `brokerInstanceType` / `kafkaVersionOf`, so it lives here next to
+// its peers.
+func clusterStorageMode(c types.ProcessedCluster) kafkatypes.StorageMode {
+	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
+	if prov == nil {
+		return ""
+	}
+	return prov.StorageMode
+}
+
 // knownEnum reports whether `value` is one of `valid` (empty value
 // always counts as known — it means "default applies"). Used by enum
 // validators across decisions (downtime_tolerance, target_auth_method)
@@ -92,6 +106,22 @@ const (
 	SourceAuthIAM    = "iam"
 	SourceAuthMTLS   = "mtls"
 	SourceAuthUnauth = "unauth"
+)
+
+// DiscoveredClientAuth* mirrors the literal strings that
+// `kcp scan client-inventory` writes into `DiscoveredClient.Auth`
+// (see `cmd/scan/client_inventory/kafka_trace_line_parser.go`).
+//
+// **Heads-up:** `types.AuthTypeIAM` in `internal/types/types.go`
+// resolves to `"SASL/IAM"` — a DIFFERENT string used elsewhere. Use
+// these constants when comparing against the persisted client
+// inventory, not the `types.AuthType*` constants.
+const (
+	DiscoveredClientAuthIAM             = "IAM"
+	DiscoveredClientAuthSASLSCRAM       = "SASL_SCRAM"
+	DiscoveredClientAuthTLS             = "TLS"
+	DiscoveredClientAuthUnauthenticated = "UNAUTHENTICATED"
+	DiscoveredClientAuthUnknown         = "UNKNOWN"
 )
 
 // sourceAuthsDetected returns the set of auth methods enabled on the

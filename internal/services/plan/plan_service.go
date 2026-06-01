@@ -13,6 +13,25 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+// Function-naming convention across this package:
+//
+//   - `decide*`  — produces a verdict / path from inputs. One decision
+//     per cluster (sizing, cluster type, networking, auth) or one
+//     per fleet (cutover, schema). Output is the rendered §section's
+//     primary recommendation.
+//
+//   - `detect*`  — enumerates findings or signals from `state` /
+//     `plan` (red flags, effort signals, tiered storage, cost
+//     reconciliation, all OQ detectors). Output is a list/section,
+//     not a single verdict. Some detectors also apply small input
+//     cascades (e.g. `detectTieredStorage` defaults
+//     `HistoricalDataStrategy`) — that's deliberate: the cascade is
+//     scoped to the section's findings, not a standalone decision.
+//
+//   - `compute*` — pure numeric / structural transforms with no
+//     verdict (e.g. `computeClusterSizing`, `computeCutoverOverrides`).
+//     Output is intermediate data the renderer + decide* consume.
+//
 // PlanService orchestrates the deterministic plan-generation pipeline.
 // Each Build step is a pure function so the test surface is the
 // orchestration, not its parts.
@@ -54,7 +73,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 			KCPVersion:        build_info.Version,
 			GeneratedAt:       s.now().UTC(),
 			StateGeneratedAt:  state.Timestamp.UTC(),
-			PlanSchemaVersion: "1-experimental",
+			PlanSchemaVersion: "1",
 		},
 		Inputs: inputs,
 	}
@@ -74,18 +93,18 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		// re-resolution `ResolvePlanInputsForCluster` would do on every
 		// iteration.
 		clusterInputs := applyClusterOverride(inputs, inputs.Raw, c.Name)
-		sizing := ComputeClusterSizing(c, s.cfg, clusterInputs)
+		sizing := computeClusterSizing(c, s.cfg, clusterInputs)
 		missing := inputsMissing(c)
 		// Each consumer gets its own slice — without Clone, a future
 		// `append` to any one InputsMissing would silently mutate the
 		// others if cap permits.
 		sizing.InputsMissing = slices.Clone(missing)
-		ct := DecideClusterType(c, sizing, s.cfg, clusterInputs)
-		net := DecideNetworking(sizing, ct, s.cfg, clusterInputs)
+		ct := decideClusterType(c, sizing, s.cfg, clusterInputs)
+		net := decideNetworking(sizing, ct, s.cfg, clusterInputs)
 		ct.InputsMissing = slices.Clone(missing)
 		net.InputsMissing = slices.Clone(missing)
 
-		auth := DecideAuth(c, s.cfg, clusterInputs)
+		auth := decideAuth(c, s.cfg, clusterInputs)
 
 		plan.Sizing = append(plan.Sizing, sizing)
 		plan.ClusterTypeDecision = append(plan.ClusterTypeDecision, ct)
@@ -104,25 +123,53 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	plan.SourceEnvironment.TotalRegions = countRegions(state)
 	plan.SizingAppendix = buildSizingAppendix(plan.Sizing, s.cfg, inputs)
 
-	// Cutover is fleet-wide (one Plan = one cutover style). Only emit
-	// when there are clusters to migrate; an empty fleet has nothing
-	// to cut over.
+	// Cutover defaults are fleet-wide; per-cluster overrides layer on
+	// top via clusters[<name>].downtime_tolerance / .sub_pattern.
+	// Empty fleet → no cutover decision at all.
 	if len(clusters) > 0 {
-		cutover := DecideCutover(clusters, inputs)
+		cutover := decideCutover(clusters, inputs)
 		plan.Cutover = &cutover
-		plan.OpenQuestions = append(plan.OpenQuestions, detectCutoverOpenQuestions(cutover, inputs, fleetUsesIAM(clusters))...)
-		plan.OpenQuestions = append(plan.OpenQuestions, detectAuthFleetOpenQuestions(inputs)...)
+		plan.CutoverOverrides = computeCutoverOverrides(clusters, cutover, inputs)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectCutoverOpenQuestions(cutover, plan.CutoverOverrides, inputs, fleetUsesIAM(clusters))...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectAuthFleetOpenQuestions(clusters, inputs)...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectClusterCutoverOpenQuestions(clusters, inputs)...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectPerClusterGatewayIncompat(clusters, cutover, inputs)...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectUnknownClusterOverrides(clusters, inputs)...)
 	}
 	// Schema migration — fleet-wide; one Plan, one verdict. The
 	// `schemaless` branch returns nil so the renderer can omit the
 	// whole section cleanly. We still run the OQ detector either way:
 	// the strategy-typo / strategy-unknown signals are valuable even
 	// when the verdict resolves to no recommendation.
-	schema := DecideSchema(state, s.cfg, inputs)
-	if schema != nil && !HasPath(schema, types.SchemaPathSchemaless) {
+	schema := decideSchema(state, s.cfg, inputs)
+	if schema != nil && !hasPath(schema, types.SchemaPathSchemaless) {
 		plan.Schema = schema
 	}
 	plan.OpenQuestions = append(plan.OpenQuestions, detectSchemaOpenQuestions(schema, s.cfg, inputs)...)
+
+	// Red Flags — fleet-wide list of trigger rows the customer should
+	// discuss with the SE. Each row carries its own evidence (field
+	// path + value) so the conversation is grounded in scan facts.
+	plan.RedFlags = detectRedFlags(state, plan, s.cfg, inputs)
+
+	// Effort Signals — quantitative inputs the customer's PM consumes
+	// to scope migration effort. Counts only; no day-estimate.
+	plan.EffortSignals = detectEffortSignals(state)
+
+	// Tiered Storage — per-cluster trade-off framing for fleets with
+	// MSK tiered storage enabled. Customer-decision shaped; kcp
+	// doesn't pick a path, just makes the three dimensions
+	// (mechanism / duration / cost direction) legible.
+	plan.TieredStorage = detectTieredStorage(state, inputs)
+	plan.OpenQuestions = append(plan.OpenQuestions, detectTieredStorageOpenQuestions(plan.TieredStorage, inputs)...)
+
+	// Cost-vs-Inventory Reconciliation — lists MSK instance types in
+	// the AWS cost report that `kcp discover` didn't surface. Sorted
+	// by spend desc; no materiality threshold (the customer judges
+	// what's real). Emits an OQ when cost data is empty.
+	plan.CostReconciliation = detectCostReconciliation(state, s.cfg)
+	plan.OpenQuestions = append(plan.OpenQuestions, detectCostReconciliationOpenQuestions(state)...)
+
 	// Stale-state OQ: surface a fleet-wide accuracy warning when the
 	// source state file is older than the freshness window. The Plan
 	// still renders against whatever's in state.json — but a 14-day-old
@@ -248,14 +295,6 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	return oqs
 }
 
-// detectCutoverOpenQuestions surfaces fleet-wide gateway-intent / prereq
-// gaps. Emitted once per Plan (no ClusterID — these aren't per-cluster).
-// Three independent OQs can fire:
-//   - gateway intent ambiguous (degraded_awaiting_oq)
-//   - gateway prereqs pending (degraded_prereqs_pending)
-//   - seconds_per_service tolerance requires the gateway, but it isn't
-//     mediated for some reason (cross-check; message varies by cause).
-//
 // detectStaleStateOQ surfaces a fleet-wide OQ when the source state
 // file is older than `staleDays`. Compares state.Timestamp against the
 // Plan's GeneratedAt time; if the state was empty (zero timestamp) the
@@ -283,7 +322,19 @@ func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDa
 	}}
 }
 
-func detectCutoverOpenQuestions(cutover types.CutoverDecision, inputs types.PlanInputsResolved, iamInUse bool) []types.OpenQuestion {
+// detectCutoverOpenQuestions surfaces fleet-wide gateway-intent /
+// prereq gaps. Emitted once per Plan (no ClusterID — these aren't
+// per-cluster). Independent OQs that can fire:
+//   - gateway intent ambiguous (degraded_awaiting_oq)
+//   - gateway prereqs pending (degraded_prereqs_pending)
+//   - seconds_per_service tolerance requires the gateway, but it isn't
+//     mediated for some reason (cross-check; message varies by cause).
+//
+// `overrides` carries per-cluster cutover exceptions; when any cluster
+// overrides to Blue/Green, the gateway-intent / prereq OQs add a note
+// that those clusters are exempt — otherwise the OQ reads as if it
+// applies to the entire fleet.
+func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types.ClusterCutoverOverride, inputs types.PlanInputsResolved, iamInUse bool) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	if !knownDowntimeTolerance(inputs.DowntimeTolerance) {
 		oqs = append(oqs, types.OpenQuestion{
@@ -293,19 +344,29 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, inputs types.Plan
 			HowToClose: "Set `downtime_tolerance` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
 		})
 	}
+	// Clusters with a Blue/Green override sidestep the gateway-mediation
+	// question entirely; the fleet-wide gateway OQs below need to
+	// acknowledge that or the reader sees a contradiction between §3's
+	// "gateway N/A for this style" note and the OQ asking them to pick
+	// a gateway path "for the fleet".
+	gatewayExempt := bgOverrideClusterNames(overrides)
+	exemptSuffix := ""
+	if len(gatewayExempt) > 0 {
+		exemptSuffix = fmt.Sprintf(" Per-cluster Blue/Green overrides (`%s`) sidestep the gateway question — this OQ applies to the rest of the fleet.", strings.Join(gatewayExempt, "`, `"))
+	}
 	switch cutover.RecommendationStatus {
 	case types.RecommendationDegradedAwaitingOQ:
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "gateway_intent_unconfirmed",
 			Title:      "Gateway intent — pick CC Gateway or plain Cluster Linking",
-			Body:       "`prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open.",
+			Body:       "`prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open." + exemptSuffix,
 			HowToClose: "In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.",
 		})
 	case types.RecommendationDegradedPrereqsPending:
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "gateway_prereqs_pending",
 			Title:      "Gateway prereqs — pending items before the gateway path can be recommended",
-			Body:       fmt.Sprintf("`prefer_gateway: true` and at least one gateway prereq is still at `not_started`: %s. The gateway-mediated path needs all applicable prereqs at `in_progress` or `complete`. Plain Cluster Linking applies until they advance.", pendingPrereqList(inputs, iamInUse)),
+			Body:       fmt.Sprintf("`prefer_gateway: true` and at least one gateway prereq is still at `not_started`: %s. The gateway-mediated path needs all applicable prereqs at `in_progress` or `complete`. Plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs, iamInUse), exemptSuffix),
 			HowToClose: "Move each pending prereq above to `in_progress` (intent declared) or `complete` (done). Re-run `kcp report plan` once the prereqs advance.",
 		})
 	}
@@ -338,9 +399,9 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, inputs types.Plan
 // (fleet-level OQ, single emit) and any per-cluster
 // `clusters[<name>].target_auth_method` typos (per-cluster OQs so the
 // affected cluster is obvious). Per-cluster typos silently fall back
-// to the per-source default in DecideAuth via effectiveTarget, so
+// to the per-source default in decideAuth via effectiveTarget, so
 // without this detector they're invisible to the customer.
-func detectAuthFleetOpenQuestions(inputs types.PlanInputsResolved) []types.OpenQuestion {
+func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	if !knownTargetAuthMethod(inputs.TargetAuthMethod) {
 		oqs = append(oqs, types.OpenQuestion{
@@ -350,28 +411,217 @@ func detectAuthFleetOpenQuestions(inputs types.PlanInputsResolved) []types.OpenQ
 			HowToClose: "Set `target_auth_method` in `plan-inputs.yaml` (or `clusters[<name>].target_auth_method` for a per-cluster override) to one of the recognised values, OR unset it to keep the per-source default.",
 		})
 	}
-	if inputs.Raw != nil {
-		clusterNames := make([]string, 0, len(inputs.Raw.Clusters))
-		for name := range inputs.Raw.Clusters {
-			clusterNames = append(clusterNames, name)
+	for _, name := range sortedKnownClusterOverrideNames(clusters, inputs) {
+		cluster := inputs.Raw.Clusters[name]
+		if cluster.TargetAuthMethod == nil {
+			continue
 		}
-		sort.Strings(clusterNames)
-		for _, name := range clusterNames {
-			cluster := inputs.Raw.Clusters[name]
-			if cluster.TargetAuthMethod == nil {
-				continue
+		value := *cluster.TargetAuthMethod
+		if knownTargetAuthMethod(value) {
+			continue
+		}
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "target_auth_method_unknown",
+			ClusterID:  name,
+			Title:      fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
+			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
+			HowToClose: fmt.Sprintf("Set `clusters[%s].target_auth_method` in `plan-inputs.yaml` to one of the recognised values, OR remove the override to keep the per-source default.", name),
+		})
+	}
+	return oqs
+}
+
+// sortedKnownClusterOverrideNames returns the keys of
+// `inputs.Raw.Clusters` that match an actual scanned cluster, in
+// stable alphabetical order. Unknown-cluster overrides are filtered
+// out here; `detectUnknownClusterOverrides` handles surfacing them as
+// their own OQ. Returns nil when no Raw inputs exist.
+func sortedKnownClusterOverrideNames(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []string {
+	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
+		return nil
+	}
+	known := make(map[string]struct{}, len(clusters))
+	for _, c := range clusters {
+		known[c.Name] = struct{}{}
+	}
+	names := make([]string, 0, len(inputs.Raw.Clusters))
+	for name := range inputs.Raw.Clusters {
+		if _, ok := known[name]; !ok {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// detectUnknownClusterOverrides surfaces 🟡 OQs for keys under
+// `clusters:` in plan-inputs.yaml that don't match any scanned
+// cluster. Without this, a typo'd cluster name (e.g. `clusters[trust]`
+// against a fleet with no `trust` cluster) silently produces no
+// override and the reader has no signal that their input was rejected.
+func detectUnknownClusterOverrides(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []types.OpenQuestion {
+	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
+		return nil
+	}
+	known := make(map[string]struct{}, len(clusters))
+	for _, c := range clusters {
+		known[c.Name] = struct{}{}
+	}
+	var unknown []string
+	for name := range inputs.Raw.Clusters {
+		if _, ok := known[name]; ok {
+			continue
+		}
+		unknown = append(unknown, name)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	oqs := make([]types.OpenQuestion, 0, len(unknown))
+	for _, name := range unknown {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "cluster_override_unknown_cluster",
+			Title:      fmt.Sprintf("`clusters[%s]` in `plan-inputs.yaml` doesn't match any scanned cluster — override silently ignored", name),
+			Body:       fmt.Sprintf("The plan-inputs `clusters:` map names `%s`, but the state file contains no cluster with that name. The override block has no effect; either the cluster name is a typo, or the state file is from a different source than expected.", name),
+			HowToClose: fmt.Sprintf("Either correct the cluster name under `clusters:` in `plan-inputs.yaml` to match a real scanned cluster, OR remove the `%s` block entirely.", name),
+		})
+	}
+	return oqs
+}
+
+// computeCutoverOverrides walks each cluster, layers its
+// `clusters[<name>].downtime_tolerance` / `.sub_pattern` override on
+// the global inputs, and emits an override entry whenever the resolved
+// style or sub_pattern differs from the fleet default. Gateway
+// mediation is recomputed per cluster too — a Blue/Green override
+// flips mediation to N/A even when the fleet mediates via the gateway.
+// When the override value isn't in the recognised enum, the entry
+// carries OverrideRejected + RejectedOverrideValue so a JSON consumer
+// can detect rejected overrides structurally (mirrors AuthDecision).
+func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet types.CutoverDecision, inputs types.PlanInputsResolved) []types.ClusterCutoverOverride {
+	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
+		return nil
+	}
+	var out []types.ClusterCutoverOverride
+	for _, c := range clusters {
+		raw, ok := inputs.Raw.Clusters[c.Name]
+		if !ok || (raw.DowntimeTolerance == nil && raw.SubPattern == nil) {
+			continue
+		}
+		clusterInputs := applyClusterOverride(inputs, inputs.Raw, c.Name)
+		dec := decideCutover([]types.ProcessedCluster{c}, clusterInputs)
+		rejected, rejectedValue := rejectedCutoverOverride(raw)
+		styleMatchesFleet := dec.Style == fleet.Style && dec.SubPattern == fleet.SubPattern && dec.GatewayMediated == fleet.GatewayMediated
+		if styleMatchesFleet && !rejected {
+			continue
+		}
+		out = append(out, types.ClusterCutoverOverride{
+			ClusterID:             c.Name,
+			Style:                 dec.Style,
+			SubPattern:            dec.SubPattern,
+			GatewayMediated:       dec.GatewayMediated,
+			OverrideRejected:      rejected,
+			RejectedOverrideValue: rejectedValue,
+		})
+	}
+	return out
+}
+
+// detectPerClusterGatewayIncompat fires when a per-cluster
+// `downtime_tolerance: seconds_per_service` override exists but the
+// fleet's gateway isn't mediated (gateway prereqs are fleet-scoped, so
+// a per-cluster override can't get its own gateway path). Without
+// this, the customer's per-cluster choice is silently lost — the
+// cluster falls back to the fleet's plain Cluster Linking shape and
+// the reader has no signal.
+func detectPerClusterGatewayIncompat(clusters []types.ProcessedCluster, fleet types.CutoverDecision, inputs types.PlanInputsResolved) []types.OpenQuestion {
+	if fleet.GatewayMediated == types.GatewayMediatedTrue {
+		return nil
+	}
+	var oqs []types.OpenQuestion
+	for _, name := range sortedKnownClusterOverrideNames(clusters, inputs) {
+		cluster := inputs.Raw.Clusters[name]
+		if cluster.DowntimeTolerance == nil || *cluster.DowntimeTolerance != DowntimeSecondsPerService {
+			continue
+		}
+		oqs = append(oqs, types.OpenQuestion{
+			ID:        "downtime_tolerance_requires_gateway",
+			ClusterID: name,
+			Title:     fmt.Sprintf("`clusters[%s].downtime_tolerance: seconds_per_service` requires the gateway but the fleet's recommendation is plain Cluster Linking", name),
+			Body: "seconds_per_service downtime tolerance requires CC-Gateway mediation, and gateway prereqs are fleet-scoped — there's no per-cluster gateway path. " +
+				"The per-cluster override is honoured for the cutover style (Stop-Restart-Repeat), but the sub-minute window depends on the fleet committing to the gateway path.",
+			HowToClose: fmt.Sprintf("Either advance the fleet's gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) so the fleet mediates via the gateway, OR relax `clusters[%s].downtime_tolerance` to `minutes_per_service`.", name),
+		})
+	}
+	return oqs
+}
+
+// bgOverrideClusterNames returns the cluster names that override to
+// Blue/Green — the only style that sidesteps the gateway-mediation
+// question. Used by detectCutoverOpenQuestions to add a clarifying
+// note to fleet-wide gateway OQs so the reader doesn't think the OQ
+// applies to gateway-exempt clusters too.
+func bgOverrideClusterNames(overrides []types.ClusterCutoverOverride) []string {
+	var out []string
+	for _, o := range overrides {
+		if o.Style == types.CutoverBlueGreen {
+			out = append(out, o.ClusterID)
+		}
+	}
+	return out
+}
+
+// rejectedCutoverOverride reports whether the per-cluster override
+// values are outside the recognised enum. Returns the first rejected
+// value found (downtime_tolerance takes precedence over sub_pattern)
+// for the renderer / JSON consumer to display.
+func rejectedCutoverOverride(raw types.ClusterPlanInputs) (bool, string) {
+	if raw.DowntimeTolerance != nil && !knownDowntimeTolerance(*raw.DowntimeTolerance) {
+		return true, *raw.DowntimeTolerance
+	}
+	if raw.SubPattern != nil && !knownCutoverSubPattern(*raw.SubPattern) {
+		return true, *raw.SubPattern
+	}
+	return false, ""
+}
+
+// detectClusterCutoverOpenQuestions emits a per-cluster OQ when a
+// `clusters[<name>].downtime_tolerance` (or `.sub_pattern`) override
+// is typo'd. Mirrors the per-cluster `target_auth_method` typo OQ —
+// without it, the typo silently falls back to a default and the
+// reader has no idea why this cluster doesn't override. Only emits
+// for cluster names that match an actual scanned cluster;
+// unknown-name overrides are handled by
+// detectUnknownClusterOverrides.
+func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []types.OpenQuestion {
+	var oqs []types.OpenQuestion
+	for _, name := range sortedKnownClusterOverrideNames(clusters, inputs) {
+		cluster := inputs.Raw.Clusters[name]
+		if cluster.DowntimeTolerance != nil {
+			value := *cluster.DowntimeTolerance
+			if !knownDowntimeTolerance(value) {
+				oqs = append(oqs, types.OpenQuestion{
+					ID:         "downtime_tolerance_unknown",
+					ClusterID:  name,
+					Title:      fmt.Sprintf("`clusters[%s].downtime_tolerance: %s` is not a recognised value — treated as `let_confluent_choose` (Stop-Restart-Repeat) for this cluster", name, value),
+					Body:       "The Plan only recognises `zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose`. The override falls outside the enum, so this cluster's cutover style resolves to the Confluent default (Stop-Restart-Repeat) — note this can DIFFER from the fleet-wide default if the fleet itself selected another style, in which case this cluster appears in the **Per-cluster overrides** sub-list above.",
+					HowToClose: fmt.Sprintf("Set `clusters[%s].downtime_tolerance` in `plan-inputs.yaml` to one of the recognised values, OR remove the override to keep the fleet default.", name),
+				})
 			}
-			value := *cluster.TargetAuthMethod
-			if knownTargetAuthMethod(value) {
-				continue
+		}
+		if cluster.SubPattern != nil {
+			value := *cluster.SubPattern
+			if !knownCutoverSubPattern(value) {
+				oqs = append(oqs, types.OpenQuestion{
+					ID:         "sub_pattern_unknown",
+					ClusterID:  name,
+					Title:      fmt.Sprintf("`clusters[%s].sub_pattern: %s` is not a recognised value — `app-by-app` applied for this cluster", name, value),
+					Body:       "The Plan only recognises `app-by-app | topic-by-topic` for the Stop-Restart-Repeat sub-pattern. The override falls outside the enum, so the cluster inherits the default `app-by-app` cadence.",
+					HowToClose: fmt.Sprintf("Set `clusters[%s].sub_pattern` in `plan-inputs.yaml` to `app-by-app` or `topic-by-topic`, OR remove the override.", name),
+				})
 			}
-			oqs = append(oqs, types.OpenQuestion{
-				ID:         "target_auth_method_unknown",
-				ClusterID:  name,
-				Title:      fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
-				Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
-				HowToClose: fmt.Sprintf("Set `clusters[%s].target_auth_method` in `plan-inputs.yaml` to one of the recognised values, OR remove the override to keep the per-source default.", name),
-			})
 		}
 	}
 	return oqs

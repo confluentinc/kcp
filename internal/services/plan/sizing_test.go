@@ -53,7 +53,7 @@ func TestComputeClusterSizing_EgressDominant(t *testing.T) {
 	// well above ingress and partitions, so the egress dimension wins and
 	// sizing snaps to 8 eCKU.
 	c := fixtureCluster("read-heavy", 2058, 88.7, 994.8, 99.0, 1200.0)
-	s := ComputeClusterSizing(c, defaultCfg(t), defaultInputs())
+	s := computeClusterSizing(c, defaultCfg(t), defaultInputs())
 
 	assert.False(t, s.Degraded)
 	assert.InDelta(t, 88.7, s.SizedInMBps, 0.1)
@@ -69,7 +69,7 @@ func TestComputeClusterSizing_SLAFloorBinds(t *testing.T) {
 	c := fixtureCluster("small", 10, 0.1, 0.1, 0.2, 0.2)
 	inputs := defaultInputs()
 	inputs.SLATarget = "99.99"
-	s := ComputeClusterSizing(c, defaultCfg(t), inputs)
+	s := computeClusterSizing(c, defaultCfg(t), inputs)
 	assert.Equal(t, 1, s.SizedECKU)
 	assert.Equal(t, 2, s.SLAFloorECKU)
 	assert.Equal(t, 2, s.FinalECKU)
@@ -83,7 +83,7 @@ func TestComputeClusterSizing_DegradedOnMissingP95(t *testing.T) {
 		ClusterMetrics:              types.ProcessedClusterMetrics{Aggregates: map[string]types.MetricAggregate{}},
 		KafkaAdminClientInformation: types.KafkaAdminClientInformation{Topics: &types.Topics{Summary: types.TopicSummary{TotalPartitions: 50}}},
 	}
-	s := ComputeClusterSizing(c, defaultCfg(t), defaultInputs())
+	s := computeClusterSizing(c, defaultCfg(t), defaultInputs())
 	require.True(t, s.Degraded)
 	assert.Contains(t, s.DegradedReason, "BytesInPerSec")
 	assert.Equal(t, 50, s.UserPartitions)
@@ -94,7 +94,7 @@ func TestComputeClusterSizing_DegradedOnMissingP95(t *testing.T) {
 func TestComputeClusterSizing_SpikyDetection(t *testing.T) {
 	// Peak 5× P95 → spiky flag fires.
 	c := fixtureCluster("spike", 100, 10.0, 10.0, 50.0, 50.0)
-	s := ComputeClusterSizing(c, defaultCfg(t), defaultInputs())
+	s := computeClusterSizing(c, defaultCfg(t), defaultInputs())
 	assert.True(t, s.SpikyIngress)
 	assert.True(t, s.SpikyEgress)
 }
@@ -102,7 +102,7 @@ func TestComputeClusterSizing_SpikyDetection(t *testing.T) {
 func TestComputeClusterSizing_PartitionWinner(t *testing.T) {
 	// 100k partitions dominate throughput in the max-ratio.
 	c := fixtureCluster("part", 100_000, 1.0, 1.0, 1.0, 1.0)
-	s := ComputeClusterSizing(c, defaultCfg(t), defaultInputs())
+	s := computeClusterSizing(c, defaultCfg(t), defaultInputs())
 	// partition ratio = 100000 / 3000 = 33.33; CEIL(33.33 * 1.30) = 44
 	assert.Equal(t, 44, s.SizedECKU)
 }

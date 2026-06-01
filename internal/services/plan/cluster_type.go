@@ -154,7 +154,7 @@ func sourceUsesMTLS(c types.ProcessedCluster) bool {
 	return tls.Enabled != nil && *tls.Enabled
 }
 
-// DecideClusterType returns the recommended Confluent Cloud cluster type
+// decideClusterType returns the recommended Confluent Cloud cluster type
 // for one source cluster.
 //
 // Standard is intentionally not a verdict: MSK migration workloads
@@ -162,7 +162,7 @@ func sourceUsesMTLS(c types.ProcessedCluster) bool {
 // that Standard doesn't offer. Enterprise is the default; hard-limit
 // rules escalate to Dedicated when a cap is exceeded or a workload
 // constraint can't be served on Enterprise.
-func DecideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterTypeDecision {
+func decideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterTypeDecision {
 	var firedTriggers []types.HardLimitTrigger
 	evaluated := make([]types.RuleEvaluation, 0, len(hardLimitCatalog))
 	for _, hl := range hardLimitCatalog {
