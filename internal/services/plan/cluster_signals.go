@@ -74,6 +74,12 @@ func brokerInventoryGap(c types.ProcessedCluster) bool {
 // per-cluster section — same MskClusterConfig pointer-chase as
 // `brokerInstanceType` / `kafkaVersionOf`, so it lives here next to
 // its peers.
+//
+// Serverless clusters always return empty — Provisioned is nil on
+// Serverless, and StorageMode is a Provisioned-only concept. Callers
+// that iterate clusters MUST also guard with `isServerless` if they
+// want to skip Serverless explicitly (recommended: silent fall-through
+// is fragile if helper semantics change later).
 func clusterStorageMode(c types.ProcessedCluster) kafkatypes.StorageMode {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil {
@@ -227,6 +233,14 @@ func fleetUsesIAM(clusters []types.ProcessedCluster) bool {
 // ambiguity the caller would have to re-disambiguate).
 func inputsMissing(c types.ProcessedCluster) []string {
 	var missing []string
+	// MskClusterConfig.Provisioned shape gap — affects every
+	// Provisioned-only helper (kafkaVersionOf, brokerInstanceType,
+	// clusterStorageMode, sourceUsesMTLS). Without surfacing this, the
+	// cluster silently flows through with empty/false everywhere and
+	// no signal back to the customer.
+	if !isServerless(c) && hasUnknownClusterType(c) {
+		missing = append(missing, "msk_cluster_config")
+	}
 	if c.KafkaAdminClientInformation.Topics == nil {
 		missing = append(missing, "topics")
 	}
@@ -237,4 +251,25 @@ func inputsMissing(c types.ProcessedCluster) []string {
 		missing = append(missing, "brokers")
 	}
 	return missing
+}
+
+// hasUnknownClusterType reports whether the cluster's discriminator
+// is something other than the two known values (`PROVISIONED` /
+// `SERVERLESS`), OR is a Provisioned cluster missing its
+// `Provisioned` block entirely. Both cases mean the Provisioned-only
+// helpers will return empty/false silently. Callers should treat this
+// as an inputs-missing gap and surface a cluster-type OQ.
+func hasUnknownClusterType(c types.ProcessedCluster) bool {
+	ct := c.AWSClientInformation.MskClusterConfig.ClusterType
+	if ct == kafkatypes.ClusterTypeServerless {
+		return false
+	}
+	if ct == kafkatypes.ClusterTypeProvisioned {
+		// Provisioned discriminator set but the Provisioned block is
+		// missing — mid-flight scan failure or pre-0.7 file shape.
+		return c.AWSClientInformation.MskClusterConfig.Provisioned == nil
+	}
+	// Anything else (empty discriminator, future AWS variant) is
+	// unrecognised.
+	return true
 }

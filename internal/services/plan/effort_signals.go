@@ -1,10 +1,21 @@
 package plan
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/types"
 )
+
+// pluralizeY appends "y" or "ies" based on count — "registry" /
+// "registries", "fleet entry" / "fleet entries". Inline helper to
+// avoid pulling the renderer's full pluralize map into the detector.
+func pluralizeY(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
+}
 
 // Stable Effort Signal IDs. Matches the spec row order.
 const (
@@ -101,6 +112,9 @@ func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) types.EffortSi
 			continue
 		}
 		for _, td := range c.KafkaAdminClientInformation.Topics.Details {
+			if td.Partitions <= 0 {
+				continue
+			}
 			if mm2CheckpointPattern.MatchString(td.Name) {
 				seen[td.Name] = struct{}{}
 			}
@@ -137,6 +151,13 @@ func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) types.Eff
 			continue
 		}
 		for _, td := range c.KafkaAdminClientInformation.Topics.Details {
+			// Zero-partition topics are pathological: AWS doesn't create
+			// them, but a malformed scan could. They're not a real
+			// Connect fleet either way — skip them so they can't inflate
+			// the count.
+			if td.Partitions <= 0 {
+				continue
+			}
 			prefix, kind, ok := connectInternalTopicPrefix(td.Name)
 			if !ok {
 				continue
@@ -213,6 +234,14 @@ func signalGlueSerializerMigration(state types.ProcessedState, clusters []types.
 		for _, gs := range gr.Schemas {
 			glueSubjects[gs.SchemaName] = struct{}{}
 		}
+	}
+	// Glue registries scanned but every one was empty — the scan ran
+	// but found no schemas. Distinguish from the "Glue not scanned"
+	// path above so the customer knows what to ask about.
+	if len(glueSubjects) == 0 {
+		sig.Count = intPtr(0)
+		sig.Note = fmt.Sprintf("%d Glue registr%s scanned but no schemas found inside — either the registries are empty or the scan ran without permissions to enumerate schemas.", len(state.SchemaRegistries.AWSGlue), pluralizeY(len(state.SchemaRegistries.AWSGlue)))
+		return sig
 	}
 	// De-dupe by ClientId so one app producing/consuming N Glue-backed
 	// topics counts as a single workstream, not N. The label is "clients
