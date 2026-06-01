@@ -79,12 +79,8 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	}
 
 	for _, c := range clusters {
-		// ProcessState doesn't populate Aggregates on the top-level path —
-		// only the per-subcommand date-filtered helpers do. Fill it in if
-		// the cluster has raw metrics but no aggregates, so sizing has P95.
-		if len(c.ClusterMetrics.Aggregates) == 0 && len(c.ClusterMetrics.Metrics) > 0 {
-			c.ClusterMetrics.Aggregates = report.CalculateMetricsAggregates(c.ClusterMetrics.Metrics)
-		}
+		// (Aggregates backfill happens in collectClusters so fleet-wide
+		// helpers see the same map.)
 		// Per-cluster overrides win over globals — heterogeneous fleets
 		// need finer-grained inputs than flipping one global flag across
 		// every cluster. We start from the already-resolved global view
@@ -177,6 +173,11 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	// change the verdicts.
 	plan.OpenQuestions = append(plan.OpenQuestions, detectStaleStateOQ(state.Timestamp, s.now(), s.cfg.Thresholds.StaleStateDays)...)
 
+	// OSK-source OQ: today's plan covers MSK only; OSK clusters in the
+	// state are silently ignored. Surface a fleet-wide OQ so the
+	// customer knows their on-prem Kafka clusters didn't get planned.
+	plan.OpenQuestions = append(plan.OpenQuestions, detectOSKSourceOpenQuestion(state)...)
+
 	// Stable order: blocker OQs first, acknowledgement OQs last; tie-break
 	// on cluster ID so two clusters of equal priority sort alphabetically.
 	sort.SliceStable(plan.OpenQuestions, func(i, j int) bool {
@@ -200,19 +201,26 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, ct types.ClusterTypeDecision, net types.NetworkingDecision, auth types.AuthDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	// Auth posture undetectable. Fires whenever the source has no
-	// detected auth methods on a non-serverless cluster — auth is its
-	// own concern, surfaced independently of topic / ACL inventory gaps
-	// (those have their own OQs and don't suppress this one).
-	// Serverless clusters legitimately produce no detected methods
-	// when IAM isn't enabled; suppress only for them.
-	if len(auth.SourceAuths) == 0 && !isServerless(c) {
-		oqs = append(oqs, types.OpenQuestion{
-			ID:         "auth_posture_unknown",
-			ClusterID:  c.Name,
-			Title:      "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
-			Body:       "Neither `AWSClientInformation.MskClusterConfig.Provisioned.ClientAuthentication` nor `kafka_admin_client_information.sasl_mechanism` reports an enabled auth method. A real MSK Provisioned cluster always has at least one. Likely cause: discover ran without admin credentials (or the state file pre-dates the auth scan).",
-			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account, OR provide admin Kafka credentials to `kcp scan clusters` so the Admin probe can backfill `sasl_mechanism`.", regionFlag(c.Region)),
-		})
+	// detected auth methods — auth is its own concern, surfaced
+	// independently of topic / ACL inventory gaps (those have their
+	// own OQs and don't suppress this one). The OQ body / how-to-close
+	// branch on cluster type because the resolution path differs:
+	// Provisioned needs an admin re-scan; Serverless needs the
+	// Serverless.ClientAuthentication block populated.
+	if len(auth.SourceAuths) == 0 {
+		oq := types.OpenQuestion{
+			ID:        "auth_posture_unknown",
+			ClusterID: c.Name,
+			Title:     "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
+		}
+		if isServerless(c) {
+			oq.Body = "`AWSClientInformation.MskClusterConfig.Serverless.ClientAuthentication` is empty for this Serverless cluster. MSK Serverless supports only SASL/IAM, but the auth block can be missing if the scan ran without admin credentials or the cluster pre-dates the auth setup."
+			oq.HowToClose = fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to refresh `Serverless.ClientAuthentication`. If the cluster genuinely has no auth wired yet, configure SASL/IAM on the MSK side first.", regionFlag(c.Region))
+		} else {
+			oq.Body = "Neither `AWSClientInformation.MskClusterConfig.Provisioned.ClientAuthentication` nor `kafka_admin_client_information.sasl_mechanism` reports an enabled auth method. A real MSK Provisioned cluster always has at least one. Likely cause: discover ran without admin credentials (or the state file pre-dates the auth scan)."
+			oq.HowToClose = fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account, OR provide admin Kafka credentials to `kcp scan clusters` so the Admin probe can backfill `sasl_mechanism`.", regionFlag(c.Region))
+		}
+		oqs = append(oqs, oq)
 	}
 	// Customer-set target_auth_method conflicts with a source whose
 	// auth_mapping is gateway_compatible: false (today: IAM). The plan
@@ -238,13 +246,21 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		}
 	}
 	if sizing.Degraded {
+		howToClose := fmt.Sprintf("Re-run `kcp discover%s` without `--skip-metrics` so CloudWatch metrics get backfilled into the state file.", regionFlag(c.Region))
+		if isServerless(c) {
+			// Serverless emits a different CloudWatch metric set than
+			// Provisioned (no `BytesInPerSec` / `BytesOutPerSec` on
+			// the per-broker dimensions), so re-discover alone won't
+			// populate the throughput floor. Customer needs to either
+			// declare throughput or consult the account team.
+			howToClose = "Serverless throughput isn't auto-populated by `kcp discover` — supply ingress/egress targets via `plan-inputs.yaml` (or work with your Confluent account team to size against actual workload rates)."
+		}
 		oqs = append(oqs, types.OpenQuestion{
-			ID:        "missing_p95_metrics",
-			ClusterID: c.Name,
-			Title:     fmt.Sprintf("No %s throughput metrics — sizing fell back to SLA floor", percentileHeader(inputs.SizingPercentile)),
-			Body:      sizing.DegradedReason,
-			// Metrics are collected by `kcp discover` (CloudWatch path), not a separate `scan metrics` subcommand.
-			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` without `--skip-metrics` so CloudWatch metrics get backfilled into the state file.", regionFlag(c.Region)),
+			ID:         "missing_p95_metrics",
+			ClusterID:  c.Name,
+			Title:      fmt.Sprintf("No %s throughput metrics — sizing fell back to SLA floor", percentileHeader(inputs.SizingPercentile)),
+			Body:       sizing.DegradedReason,
+			HowToClose: howToClose,
 		})
 	}
 	if !aclScanRan(c) && !isServerless(c) {
@@ -267,13 +283,33 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		})
 	}
 	if topicCount(c) == 0 {
+		topicsField := c.KafkaAdminClientInformation.Topics
+		var body string
+		switch {
+		case isServerless(c):
+			// Fresh Serverless: legitimately 0 topics.
+			body = "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. For a Serverless cluster that's only plausible if the cluster has genuinely never been used; if apps are connected, the admin scan probably didn't run with credentials to enumerate topics."
+		case topicsField == nil:
+			// Provisioned but the Topics field itself is absent — scan didn't run.
+			body = "`KafkaAdminClientInformation.Topics` is absent on this cluster — the admin scan that enumerates topics didn't run (or ran with `--skip-topics`)."
+		default:
+			body = "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero)."
+		}
 		oqs = append(oqs, types.OpenQuestion{
-			ID:        "topic_inventory_empty",
-			ClusterID: c.Name,
-			Title:     "Source environment shows 0 topics — likely an incomplete scan",
-			Body:      "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero).",
-			// `kcp scan clusters` doesn't take --region — it reads region from the state file.
+			ID:         "topic_inventory_empty",
+			ClusterID:  c.Name,
+			Title:      "Source environment shows 0 topics — likely an incomplete scan",
+			Body:       body,
 			HowToClose: "Re-run `kcp scan clusters --source-type msk --credentials-file <msk-credentials.yaml>` with admin Kafka credentials (without `--skip-topics`) to populate the topic list.",
+		})
+	}
+	if hasUnknownClusterType(c) {
+		oqs = append(oqs, types.OpenQuestion{
+			ID:         "cluster_type_unrecognised",
+			ClusterID:  c.Name,
+			Title:      "MSK cluster discriminator unrecognised — Plan treated as Provisioned with empty fields",
+			Body:       fmt.Sprintf("`MskClusterConfig.ClusterType` is %q. Recognised values are `PROVISIONED` and `SERVERLESS`. Without a recognised discriminator (or with `PROVISIONED` but `Provisioned == nil`), the Provisioned-shaped helpers — Kafka version, broker instance type, storage mode, mTLS detection — all return empty. The cluster appears in the Plan with most signals missing.", string(c.AWSClientInformation.MskClusterConfig.ClusterType)),
+			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to refresh `MskClusterConfig`. If the cluster legitimately uses a future MSK variant, file an issue against kcp so it can be added to the recognised set.", regionFlag(c.Region)),
 		})
 	}
 	if privateLinkSizingExceedsCap(sizing, ct, net, cfg) {
@@ -293,6 +329,39 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	// sees the signal and knows the override path (`sizing_percentile: p99`)
 	// exists if they want tighter sizing.
 	return oqs
+}
+
+// detectOSKSourceOpenQuestion surfaces a fleet-wide OQ when the
+// state file contains OSK (open-source Kafka, on-prem) clusters.
+// `kcp report plan` covers MSK only today; without this OQ those
+// clusters would be silently dropped from the plan.
+func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestion {
+	var oskCount int
+	for _, src := range state.Sources {
+		if src.OSKData != nil {
+			oskCount += len(src.OSKData.Clusters)
+		}
+	}
+	if oskCount == 0 {
+		return nil
+	}
+	return []types.OpenQuestion{{
+		ID:         "osk_source_unsupported",
+		Title:      fmt.Sprintf("%d on-prem Kafka cluster%s in the state file aren't covered by `kcp report plan`", oskCount, pluralizeSimple("", oskCount)),
+		Body:       "The state file includes `osk_sources` clusters (open-source Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the OSK clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
+		HowToClose: "Plan the OSK clusters separately: run `kcp report plan` against a state file slice that only contains the OSK clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
+	}}
+}
+
+// pluralizeSimple is a one-shot pluralizer for OQ titles ("0 clusters",
+// "1 cluster", "5 clusters"). The plan package has a richer pluralizer
+// for table headers (`pluralize`), but it depends on a registered noun
+// list; this helper just appends "s" when n != 1.
+func pluralizeSimple(_ string, n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // detectStaleStateOQ surfaces a fleet-wide OQ when the source state
@@ -675,7 +744,18 @@ func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
 			continue
 		}
 		for _, region := range src.MSKData.Regions {
-			out = append(out, region.Clusters...)
+			for _, c := range region.Clusters {
+				// ProcessState doesn't populate Aggregates on the
+				// top-level path — only per-subcommand helpers do.
+				// Backfill from raw metrics here so EVERY downstream
+				// consumer (sizing in the Build loop AND fleet-wide
+				// helpers like detectTieredStorage that re-call
+				// collectClusters) sees the same Aggregates map.
+				if len(c.ClusterMetrics.Aggregates) == 0 && len(c.ClusterMetrics.Metrics) > 0 {
+					c.ClusterMetrics.Aggregates = report.CalculateMetricsAggregates(c.ClusterMetrics.Metrics)
+				}
+				out = append(out, c)
+			}
 		}
 	}
 	return out

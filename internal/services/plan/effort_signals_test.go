@@ -42,9 +42,9 @@ func TestEffortSignal_IAMClientCount(t *testing.T) {
 func TestEffortSignal_MM2CheckpointTopics(t *testing.T) {
 	c := redFlagCluster("mm2-cluster", "3.5.0", "", "")
 	c.KafkaAdminClientInformation.Topics = &types.Topics{Details: []types.TopicDetails{
-		{Name: "us-east.checkpoints.internal"},
-		{Name: "us-west.checkpoints.internal"},
-		{Name: "regular-topic"},
+		{Name: "us-east.checkpoints.internal", Partitions: 1},
+		{Name: "us-west.checkpoints.internal", Partitions: 1},
+		{Name: "regular-topic", Partitions: 1},
 	}}
 	state := wrapClusters(c)
 	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
@@ -60,14 +60,14 @@ func TestEffortSignal_SelfManagedConnectFleets(t *testing.T) {
 	c := redFlagCluster("connect-cluster", "3.5.0", "", "")
 	c.KafkaAdminClientInformation.Topics = &types.Topics{Details: []types.TopicDetails{
 		// Fleet A — has all three triad topics with prefix "team-a-"
-		{Name: "team-a-connect-configs"},
-		{Name: "team-a-connect-offsets"},
-		{Name: "team-a-connect-status"},
+		{Name: "team-a-connect-configs", Partitions: 1},
+		{Name: "team-a-connect-offsets", Partitions: 25},
+		{Name: "team-a-connect-status", Partitions: 5},
 		// Fleet B — only two of three (configs + status, no offsets)
-		{Name: "team-b-connect-configs"},
-		{Name: "team-b-connect-status"},
+		{Name: "team-b-connect-configs", Partitions: 1},
+		{Name: "team-b-connect-status", Partitions: 5},
 		// Partial — only configs, NOT counted
-		{Name: "team-c-connect-configs"},
+		{Name: "team-c-connect-configs", Partitions: 1},
 	}}
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
 	sig := findSignal(t, plan.EffortSignals, EffortSignalIDSelfManagedConnectFleets)

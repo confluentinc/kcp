@@ -136,6 +136,7 @@ func TestDetectOpenQuestions(t *testing.T) {
 		c := types.ProcessedCluster{Name: name}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
+		c.AWSClientInformation.MskClusterConfig.Provisioned = &kafkatypes.Provisioned{} // non-nil to satisfy cluster_type_unrecognised guard
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{} // non-nil means "scan ran" under aclScanRan's current heuristic
 		return c
@@ -312,10 +313,77 @@ func withRegion(c types.ProcessedCluster, region string) types.ProcessedCluster 
 	return c
 }
 
+// State with OSKSources but no MSK clusters MUST surface the
+// osk_source_unsupported OQ so the customer knows on-prem clusters
+// were silently dropped. Today the plan only covers MSK.
+func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
+	state := types.ProcessedState{
+		Sources: []types.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
+				Clusters: []types.ProcessedOSKCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
+			}},
+		},
+	}
+	oqs := detectOSKSourceOpenQuestion(state)
+	require.Len(t, oqs, 1)
+	assert.Equal(t, "osk_source_unsupported", oqs[0].ID)
+	assert.Contains(t, oqs[0].Title, "2 on-prem Kafka clusters")
+}
+
+func TestDetectOSKSourceOpenQuestion_NoOQWhenOSKAbsent(t *testing.T) {
+	state := types.ProcessedState{}
+	assert.Empty(t, detectOSKSourceOpenQuestion(state))
+}
+
+// MskClusterConfig.ClusterType outside the recognised enum (empty or
+// future variant) MUST surface cluster_type_unrecognised so the
+// customer knows the Provisioned-shaped helpers silently returned
+// empty for that cluster.
+func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
+	t.Run("empty ClusterType → msk_cluster_config", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "no-type"}
+		// ClusterType left as zero-value
+		c.KafkaAdminClientInformation.Topics = &types.Topics{}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
+	})
+	t.Run("PROVISIONED with nil Provisioned → msk_cluster_config", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "nil-prov"}
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
+		// Provisioned block left as nil
+		c.KafkaAdminClientInformation.Topics = &types.Topics{}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
+	})
+	t.Run("Future variant ClusterType → msk_cluster_config", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "future"}
+		c.AWSClientInformation.MskClusterConfig.ClusterType = "HYBRID"
+		c.KafkaAdminClientInformation.Topics = &types.Topics{}
+		c.KafkaAdminClientInformation.Acls = []types.Acls{}
+		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
+		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
+	})
+	t.Run("Serverless does NOT report msk_cluster_config", func(t *testing.T) {
+		c := types.ProcessedCluster{Name: "srv"}
+		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
+		c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
+			VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}}},
+		}
+		c.KafkaAdminClientInformation.Topics = &types.Topics{}
+		assert.NotContains(t, inputsMissing(c), "msk_cluster_config")
+	})
+}
+
 func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 	t.Run("fully-scanned PROVISIONED cluster reports no missing inputs", func(t *testing.T) {
 		c := types.ProcessedCluster{Name: "ok"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
+		// Provisioned block must be populated — without it, the
+		// Provisioned-only helpers return empty and the new
+		// `msk_cluster_config` inputs-missing entry fires.
+		c.AWSClientInformation.MskClusterConfig.Provisioned = &kafkatypes.Provisioned{}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}

@@ -145,7 +145,14 @@ var hardLimitCatalog = []hardLimit{
 // sourceUsesMTLS reads `MskClusterConfig.Provisioned.ClientAuthentication.Tls.Enabled`
 // from `kcp scan clusters` output. Returns false when any layer is unpopulated
 // (the admin scan didn't run, or the cluster is OSK).
+//
+// Serverless clusters always return false — AWS MSK Serverless supports
+// only IAM SASL (no mTLS); its ClientAuthentication block lives on the
+// `Serverless` struct (not `Provisioned`) and has no TLS field.
 func sourceUsesMTLS(c types.ProcessedCluster) bool {
+	if isServerless(c) {
+		return false
+	}
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.ClientAuthentication == nil || prov.ClientAuthentication.Tls == nil {
 		return false
