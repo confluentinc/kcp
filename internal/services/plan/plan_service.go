@@ -512,8 +512,22 @@ func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet types.Cuto
 		}
 		clusterInputs := applyClusterOverride(inputs, inputs.Raw, c.Name)
 		dec := decideCutover([]types.ProcessedCluster{c}, clusterInputs)
+		// Gateway prereqs are fleet-scoped — a per-cluster override
+		// can't earn its own gateway path. Inherit the fleet's
+		// mediation verdict unless the override is Blue/Green, which
+		// sidesteps the gateway entirely (N/A). We can't reuse
+		// `dec.GatewayMediated` directly because `decideCutover` ran
+		// against a single-cluster slice and `fleetUsesIAM` would
+		// have re-evaluated against that one cluster's auth instead
+		// of the whole fleet — producing wrong mediation for mixed
+		// IAM / non-IAM fleets. (See `detectPerClusterGatewayIncompat`
+		// for the separate OQ that surfaces the cross-check.)
+		mediated := fleet.GatewayMediated
+		if dec.Style == types.CutoverBlueGreen {
+			mediated = types.GatewayMediatedNotApplicable
+		}
 		rejected, rejectedValue := rejectedCutoverOverride(raw)
-		styleMatchesFleet := dec.Style == fleet.Style && dec.SubPattern == fleet.SubPattern && dec.GatewayMediated == fleet.GatewayMediated
+		styleMatchesFleet := dec.Style == fleet.Style && dec.SubPattern == fleet.SubPattern && mediated == fleet.GatewayMediated
 		if styleMatchesFleet && !rejected {
 			continue
 		}
@@ -521,7 +535,7 @@ func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet types.Cuto
 			ClusterID:             c.Name,
 			Style:                 dec.Style,
 			SubPattern:            dec.SubPattern,
-			GatewayMediated:       dec.GatewayMediated,
+			GatewayMediated:       mediated,
 			OverrideRejected:      rejected,
 			RejectedOverrideValue: rejectedValue,
 		})

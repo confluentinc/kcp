@@ -409,6 +409,45 @@ func TestPerCluster_BlueGreenOverrideOnIAMClusterWithCompletePrereqs(t *testing.
 	}
 }
 
+// Per-cluster cutover overrides inherit the fleet's GatewayMediated
+// for non-Blue/Green styles — gateway prereqs are fleet-scoped, so
+// the override can't be re-evaluated against just this cluster's auth
+// (which is what `decideCutover([]{c}, ...)` would do via
+// `fleetUsesIAM`). Regression guard: a non-IAM override cluster in a
+// mixed IAM/non-IAM fleet must NOT flip the IAM-prereq gate.
+func TestComputeCutoverOverrides_GatewayMediationInheritedFromFleet(t *testing.T) {
+	base := styleInputs(DowntimeMinutesPerService)
+	base.ConfluentForKubernetesStatus = PrereqStatusCompleteInput
+	base.CCGatewayLicenseStatus = PrereqStatusCompleteInput
+	base.IAMPreMigrationStatus = PrereqNotStarted // not_started — relevant ONLY if fleet uses IAM
+	// Fleet has an IAM cluster → IAM prereq is consulted → fleet is
+	// degraded (not gateway-mediated).
+	clusters := []types.ProcessedCluster{
+		withSourceAuth("iam-cluster", SourceAuthIAM),
+		withSourceAuth("scram-override", SourceAuthSCRAM),
+	}
+	srr := DowntimeMinutesPerService
+	tbt := string(types.SubPatternTopicByTopic)
+	raw := &types.PlanInputs{
+		Clusters: map[string]types.ClusterPlanInputs{
+			// scram-override flips sub-pattern only — same style as fleet.
+			// Pre-fix, decideCutover on a single SCRAM cluster would
+			// IGNORE the IAM prereq (fleetUsesIAM=false for this slice)
+			// and emit GatewayMediated=true, contradicting the fleet.
+			"scram-override": {DowntimeTolerance: &srr, SubPattern: &tbt},
+		},
+	}
+	base.Raw = raw
+	fleet := decideCutover(clusters, base)
+	require.NotEqual(t, types.GatewayMediatedTrue, fleet.GatewayMediated, "fleet must be degraded by the IAM-not-started prereq")
+
+	overrides := computeCutoverOverrides(clusters, fleet, base)
+	require.Len(t, overrides, 1, "scram-override must surface (sub-pattern differs)")
+	assert.Equal(t, "scram-override", overrides[0].ClusterID)
+	assert.Equal(t, fleet.GatewayMediated, overrides[0].GatewayMediated,
+		"non-BG override must inherit fleet's GatewayMediated — not re-evaluate IAM prereqs against this single cluster")
+}
+
 // Per-cluster `downtime_tolerance: seconds_per_service` against a
 // fleet without gateway mediation must surface the conflict — gateway
 // prereqs are fleet-scoped so a per-cluster override can't earn its

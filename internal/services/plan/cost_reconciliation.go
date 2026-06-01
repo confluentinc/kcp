@@ -30,7 +30,15 @@ func mskUsageTypeRegex(cfg *PlanConfig) *regexp.Regexp {
 	if len(families) == 0 {
 		families = []string{"Kafka", "Express"}
 	}
-	familyAlt := strings.Join(families, "|")
+	// QuoteMeta each family token before joining — `usage_families` is
+	// configurable and a stray regex metacharacter (`.`, `+`, `(`, …)
+	// would otherwise change the match semantics or invalidate the
+	// regex at MustCompile time.
+	escaped := make([]string, len(families))
+	for i, f := range families {
+		escaped[i] = regexp.QuoteMeta(f)
+	}
+	familyAlt := strings.Join(escaped, "|")
 	return regexp.MustCompile(`^[A-Z0-9-]+?-((?:` + familyAlt + `))\.([A-Za-z0-9.\-]+)$`)
 }
 

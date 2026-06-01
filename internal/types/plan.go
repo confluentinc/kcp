@@ -10,22 +10,26 @@ import "time"
 //
 // Empty-section conventions across the struct:
 //
-//   - Per-cluster slices (`Sizing`, `ClusterTypeDecision`,
-//     `NetworkingDecision`, `Auth`, `CutoverOverrides`) — empty slice
-//     means "no clusters / no overrides"; the renderer either skips
-//     them or emits an empty table. JSON serialises as `[]` when empty
-//     (no `omitempty`) so consumers can tell "no clusters" from "the
-//     field is missing".
+//   - Always-present per-cluster slices — `Sizing`,
+//     `ClusterTypeDecision`, `NetworkingDecision`, `SizingAppendix`.
+//     No `omitempty`. JSON renders `[]` when the fleet is empty so a
+//     consumer can tell "fleet had no clusters" from "the key is
+//     missing because the field was renamed".
 //
-//   - Fleet-wide pointer sections (`Cutover`, `Schema`, `RedFlags`,
-//     `EffortSignals`, `TieredStorage`, `CostReconciliation`) — nil
-//     means "section omitted entirely" (no source data, or the path is
-//     intentionally skipped, e.g. schemaless). JSON uses `omitempty`
-//     so the key disappears from the output.
+//   - Conditionally-present per-cluster slices — `Auth`,
+//     `CutoverOverrides`, `OpenQuestions`. Tagged `omitempty`, so an
+//     empty slice (or nil) drops the key from the JSON entirely. Used
+//     when the section either runs for every cluster but may be empty
+//     (no clusters found in the state file) or runs only when there's
+//     something to say (no overrides → no key; no OQs → no key).
 //
-//   - `OpenQuestions` and `SizingAppendix` always render in the JSON
-//     (empty slice if there are none); the renderer hides the
-//     corresponding §section when the slice is empty.
+//   - Fleet-wide pointer sections — `Cutover`, `Schema`, `RedFlags`,
+//     `EffortSignals`, `TieredStorage`, `CostReconciliation`. Tagged
+//     `omitempty`. Nil means "section omitted entirely" (no source
+//     data, or the path is intentionally skipped, e.g. schemaless).
+//
+// In all three cases the renderer hides the corresponding §section
+// when the JSON value is empty / nil.
 type Plan struct {
 	Header              PlanHeader            `json:"header"`
 	Inputs              PlanInputsResolved    `json:"inputs"`
@@ -387,8 +391,12 @@ type PlanInputsResolved struct {
 	KafkaStreamsInUse            *bool `json:"kafka_streams_in_use,omitempty"`
 
 	// Tiered Storage knobs. Strings normalized to lowercase tokens by
-	// the resolver; empty means "no preference declared" (treated as
-	// `unknown` by the detector so the section surfaces the OQ).
+	// the resolver. `ConsumerHistoryRequirement` empty means "not
+	// declared" and is defaulted to `required` by the detector (so the
+	// section surfaces the trade-off rather than the unknown-OQ
+	// branch). `HistoricalDataStrategy` empty is "not declared" and
+	// stays empty unless `ConsumerHistoryRequirement == not_required`,
+	// in which case it cascades to `defer_to_account_team`.
 	ConsumerHistoryRequirement string `json:"consumer_history_requirement,omitempty"`
 	HistoricalDataStrategy     string `json:"historical_data_strategy,omitempty"`
 }

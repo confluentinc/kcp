@@ -13,21 +13,20 @@ import (
 // look like?" is the kind of drift that bit V2 review round 1.
 
 // Connect internal topic — boundary-required form. The leading
-// `(^|-)` anchor stops a topic like "disconnect-configs" from
-// matching while still permitting both an empty prefix
+// `(?:^|-)` non-capturing anchor stops a topic like "disconnect-configs"
+// from matching while still permitting both an empty prefix
 // (`connect-configs`) and any dash-suffixed prefix
 // (`team-a-connect-configs`). Used by the red-flags row 7
 // cross-check, the row-15 broad-pattern scan, and the
 // effort-signals self-managed Connect fleet counter.
 //
-// Capture groups in this anchored form:
+// Single capture group:
 //
-//	[1] = "" or "-" (the boundary that matched)
-//	[2] = the kind suffix (configs | offsets | status)
+//	[1] = the kind suffix (configs | offsets | status)
 //
-// Use `connectInternalTopicPrefix(topic)` (below) to extract the
-// fleet prefix — it folds out the boundary character so callers
-// don't have to.
+// The boundary is intentionally non-capturing — callers that need the
+// fleet prefix use `connectInternalTopicPrefix(topic)` (below), which
+// derives it from the match-start offset rather than a capture group.
 var connectInternalTopicPattern = regexp.MustCompile(`(?:^|-)connect-(configs|offsets|status)$`)
 
 // connectInternalTopicPrefix returns the fleet prefix portion of a
