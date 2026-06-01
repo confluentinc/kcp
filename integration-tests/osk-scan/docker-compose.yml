@@ -155,20 +155,6 @@ services:
           WAIT_TIME=$$((WAIT_TIME + 2))
         done
 
-        # Create a sample connector for testing
-        echo "Creating sample MirrorHeartbeat connector..."
-        curl -X POST http://localhost:8083/connectors -H "Content-Type: application/json" -d '{
-          "name": "test-heartbeat",
-          "config": {
-            "connector.class": "org.apache.kafka.connect.mirror.MirrorHeartbeatConnector",
-            "tasks.max": "1",
-            "source.cluster.alias": "source",
-            "target.cluster.alias": "target",
-            "source.cluster.bootstrap.servers": "osk-kafka:29092",
-            "target.cluster.bootstrap.servers": "osk-kafka:29092"
-          }
-        }' || true
-
         wait $$CONNECT_PID
 
   kafka-jmx-auth:

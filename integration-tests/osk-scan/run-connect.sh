@@ -40,22 +40,38 @@ if [ $WAIT_TIME -ge $MAX_WAIT ]; then
     exit 1
 fi
 
-# Wait for the test connector to be registered (created inside the container startup)
-echo "Waiting for test connector to be registered..."
+# Create test connector with retry (Connect may need time after REST is up
+# to finish its internal group rebalance before accepting connectors)
+echo "Creating test connector..."
 CONN_WAIT=0
 CONN_MAX=60
+CONNECTOR_CREATED=false
 while [ $CONN_WAIT -lt $CONN_MAX ]; do
-    CONN_COUNT=$(curl -s http://localhost:8083/connectors 2>/dev/null | jq 'length // 0' 2>/dev/null || echo 0)
-    if [ "$CONN_COUNT" -gt 0 ]; then
-        echo "Connector registered! ($CONN_COUNT connector(s) found)"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8083/connectors \
+        -H "Content-Type: application/json" \
+        -d '{
+          "name": "test-heartbeat",
+          "config": {
+            "connector.class": "org.apache.kafka.connect.mirror.MirrorHeartbeatConnector",
+            "tasks.max": "1",
+            "source.cluster.alias": "source",
+            "target.cluster.alias": "target",
+            "source.cluster.bootstrap.servers": "osk-kafka:29092",
+            "target.cluster.bootstrap.servers": "osk-kafka:29092"
+          }
+        }' 2>/dev/null)
+    if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo "Connector created! (HTTP $HTTP_CODE)"
+        CONNECTOR_CREATED=true
         break
     fi
+    echo "Connector creation returned HTTP $HTTP_CODE, retrying... ($CONN_WAIT/$CONN_MAX seconds)"
     sleep 2
     CONN_WAIT=$((CONN_WAIT + 2))
 done
 
-if [ $CONN_WAIT -ge $CONN_MAX ]; then
-    echo "ERROR: No connectors registered within ${CONN_MAX}s"
+if [ "$CONNECTOR_CREATED" != "true" ]; then
+    echo "ERROR: Failed to create connector within ${CONN_MAX}s"
     echo "Connect REST response: $(curl -s http://localhost:8083/connectors 2>/dev/null)"
     exit 1
 fi
