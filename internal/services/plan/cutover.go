@@ -23,7 +23,7 @@ const (
 	PrereqStatusCompleteInput   = "complete"
 )
 
-// DecideCutover produces the fleet-wide cutover decision.
+// decideCutover produces the fleet-wide cutover decision.
 // Reads:
 //   - inputs.DowntimeTolerance → CutoverStyle (1:1 mapping)
 //   - gateway eligibility (3 prereqs + fleet-wide IAM cross-reference)
@@ -40,7 +40,7 @@ const (
 // distinct from "the customer set `prefer_gateway: false`" but
 // indistinguishable at this layer. Callers from tests should construct
 // inputs via the resolver, not by struct literal.
-func DecideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
+func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
 	style, sub := resolveStyle(inputs)
 
 	// Blue/Green sidesteps the gateway question entirely — the gateway
@@ -147,6 +147,16 @@ func knownDowntimeTolerance(tolerance string) bool {
 		DowntimeScheduledWindowSequential,
 		DowntimeScheduledWindowAllAtOnce,
 		DowntimeLetConfluentChoose,
+	)
+}
+
+// knownCutoverSubPattern reports whether `sub` is one of the
+// Stop-Restart-Repeat sub-patterns. Empty counts as known (falls back
+// to app-by-app in resolveStyle).
+func knownCutoverSubPattern(sub string) bool {
+	return knownEnum(sub,
+		string(types.SubPatternAppByApp),
+		string(types.SubPatternTopicByTopic),
 	)
 }
 

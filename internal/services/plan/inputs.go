@@ -132,6 +132,20 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	if in.ConfluentSRCPEdition != nil {
 		out.ConfluentSRCPEdition = *in.ConfluentSRCPEdition
 	}
+	if in.ExactlyOnceTransactionsInUse != nil {
+		v := *in.ExactlyOnceTransactionsInUse
+		out.ExactlyOnceTransactionsInUse = &v
+	}
+	if in.KafkaStreamsInUse != nil {
+		v := *in.KafkaStreamsInUse
+		out.KafkaStreamsInUse = &v
+	}
+	if in.ConsumerHistoryRequirement != nil {
+		out.ConsumerHistoryRequirement = *in.ConsumerHistoryRequirement
+	}
+	if in.HistoricalDataStrategy != nil {
+		out.HistoricalDataStrategy = *in.HistoricalDataStrategy
+	}
 	return out
 }
 
@@ -196,6 +210,12 @@ func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, cl
 	}
 	if override.TargetAuthMethod != nil {
 		out.TargetAuthMethod = *override.TargetAuthMethod
+	}
+	if override.DowntimeTolerance != nil {
+		out.DowntimeTolerance = *override.DowntimeTolerance
+	}
+	if override.SubPattern != nil {
+		out.SubPattern = *override.SubPattern
 	}
 	return out
 }

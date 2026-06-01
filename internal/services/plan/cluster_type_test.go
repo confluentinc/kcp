@@ -12,7 +12,7 @@ import (
 func TestDecideClusterType_DefaultEnterprise(t *testing.T) {
 	cfg := defaultCfg(t)
 	sizing := types.ClusterSizing{ClusterID: "x", FinalECKU: 5}
-	d := DecideClusterType(types.ProcessedCluster{Name: "x"}, sizing, cfg, defaultInputs())
+	d := decideClusterType(types.ProcessedCluster{Name: "x"}, sizing, cfg, defaultInputs())
 	assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
 	assert.Empty(t, d.Triggers)
 }
@@ -21,7 +21,7 @@ func TestDecideClusterType_DedicatedWhenSizedOverPNICap(t *testing.T) {
 	cfg := defaultCfg(t)
 	// pni_max_eCKU = 32; size at 33 to fire the rule.
 	sizing := types.ClusterSizing{ClusterID: "huge", FinalECKU: 33}
-	d := DecideClusterType(types.ProcessedCluster{Name: "huge"}, sizing, cfg, defaultInputs())
+	d := decideClusterType(types.ProcessedCluster{Name: "huge"}, sizing, cfg, defaultInputs())
 	assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 	assert.Len(t, d.Triggers, 1)
 	assert.Equal(t, "eCKU_exceeds_pni_cap", d.Triggers[0].RowID)
@@ -53,7 +53,7 @@ func TestDecideClusterType_DedicatedWhenACLsOverCap(t *testing.T) {
 	c := provisionedClusterWithScan("many-acls", make([]types.Acls, 4001))
 	sizing := types.ClusterSizing{ClusterID: "many-acls", FinalECKU: 5}
 
-	d := DecideClusterType(c, sizing, cfg, defaultInputs())
+	d := decideClusterType(c, sizing, cfg, defaultInputs())
 	assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 	assert.Len(t, d.Triggers, 1)
 	assert.Equal(t, "acl_count_exceeds_cap", d.Triggers[0].RowID)
@@ -79,7 +79,7 @@ func TestDecideClusterType_ACLRuleNilVsEmpty(t *testing.T) {
 
 	t.Run("non-nil ACL slice evaluates the rule (under cap)", func(t *testing.T) {
 		c := provisionedClusterWithScan("provisioned-empty-acls", []types.Acls{})
-		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "0 ACLs is under the 4000 cap — rule should evaluate, not fire")
 	})
 
@@ -88,7 +88,7 @@ func TestDecideClusterType_ACLRuleNilVsEmpty(t *testing.T) {
 		// without an explicit "scanned" flag we take the conservative
 		// position that nil means "uncertain" and skip the rule.
 		c := provisionedClusterWithScan("provisioned-nil-acls", nil)
-		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "nil ACLs must skip rule 2 (count is unknown), not fire it")
 	})
 
@@ -96,7 +96,7 @@ func TestDecideClusterType_ACLRuleNilVsEmpty(t *testing.T) {
 		c := types.ProcessedCluster{Name: "serverless"}
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
-		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict, "SERVERLESS doesn't expose ACLs via this API — rule should skip")
 	})
 }
@@ -136,7 +136,7 @@ func TestDecideClusterType_CustomerDeclaredFlags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := defaultInputs()
 			tc.mutator(&in)
-			d := DecideClusterType(c, sizing, cfg, in)
+			d := decideClusterType(c, sizing, cfg, in)
 			assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 			assert.Len(t, d.Triggers, 1)
 			assert.Equal(t, tc.ruleID, d.Triggers[0].RowID)
@@ -160,14 +160,14 @@ func TestDecideClusterType_MTLSOnNonAWSTarget(t *testing.T) {
 	t.Run("aws target leaves Enterprise", func(t *testing.T) {
 		in := defaultInputs()
 		in.TargetCloud = "aws"
-		d := DecideClusterType(c, sizing, cfg, in)
+		d := decideClusterType(c, sizing, cfg, in)
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
 	})
 
 	t.Run("azure target forces Dedicated", func(t *testing.T) {
 		in := defaultInputs()
 		in.TargetCloud = "azure"
-		d := DecideClusterType(c, sizing, cfg, in)
+		d := decideClusterType(c, sizing, cfg, in)
 		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 		assert.Len(t, d.Triggers, 1)
 		assert.Equal(t, "mtls_on_non_aws_target", d.Triggers[0].RowID)
@@ -178,7 +178,7 @@ func TestDecideClusterType_MTLSOnNonAWSTarget(t *testing.T) {
 		c2 := types.ProcessedCluster{Name: "scram"}
 		in := defaultInputs()
 		in.TargetCloud = "gcp"
-		d := DecideClusterType(c2, sizing, cfg, in)
+		d := decideClusterType(c2, sizing, cfg, in)
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
 	})
 }
@@ -189,7 +189,7 @@ func TestDecideClusterType_Topology(t *testing.T) {
 	c := types.ProcessedCluster{Name: "x"}
 
 	t.Run("Enterprise verdict has no topology", func(t *testing.T) {
-		d := DecideClusterType(c, sizing, cfg, defaultInputs())
+		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
 		assert.Equal(t, types.TopologyNotApplicable, d.Topology)
 		assert.Nil(t, d.FinalCKU, "Enterprise clusters are sized in eCKU only — no FinalCKU mirror")
@@ -197,7 +197,7 @@ func TestDecideClusterType_Topology(t *testing.T) {
 
 	t.Run("Dedicated via eCKU cap → Multi-Zone", func(t *testing.T) {
 		big := types.ClusterSizing{ClusterID: "big", FinalECKU: 33}
-		d := DecideClusterType(c, big, cfg, defaultInputs())
+		d := decideClusterType(c, big, cfg, defaultInputs())
 		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 		assert.Equal(t, types.TopologyMultiZone, d.Topology)
 		require.NotNil(t, d.FinalCKU)
@@ -207,7 +207,7 @@ func TestDecideClusterType_Topology(t *testing.T) {
 	t.Run("Dedicated via 99.95 single-zone SLA → Single-Zone", func(t *testing.T) {
 		in := defaultInputs()
 		in.Requires9995SLAWithinSingleZone = true
-		d := DecideClusterType(c, sizing, cfg, in)
+		d := decideClusterType(c, sizing, cfg, in)
 		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 		assert.Equal(t, types.TopologySingleZone, d.Topology)
 		require.NotNil(t, d.FinalCKU)
@@ -220,7 +220,7 @@ func TestDecideClusterType_Topology(t *testing.T) {
 		c2 := provisionedClusterWithScan("combo", make([]types.Acls, 4001))
 		in := defaultInputs()
 		in.Requires9995SLAWithinSingleZone = true
-		d := DecideClusterType(c2, sizing, cfg, in)
+		d := decideClusterType(c2, sizing, cfg, in)
 		assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 		assert.Equal(t, types.TopologySingleZone, d.Topology)
 		assert.GreaterOrEqual(t, len(d.Triggers), 2, "both rules should have fired")

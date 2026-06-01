@@ -35,7 +35,7 @@ func ptrBool(b bool) *bool { return &b }
 // Glue detected → kcp_migrate_schemas_glue, regardless of strategy
 // (the kcp-automated path doesn't need a strategy declaration).
 func TestDecideSchema_GlueDetected(t *testing.T) {
-	dec := DecideSchema(schemaState(nil, []string{"my-glue"}), defaultCfg(t), schemaInputs(SchemaStrategyMigrateExistingSchemaRegistry))
+	dec := decideSchema(schemaState(nil, []string{"my-glue"}), defaultCfg(t), schemaInputs(SchemaStrategyMigrateExistingSchemaRegistry))
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaSourceGlue, dec.Source)
 	assert.Equal(t, types.SchemaPathMigrateGlue, primaryPath(dec))
@@ -49,7 +49,7 @@ func TestDecideSchema_ConfluentEligible(t *testing.T) {
 	inputs.ConfluentSRCPEdition = SchemaCPEditionEnterprise
 	inputs.SourceSROutboundReachableToCC = ptrBool(true)
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaSourceConfluent, dec.Source)
 	assert.Equal(t, types.SchemaPathSchemaLinking, primaryPath(dec))
@@ -66,7 +66,7 @@ func TestDecideSchema_ConfluentBelowCPFloor(t *testing.T) {
 	inputs.ConfluentSRCPEdition = SchemaCPEditionEnterprise
 	inputs.SourceSROutboundReachableToCC = ptrBool(true)
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaPathDeferToAccount, primaryPath(dec))
 	require.NotNil(t, dec.MeetsCPVersionFloor)
@@ -80,7 +80,7 @@ func TestDecideSchema_ConfluentCommunityEdition(t *testing.T) {
 	inputs.ConfluentSRCPEdition = SchemaCPEditionCommunity
 	inputs.SourceSROutboundReachableToCC = ptrBool(true)
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaPathDeferToAccount, primaryPath(dec))
 	require.NotNil(t, dec.MeetsCPEditionRequirement)
@@ -94,7 +94,7 @@ func TestDecideSchema_ConfluentReachabilityUnknown(t *testing.T) {
 	inputs.ConfluentSRCPEdition = SchemaCPEditionEnterprise
 	// SourceSROutboundReachableToCC left nil
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaPathUnknown, primaryPath(dec))
 	assert.Nil(t, dec.SourceSROutboundReachable, "nil tri-state preserved when input is unset")
@@ -102,7 +102,7 @@ func TestDecideSchema_ConfluentReachabilityUnknown(t *testing.T) {
 
 // State empty + strategy=no_schemas → schemaless (section omitted by Build).
 func TestDecideSchema_NoneAndNoSchemas(t *testing.T) {
-	dec := DecideSchema(schemaState(nil, nil), defaultCfg(t), schemaInputs(SchemaStrategyNoSchemas))
+	dec := decideSchema(schemaState(nil, nil), defaultCfg(t), schemaInputs(SchemaStrategyNoSchemas))
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaSourceNone, dec.Source)
 	assert.Equal(t, types.SchemaPathSchemaless, primaryPath(dec))
@@ -110,14 +110,14 @@ func TestDecideSchema_NoneAndNoSchemas(t *testing.T) {
 
 // Strategy=unknown (default) → unknown (OQ asks customer to declare).
 func TestDecideSchema_StrategyUnknown(t *testing.T) {
-	dec := DecideSchema(schemaState(nil, nil), defaultCfg(t), schemaInputs(SchemaStrategyUnknown))
+	dec := decideSchema(schemaState(nil, nil), defaultCfg(t), schemaInputs(SchemaStrategyUnknown))
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaPathUnknown, primaryPath(dec))
 }
 
 // Strategy typo'd → unknown (OQ flags the typo before any path applies).
 func TestDecideSchema_StrategyTypo(t *testing.T) {
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), schemaInputs("no_schemaz"))
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), schemaInputs("no_schemaz"))
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaPathUnknown, primaryPath(dec), "typo'd strategy must not select a downstream path")
 }
@@ -131,14 +131,14 @@ func TestDecideSchema_ConfluentAndGlue(t *testing.T) {
 	inputs.ConfluentSRCPEdition = SchemaCPEditionEnterprise
 	inputs.SourceSROutboundReachableToCC = ptrBool(true)
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, []string{"my-glue"}), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, []string{"my-glue"}), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaSourceConfluentAndGlue, dec.Source)
 	require.Len(t, dec.Paths, 2, "dual-source must carry both arms in Paths")
 	assert.Equal(t, types.SchemaPathMigrateGlue, dec.Paths[0], "Glue path renders first")
 	assert.Equal(t, types.SchemaPathSchemaLinking, dec.Paths[1], "Confluent verdict in second slot")
-	assert.True(t, HasPath(dec, types.SchemaPathSchemaLinking))
-	assert.True(t, HasPath(dec, types.SchemaPathMigrateGlue))
+	assert.True(t, hasPath(dec, types.SchemaPathSchemaLinking))
+	assert.True(t, hasPath(dec, types.SchemaPathMigrateGlue))
 	require.NotNil(t, dec.MeetsCPVersionFloor, "Confluent eligibility populated even when Glue is the leading verdict")
 }
 
@@ -149,11 +149,11 @@ func TestDecideSchema_ConfluentAndGlue_PendingConfluentArmDropped(t *testing.T) 
 	inputs := schemaInputs(SchemaStrategyMigrateExistingSchemaRegistry)
 	// All eligibility inputs left nil → Confluent arm unknown.
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, []string{"my-glue"}), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, []string{"my-glue"}), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	require.Len(t, dec.Paths, 1, "pending Confluent arm must NOT serialise as Paths[1]==unknown")
 	assert.Equal(t, types.SchemaPathMigrateGlue, dec.Paths[0])
-	assert.False(t, HasPath(dec, types.SchemaPathUnknown))
+	assert.False(t, hasPath(dec, types.SchemaPathUnknown))
 }
 
 // Dual-source with Confluent arm INELIGIBLE (e.g. CP below floor) —
@@ -164,7 +164,7 @@ func TestDecideSchema_ConfluentAndGlue_ConfluentArmIneligible(t *testing.T) {
 	inputs.ConfluentSRCPEdition = SchemaCPEditionEnterprise
 	inputs.SourceSROutboundReachableToCC = ptrBool(true)
 
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, []string{"my-glue"}), defaultCfg(t), inputs)
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, []string{"my-glue"}), defaultCfg(t), inputs)
 	require.NotNil(t, dec)
 	require.Len(t, dec.Paths, 2)
 	assert.Equal(t, types.SchemaPathMigrateGlue, dec.Paths[0])
@@ -176,7 +176,7 @@ func TestDecideSchema_ConfluentAndGlue_ConfluentArmIneligible(t *testing.T) {
 // the customer's intent is real but kcp can't recommend a concrete
 // path until a source SR is scanned or "no existing SR" is confirmed.
 func TestDecideSchema_NoneWithAdoptStrategy(t *testing.T) {
-	dec := DecideSchema(schemaState(nil, nil), defaultCfg(t), schemaInputs(SchemaStrategyAdoptSchemasDuringMigration))
+	dec := decideSchema(schemaState(nil, nil), defaultCfg(t), schemaInputs(SchemaStrategyAdoptSchemasDuringMigration))
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaSourceNone, dec.Source)
 	assert.Equal(t, types.SchemaPathUnknown, primaryPath(dec))
@@ -189,7 +189,7 @@ func TestDecideSchema_NoneWithAdoptStrategy(t *testing.T) {
 // 3-row table to someone who said they're not migrating schemas.
 // The mismatch OQ carries the contradiction.
 func TestDecideSchema_NoSchemasButConfluentDetected(t *testing.T) {
-	dec := DecideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), schemaInputs(SchemaStrategyNoSchemas))
+	dec := decideSchema(schemaState([]string{"https://csr.example.com"}, nil), defaultCfg(t), schemaInputs(SchemaStrategyNoSchemas))
 	require.NotNil(t, dec)
 	assert.Equal(t, types.SchemaSourceConfluent, dec.Source)
 	assert.Equal(t, types.SchemaPathUnknown, primaryPath(dec), "verdict short-circuits to unknown; OQ carries the message")
@@ -245,14 +245,19 @@ func TestCPVersionAtLeast(t *testing.T) {
 		{"7.5.1", "7.0", true},
 		{"6.2.1", "7.0", false},
 		{"8.0", "7.0", true},
-		{"latest", "7.0", true},     // "latest" always clears any floor
-		{"current", "7.0", true},    // case-insensitive alias
-		{"LATEST", "7.0", true},     // case-insensitive
-		{"7.0.0-rc1", "7.0", true},  // pre-release suffix stripped before compare
-		{"7.0+build5", "7.0", true}, // build-metadata suffix stripped
-		{"6.2.1-rc3", "7.0", false}, // pre-release stripped, base compares below floor
-		{"garbage", "7.0", false},   // truly unparseable → safe direction (false)
-		{"7.-1.0", "7.0", false},    // negative segment rejected → unparseable
+		{"latest", "7.0", true},        // "latest" always clears any floor
+		{"current", "7.0", true},       // case-insensitive alias
+		{"LATEST", "7.0", true},        // case-insensitive
+		{"7.0.0-rc1", "7.0", true},     // pre-release suffix stripped before compare
+		{"7.0+build5", "7.0", true},    // build-metadata suffix stripped
+		{"6.2.1-rc3", "7.0", false},    // pre-release stripped, base compares below floor
+		{"garbage", "7.0", false},      // truly unparseable → safe direction (false)
+		{"7.-1.0", "7.0", false},       // negative segment rejected → unparseable
+		{"3.8.x", "2.4.0", true},       // AWS MSK trailing 'x' suffix → 3.8.0 clears 2.4.0
+		{"4.0.x.kraft", "2.4.0", true}, // AWS MSK KRaft suffix → 4.0.0 clears 2.4.0
+		{"3.9.x.kraft", "3.9.0", true}, // trailing alphanumeric segments treated as 0
+		{"3.8.x", "3.8.1", false},      // 'x' is a placeholder; conservatively treated as 0, so 3.8.0 < 3.8.1
+		{"x.8.0", "2.4.0", false},      // first segment non-numeric → unparseable, safe direction
 	}
 	for _, c := range cases {
 		t.Run(c.have+"_vs_"+c.floor, func(t *testing.T) {
