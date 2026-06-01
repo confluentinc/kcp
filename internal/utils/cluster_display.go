@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"fmt"
+
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -22,4 +24,20 @@ func GetClusterDisplayName(sourceType types.SourceType, clusterArn string, clust
 	default:
 		return "unknown-cluster"
 	}
+}
+
+// InferSourceTypeFromClusterID resolves a cluster identifier to its source type
+// by looking it up in the state file. MSK clusters are matched by ARN; OSK
+// clusters are matched by ID. Returns an error if the cluster is registered
+// under neither.
+func InferSourceTypeFromClusterID(state *types.State, clusterID string) (types.SourceType, error) {
+	if state != nil {
+		if _, err := state.GetClusterByArn(clusterID); err == nil {
+			return types.SourceTypeMSK, nil
+		}
+		if _, err := state.GetOSKClusterByID(clusterID); err == nil {
+			return types.SourceTypeOSK, nil
+		}
+	}
+	return "", fmt.Errorf("cluster %q not found in state file as either an MSK cluster (by ARN) or an OSK cluster (by ID)", clusterID)
 }
