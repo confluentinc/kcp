@@ -128,7 +128,7 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 		return nil, fmt.Errorf("failed to list acls: %v", err)
 	}
 
-	// Flatten the ACLs for easier processing
+	// Flatten the ACLs for easier processing.
 	var flattenedAcls []types.Acls
 	for _, resourceAcl := range acls {
 		for _, acl := range resourceAcl.Acls {

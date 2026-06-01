@@ -10,45 +10,75 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// counterMBeanConfig defines a rate MBean whose Count field is a monotonic counter.
-type counterMBeanConfig struct {
+// CounterMBeanConfig defines a rate MBean whose Count field is a monotonic counter.
+type CounterMBeanConfig struct {
 	Name  string
 	MBean string
 }
 
-// gaugeMBeanConfig defines a MBean that returns a point-in-time gauge value.
-type gaugeMBeanConfig struct {
+// GaugeMBeanConfig defines a MBean that returns a point-in-time gauge value.
+type GaugeMBeanConfig struct {
 	Name     string
 	MBean    string
 	ValueKey string
 }
 
-// aggregateMBeanConfig defines a MBean that requires wildcard pattern + aggregation.
-type aggregateMBeanConfig struct {
+// AggregateMBeanConfig defines a MBean that requires wildcard pattern + aggregation.
+type AggregateMBeanConfig struct {
 	Name      string
 	MBean     string
 	Attribute string
 }
 
-var counterMBeans = []counterMBeanConfig{
-	{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
-	{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
-	{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
+// MetricDefinitions holds all metric definitions for a JMX collection target.
+type MetricDefinitions struct {
+	Counters        []CounterMBeanConfig
+	Gauges          []GaugeMBeanConfig
+	Controller      []GaugeMBeanConfig
+	Aggregates      []AggregateMBeanConfig
+	UnitConversions map[string]float64
 }
 
-var gaugeMBeans = []gaugeMBeanConfig{
-	{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
+// BrokerMetricDefinitions returns the standard Kafka broker metric definitions.
+func BrokerMetricDefinitions() MetricDefinitions {
+	return MetricDefinitions{
+		Counters: []CounterMBeanConfig{
+			{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
+			{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
+			{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
+		},
+		Gauges: []GaugeMBeanConfig{
+			{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
+		},
+		Controller: []GaugeMBeanConfig{
+			{"GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount", "Value"},
+		},
+		Aggregates: []AggregateMBeanConfig{
+			{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
+			{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
+		},
+		UnitConversions: map[string]float64{
+			"TotalLocalStorageUsage": 1024 * 1024 * 1024,
+		},
+	}
 }
 
-// controllerMBeans are MBeans that only exist on the active controller broker.
-// We try all brokers and use the first successful response (no summing).
-var controllerMBeans = []gaugeMBeanConfig{
-	{"GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount", "Value"},
-}
-
-var aggregateMBeans = []aggregateMBeanConfig{
-	{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
-	{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
+// ConnectMetricDefinitions returns metric definitions for Kafka Connect workers.
+func ConnectMetricDefinitions() MetricDefinitions {
+	return MetricDefinitions{
+		Gauges: []GaugeMBeanConfig{
+			{"connector-count", "kafka.connect:type=connect-worker-metrics", "connector-count"},
+			{"task-count", "kafka.connect:type=connect-worker-metrics", "task-count"},
+		},
+		Aggregates: []AggregateMBeanConfig{
+			{"incoming-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "incoming-byte-rate"},
+			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
+			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
+			{"request-rate", "kafka.connect:client-id=*,type=connect-metrics", "request-rate"},
+			{"source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate"},
+			{"source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-poll-rate"},
+		},
+	}
 }
 
 // rawSample holds raw counter and gauge readings from a single poll.
@@ -69,15 +99,16 @@ type jmxSnapshot struct {
 // JMXService collects JMX metrics from Kafka brokers via Jolokia
 type JMXService struct {
 	clients []*client.JolokiaClient
+	metrics MetricDefinitions
 }
 
 // NewJMXService creates a new JMX service with Jolokia clients for each broker endpoint
-func NewJMXService(endpoints []string, opts ...client.JolokiaOption) *JMXService {
+func NewJMXService(endpoints []string, defs MetricDefinitions, opts ...client.JolokiaOption) *JMXService {
 	clients := make([]*client.JolokiaClient, len(endpoints))
 	for i, endpoint := range endpoints {
 		clients[i] = client.NewJolokiaClient(endpoint, opts...)
 	}
-	return &JMXService{clients: clients}
+	return &JMXService{clients: clients, metrics: defs}
 }
 
 // collectRawSample reads raw counter and gauge values from all brokers.
@@ -88,7 +119,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		gauges:    make(map[string]float64),
 	}
 
-	for _, mb := range counterMBeans {
+	for _, mb := range s.metrics.Counters {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
@@ -103,7 +134,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		}
 	}
 
-	for _, mb := range gaugeMBeans {
+	for _, mb := range s.metrics.Gauges {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
@@ -120,7 +151,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 
 	// Controller MBeans only exist on the active controller broker.
 	// Try all brokers; use the first successful response.
-	for _, mb := range controllerMBeans {
+	for _, mb := range s.metrics.Controller {
 		found := false
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
@@ -141,7 +172,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		}
 	}
 
-	for _, amb := range aggregateMBeans {
+	for _, amb := range s.metrics.Aggregates {
 		var total float64
 		for _, brokerClient := range s.clients {
 			val, err := brokerClient.ReadMBeanAggregate(ctx, amb.MBean, amb.Attribute)
@@ -158,7 +189,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 }
 
 // computeSnapshot computes metrics from two consecutive raw samples.
-func computeSnapshot(prev, curr *rawSample) *jmxSnapshot {
+func computeSnapshot(prev, curr *rawSample, unitConversions map[string]float64) *jmxSnapshot {
 	elapsed := curr.timestamp.Sub(prev.timestamp).Seconds()
 	snapshot := &jmxSnapshot{
 		start:   prev.timestamp,
@@ -181,8 +212,10 @@ func computeSnapshot(prev, curr *rawSample) *jmxSnapshot {
 		snapshot.metrics[name] = value
 	}
 
-	if bytes, ok := snapshot.metrics["TotalLocalStorageUsage"]; ok {
-		snapshot.metrics["TotalLocalStorageUsage"] = bytes / (1024 * 1024 * 1024)
+	for metricName, divisor := range unitConversions {
+		if raw, ok := snapshot.metrics[metricName]; ok {
+			snapshot.metrics[metricName] = raw / divisor
+		}
 	}
 
 	return snapshot
@@ -218,12 +251,12 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 		select {
 		case <-ctx.Done():
 			result := toProcessedClusterMetrics(snapshots, startTime, duration, interval)
-			result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval)
+			result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval, s.metrics)
 			return result, ctx.Err()
 		case <-ticker.C:
 			if time.Now().After(deadline) {
 				result := toProcessedClusterMetrics(snapshots, startTime, duration, interval)
-				result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval)
+				result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval, s.metrics)
 				return result, nil
 			}
 
@@ -233,7 +266,7 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 				continue
 			}
 
-			snapshot := computeSnapshot(prevSample, currSample)
+			snapshot := computeSnapshot(prevSample, currSample, s.metrics.UnitConversions)
 			snapshots = append(snapshots, *snapshot)
 			prevSample = currSample
 
@@ -308,7 +341,7 @@ func calculateAggregates(snapshots []jmxSnapshot) map[string]types.MetricAggrega
 
 // buildJMXQueryInfo generates MetricQueryInfo entries for all JMX metrics,
 // including the MBean path and a curl command to reproduce the query.
-func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []types.MetricQueryInfo {
+func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration, defs MetricDefinitions) []types.MetricQueryInfo {
 	if len(brokerURLs) == 0 {
 		return nil
 	}
@@ -319,7 +352,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 
 	var infos []types.MetricQueryInfo
 
-	for _, mb := range counterMBeans {
+	for _, mb := range defs.Counters {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
 			SourceType:    types.MetricBackendJolokia,
@@ -335,7 +368,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 		})
 	}
 
-	for _, mb := range gaugeMBeans {
+	for _, mb := range defs.Gauges {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
 			SourceType:    types.MetricBackendJolokia,
@@ -351,7 +384,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 		})
 	}
 
-	for _, mb := range controllerMBeans {
+	for _, mb := range defs.Controller {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
 			SourceType:    types.MetricBackendJolokia,
@@ -367,7 +400,7 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration) []
 		})
 	}
 
-	for _, mb := range aggregateMBeans {
+	for _, mb := range defs.Aggregates {
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
 			SourceType:    types.MetricBackendJolokia,

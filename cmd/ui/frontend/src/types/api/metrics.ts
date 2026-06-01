@@ -51,6 +51,7 @@ export interface MetricQueryInfo {
   curl_command?: string
   query_duration?: string
   aggregation_note: string
+  label_filter?: Record<string, string>
 }
 
 /**
