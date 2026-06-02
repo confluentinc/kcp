@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -16,11 +17,12 @@ func TestCommandErrorNotDuplicated(t *testing.T) {
 	// Save originals and restore after test
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
-	oldArgs := os.Args
+	oldLogger := slog.Default()
 	defer func() {
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
-		os.Args = oldArgs
+		slog.SetDefault(oldLogger)
+		cmd.RootCmd.SetArgs(nil)
 	}()
 
 	// Run in a temp dir to avoid kcp.log in the repo root
