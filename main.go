@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -9,9 +8,15 @@ import (
 )
 
 func main() {
-	if err := cmd.RootCmd.Execute(); err != nil {
-		slog.Error(err.Error())
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if err := run(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func run() error {
+	if err := cmd.RootCmd.Execute(); err != nil {
+		slog.Error(err.Error())
+		return err
+	}
+	return nil
 }
