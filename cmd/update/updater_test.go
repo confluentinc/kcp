@@ -34,6 +34,10 @@ func TestAssetFilterFor(t *testing.T) {
 				"kcp_darwin_arm64",       // wrong platform
 				"kcp_linux_arm64",        // wrong arch
 				"kcp_linux_amd64.exe",    // windows ext on a linux filter
+				// The library also tests the filter against the full browser
+				// download URL; the ^ anchor must reject that form so matching
+				// relies on the short asset name, not the URL.
+				"https://github.com/confluentinc/kcp/releases/download/v1.2.3/kcp_linux_amd64",
 			},
 		},
 		{

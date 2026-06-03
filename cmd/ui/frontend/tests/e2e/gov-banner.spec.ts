@@ -17,4 +17,20 @@ test.describe('GOV-mode banner', () => {
     expect(res.ok()).toBeTruthy()
     expect(await res.json()).toEqual({ mode: 'prod' })
   })
+
+  // The harness only builds the prod binary, so to exercise the banner's
+  // positive (gov) render path we stub the /edition response. This covers the
+  // `res.mode === 'gov'` branch in GovBanner that a prod build never hits.
+  test('renders when /edition reports gov', async ({ page }) => {
+    await page.route('**/edition', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ mode: 'gov' }),
+      })
+    )
+    await page.goto('/')
+    await expect(page.getByTestId('gov-banner')).toBeVisible()
+    await expect(page.getByTestId('gov-banner')).toContainText('GOV MODE')
+  })
 })

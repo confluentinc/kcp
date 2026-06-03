@@ -34,8 +34,13 @@ build-gov: build-frontend ## Build the slimmed gov edition as kcp-lite
 
 verify-gov: build-frontend ## Compile, vet, and test the gov edition (CI tag guard)
 	@echo "Verifying gov edition (-tags=gov)..."
+	# build + vet compile every package AND test file under -tags=gov, so
+	# tag-gated compile breakage anywhere in the tree is caught here.
 	go build -tags=gov ./...
 	go vet -tags=gov ./...
+	# Test execution is limited to the packages with gov-specific assertions to
+	# keep the guard cheap. Add a package here if you add gov-tagged tests
+	# (//go:build gov) that must actually run, not just compile.
 	go test $(GOTEST_FLAGS) -tags=gov ./internal/build_info/... ./cmd/create_asset/... ./cmd/version/... ./cmd/ui/api/...
 
 build-linux: ## Build for Linux amd64

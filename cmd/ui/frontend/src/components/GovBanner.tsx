@@ -29,10 +29,12 @@ export const GovBanner = () => {
 
   return (
     <div
-      role="alert"
+      role="status"
       data-testid="gov-banner"
       className="w-full bg-red-700 text-white text-center text-sm font-bold tracking-wider py-1.5 px-4 shadow-md"
     >
+      {/* Keep this list in sync with cmd/create_asset/register_full.go (the
+          gov-excluded command set). */}
       GOV MODE — kcp-lite (target-infra, migration-infra, and connector migration are not available)
     </div>
   )
