@@ -54,6 +54,7 @@ migration-plan/
 # Ignore kcp generated files
 kcp-scan/
 kcp
+kcp-lite
 set_migration_env_vars.sh
 kcp-scan*
 cluster-credentials.yaml
