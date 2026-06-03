@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -18,6 +19,34 @@ import (
 const (
 	slug = "confluentinc/kcp"
 )
+
+// assetFilter returns a regexp matching exactly this edition's release binary
+// asset for the running platform. Both editions ship per-platform assets in the
+// same release (kcp_{os}_{arch} and kcp-lite_{os}_{arch}), so without a filter
+// the updater could install the wrong edition. The edition is fixed at compile
+// time via build_info, so a kcp-lite binary always resolves the kcp-lite asset.
+func assetFilter() string {
+	return assetFilterFor(build_info.IsGov(), runtime.GOOS, runtime.GOARCH)
+}
+
+// assetFilterFor is the pure, testable core of assetFilter. It builds an
+// anchored regexp matching goreleaser's `{name}_{os}_{arch}` binary asset (with
+// an optional `.exe` on Windows). The anchors ensure "kcp" never matches
+// "kcp-lite" (and vice-versa) and that the `.tar.gz`/`.zip` archive variants are
+// excluded in favour of the raw binary.
+func assetFilterFor(gov bool, goos, goarch string) string {
+	name := "kcp"
+	if gov {
+		name = "kcp-lite"
+	}
+	// Windows binary assets carry a `.exe` extension; other platforms don't.
+	ext := ""
+	if goos == "windows" {
+		ext = `(\.exe)?`
+	}
+	return fmt.Sprintf(`(?i)^%s_%s_%s%s$`,
+		regexp.QuoteMeta(name), regexp.QuoteMeta(goos), regexp.QuoteMeta(goarch), ext)
+}
 
 type Updater struct {
 	opts UpdaterOpts
@@ -64,13 +93,24 @@ func (u *Updater) Run() error {
 		}
 	}
 
-	// Step 3: Check for latest version from GitHub releases
-	latest, found, err := selfupdate.DetectLatest(context.Background(), selfupdate.ParseSlug(slug))
+	// Step 3: Check for latest version from GitHub releases. Constrain asset
+	// resolution to this edition's binary so a kcp-lite build never installs the
+	// full kcp (and vice-versa).
+	updater, err := selfupdate.NewUpdater(selfupdate.Config{
+		Filters: []string{assetFilter()},
+	})
+	if err != nil {
+		return fmt.Errorf("could not configure updater: %w", err)
+	}
+
+	latest, found, err := updater.DetectLatest(context.Background(), selfupdate.ParseSlug(slug))
 	if err != nil {
 		return fmt.Errorf("error occurred while detecting version: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("latest version for %s/%s could not be found from github repository", runtime.GOOS, runtime.GOARCH)
+		// No asset matched the edition-specific filter — refuse rather than risk
+		// installing the wrong edition.
+		return fmt.Errorf("no %q release asset found for %s/%s; not updating to avoid installing the wrong edition", build_info.Mode, runtime.GOOS, runtime.GOARCH)
 	}
 
 	// Step 4: Check if already up to date
@@ -95,8 +135,9 @@ func (u *Updater) Run() error {
 
 	fmt.Printf("🚀 Updating from %s --> %s\n", currentVersion, latest.Version())
 
-	// Step 7: Download and install the latest version
-	if err := selfupdate.UpdateTo(context.Background(), latest.AssetURL, latest.AssetName, exePath); err != nil {
+	// Step 7: Download and install the latest version. Use the updater (with the
+	// edition filter applied) so the resolved asset matches this edition.
+	if err := updater.UpdateTo(context.Background(), latest, exePath); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
 
