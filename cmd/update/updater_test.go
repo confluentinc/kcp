@@ -2,6 +2,7 @@ package update
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -86,27 +87,15 @@ func TestAssetFilterFor(t *testing.T) {
 			}
 			for _, m := range tc.matches {
 				// The library lowercases asset names before matching.
-				if !re.MatchString(toLower(m)) {
+				if !re.MatchString(strings.ToLower(m)) {
 					t.Errorf("filter %q should match %q but did not", re.String(), m)
 				}
 			}
 			for _, r := range tc.rejects {
-				if re.MatchString(toLower(r)) {
+				if re.MatchString(strings.ToLower(r)) {
 					t.Errorf("filter %q should NOT match %q but did", re.String(), r)
 				}
 			}
 		})
 	}
-}
-
-// toLower mirrors the case folding the selfupdate library applies to asset
-// names before testing them against the filter.
-func toLower(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if c >= 'A' && c <= 'Z' {
-			b[i] = c + ('a' - 'A')
-		}
-	}
-	return string(b)
 }
