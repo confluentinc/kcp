@@ -74,6 +74,10 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - (cd cmd/ui/frontend && npx playwright install chromium chromium-headless-shell --with-deps)
             - make test-go GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
+            # Guard the gov build tag: compile, vet, and test the -tags=gov
+            # variant so tag-gated breakage (only the prod tree builds by
+            # default) is caught here.
+            - make verify-gov GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
             - make test-playwright
       epilogue:
         on_pass:
