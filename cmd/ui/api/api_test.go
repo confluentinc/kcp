@@ -65,6 +65,39 @@ func TestHandleUploadState_VersionMatch(t *testing.T) {
 	}
 }
 
+func TestHandleGetEdition(t *testing.T) {
+	ui := newTestUI()
+	e := echo.New()
+
+	req := httptest.NewRequest(http.MethodGet, "/edition", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := ui.handleGetEdition(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// The endpoint must report whatever edition the binary was compiled as, so
+	// the banner can never disagree with the running binary. The gov value is
+	// exercised under `-tags=gov` (see `make verify-gov`).
+	if body.Mode != build_info.Mode {
+		t.Errorf("edition mode = %q, want %q", body.Mode, build_info.Mode)
+	}
+	if body.Mode != "prod" && body.Mode != "gov" {
+		t.Errorf("edition mode = %q, want one of {prod, gov}", body.Mode)
+	}
+}
+
 func TestHandleUploadState_VersionMismatch_Succeeds(t *testing.T) {
 	ui := newTestUI()
 	e := echo.New()
