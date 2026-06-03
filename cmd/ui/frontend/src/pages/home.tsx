@@ -144,7 +144,7 @@ export const Home = () => {
 
   return (
     <PageErrorBoundary>
-      <div className="h-svh flex flex-col w-full bg-background transition-colors overflow-hidden">
+      <div className="h-full flex flex-col w-full bg-background transition-colors overflow-hidden">
         <AppHeader
           onFileUpload={triggerFileUpload}
           isProcessing={isProcessing}

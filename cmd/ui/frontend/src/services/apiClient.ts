@@ -279,6 +279,22 @@ const state = {
 }
 
 /**
+ * Edition API functions
+ */
+export interface EditionResponse {
+  mode: 'prod' | 'gov'
+}
+
+const edition = {
+  /**
+   * Get the binary's compile-time edition (prod/gov).
+   */
+  async getEdition(config?: RequestConfig): Promise<EditionResponse> {
+    return get<EditionResponse>(API_ENDPOINTS.EDITION, undefined, config)
+  },
+}
+
+/**
  * Wizard API functions
  */
 const wizard = {
@@ -305,5 +321,6 @@ export const apiClient = {
   metrics,
   costs,
   state,
+  edition,
   wizard,
 }

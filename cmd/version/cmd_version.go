@@ -13,10 +13,11 @@ func NewVersionCmd() *cobra.Command {
 		Short:   "Show version information",
 		Long:    "Display version, commit, and build date information",
 		Example: "  kcp version",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("Version: %s\n", build_info.Version)
-			fmt.Printf("Commit:  %s\n", build_info.Commit)
-			fmt.Printf("Date:    %s\n", build_info.Date)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(),
+				"Version: %s\nCommit:  %s\nDate:    %s\nEdition: %s\n",
+				build_info.Version, build_info.Commit, build_info.Date, build_info.Mode)
+			return err
 		},
 	}
 }

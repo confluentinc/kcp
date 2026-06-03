@@ -3,6 +3,7 @@
 # ==============================================================================
 
 BINARY_NAME := kcp
+GOV_BINARY_NAME := kcp-lite
 MAIN_PATH := .
 GOTEST_FLAGS ?= -v
 
@@ -17,7 +18,7 @@ LD_FLAGS := -X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 # Build
 # ==============================================================================
 
-.PHONY: build-frontend build build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all
+.PHONY: build-frontend build build-gov verify-gov build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all
 
 build-frontend: ## Build the frontend application
 	@echo "Building frontend..."
@@ -26,6 +27,21 @@ build-frontend: ## Build the frontend application
 build: build-frontend ## Build the binary for current platform
 	@echo "Building $(BINARY_NAME)..."
 	go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
+
+build-gov: build-frontend ## Build the slimmed gov edition as kcp-lite
+	@echo "Building $(GOV_BINARY_NAME) (gov edition)..."
+	go build -tags=gov -ldflags "$(LD_FLAGS)" -o $(GOV_BINARY_NAME) $(MAIN_PATH)
+
+verify-gov: build-frontend ## Compile, vet, and test the gov edition (CI tag guard)
+	@echo "Verifying gov edition (-tags=gov)..."
+	# build + vet compile every package AND test file under -tags=gov, so
+	# tag-gated compile breakage anywhere in the tree is caught here.
+	go build -tags=gov ./...
+	go vet -tags=gov ./...
+	# Test execution is limited to the packages with gov-specific assertions to
+	# keep the guard cheap. Add a package here if you add gov-tagged tests
+	# (//go:build gov) that must actually run, not just compile.
+	go test $(GOTEST_FLAGS) -tags=gov ./internal/build_info/... ./cmd/create_asset/... ./cmd/version/... ./cmd/ui/api/...
 
 build-linux: ## Build for Linux amd64
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
@@ -151,7 +167,7 @@ docs-build: docs-gen ## Build the docs site into ./site
 .PHONY: clean help
 
 clean: ## Clean build artifacts
-	rm -rf $(BINARY_NAME) coverage.out site/
+	rm -rf $(BINARY_NAME) $(GOV_BINARY_NAME) coverage.out site/
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \

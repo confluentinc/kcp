@@ -1,14 +1,7 @@
 package create_asset
 
 import (
-	"github.com/confluentinc/kcp/cmd/create_asset/bastion_host"
-	"github.com/confluentinc/kcp/cmd/create_asset/migrate_acls"
-	"github.com/confluentinc/kcp/cmd/create_asset/migrate_connectors"
-	"github.com/confluentinc/kcp/cmd/create_asset/migrate_schemas"
-	"github.com/confluentinc/kcp/cmd/create_asset/migrate_topics"
-	"github.com/confluentinc/kcp/cmd/create_asset/migration_infra"
-	"github.com/confluentinc/kcp/cmd/create_asset/reverse_proxy"
-	"github.com/confluentinc/kcp/cmd/create_asset/target_infra"
+	"github.com/confluentinc/kcp/cmd/create_asset/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -19,17 +12,10 @@ func NewCreateAssetCmd() *cobra.Command {
 		Long:  "Generate various infrastructure and migration assets including bastion host configurations, data migration tools, and target environment setups.",
 	}
 
-	// Add subcommands
-	createAssetCmd.AddCommand(
-		bastion_host.NewBastionHostCmd(),
-		migrate_acls.NewMigrateAclsCmd(),
-		migrate_connectors.NewMigrateConnectorsCmd(),
-		migrate_topics.NewMigrateTopicsCmd(),
-		migrate_schemas.NewMigrateSchemasCmd(),
-		migration_infra.NewMigrationInfraCmd(),
-		reverse_proxy.NewReverseProxyCmd(),
-		targetinfra.NewTargetInfraCmd(),
-	)
+	// Subcommands self-register via their package init()s (see register_base.go
+	// and the edition-gated register_full.go). The set present here is therefore
+	// determined by which subcommand packages are compiled into this edition.
+	createAssetCmd.AddCommand(registry.Commands()...)
 
 	return createAssetCmd
 }

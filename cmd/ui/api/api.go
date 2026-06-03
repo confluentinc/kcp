@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
@@ -109,6 +110,10 @@ func (ui *UI) Run() error {
 		})
 	})
 
+	// Edition endpoint — lets the frontend show the GOV-mode banner. The value
+	// is the compile-time edition (prod/gov), so it matches the running binary.
+	e.GET("/edition", ui.handleGetEdition)
+
 	// Get pre-loaded state endpoint
 	e.GET("/state", ui.handleGetState)
 
@@ -151,6 +156,14 @@ func parseDateRange(c echo.Context) (*time.Time, *time.Time, error) {
 		endTime = &parsed
 	}
 	return startTime, endTime, nil
+}
+
+// handleGetEdition reports the binary's compile-time edition so the frontend
+// can decide whether to show the GOV-mode banner.
+func (ui *UI) handleGetEdition(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]any{
+		"mode": build_info.Mode,
+	})
 }
 
 func (ui *UI) handleGetState(c echo.Context) error {

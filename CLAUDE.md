@@ -56,9 +56,21 @@ make build-linux
 make build-darwin-arm64
 make build-all
 
+# Build the slimmed "gov" edition as kcp-lite (see Editions below)
+make build-gov
+
 # Install to system path (requires sudo)
 make install
 ```
+
+### Editions
+
+KCP compiles into two editions selected by the `gov` Go build tag:
+
+- **prod** (default, `make build` → `kcp`) — the full command tree.
+- **gov** (`make build-gov` → `kcp-lite`) — omits `create-asset {target-infra, migration-infra, migrate-connectors}`, which a gov target environment can't honor.
+
+The edition is a compile-time constant (`internal/build_info.Mode` / `IsGov()`), surfaced in `kcp version`, the startup banner, and a GOV banner in the web UI. Commands are stripped via tag-gated imports in `cmd/create_asset/register_full.go` (`//go:build !gov`), not runtime checks. Run `make verify-gov` to compile/vet/test the gov variant (also runs in CI). The gov-excluded set lives in `register_full.go` — keep its two downstream copies (`cmd_create_asset_gov_test.go`, `GovBanner.tsx`) in sync.
 
 ## Development Commands
 

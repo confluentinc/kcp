@@ -1,5 +1,7 @@
 // Package build_info exposes ldflag-injected build metadata (Version, Commit,
-// Date) and small derived helpers (IsDev, DocsURL) that depend on it.
+// Date) and small derived helpers (IsDev, DocsURL) that depend on it. It also
+// exposes the compile-time edition (Mode/IsGov), derived from the `gov` build
+// tag rather than an ldflag — see mode_prod.go / mode_gov.go.
 package build_info
 
 import "strings"
@@ -16,6 +18,13 @@ var (
 	Commit  = "unknown"
 	Date    = "unknown"
 )
+
+// IsGov reports whether the binary is the slimmed `gov` edition (kcp-lite).
+// The edition is fixed at compile time by the `gov` build tag via Mode, so it
+// cannot disagree with the set of commands actually compiled into the binary.
+func IsGov() bool {
+	return Mode == "gov"
+}
 
 // IsDev reports whether the binary is a development (non-released) build.
 // Treats the Makefile default (DefaultDevVersion), the historical "dev"
