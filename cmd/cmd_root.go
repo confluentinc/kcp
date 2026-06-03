@@ -71,11 +71,12 @@ var RootCmd = &cobra.Command{
 				color.RedString("└─────────────────────────────────────────────────────────────────────────┘"))
 		}
 
-		fmt.Printf("%s %s %s %s\n",
+		fmt.Printf("%s %s %s %s %s\n",
 			color.CyanString("Executing kcp with build"),
 			color.GreenString("version=%s", build_info.Version),
 			color.YellowString("commit=%s", build_info.Commit),
-			color.BlueString("date=%s", build_info.Date))
+			color.BlueString("date=%s", build_info.Date),
+			color.MagentaString("edition=%s", build_info.Mode))
 
 		if err := checkWritePermissions(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
