@@ -135,6 +135,12 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 	var belowStrs []string
 	var unparseable []string
 	for _, c := range clusters {
+		// Serverless clusters don't expose a Kafka version — AWS
+		// manages the version transparently. Skip rather than
+		// surfacing a spurious "kafka_version missing" Unknown.
+		if isServerless(c) {
+			continue
+		}
 		v := kafkaVersionOf(c)
 		if v == "" {
 			unparseable = append(unparseable, c.Name+" (no version recorded)")
@@ -162,6 +168,13 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 	return rf
 }
 
+// kafkaVersionOf returns the cluster's reported Kafka version, or
+// "" when it isn't recorded.
+//
+// Serverless clusters always return "" — AWS manages the Serverless
+// version transparently and never populates
+// `Provisioned.CurrentBrokerSoftwareInfo`. Callers MUST guard with
+// `isServerless` before interpreting "" as "scan didn't run".
 func kafkaVersionOf(c types.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.CurrentBrokerSoftwareInfo == nil || prov.CurrentBrokerSoftwareInfo.KafkaVersion == nil {
@@ -379,6 +392,8 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDZeroACLsWithIAM, Title: "Zero ACLs with IAM auth enabled — verify SE expected behavior"}
 	var hits []string
+	var serverlessIAM []string // Serverless+IAM clusters can't expose ACLs via the kcp scan path
+	var unscannedIAM []string  // Provisioned+IAM clusters where the ACL scan didn't run (nil ACLs)
 	for _, c := range clusters {
 		iam := false
 		for _, a := range sourceAuthsDetected(c) {
@@ -390,13 +405,41 @@ func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
 		if !iam {
 			continue
 		}
-		if aclScanRan(c) && len(c.KafkaAdminClientInformation.Acls) == 0 {
+		if isServerless(c) {
+			serverlessIAM = append(serverlessIAM, c.Name)
+			continue
+		}
+		if !aclScanRan(c) {
+			// Provisioned+IAM with nil ACLs (scan didn't run / --skip-acls
+			// / 0-ACL scan ambiguity per aclScanRan). The acls_not_scanned
+			// OQ already nudges the customer to re-run; we just need to
+			// not let the row claim "Not triggered" silently for them.
+			unscannedIAM = append(unscannedIAM, c.Name)
+			continue
+		}
+		if len(c.KafkaAdminClientInformation.Acls) == 0 {
 			hits = append(hits, c.Name)
 		}
 	}
+	excludedNote := ""
+	switch {
+	case len(serverlessIAM) > 0 && len(unscannedIAM) > 0:
+		excludedNote = fmt.Sprintf(" (excluded — Serverless+IAM %s lack ACL scan path; Provisioned+IAM %s had nil ACLs)", strings.Join(serverlessIAM, ", "), strings.Join(unscannedIAM, ", "))
+	case len(serverlessIAM) > 0:
+		excludedNote = fmt.Sprintf(" (Serverless+IAM clusters %s excluded — ACLs aren't exposed via the kcp scan path on Serverless)", strings.Join(serverlessIAM, ", "))
+	case len(unscannedIAM) > 0:
+		excludedNote = fmt.Sprintf(" (Provisioned+IAM clusters %s excluded — ACL scan didn't populate; see `acls_not_scanned` OQ to re-scan)", strings.Join(unscannedIAM, ", "))
+	}
 	if len(hits) > 0 {
 		rf.Status = types.RedFlagTriggered
-		rf.Evidence = "IAM + 0 ACLs on: " + strings.Join(hits, ", ")
+		rf.Evidence = "IAM + 0 ACLs on: " + strings.Join(hits, ", ") + excludedNote
+		return rf
+	}
+	// No Provisioned hits but at least one IAM cluster the row can't
+	// evaluate — Serverless or --skip-acls. Don't claim "Not triggered".
+	if len(serverlessIAM) > 0 || len(unscannedIAM) > 0 {
+		rf.Status = types.RedFlagUnknown
+		rf.Evidence = "Row can't evaluate for one or more IAM clusters" + excludedNote + ". Verify ACL posture manually."
 		return rf
 	}
 	rf.Status = types.RedFlagNotTriggered
@@ -438,6 +481,14 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 	var hits []expressHit
 	var hitStrs []string
 	for _, c := range clusters {
+		// Serverless is a distinct tier from Express — it has no
+		// BrokerNodeGroupInfo at all (details live on the Serverless
+		// struct, not Provisioned). Skip explicitly so the empty
+		// brokerInstanceType return for Serverless can't be misread
+		// as "scan didn't run".
+		if isServerless(c) {
+			continue
+		}
 		instType := brokerInstanceType(c)
 		if instType == "" {
 			continue
@@ -460,6 +511,15 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 	return rf
 }
 
+// brokerInstanceType returns the cluster's broker EC2 instance-type
+// string, or "" when it isn't recorded.
+//
+// Serverless clusters always return "" — Serverless has no
+// BrokerNodeGroupInfo (its details live on `MskClusterConfig.Serverless`,
+// not `Provisioned`). Callers MUST guard with `isServerless` before
+// treating "" as "scan didn't run"; for Serverless inventory accounting,
+// see `inventoryInstanceTypes` (cost_reconciliation.go), which registers
+// Serverless clusters under the synthetic `Serverless-Hours` type.
 func brokerInstanceType(c types.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.BrokerNodeGroupInfo == nil || prov.BrokerNodeGroupInfo.InstanceType == nil {
@@ -474,6 +534,11 @@ func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDTieredStorageInUse, Title: "Tiered storage in use on the source"}
 	var hits []string
 	for _, c := range clusters {
+		// Serverless has no `StorageMode` concept — the elastic
+		// storage path differs from Provisioned tiered storage. Skip.
+		if isServerless(c) {
+			continue
+		}
 		if clusterStorageMode(c) == kafkatypes.StorageModeTiered {
 			hits = append(hits, c.Name)
 		}

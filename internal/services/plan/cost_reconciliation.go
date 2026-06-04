@@ -39,7 +39,13 @@ func mskUsageTypeRegex(cfg *PlanConfig) *regexp.Regexp {
 		escaped[i] = regexp.QuoteMeta(f)
 	}
 	familyAlt := strings.Join(escaped, "|")
-	return regexp.MustCompile(`^[A-Z0-9-]+?-((?:` + familyAlt + `))\.([A-Za-z0-9.\-]+)$`)
+	// Instance-type capture group accepts either:
+	//   - the standard EC2 shape `<family>.<size>` (lowercase / mixed),
+	//     e.g. `m5.large`, `kraft.t3.small`, `m7g.large`
+	//   - the synthetic `Serverless-Hours` AWS bills MSK Serverless under
+	// Anything else (DataTransfer-Out-Bytes, garbage strings) misses on
+	// purpose so it doesn't surface as a phantom hidden-cluster candidate.
+	return regexp.MustCompile(`^[A-Z0-9-]+?-((?:` + familyAlt + `))\.((?:[a-z][a-z0-9]*\.[a-z0-9]+(?:\.[a-z0-9]+)?)|Serverless-Hours)$`)
 }
 
 // detectCostReconciliation produces the per-region diff between MSK
@@ -93,9 +99,22 @@ func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *type
 // inventoryInstanceTypes returns the set of instance types
 // `kcp discover` found in the given region. Stored as a map for
 // O(1) lookup during the diff.
+//
+// Serverless clusters carry no `BrokerNodeGroupInfo.InstanceType` —
+// the AWS cost report bills them under `<REGION>-Kafka.Serverless-Hours`,
+// which `parseMSKInstanceType` renders as `kafka.Serverless-Hours`. We
+// register that string in the inventory whenever a discovered cluster
+// is Serverless so the diff doesn't flag the Serverless-Hours cost
+// line as a "hidden cluster".
+const serverlessInventoryType = "kafka.Serverless-Hours"
+
 func inventoryInstanceTypes(region types.ProcessedRegion) map[string]struct{} {
 	out := map[string]struct{}{}
 	for _, c := range region.Clusters {
+		if isServerless(c) {
+			out[serverlessInventoryType] = struct{}{}
+			continue
+		}
 		if t := brokerInstanceType(c); t != "" {
 			out[t] = struct{}{}
 		}

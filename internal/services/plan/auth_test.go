@@ -102,6 +102,41 @@ func TestDecideAuth_OverrideRejectedRecordedOnTypo(t *testing.T) {
 	assert.NotEqual(t, "oauthhh", row.EffectiveTarget, "row must NOT carry the typo as its effective target")
 }
 
+// Serverless cluster with IAM enabled on the Serverless block (not
+// Provisioned). DecideAuth must pick up the IAM row via
+// serverlessSourceAuths — Provisioned is nil, so the previous
+// Provisioned-only path would have returned no rows.
+func TestDecideAuth_ServerlessIAM(t *testing.T) {
+	c := serverlessCluster("srv-iam")
+	d := decideAuth(c, defaultCfg(t), authInputs())
+	assert.Equal(t, []string{SourceAuthIAM}, d.SourceAuths)
+	row := requireRow(t, d, SourceAuthIAM)
+	assert.False(t, row.GatewayCompatible, "Serverless IAM still inherits the IAM-→-API-Keys mapping with gateway incompatibility")
+}
+
+// Serverless cluster with no Serverless.ClientAuthentication block.
+// DecideAuth must return empty SourceAuths without panicking.
+func TestDecideAuth_ServerlessNoAuth(t *testing.T) {
+	c := types.ProcessedCluster{Name: "srv-noauth"}
+	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
+	c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
+		VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}, SecurityGroupIds: []string{"g"}}},
+	}
+	d := decideAuth(c, defaultCfg(t), authInputs())
+	assert.Empty(t, d.SourceAuths)
+	assert.Empty(t, d.TargetMappings)
+}
+
+// `sourceUsesMTLS` must short-circuit to false for Serverless — even
+// when ClientAuthentication on the Serverless block carries an IAM
+// entry, that's not mTLS. Without the explicit guard, a future
+// refactor could try to read prov.ClientAuthentication.Tls on a nil
+// prov and panic.
+func TestSourceUsesMTLS_ServerlessAlwaysFalse(t *testing.T) {
+	c := serverlessCluster("srv-iam")
+	assert.False(t, sourceUsesMTLS(c), "Serverless never supports mTLS — must short-circuit on isServerless")
+}
+
 // Recognised override values keep OverrideRejected false; absent
 // override is also fine. Without this guard a regression could
 // silently mark every cluster as rejected.
