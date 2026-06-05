@@ -376,6 +376,57 @@ func TestRedFlags_ZeroACLs_SkipACLsCaseSurfacesAsUnknown(t *testing.T) {
 	assert.Contains(t, row.Evidence, "prov-iam-skipped")
 }
 
+// Row 16 fires Triggered when §Cost Reconciliation surfaces an
+// instance type AWS billed for but `kcp discover` didn't enumerate.
+// Boolean signal — the §Cost Reconciliation section carries the per-
+// candidate detail. Same pattern as row 12 (Tiered Storage) + the
+// §Tiered Storage section.
+func TestRedFlags_CostInventoryHidden_FiresOnUndiscoveredInstanceType(t *testing.T) {
+	discovered := redFlagCluster("known-cluster", "3.5.0", "kafka.m5.large", "")
+	state := wrapClusters(discovered)
+	// Cost line for an instance type NOT in inventory.
+	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+		Region: "us-east-1",
+		Results: []types.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.00}},
+		},
+	}
+	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDCostInventoryHidden)
+	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Contains(t, row.Evidence, "kafka.m7g.large")
+	assert.Contains(t, row.Evidence, "us-east-1")
+}
+
+// No cost data in the state file → row stays Unknown (the
+// cost_data_not_collected OQ already nudges the customer to run
+// `kcp report costs`). Don't misleadingly claim NotTriggered.
+func TestRedFlags_CostInventoryHidden_UnknownWhenNoCostData(t *testing.T) {
+	c := redFlagCluster("c", "3.5.0", "kafka.m5.large", "")
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDCostInventoryHidden)
+	assert.Equal(t, types.RedFlagUnknown, row.Status)
+}
+
+// Cost data populated AND every billed instance type maps to a
+// discovered cluster → NotTriggered (clean diff).
+func TestRedFlags_CostInventoryHidden_NotTriggeredOnCleanDiff(t *testing.T) {
+	c := redFlagCluster("known", "3.5.0", "kafka.m5.large", "")
+	state := wrapClusters(c)
+	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+		Region: "us-east-1",
+		Results: []types.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m5.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.00}},
+		},
+	}
+	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDCostInventoryHidden)
+	assert.Equal(t, types.RedFlagNotTriggered, row.Status)
+}
+
 // Discovered Serverless cluster, but NO Serverless-Hours cost line:
 // the inventory still registers the Serverless cluster, but cost
 // reconciliation just doesn't include the Serverless row in its diff

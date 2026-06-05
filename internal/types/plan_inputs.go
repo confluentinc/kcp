@@ -192,4 +192,80 @@ type ClusterPlanInputs struct {
 	// SubPattern is the per-cluster override; only meaningful when the
 	// resolved style is Stop-Restart-Repeat. Mirrors the global field.
 	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
+
+	// ---------- Customer-declared scan-equivalent fields ----------
+	//
+	// These let the customer feed the Plan when a scan file is
+	// missing or partial. Two use modes:
+	//
+	//   - **Override**: scan-derived value is available but the
+	//     customer wants to override it (e.g. peak throughput from a
+	//     load test, not CloudWatch).
+	//   - **Synthesize**: no scan file at all — plan-inputs fully
+	//     declares the source cluster. When `--state-file` is omitted,
+	//     every cluster key under `clusters:` with a `region` set is
+	//     synthesised into a ProcessedCluster and run through the
+	//     normal decision pipeline.
+	//
+	// Decision priority: customer override > scan value > nil/default.
+
+	// Region the source cluster lives in. Used when synthesising
+	// clusters from plan-inputs only (state file absent). When a
+	// state file IS present, the scan's region wins.
+	Region *string `yaml:"region,omitempty" json:"region,omitempty"`
+	// ClusterTypeFromScan is the customer's declaration of the MSK
+	// cluster type — `PROVISIONED` or `SERVERLESS`. Mirrors AWS's
+	// `MskClusterConfig.ClusterType`. Only used when the state file
+	// doesn't carry the value.
+	ClusterTypeFromScan *string `yaml:"cluster_type,omitempty" json:"cluster_type,omitempty"`
+	// KafkaVersion overrides / synthesises the Kafka version. AWS MSK
+	// version strings like "3.8.x" / "4.0.x.kraft" are accepted —
+	// `parseVersionSegments` handles trailing alphanumeric segments.
+	KafkaVersion *string `yaml:"kafka_version,omitempty" json:"kafka_version,omitempty"`
+	// BrokerCount overrides / synthesises the broker count. Used in
+	// the §1 Source Environment table and for any rule that reads
+	// AWSClientInformation.Nodes.
+	BrokerCount *int `yaml:"broker_count,omitempty" json:"broker_count,omitempty"`
+	// BrokerInstanceType overrides / synthesises the EC2 instance
+	// type (e.g. `kafka.m5.24xlarge`, `express.m7g.large`). Drives the
+	// MSK Express tier Red Flag row and the cost-vs-inventory diff.
+	BrokerInstanceType *string `yaml:"broker_instance_type,omitempty" json:"broker_instance_type,omitempty"`
+	// StorageMode overrides / synthesises the storage mode. Values:
+	// `LOCAL` (default) | `TIERED`.
+	StorageMode *string `yaml:"storage_mode,omitempty" json:"storage_mode,omitempty"`
+	// AuthMethods overrides / synthesises the source auth methods
+	// detected on this cluster. Values: subset of
+	// `scram | iam | mtls | unauth`. When set, replaces what
+	// `sourceAuthsDetected` would have returned from the
+	// MskClusterConfig.ClientAuthentication block.
+	AuthMethods []string `yaml:"auth_methods,omitempty" json:"auth_methods,omitempty"`
+	// NetworkAccessibility — `private` (default) | `public`. Surfaces
+	// in §1 Source Environment.
+	NetworkAccessibility *string `yaml:"network_accessibility,omitempty" json:"network_accessibility,omitempty"`
+	// PeakIngressMBps overrides / synthesises the cluster's peak
+	// ingress throughput. Customer-declared values from load tests or
+	// known SLOs take precedence over CloudWatch metrics. When only
+	// peak is provided (no P95 below), the synthesis path also uses
+	// it as the P95 value — conservative oversizing relative to a
+	// real CloudWatch P95 but the alternative is sizing-degraded.
+	PeakIngressMBps *float64 `yaml:"peak_ingress_mbps,omitempty" json:"peak_ingress_mbps,omitempty"`
+	// PeakEgressMBps overrides / synthesises peak egress throughput.
+	// Same precedence + P95-fallback rule.
+	PeakEgressMBps *float64 `yaml:"peak_egress_mbps,omitempty" json:"peak_egress_mbps,omitempty"`
+	// P95IngressMBps overrides the P95 directly. Optional — if absent
+	// and Peak is set, Peak doubles as P95.
+	P95IngressMBps *float64 `yaml:"p95_ingress_mbps,omitempty" json:"p95_ingress_mbps,omitempty"`
+	// P95EgressMBps — same as P95IngressMBps for egress.
+	P95EgressMBps *float64 `yaml:"p95_egress_mbps,omitempty" json:"p95_egress_mbps,omitempty"`
+	// PartitionCount overrides / synthesises the user-partition
+	// count. Drives the partition-cap rule + the partition-approaching
+	// Red Flag.
+	PartitionCount *int `yaml:"partition_count,omitempty" json:"partition_count,omitempty"`
+	// TopicCount overrides / synthesises the user-topic count. Used
+	// in §1 Source Environment and the topic_inventory_empty OQ
+	// suppression.
+	TopicCount *int `yaml:"topic_count,omitempty" json:"topic_count,omitempty"`
+	// ACLCount overrides / synthesises the ACL count. Drives the
+	// acl_count_exceeds_cap hard-limit rule.
+	ACLCount *int `yaml:"acl_count,omitempty" json:"acl_count,omitempty"`
 }
