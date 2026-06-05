@@ -133,7 +133,7 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 			ID:         "tiered_consumer_history_invalid",
 			Title:      "`consumer_history_requirement` is not a recognised value",
 			Body:       "Recognised values: `required` (default) | `not_required` | `unknown`. The current value falls outside the enum; the Plan treats it as `required` until corrected.",
-			HowToClose: "Set `consumer_history_requirement` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
+			HowToClose: "In `plan-inputs.yaml`:\n```yaml\nconsumer_history_requirement: required   # required (default) | not_required | unknown\n```",
 		})
 	}
 	if inputs.HistoricalDataStrategy != "" && !knownHistoricalStrategy(inputs.HistoricalDataStrategy) {
@@ -141,7 +141,7 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 			ID:         "tiered_historical_strategy_invalid",
 			Title:      "`historical_data_strategy` is not a recognised value",
 			Body:       "Recognised values: `keep_msk_running_until_data_expires` | `bulk_load_historical_via_external_tool` | `defer_to_account_team`. The current value falls outside the enum; the Plan ignores it and treats the strategy as undeclared.",
-			HowToClose: "Set `historical_data_strategy` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
+			HowToClose: "In `plan-inputs.yaml`:\n```yaml\nhistorical_data_strategy: defer_to_account_team   # keep_msk_running_until_data_expires | bulk_load_historical_via_external_tool | defer_to_account_team\n```",
 		})
 	}
 	// Strategy undeclared AND the customer either hasn't expressed a
