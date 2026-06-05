@@ -192,4 +192,48 @@ type ClusterPlanInputs struct {
 	// SubPattern is the per-cluster override; only meaningful when the
 	// resolved style is Stop-Restart-Repeat. Mirrors the global field.
 	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
+
+	// ---------- Customer-declared scan-equivalent fields ----------
+	//
+	// Used in two modes: overlay onto a matching scanned cluster
+	// (overrides scan values), or synthesise a fresh cluster when no
+	// scan match exists (requires Region). Decision priority:
+	// customer-declared > scan-derived > nil/default.
+
+	// Region the cluster lives in. Required for synthesis. Ignored when
+	// a state file already provides the region.
+	Region *string `yaml:"region,omitempty" json:"region,omitempty"`
+	// ClusterTypeFromScan — `PROVISIONED` | `SERVERLESS`.
+	ClusterTypeFromScan *string `yaml:"cluster_type,omitempty" json:"cluster_type,omitempty"`
+	// KafkaVersion — AWS MSK version strings like "3.8.x" /
+	// "4.0.x.kraft" are accepted.
+	KafkaVersion *string `yaml:"kafka_version,omitempty" json:"kafka_version,omitempty"`
+	// BrokerCount — drives §1 + rules that read len(Nodes).
+	BrokerCount *int `yaml:"broker_count,omitempty" json:"broker_count,omitempty"`
+	// BrokerInstanceType — e.g. `kafka.m5.24xlarge`, `express.m7g.large`.
+	// Drives the Express tier Red Flag + cost-vs-inventory diff.
+	BrokerInstanceType *string `yaml:"broker_instance_type,omitempty" json:"broker_instance_type,omitempty"`
+	// StorageMode — `LOCAL` (default) | `TIERED`.
+	StorageMode *string `yaml:"storage_mode,omitempty" json:"storage_mode,omitempty"`
+	// AuthMethods — subset of `scram | iam | mtls | unauth`. Replaces
+	// the scan's ClientAuthentication block when present.
+	AuthMethods []string `yaml:"auth_methods,omitempty" json:"auth_methods,omitempty"`
+	// NetworkAccessibility — `private` (default) | `public`.
+	NetworkAccessibility *string `yaml:"network_accessibility,omitempty" json:"network_accessibility,omitempty"`
+	// PeakIngressMBps — overrides the scan's BytesInPerSec.max. When
+	// no P95 is declared, peak doubles as P95 (conservative oversizing
+	// vs. degraded sizing on a customer-provided value).
+	PeakIngressMBps *float64 `yaml:"peak_ingress_mbps,omitempty" json:"peak_ingress_mbps,omitempty"`
+	// PeakEgressMBps — overrides BytesOutPerSec.max. Same fallback.
+	PeakEgressMBps *float64 `yaml:"peak_egress_mbps,omitempty" json:"peak_egress_mbps,omitempty"`
+	// P95IngressMBps — overrides the P95 directly. Optional.
+	P95IngressMBps *float64 `yaml:"p95_ingress_mbps,omitempty" json:"p95_ingress_mbps,omitempty"`
+	// P95EgressMBps — same for egress.
+	P95EgressMBps *float64 `yaml:"p95_egress_mbps,omitempty" json:"p95_egress_mbps,omitempty"`
+	// PartitionCount — user-partition count; drives the partition-cap rule.
+	PartitionCount *int `yaml:"partition_count,omitempty" json:"partition_count,omitempty"`
+	// TopicCount — user-topic count; surfaces in §1.
+	TopicCount *int `yaml:"topic_count,omitempty" json:"topic_count,omitempty"`
+	// ACLCount — drives acl_count_exceeds_cap.
+	ACLCount *int `yaml:"acl_count,omitempty" json:"acl_count,omitempty"`
 }

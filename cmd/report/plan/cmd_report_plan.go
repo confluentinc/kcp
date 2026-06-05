@@ -49,13 +49,13 @@ func NewReportPlanCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan).")
 	reportPlanCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides. All fields optional.")
+	optionalFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan). Optional when --plan-inputs declares clusters; one of the two is required.")
+	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides + customer-declared cluster facts. Optional when --state-file is provided; one of the two is required.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "./plan-output", "Directory to write plan.md / plan.json into.")
 	optionalFlags.StringVar(&output, "output", "md,json", "Comma-separated output formats: md, json, or both.")
 	optionalFlags.StringVar(&configPath, "config", "", "Path to a plan-config.yaml override. Embedded config is the default.")
@@ -77,7 +77,6 @@ func NewReportPlanCmd() *cobra.Command {
 		return nil
 	})
 
-	_ = reportPlanCmd.MarkFlagRequired("state-file")
 	return reportPlanCmd
 }
 
@@ -86,12 +85,25 @@ func preRunReportPlan(cmd *cobra.Command, _ []string) error {
 }
 
 func runReportPlan(_ *cobra.Command, _ []string) error {
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return fmt.Errorf("state file does not exist: %s", stateFile)
+	if stateFile == "" && planInputs == "" {
+		return fmt.Errorf("at least one of --state-file or --plan-inputs is required (run with --help for the schema)")
 	}
-	state, err := loadState(stateFile)
-	if err != nil {
-		return fmt.Errorf("load --state-file %s: %w", stateFile, err)
+
+	var state *types.State
+	if stateFile != "" {
+		if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+			return fmt.Errorf("state file does not exist: %s", stateFile)
+		}
+		var err error
+		state, err = loadState(stateFile)
+		if err != nil {
+			return fmt.Errorf("load --state-file %s: %w", stateFile, err)
+		}
+	} else {
+		// No state file: synthesise an empty State so the plan pipeline
+		// has something to mutate. applyClusterDeclarations then fills
+		// the cluster slice from plan-inputs.
+		state = &types.State{}
 	}
 
 	cfg, err := plan.LoadPlanConfig(configPath)
@@ -107,6 +119,14 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("load --plan-inputs %s: %w", planInputs, err)
 	}
 	inputs := plan.ResolvePlanInputs(rawInputs, cfg)
+	// Validate the plan-inputs-only path: when no state file is provided,
+	// plan-inputs MUST declare at least one cluster with a region so
+	// applyClusterDeclarations has something to synthesise.
+	if stateFile == "" {
+		if rawInputs == nil || !declaresAtLeastOneCluster(rawInputs) {
+			return fmt.Errorf("--state-file omitted but --plan-inputs %s declares no clusters with a region — declare at least one cluster under `clusters:` with a `region` field, or supply --state-file", planInputs)
+		}
+	}
 
 	rs := report.NewReportService()
 	processed := rs.ProcessState(*state)
@@ -148,6 +168,18 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		fmt.Println("wrote", path)
 	}
 	return nil
+}
+
+// declaresAtLeastOneCluster reports whether `in.Clusters` carries at
+// least one cluster entry with a `region` set. The plan-inputs-only
+// path requires this — synthesis lands clusters into region buckets.
+func declaresAtLeastOneCluster(in *types.PlanInputs) bool {
+	for _, c := range in.Clusters {
+		if c.Region != nil && *c.Region != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // loadState reads the state file and tolerates two pre-0.7 layouts the

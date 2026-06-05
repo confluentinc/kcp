@@ -345,7 +345,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 			ID:         "schema_linking_ineligible",
 			Title:      "Schema Linking blocked — fix the failing constraint or defer to your Confluent account team",
 			Body:       ineligibilityBody(dec, cfg, inputs),
-			HowToClose: fmt.Sprintf("Either resolve the failing constraint (upgrade source CP, switch to `%s` edition, open outbound TCP from source SR to CC SR) and re-run `kcp report plan`, OR confirm with your account team that the manual REST API path is acceptable.", cfg.SchemaLinking.RequiresCPEdition),
+			HowToClose: fmt.Sprintf("Resolve the failing constraint (upgrade source CP, switch to `%s` edition, open outbound TCP from source SR to CC SR) and re-declare in `plan-inputs.yaml`:\n```yaml\nconfluent_sr_cp_version: \"%s\"           # or later\nconfluent_sr_cp_edition: %s\nsource_sr_outbound_reachable_to_cc: true\n```\nOR confirm with your account team that the manual REST API path is acceptable.", cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition),
 		})
 	}
 
