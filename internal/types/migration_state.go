@@ -22,7 +22,7 @@ func NewMigrationState() *MigrationState {
 	return &MigrationState{
 		Migrations: []MigrationConfig{},
 		KcpBuildInfo: KcpBuildInfo{
-			Version: build_info.Version,
+			Version: build_info.ResolvedVersion(),
 			Commit:  build_info.Commit,
 			Date:    build_info.Date,
 		},
