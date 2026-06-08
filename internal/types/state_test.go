@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
 
 func TestNewState(t *testing.T) {
@@ -1211,6 +1213,74 @@ func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown field, got nil")
 	}
+}
+
+func TestUpsertTargetedClusters(t *testing.T) {
+	clusterWithAcls := DiscoveredCluster{
+		Arn:    "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+		Region: "us-east-1",
+		KafkaAdminClientInformation: KafkaAdminClientInformation{
+			Acls: []Acls{{ResourceName: "topic-a", Principal: "User:alice"}},
+		},
+	}
+	siblingCluster := DiscoveredCluster{
+		Arn:    "arn:aws:kafka:us-east-1:111:cluster/b/uuid",
+		Region: "us-east-1",
+	}
+
+	t.Run("creates region when absent", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{}}}
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{clusterWithAcls},
+		})
+		if len(s.MSKSources.Regions) != 1 {
+			t.Fatalf("got %d regions, want 1", len(s.MSKSources.Regions))
+		}
+		if len(s.MSKSources.Regions[0].Clusters) != 1 {
+			t.Fatalf("got %d clusters, want 1", len(s.MSKSources.Regions[0].Clusters))
+		}
+	})
+
+	t.Run("preserves siblings and refreshes region costs", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{{
+			Name:     "us-east-1",
+			Costs:    CostInformation{},
+			Clusters: []DiscoveredCluster{clusterWithAcls, siblingCluster},
+		}}}}
+
+		// targeted re-discovery of cluster A with fresh (empty-admin-info) data + new region costs
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:  "us-east-1",
+			Costs: CostInformation{CostResults: make([]costexplorertypes.ResultByTime, 1)},
+			Clusters: []DiscoveredCluster{{
+				Arn:    "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				Region: "us-east-1",
+			}},
+		})
+
+		region := s.MSKSources.Regions[0]
+		if len(region.Clusters) != 2 {
+			t.Fatalf("got %d clusters, want 2 (sibling preserved)", len(region.Clusters))
+		}
+		if len(region.Costs.CostResults) != 1 {
+			t.Errorf("region costs not refreshed: got %d results, want 1", len(region.Costs.CostResults))
+		}
+
+		// targeted cluster keeps its scan-acquired ACLs (MergeFrom preserves old when new empty)
+		var clusterA *DiscoveredCluster
+		for i := range region.Clusters {
+			if region.Clusters[i].Arn == "arn:aws:kafka:us-east-1:111:cluster/a/uuid" {
+				clusterA = &region.Clusters[i]
+			}
+		}
+		if clusterA == nil {
+			t.Fatal("targeted cluster A missing")
+		}
+		if len(clusterA.KafkaAdminClientInformation.Acls) != 1 {
+			t.Errorf("scan ACLs not preserved on targeted cluster: got %d, want 1", len(clusterA.KafkaAdminClientInformation.Acls))
+		}
+	})
 }
 
 func TestFormatQueryDuration(t *testing.T) {
