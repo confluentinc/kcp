@@ -23,7 +23,7 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       # SASL configuration
-      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,PLAIN
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,SCRAM-SHA-512,PLAIN
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
       KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
       # SASL/PLAIN per-listener JAAS config (avoids modifying the shared JAAS file)
@@ -74,6 +74,8 @@ services:
         echo 'Creating SCRAM credentials...'
         kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
         kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-512=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-512=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
         echo 'SCRAM credentials created.'
 
         wait
