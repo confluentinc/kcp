@@ -1,4 +1,8 @@
-package types
+// Package hcltypes holds the Terraform/HCL data models produced by the hcl
+// service. It is a dependency-free leaf package so that the hcl package, its
+// subpackages (modules, confluent, aws), and external callers (cmd, utils) can
+// all import these types without creating a parent/child import cycle.
+package hcltypes
 
 type TerraformState struct {
 	Outputs TerraformOutputOld `json:"outputs"`

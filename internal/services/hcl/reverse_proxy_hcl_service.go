@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -29,8 +30,8 @@ func NewReverseProxyHCLService() *ReverseProxyHCLService {
 	return &ReverseProxyHCLService{}
 }
 
-func (s *ReverseProxyHCLService) GenerateReverseProxyFiles(request types.ReverseProxyRequest) (types.TerraformFiles, error) {
-	return types.TerraformFiles{
+func (s *ReverseProxyHCLService) GenerateReverseProxyFiles(request types.ReverseProxyRequest) (hcltypes.TerraformFiles, error) {
+	return hcltypes.TerraformFiles{
 		MainTf:           s.generateMainTf(request),
 		ProvidersTf:      s.generateProvidersTf(),
 		VariablesTf:      s.generateVariablesTf(),
@@ -297,7 +298,7 @@ func (s *ReverseProxyHCLService) generateVariablesTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
-	variables := []types.TerraformVariable{
+	variables := []hcltypes.TerraformVariable{
 		{Name: "vpc_id", Description: "The ID of the VPC", Type: "string", Sensitive: false},
 		{Name: "public_subnet_cidr", Description: "CIDR block for the public subnet", Type: "string", Sensitive: false},
 		{Name: "confluent_cloud_cluster_bootstrap_endpoint", Description: "The bootstrap endpoint of the Confluent cluster", Type: "string", Sensitive: false},

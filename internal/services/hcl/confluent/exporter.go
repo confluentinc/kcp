@@ -1,6 +1,7 @@
 package confluent
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -19,7 +20,7 @@ const (
 )
 
 // SchemaExporterVariables defines all the variables needed for schema exporter resources
-var SchemaExporterVariables = []types.TerraformVariable{
+var SchemaExporterVariables = []hcltypes.TerraformVariable{
 	{Name: VarSourceSchemaRegistryID, Description: "ID of the source schema registry", Sensitive: false, Type: "string"},
 	{Name: VarSourceSchemaRegistryURL, Description: "URL of the source schema registry", Sensitive: false, Type: "string"},
 	{Name: VarSourceSchemaRegistryUsername, Description: "Username for source schema registry authentication", Sensitive: false, Type: "string"},

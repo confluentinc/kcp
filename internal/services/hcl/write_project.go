@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 )
 
 // WriteTerraformProject writes a MigrationInfraTerraformProject to disk at the given output directory.
-func WriteTerraformProject(outputDir string, project types.MigrationInfraTerraformProject) error {
+func WriteTerraformProject(outputDir string, project hcltypes.MigrationInfraTerraformProject) error {
 	if project.MainTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(project.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)
