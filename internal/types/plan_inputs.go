@@ -12,9 +12,19 @@ package types
 // is the reason.
 type PlanInputs struct {
 	// Sizing overrides (defaults live in plan-config.yaml).
-	SLATarget          *string  `yaml:"sla_target,omitempty"          json:"sla_target,omitempty"`
-	SizingPercentile   *string  `yaml:"sizing_percentile,omitempty"   json:"sizing_percentile,omitempty"`
-	HeadroomFraction   *float64 `yaml:"headroom_fraction,omitempty"   json:"headroom_fraction,omitempty"`
+	//
+	// SLATarget — uptime SLA token. Enum: `99.9` | `99.95` | `99.99`.
+	// Default `99.9`. 99.99 forces a 2-eCKU floor.
+	SLATarget *string `yaml:"sla_target,omitempty"          json:"sla_target,omitempty"`
+	// SizingPercentile — sizing percentile for throughput. Enum:
+	// `p95` (default) | `p99`. p99 sizes for tighter peaks; p95 sizes
+	// for sustained load and lets elasticity absorb spikes.
+	SizingPercentile *string `yaml:"sizing_percentile,omitempty"   json:"sizing_percentile,omitempty"`
+	// HeadroomFraction — fraction above sized capacity to reserve.
+	// Default `0.30` (30%). Range (0, 1).
+	HeadroomFraction *float64 `yaml:"headroom_fraction,omitempty"   json:"headroom_fraction,omitempty"`
+	// SpikyWorkloadRatio — peak/P95 ratio above which the renderer
+	// surfaces a spiky-workload FYI note. Default `2.0`.
 	SpikyWorkloadRatio *float64 `yaml:"spiky_workload_ratio,omitempty" json:"spiky_workload_ratio,omitempty"`
 
 	// Customer-declared hard requirements that force Dedicated.
@@ -23,15 +33,18 @@ type PlanInputs struct {
 	RequiresHighThroughputRESTProduceAPI *bool `yaml:"requires_high_throughput_rest_produce_api,omitempty" json:"requires_high_throughput_rest_produce_api,omitempty"`
 	Requires9995SLAWithinSingleZone      *bool `yaml:"requires_99_95_sla_within_a_single_zone,omitempty"  json:"requires_99_95_sla_within_a_single_zone,omitempty"`
 
-	// When source auth includes mTLS AND target_cloud is not `aws`,
-	// Dedicated is required because only Dedicated supports mTLS on
-	// Azure / GCP. MSK is AWS-only so this defaults to `aws`.
+	// TargetCloud — destination cloud for the migration. Enum:
+	// `aws` (default) | `azure` | `gcp`. When the source uses mTLS
+	// AND target_cloud is not `aws`, Dedicated is required (only
+	// Dedicated supports mTLS on Azure / GCP). MSK is AWS-only so
+	// the source side is always AWS; this knob controls the target.
 	TargetCloud *string `yaml:"target_cloud,omitempty" json:"target_cloud,omitempty"`
 
-	// Existing VPC connectivity to MSK. When set to `transit_gateway`
-	// or `vpc_peering` and the cluster is Dedicated, the same pattern
-	// is recommended for Confluent Cloud. `privatelink_or_pni` (default)
-	// keeps the AWS-to-AWS Enterprise default (PNI) unless one of the
+	// ExistingVPCConnectivity — how the customer's existing MSK is
+	// reached today. Enum: `privatelink_or_pni` (default) |
+	// `transit_gateway` | `vpc_peering`. TGW / VPC peering force
+	// Dedicated (Enterprise doesn't support them); the default keeps
+	// the AWS-to-AWS Enterprise PNI path unless one of the
 	// PrivateLink triggers fires (see CCEgressRequired,
 	// ProjectedPNIGatewayCount, non-AWS target_cloud).
 	ExistingVPCConnectivity *string `yaml:"existing_vpc_connectivity,omitempty" json:"existing_vpc_connectivity,omitempty"`
@@ -162,6 +175,22 @@ type PlanInputs struct {
 // All fields are optional pointers so the resolver can detect "not set
 // for this cluster" and fall back to the global default.
 //
+// Used in two modes:
+//
+//  1. **Override an existing scanned cluster.** Cluster name (the key
+//     under `clusters:`) matches a cluster in the state file —
+//     declared fields overlay on top of the scan, undeclared fields
+//     keep their scan values.
+//
+//  2. **Synthesise a cluster from scratch** (no state file or no scan
+//     match for this name). Required fields for synthesis:
+//     `region` — without it, the entry is dropped.
+//     Recommended minimum to produce a useful Plan verdict:
+//     `cluster_type`, `auth_methods`, `broker_count`,
+//     `peak_ingress_mbps`, `peak_egress_mbps`, `partition_count`,
+//     `acl_count`. Anything missing falls through to the
+//     corresponding scan-gap Open Question.
+//
 // **Intentionally global-only** (not in this struct):
 //   - `sizing_percentile` — the Appendix A1 preamble names a single
 //     percentile for the whole plan; mixing P95 + P99 in one run would
@@ -192,4 +221,46 @@ type ClusterPlanInputs struct {
 	// SubPattern is the per-cluster override; only meaningful when the
 	// resolved style is Stop-Restart-Repeat. Mirrors the global field.
 	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
+
+	// ---------- Customer-declared scan-equivalent fields ----------
+	//
+	// Used in two modes: overlay onto a matching scanned cluster
+	// (overrides scan values), or synthesise a fresh cluster when no
+	// scan match exists (requires Region). Decision priority:
+	// customer-declared > scan-derived > nil/default.
+
+	// Region the cluster lives in. Required for synthesis. Ignored when
+	// a state file already provides the region.
+	Region *string `yaml:"region,omitempty" json:"region,omitempty"`
+	// ClusterType — `PROVISIONED` | `SERVERLESS`.
+	ClusterType *string `yaml:"cluster_type,omitempty" json:"cluster_type,omitempty"`
+	// KafkaVersion — AWS MSK version strings like "3.8.x" /
+	// "4.0.x.kraft" are accepted.
+	KafkaVersion *string `yaml:"kafka_version,omitempty" json:"kafka_version,omitempty"`
+	// BrokerCount — drives §1 + rules that read len(Nodes).
+	BrokerCount *int `yaml:"broker_count,omitempty" json:"broker_count,omitempty"`
+	// BrokerInstanceType — e.g. `kafka.m5.24xlarge`, `express.m7g.large`.
+	// Drives the Express tier Red Flag + cost-vs-inventory diff.
+	BrokerInstanceType *string `yaml:"broker_instance_type,omitempty" json:"broker_instance_type,omitempty"`
+	// StorageMode — `LOCAL` (default) | `TIERED`.
+	StorageMode *string `yaml:"storage_mode,omitempty" json:"storage_mode,omitempty"`
+	// AuthMethods — subset of `scram | iam | mtls | unauth`. Replaces
+	// the scan's ClientAuthentication block when present.
+	AuthMethods []string `yaml:"auth_methods,omitempty" json:"auth_methods,omitempty"`
+	// PeakIngressMBps — overrides the scan's BytesInPerSec.max. When
+	// no P95 is declared, peak doubles as P95 (conservative oversizing
+	// vs. degraded sizing on a customer-provided value).
+	PeakIngressMBps *float64 `yaml:"peak_ingress_mbps,omitempty" json:"peak_ingress_mbps,omitempty"`
+	// PeakEgressMBps — overrides BytesOutPerSec.max. Same fallback.
+	PeakEgressMBps *float64 `yaml:"peak_egress_mbps,omitempty" json:"peak_egress_mbps,omitempty"`
+	// P95IngressMBps — overrides the P95 directly. Optional.
+	P95IngressMBps *float64 `yaml:"p95_ingress_mbps,omitempty" json:"p95_ingress_mbps,omitempty"`
+	// P95EgressMBps — same for egress.
+	P95EgressMBps *float64 `yaml:"p95_egress_mbps,omitempty" json:"p95_egress_mbps,omitempty"`
+	// PartitionCount — user-partition count; drives the partition-cap rule.
+	PartitionCount *int `yaml:"partition_count,omitempty" json:"partition_count,omitempty"`
+	// TopicCount — user-topic count; surfaces in §1.
+	TopicCount *int `yaml:"topic_count,omitempty" json:"topic_count,omitempty"`
+	// ACLCount — drives acl_count_exceeds_cap.
+	ACLCount *int `yaml:"acl_count,omitempty" json:"acl_count,omitempty"`
 }

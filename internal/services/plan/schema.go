@@ -276,7 +276,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 			ID:         "schema_strategy_invalid",
 			Title:      "`schema_strategy` is not a recognised value — set to one of the four enum tokens",
 			Body:       "Recognised values: `unknown` | `no_schemas` | `adopt_schemas_during_migration` | `migrate_existing_schema_registry`. The current value falls outside the enum, so the Plan treats it as `unknown` and emits this OQ.",
-			HowToClose: "Set `schema_strategy` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
+			HowToClose: "In `plan-inputs.yaml`:\n```yaml\nschema_strategy: migrate_existing_schema_registry   # unknown | no_schemas | adopt_schemas_during_migration | migrate_existing_schema_registry\n```",
 		})
 		return oqs
 	}
@@ -345,7 +345,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 			ID:         "schema_linking_ineligible",
 			Title:      "Schema Linking blocked — fix the failing constraint or defer to your Confluent account team",
 			Body:       ineligibilityBody(dec, cfg, inputs),
-			HowToClose: fmt.Sprintf("Either resolve the failing constraint (upgrade source CP, switch to `%s` edition, open outbound TCP from source SR to CC SR) and re-run `kcp report plan`, OR confirm with your account team that the manual REST API path is acceptable.", cfg.SchemaLinking.RequiresCPEdition),
+			HowToClose: fmt.Sprintf("Resolve the failing constraint (upgrade source CP, switch to `%s` edition, open outbound TCP from source SR to CC SR) and re-declare in `plan-inputs.yaml`:\n```yaml\nconfluent_sr_cp_version: \"%s\"           # or later\nconfluent_sr_cp_edition: %s\nsource_sr_outbound_reachable_to_cc: true\n```\nOR confirm with your account team that the manual REST API path is acceptable.", cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition),
 		})
 	}
 

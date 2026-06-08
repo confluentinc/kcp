@@ -27,15 +27,37 @@ var (
 func NewReportPlanCmd() *cobra.Command {
 	reportPlanCmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate a Migration Plan to migrate to Confluent Cloud (Experimental / WIP)",
-		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan` (Experimental / WIP). " +
-			"The plan provides technical recommendations on target cluster sizing, networking, authentication, and migration approach for each source cluster, and surfaces open questions to capture your intent so the generated plan fits your use case.\n\n" +
-			"**Output:** writes `plan.md` and/or `plan.json` to `--output-dir` (default `./plan-output`).",
-		Example: `  # Minimal: state file in, plan.md/plan.json out
+		Short: "Generate a Migration Plan to migrate to Confluent Cloud (Experimental)",
+		Long: "Generate a Migration Plan to migrate to Confluent Cloud (Experimental). " +
+			"The plan provides technical recommendations across sizing, cluster type, networking, authentication, schema migration, cutover approach, red flags, and effort signals for each source cluster, and surfaces open questions to capture your intent so the generated plan fits your use case.\n\n" +
+			"**Output:** writes `plan.md` and/or `plan.json` to `--output-dir` (default `./plan-output`).\n\n" +
+			"### Generating a plan with a scan file\n\n" +
+			"The typical path. Run `kcp scan` against your fleet to produce a `kcp-state.json`, then point `kcp report plan` at it:\n\n" +
+			"```\nkcp scan --output kcp-state.json\nkcp report plan --state-file kcp-state.json\n```\n\n" +
+			"Optionally layer `--plan-inputs plan-inputs.yaml` on top to add overrides and customer-declared facts (SLA, downtime tolerance, schema strategy, gateway prereqs, per-cluster overrides, etc.):\n\n" +
+			"```\nkcp report plan --state-file kcp-state.json --plan-inputs plan-inputs.yaml\n```\n\n" +
+			"The scan supplies cluster facts; plan-inputs supplies the intent the scan can't observe.\n\n" +
+			"### Generating a plan without a scan file\n\n" +
+			"Starter `plan-inputs.yaml` — copy, paste, edit the cluster name + region, run:\n\n" +
+			"```yaml\nclusters:\n  my-cluster:\n    region: us-east-1\n```\n\n" +
+			"```\nkcp report plan --plan-inputs plan-inputs.yaml\n```\n\n" +
+			"That alone produces a plan, but most sections fall through to scan-gap Open Questions. The fields that move the needle most:\n\n" +
+			"| Field | Drives |\n" +
+			"|---|---|\n" +
+			"| `region` (required) | Region bucket the cluster lands in |\n" +
+			"| `cluster_type`, `auth_methods` | Cluster Type + Auth verdicts |\n" +
+			"| `broker_count`, `peak_ingress_mbps`, `peak_egress_mbps` | Sizing |\n" +
+			"| `partition_count`, `acl_count` | Hard-limit cap rules |\n" +
+			"| `kafka_version`, `broker_instance_type`, `storage_mode` | Red Flags + cost reconciliation |\n\n" +
+			"See `docs/assets/plan-inputs.example.yaml` for the full annotated schema with per-field guidance and a multi-cluster fleet example.",
+		Example: `  # From a kcp scan
   kcp report plan --state-file kcp-state.json
 
-  # With your overrides
+  # From a kcp scan, with your overrides
   kcp report plan --state-file kcp-state.json --plan-inputs plan-inputs.yaml
+
+  # From manual inputs (no scan file; must declare at least one cluster with a region)
+  kcp report plan --plan-inputs plan-inputs.yaml
 
   # JSON only
   kcp report plan --state-file kcp-state.json --output json`,
@@ -49,13 +71,13 @@ func NewReportPlanCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan).")
 	reportPlanCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides. All fields optional.")
+	optionalFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan). Optional when --plan-inputs declares clusters; one of the two is required.")
+	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides + customer-declared cluster facts. Optional when --state-file is provided; one of the two is required.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "./plan-output", "Directory to write plan.md / plan.json into.")
 	optionalFlags.StringVar(&output, "output", "md,json", "Comma-separated output formats: md, json, or both.")
 	optionalFlags.StringVar(&configPath, "config", "", "Path to a plan-config.yaml override. Embedded config is the default.")
@@ -77,7 +99,6 @@ func NewReportPlanCmd() *cobra.Command {
 		return nil
 	})
 
-	_ = reportPlanCmd.MarkFlagRequired("state-file")
 	return reportPlanCmd
 }
 
@@ -86,12 +107,25 @@ func preRunReportPlan(cmd *cobra.Command, _ []string) error {
 }
 
 func runReportPlan(_ *cobra.Command, _ []string) error {
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return fmt.Errorf("state file does not exist: %s", stateFile)
+	if stateFile == "" && planInputs == "" {
+		return fmt.Errorf("--state-file is the typical input (produced by `kcp scan`). If a scan isn't available, declare your fleet in --plan-inputs instead. Starter `plan-inputs.yaml`:\n\n%s", starterPlanInputsYAML())
 	}
-	state, err := loadState(stateFile)
-	if err != nil {
-		return fmt.Errorf("load --state-file %s: %w", stateFile, err)
+
+	var state *types.State
+	if stateFile != "" {
+		if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+			return fmt.Errorf("state file does not exist: %s", stateFile)
+		}
+		var err error
+		state, err = loadState(stateFile)
+		if err != nil {
+			return fmt.Errorf("load --state-file %s: %w", stateFile, err)
+		}
+	} else {
+		// No state file: synthesise an empty State so the plan pipeline
+		// has something to mutate. applyClusterDeclarations then fills
+		// the cluster slice from plan-inputs.
+		state = &types.State{}
 	}
 
 	cfg, err := plan.LoadPlanConfig(configPath)
@@ -107,6 +141,14 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("load --plan-inputs %s: %w", planInputs, err)
 	}
 	inputs := plan.ResolvePlanInputs(rawInputs, cfg)
+	// Validate the plan-inputs-only path: when no state file is provided,
+	// plan-inputs MUST declare at least one cluster with a region so
+	// applyClusterDeclarations has something to synthesise.
+	if stateFile == "" {
+		if rawInputs == nil || !declaresAtLeastOneCluster(rawInputs) {
+			return fmt.Errorf("--state-file omitted but --plan-inputs %s declares no clusters with a region. Add at least a cluster name and region, then re-run. Starter snippet:\n\n%s", planInputs, starterPlanInputsYAML())
+		}
+	}
 
 	rs := report.NewReportService()
 	processed := rs.ProcessState(*state)
@@ -148,6 +190,32 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		fmt.Println("wrote", path)
 	}
 	return nil
+}
+
+// declaresAtLeastOneCluster reports whether `in.Clusters` carries at
+// least one cluster entry with a `region` set. The plan-inputs-only
+// path requires this — synthesis lands clusters into region buckets.
+func declaresAtLeastOneCluster(in *types.PlanInputs) bool {
+	for _, c := range in.Clusters {
+		if c.Region != nil && *c.Region != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// starterPlanInputsYAML returns a minimal copy-pasteable
+// `plan-inputs.yaml` skeleton (one cluster name + region). Surfaced in
+// validator errors so a first-time user can paste the snippet into a
+// file, edit the cluster name + region, and re-run without re-reading
+// the schema. Returning the bare minimum on purpose: anything past
+// region falls through to a scan-gap Open Question rather than
+// blocking the run, so the starter stays unambiguous.
+func starterPlanInputsYAML() string {
+	return `clusters:
+  my-cluster:
+    region: us-east-1
+`
 }
 
 // loadState reads the state file and tolerates two pre-0.7 layouts the
