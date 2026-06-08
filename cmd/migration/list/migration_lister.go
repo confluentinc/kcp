@@ -6,18 +6,18 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/fatih/color"
 )
 
 type MigrationListerOpts struct {
 	MigrationStateFile string
-	MigrationState     types.MigrationState
+	MigrationState     migration.MigrationState
 }
 
 type MigrationLister struct {
 	migrationStateFile string
-	migrationState     types.MigrationState
+	migrationState     migration.MigrationState
 }
 
 func NewMigrationLister(opts MigrationListerOpts) *MigrationLister {
@@ -52,7 +52,7 @@ func (ml *MigrationLister) Run() error {
 
 	// Sort migrations by creation time (newest first)
 	// We'll use the migration ID timestamp if available, otherwise just reverse order
-	sortedMigrations := make([]types.MigrationConfig, len(migrations))
+	sortedMigrations := make([]migration.MigrationConfig, len(migrations))
 	copy(sortedMigrations, migrations)
 	slices.Reverse(sortedMigrations)
 
@@ -64,7 +64,7 @@ func (ml *MigrationLister) Run() error {
 	return nil
 }
 
-func (ml *MigrationLister) displayMigration(index int, migration types.MigrationConfig) {
+func (ml *MigrationLister) displayMigration(index int, migration migration.MigrationConfig) {
 	// Index and Migration ID
 	fmt.Printf("%s %s %s\n",
 		color.HiBlackString("[%d]", index),

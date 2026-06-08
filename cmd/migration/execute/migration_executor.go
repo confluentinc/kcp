@@ -19,8 +19,8 @@ import (
 
 type MigrationExecutorOpts struct {
 	MigrationStateFile    string
-	MigrationState        types.MigrationState
-	MigrationConfig       types.MigrationConfig
+	MigrationState        migration.MigrationState
+	MigrationConfig       migration.MigrationConfig
 	LagThreshold          int64
 	ClusterApiKey         string
 	ClusterApiSecret      string

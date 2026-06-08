@@ -10,7 +10,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -26,14 +25,14 @@ type orchestratorOverrides struct {
 // newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
 // The returned config starts at the given initialState.
 // Optional overrides allow customizing mock behavior before construction.
-func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *types.MigrationConfig, string) {
+func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig, string) {
 	t.Helper()
 
 	if len(topics) == 0 {
 		topics = []string{"topic-a", "topic-b"}
 	}
 
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		MigrationId:         "test-migration-1",
 		CurrentState:        initialState,
 		KubeConfigPath:      "/fake/kubeconfig",
@@ -143,7 +142,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	stateDir := t.TempDir()
 	stateFilePath := filepath.Join(stateDir, "migration-state.json")
 
-	migrationState := types.NewMigrationState()
+	migrationState := NewMigrationState()
 
 	orch := NewMigrationOrchestrator(config, workflow, migrationState, stateFilePath)
 
@@ -151,9 +150,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 }
 
 // loadPersistedMigration reads the state file and returns the migration config by ID.
-func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *types.MigrationConfig {
+func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *MigrationConfig {
 	t.Helper()
-	state, err := types.NewMigrationStateFromFile(stateFilePath)
+	state, err := NewMigrationStateFromFile(stateFilePath)
 	require.NoError(t, err, "failed to load state file")
 	m, err := state.GetMigrationById(migrationID)
 	require.NoError(t, err, "migration %q not found in state file", migrationID)
@@ -163,31 +162,31 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *ty
 // --- FSM transition tests ---
 
 func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil)
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
 	err := orch.Initialize(context.Background(), "api-key", "api-secret")
 	require.NoError(t, err)
 
-	assert.Equal(t, types.StateInitialized, config.CurrentState)
+	assert.Equal(t, StateInitialized, config.CurrentState)
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, types.StateInitialized, persisted.CurrentState)
+	assert.Equal(t, StateInitialized, persisted.CurrentState)
 }
 
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil)
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
 	require.NoError(t, err)
 
-	assert.Equal(t, types.StateSwitched, config.CurrentState)
+	assert.Equal(t, StateSwitched, config.CurrentState)
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, types.StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
 }
 
 func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
-	for _, startState := range []string{types.StateInitialized, types.StateLagsOk, types.StateFenced, types.StatePromoted} {
+	for _, startState := range []string{StateInitialized, StateLagsOk, StateFenced, StatePromoted} {
 		t.Run("from_"+startState, func(t *testing.T) {
 			var getYAMLCalls int32
 			overrides := orchestratorOverrides{
@@ -202,14 +201,14 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
 			require.NoError(t, err)
 
-			assert.Equal(t, types.StateSwitched, config.CurrentState)
+			assert.Equal(t, StateSwitched, config.CurrentState)
 
 			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-			assert.Equal(t, types.StateSwitched, persisted.CurrentState)
+			assert.Equal(t, StateSwitched, persisted.CurrentState)
 
 			// For initialized and later states, init step should be skipped
 			// (GetGatewayYAML is called during init, so 0 calls means init was skipped)
-			if startState == types.StateInitialized {
+			if startState == StateInitialized {
 				assert.Equal(t, int32(0), atomic.LoadInt32(&getYAMLCalls),
 					"GetGatewayYAML should not be called when resuming from initialized (init step should be skipped)")
 			}
@@ -226,24 +225,24 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil, overrides)
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
 	err := orch.Initialize(context.Background(), "api-key", "api-secret")
 	require.Error(t, err)
 
 	// Config state should NOT have advanced
-	assert.Equal(t, types.StateUninitialized, config.CurrentState)
+	assert.Equal(t, StateUninitialized, config.CurrentState)
 
 	// State file should not have been written (persistState is called after fsm.Event,
 	// and fsm.Event returns error when the callback cancels)
-	_, loadErr := types.NewMigrationStateFromFile(stateFilePath)
+	_, loadErr := NewMigrationStateFromFile(stateFilePath)
 	if loadErr == nil {
 		// If file exists, verify the migration is NOT at initialized
-		state, _ := types.NewMigrationStateFromFile(stateFilePath)
+		state, _ := NewMigrationStateFromFile(stateFilePath)
 		if state != nil {
 			m, getErr := state.GetMigrationById(config.MigrationId)
 			if getErr == nil {
-				assert.NotEqual(t, types.StateInitialized, m.CurrentState,
+				assert.NotEqual(t, StateInitialized, m.CurrentState,
 					"state file should NOT contain migration at initialized state after init failure")
 			}
 		}
@@ -258,7 +257,7 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateUninitialized, nil, overrides)
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
 	require.Error(t, err)
@@ -268,7 +267,7 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	// CheckLags (initialized -> lags_ok) succeeded and was persisted.
 	// Fence (lags_ok -> fenced) failed, so the last persisted state should be lags_ok.
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, types.StateLagsOk, persisted.CurrentState)
+	assert.Equal(t, StateLagsOk, persisted.CurrentState)
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
@@ -278,23 +277,23 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, types.StateFenced, nil, overrides)
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
 	require.Error(t, err)
 
 	// State should remain at fenced — the promote transition was cancelled
-	assert.Equal(t, types.StateFenced, config.CurrentState)
+	assert.Equal(t, StateFenced, config.CurrentState)
 
 	// No state file should have been written for this run since no transition succeeded.
 	// (We started at fenced and the first attempted transition fenced->promoted failed.)
-	_, loadErr := types.NewMigrationStateFromFile(stateFilePath)
+	_, loadErr := NewMigrationStateFromFile(stateFilePath)
 	if loadErr == nil {
-		state, _ := types.NewMigrationStateFromFile(stateFilePath)
+		state, _ := NewMigrationStateFromFile(stateFilePath)
 		if state != nil {
 			m, getErr := state.GetMigrationById(config.MigrationId)
 			if getErr == nil {
-				assert.NotEqual(t, types.StatePromoted, m.CurrentState,
+				assert.NotEqual(t, StatePromoted, m.CurrentState,
 					"state file should NOT contain migration at promoted state after promote failure")
 			}
 		}
