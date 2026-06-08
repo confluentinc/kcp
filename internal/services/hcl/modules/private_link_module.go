@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -10,7 +11,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
 			Name: "aws_region",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "aws_region",
 				Description: "The AWS region of the VPC that the private link connection is established in.",
 				Sensitive:   false,
@@ -23,7 +24,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "vpc_id",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "vpc_id",
 				Description: "The ID of the VPC that the private link connection is established in.",
 				Sensitive:   false,
@@ -36,7 +37,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "subnet_cidr_ranges",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "subnet_cidr_ranges",
 				Description: "The CIDR ranges of the subnets that the private link connection is established in.",
 				Sensitive:   false,
@@ -49,7 +50,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "environment_id",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "environment_id",
 				Description: "The ID of the environment that the private link connection is established in.",
 				Sensitive:   false,
@@ -61,7 +62,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "network_id",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "network_id",
 				Description: "The ID of the Confluent Cloud network (for dedicated cluster private link).",
 				Sensitive:   false,
@@ -75,7 +76,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "network_dns_domain",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "network_dns_domain",
 				Description: "The DNS domain of the Confluent Cloud network (for dedicated cluster private link).",
 				Sensitive:   false,
@@ -89,7 +90,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "network_private_link_endpoint_service",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "network_private_link_endpoint_service",
 				Description: "The AWS VPC endpoint service name for the Confluent Cloud network (for dedicated cluster private link).",
 				Sensitive:   false,
@@ -103,7 +104,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 		},
 		{
 			Name: "network_zones",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "network_zones",
 				Description: "Availability zone IDs supported by the Confluent Cloud network (for dedicated cluster private link).",
 				Sensitive:   false,
@@ -118,8 +119,8 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 	}
 }
 
-func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []types.TerraformOutput {
-	return []types.TerraformOutput{
+func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []hcltypes.TerraformOutput {
+	return []hcltypes.TerraformOutput{
 		{
 			Name:        "vpc_endpoint_id",
 			Description: "ID of the AWS VPC Endpoint for the Private Link connection",
@@ -128,6 +129,6 @@ func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []typ
 	}
 }
 
-func GetTargetClusterPrivateLinkModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
+func GetTargetClusterPrivateLinkModuleVariableDefinitions(request types.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetTargetClusterPrivateLinkVariables(), request)
 }

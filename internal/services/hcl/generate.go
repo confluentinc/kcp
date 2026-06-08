@@ -3,6 +3,7 @@ package hcl
 import (
 	"sort"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -11,7 +12,7 @@ import (
 
 // GenerateVariablesTf generates a variables.tf file from a list of variable definitions.
 // Duplicate variable names are deduplicated (first occurrence wins).
-func GenerateVariablesTf(tfVariables []types.TerraformVariable) string {
+func GenerateVariablesTf(tfVariables []hcltypes.TerraformVariable) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -40,7 +41,7 @@ func GenerateVariablesTf(tfVariables []types.TerraformVariable) string {
 }
 
 // GenerateOutputsTf generates an outputs.tf file from a list of output definitions.
-func GenerateOutputsTf(tfOutputs []types.TerraformOutput) string {
+func GenerateOutputsTf(tfOutputs []hcltypes.TerraformOutput) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 

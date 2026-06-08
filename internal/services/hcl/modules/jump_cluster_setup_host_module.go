@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -8,7 +9,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_setup_host_subnet_id",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "jump_cluster_setup_host_subnet_id",
 				Description: "ID of the subnet that the jump cluster setup host (Ansible) instance is deployed to.",
 				Sensitive:   false,
@@ -40,7 +41,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 		},
 		{
 			Name: "jump_cluster_instances_private_dns",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "jump_cluster_instances_private_dns",
 				Description: "Private DNS addresses of the jump cluster instances.",
 				Sensitive:   false,
@@ -54,7 +55,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 		},
 		{
 			Name: "private_key",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "private_key",
 				Description: "Private SSH key for accessing the jump cluster (including setup host) instances.",
 				Sensitive:   true,
@@ -69,6 +70,6 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 	}
 }
 
-func GetJumpClusterSetupHostVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+func GetJumpClusterSetupHostVariableDefinitions(request types.MigrationWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetJumpClusterSetupHostVariables(), request)
 }

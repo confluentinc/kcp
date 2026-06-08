@@ -1,6 +1,7 @@
 package hcl
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -18,7 +19,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 	return &MigrationInfraHCLService{}
 }
 
-func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) hcltypes.MigrationInfraTerraformProject {
 	if request.HasPublicEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
@@ -30,15 +31,15 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 	return mi.handleExternalOutboundClusterLinkingInfrastructure(request)
 }
 
-func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request types.MigrationWizardRequest) hcltypes.MigrationInfraTerraformProject {
 	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
 
-	return types.MigrationInfraTerraformProject{
+	return hcltypes.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForPublicMigrationInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForClusterLink(),
 		VariablesTf:      GenerateVariablesTf(requiredVariables),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
-		Modules: []types.MigrationInfraTerraformModule{
+		Modules: []hcltypes.MigrationInfraTerraformModule{
 			{
 				Name:        "cluster_link",
 				MainTf:      mi.generateClusterLinkMainTf(),
@@ -48,16 +49,16 @@ func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request 
 	}
 }
 
-func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request types.MigrationWizardRequest) hcltypes.MigrationInfraTerraformProject {
 	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
 
-	return types.MigrationInfraTerraformProject{
+	return hcltypes.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForPrivateMigrationInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForPrivateMigrationInfrastructure(),
 		VariablesTf:      GenerateVariablesTf(requiredVariables),
 		ReadmeMd:         mi.generateJumpClusterReadmeMd(request),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
-		Modules: []types.MigrationInfraTerraformModule{
+		Modules: []hcltypes.MigrationInfraTerraformModule{
 			{
 				Name:        "jump_cluster_setup_host",
 				MainTf:      mi.generateJumpClusterSetupHostMainTf(),
@@ -88,15 +89,15 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 	}
 }
 
-func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastructure(request types.MigrationWizardRequest) hcltypes.MigrationInfraTerraformProject {
 	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
 
-	return types.MigrationInfraTerraformProject{
+	return hcltypes.MigrationInfraTerraformProject{
 		MainTf:           mi.generateRootMainTfForExternalOutboundClusterLinkingInfrastructure(request),
 		ProvidersTf:      mi.generateRootProvidersTfForExternalOutboundClusterLinkingInfrastructure(),
 		VariablesTf:      GenerateVariablesTf(requiredVariables),
 		InputsAutoTfvars: mi.generateInputsAutoTfvars(request),
-		Modules: []types.MigrationInfraTerraformModule{
+		Modules: []hcltypes.MigrationInfraTerraformModule{
 			{
 				Name:        "external_outbound_cluster_link",
 				MainTf:      mi.generateExternalOutboundClusterLinkMainTf(request),

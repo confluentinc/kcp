@@ -6,6 +6,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -82,8 +83,8 @@ func NewTargetInfraHCLService() *TargetInfraHCLService {
 	}
 }
 
-func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) types.MigrationInfraTerraformProject {
-	requiredModules := []types.MigrationInfraTerraformModule{
+func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) hcltypes.MigrationInfraTerraformProject {
+	requiredModules := []hcltypes.MigrationInfraTerraformModule{
 		{
 			Name:        "confluent_cloud",
 			MainTf:      ti.generateConfluentCloudModuleMainTf(request),
@@ -94,7 +95,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 	}
 
 	if request.NeedsPrivateLink {
-		requiredModules = append(requiredModules, types.MigrationInfraTerraformModule{
+		requiredModules = append(requiredModules, hcltypes.MigrationInfraTerraformModule{
 			Name:        "private_link",
 			MainTf:      ti.generatePrivateLinkModuleMainTf(request),
 			VariablesTf: ti.generatePrivateLinkModuleVariablesTf(request),
@@ -103,7 +104,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 		})
 	}
 
-	return types.MigrationInfraTerraformProject{
+	return hcltypes.MigrationInfraTerraformProject{
 		MainTf:           ti.generateRootMainTf(request),
 		ProvidersTf:      ti.generateRootProvidersTf(),
 		VariablesTf:      GenerateVariablesTf(modules.GetTargetClusterModuleVariableDefinitions(request)),
@@ -199,7 +200,7 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 		KafkaAPIKeyName:    ti.ResourceNames.KafkaAPIKey,
 	})
 
-	var rootOutputs []types.TerraformOutput
+	var rootOutputs []hcltypes.TerraformOutput
 	// For enterprise clusters with Private Link, the default cluster endpoints use
 	// *.aws.private.confluent.cloud which does not resolve via the gateway Route53
 	// Private Hosted Zone. Replace them with gateway-specific endpoints that resolve
@@ -213,7 +214,7 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 		if skipDefaultEndpoints && (o.Name == "cluster_bootstrap_endpoint" || o.Name == "cluster_rest_endpoint") {
 			continue
 		}
-		rootOutputs = append(rootOutputs, types.TerraformOutput{
+		rootOutputs = append(rootOutputs, hcltypes.TerraformOutput{
 			Name:        o.Name,
 			Description: o.Description,
 			Sensitive:   o.Sensitive,
@@ -224,7 +225,7 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 	if request.NeedsPrivateLink {
 		privateLinkOutputs := modules.GetPrivateLinkModuleOutputDefinitions(ti.ResourceNames.VpcEndpoint)
 		for _, o := range privateLinkOutputs {
-			rootOutputs = append(rootOutputs, types.TerraformOutput{
+			rootOutputs = append(rootOutputs, hcltypes.TerraformOutput{
 				Name:        o.Name,
 				Description: o.Description,
 				Sensitive:   o.Sensitive,
@@ -237,12 +238,12 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 		// cluster links (--target-bootstrap-endpoint and --target-rest-endpoint).
 		if request.ClusterType == "enterprise" {
 			rootOutputs = append(rootOutputs,
-				types.TerraformOutput{
+				hcltypes.TerraformOutput{
 					Name:        "cluster_bootstrap_endpoint",
 					Description: "Gateway-specific bootstrap endpoint for Private Link access",
 					Value:       `[for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "BOOTSTRAP"][0]`,
 				},
-				types.TerraformOutput{
+				hcltypes.TerraformOutput{
 					Name:        "cluster_rest_endpoint",
 					Description: "Gateway-specific REST endpoint for Private Link access",
 					Value:       `[for e in data.confluent_endpoint.private_kafka_endpoints.endpoints : e.endpoint if e.endpoint_type == "REST"][0]`,
