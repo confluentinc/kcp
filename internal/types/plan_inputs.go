@@ -4,10 +4,6 @@ package types
 // from the zero value so the loader can echo only the fields the customer
 // explicitly set.
 //
-// MVP scope: sizing knobs + the customer-declared hard-requirement flags
-// that force Dedicated, plus the networking-topology signal that selects
-// PNI / Transit Gateway / VPC Peering on the Dedicated path.
-//
 // Customer-declared flags that flip the cluster-type verdict
 // (`EnforceSchemasAtTheBroker`, `RequiresHighThroughputRESTProduceAPI`,
 // `Requires9995SLAWithinSingleZone`) are wrong-click sensitive — a
@@ -51,6 +47,106 @@ type PlanInputs struct {
 	// PrivateLink. Default 1 (single gateway).
 	ProjectedPNIGatewayCount *int `yaml:"projected_pni_gateway_count,omitempty" json:"projected_pni_gateway_count,omitempty"`
 
+	// ----- cutover -----
+
+	// DowntimeTolerance maps 1:1 to a cutover style. Enum values:
+	//   zero                          → Blue/Green
+	//   seconds_per_service           → Stop-Restart-Repeat (gateway REQUIRED)
+	//   minutes_per_service           → Stop-Restart-Repeat (gateway optional)
+	//   scheduled_window_sequential   → Stop-Wait-Restart
+	//   scheduled_window_all_at_once  → Restart-All-At-Once
+	//   let_confluent_choose          → Stop-Restart-Repeat (Confluent default)
+	DowntimeTolerance *string `yaml:"downtime_tolerance,omitempty" json:"downtime_tolerance,omitempty"`
+
+	// SubPattern is only consulted when the resolved style is
+	// Stop-Restart-Repeat. Values: `app-by-app` (default) | `topic-by-topic`.
+	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
+
+	// PreferGateway lets the customer opt out of the gateway-mediated
+	// recommendation even when they're eligible. Default true mirrors
+	// Confluent's canonical recommendation; set false for plain Cluster
+	// Linking.
+	PreferGateway *bool `yaml:"prefer_gateway,omitempty" json:"prefer_gateway,omitempty"`
+
+	// Gateway prereq statuses. Each is one of `not_started` |
+	// `in_progress` | `complete`. Eligibility for the canonical
+	// recommendation requires all three to be at `in_progress` or
+	// `complete` (with the IAM prereq only relevant when IAM is
+	// detected on any source cluster).
+	ConfluentForKubernetesStatus *string `yaml:"confluent_for_kubernetes_status,omitempty" json:"confluent_for_kubernetes_status,omitempty"`
+	CCGatewayLicenseStatus       *string `yaml:"cc_gateway_license_status,omitempty"       json:"cc_gateway_license_status,omitempty"`
+	IAMPreMigrationStatus        *string `yaml:"iam_pre_migration_status,omitempty"        json:"iam_pre_migration_status,omitempty"`
+
+	// ----- auth -----
+
+	// TargetAuthMethod overrides the default target auth (looked up
+	// per source auth in `auth_mapping`). Enum:
+	// `confluent_cloud_api_keys` (default) | `mtls` | `oauth`.
+	// Per-cluster override available via `clusters[name].target_auth_method`.
+	TargetAuthMethod *string `yaml:"target_auth_method,omitempty" json:"target_auth_method,omitempty"`
+
+	// ----- schema migration -----
+
+	// SchemaStrategy declares the customer's intent for schemas. Enum:
+	//   unknown                          → emit OQ (default; first-run safety)
+	//   no_schemas                       → schemaless path (omit §Schema)
+	//   adopt_schemas_during_migration   → start with no source SR, adopt CC SR
+	//   migrate_existing_schema_registry → run the SR-detected path
+	SchemaStrategy *string `yaml:"schema_strategy,omitempty" json:"schema_strategy,omitempty"`
+
+	// SourceSROutboundReachableToCC is the customer's network-reachability
+	// declaration: can the source Confluent SR reach the CC SR endpoint
+	// outbound? Schema Linking's Schema Exporter is one-directional from
+	// source SR → CC SR, so without this the gateway-eligible verdict
+	// can't hold. Default nil = unknown.
+	SourceSROutboundReachableToCC *bool `yaml:"source_sr_outbound_reachable_to_cc,omitempty" json:"source_sr_outbound_reachable_to_cc,omitempty"`
+
+	// ConfluentSRCPVersion is the customer-declared Confluent Platform
+	// version of the source Schema Registry. Schema Linking requires
+	// CP 7.0 or later. Default nil = unknown — the scanner does not
+	// populate this today, so the customer declares it via plan-inputs.
+	// Accepted shape: "7.5.1" / "7.0" / "6.2" — string compare against
+	// the configured floor.
+	ConfluentSRCPVersion *string `yaml:"confluent_sr_cp_version,omitempty" json:"confluent_sr_cp_version,omitempty"`
+
+	// ConfluentSRCPEdition is the customer-declared Confluent Platform
+	// edition. Schema Linking requires `enterprise` (CP 7.0 Community
+	// does not include it). Enum: `enterprise` | `community`.
+	ConfluentSRCPEdition *string `yaml:"confluent_sr_cp_edition,omitempty" json:"confluent_sr_cp_edition,omitempty"`
+
+	// ----- red flags -----
+
+	// ExactlyOnceTransactionsInUse declares whether the source has
+	// EOS / Kafka transactions enabled. There is no detectable state
+	// signal for this; customer-only. Default nil = unknown — the
+	// Red Flag row surfaces as "not scanned" rather than firing false.
+	ExactlyOnceTransactionsInUse *bool `yaml:"exactly_once_transactions_in_use,omitempty" json:"exactly_once_transactions_in_use,omitempty"`
+
+	// KafkaStreamsInUse declares whether Kafka Streams apps consume
+	// from the source. The Red Flag detector also runs a
+	// topic-pattern scan (`-changelog` / `-repartition`); this flag
+	// lets the customer affirm even when topic patterns miss.
+	KafkaStreamsInUse *bool `yaml:"kafka_streams_in_use,omitempty" json:"kafka_streams_in_use,omitempty"`
+
+	// ----- tiered storage -----
+
+	// ConsumerHistoryRequirement declares whether downstream consumers
+	// actually need to replay historical (tiered) data. Enum:
+	//   required (default)  → backfill is required; weigh the 3
+	//                         dimensions (mechanism / duration / cost)
+	//   not_required        → real-time-only consumers; defer to the
+	//                         account team for the cascade of
+	//                         per-topic + consumer-offset decisions
+	//   unknown             → customer hasn't decided yet
+	ConsumerHistoryRequirement *string `yaml:"consumer_history_requirement,omitempty" json:"consumer_history_requirement,omitempty"`
+
+	// HistoricalDataStrategy is the customer's preferred path when
+	// tiered-storage backfill IS required. Enum:
+	//   keep_msk_running_until_data_expires
+	//   bulk_load_historical_via_external_tool
+	//   defer_to_account_team   (default for the not_required cascade)
+	HistoricalDataStrategy *string `yaml:"historical_data_strategy,omitempty" json:"historical_data_strategy,omitempty"`
+
 	// Clusters — per-cluster overrides keyed by source cluster name.
 	// Heterogeneous fleets (mixed-SLA, mixed-tier) need finer-grained
 	// inputs than the global flags above; without this, flipping a
@@ -83,4 +179,17 @@ type ClusterPlanInputs struct {
 	ExistingVPCConnectivity              *string  `yaml:"existing_vpc_connectivity,omitempty"                  json:"existing_vpc_connectivity,omitempty"`
 	CCEgressRequired                     *bool    `yaml:"cc_egress_required,omitempty"                         json:"cc_egress_required,omitempty"`
 	ProjectedPNIGatewayCount             *int     `yaml:"projected_pni_gateway_count,omitempty"                json:"projected_pni_gateway_count,omitempty"`
+	// TargetAuthMethod is the per-cluster override for the target
+	// auth verdict. Same enum as the global field.
+	TargetAuthMethod *string `yaml:"target_auth_method,omitempty" json:"target_auth_method,omitempty"`
+	// DowntimeTolerance is the per-cluster override for the cutover
+	// style. Same enum as the global field. Use when heterogeneous
+	// fleets need different cutover styles per cluster — e.g. a
+	// latency-sensitive service on Blue/Green while batch jobs run
+	// Stop-Restart-Repeat. Without this, the customer would have to
+	// slice the state file and run kcp once per cluster subset.
+	DowntimeTolerance *string `yaml:"downtime_tolerance,omitempty" json:"downtime_tolerance,omitempty"`
+	// SubPattern is the per-cluster override; only meaningful when the
+	// resolved style is Stop-Restart-Repeat. Mirrors the global field.
+	SubPattern *string `yaml:"sub_pattern,omitempty" json:"sub_pattern,omitempty"`
 }

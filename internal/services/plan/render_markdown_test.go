@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -166,8 +167,13 @@ func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 
-	assert.NotContains(t, body, "⚠", "state-derived Dedicated escalations must not surface the wrong-click callout")
-	assert.NotContains(t, body, "higher monthly cost")
+	assert.NotContains(t, body, "⚠ **Cost callout:**", "state-derived Dedicated must not surface the customer-declared wrong-click callout")
+	// State-derived Dedicated DOES get a separate ℹ cost-direction note
+	// (round-3 feedback: bigger cost decisions than SLA-SZ shouldn't be
+	// silent). It uses ℹ not ⚠ and frames recovery as "not recoverable
+	// by editing plan-inputs.yaml" — semantically distinct from the
+	// wrong-click flow.
+	assert.Contains(t, body, "ℹ **Cost direction:**", "state-derived Dedicated must surface the cost-direction note")
 }
 
 // Clusters whose source scan didn't populate the load-bearing signals
@@ -332,7 +338,7 @@ func TestRenderMarkdown_GlobalTriggerCollapsesToBanner(t *testing.T) {
 	// (note the leading `  - `); the banner uses `> ⚠ **Cost callout
 	// (applies to every cluster below):**`. Count only the per-cluster
 	// shape to verify it didn't ALSO fire when the global banner did.
-	perClusterCount := strings.Count(body, "  - > ⚠ **Cost callout:**")
+	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 1, bannerCount, "global trigger must collapse to exactly one banner up top")
 	assert.Equal(t, 0, perClusterCount, "the per-cluster cost callout must NOT fire when the banner already did")
@@ -384,9 +390,114 @@ func TestDetectGlobalCustomerTriggers_PartialFireKeepsInline(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 	bannerCount := strings.Count(body, "applies to every cluster below")
-	perClusterCount := strings.Count(body, "  - > ⚠ **Cost callout:**")
+	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 0, bannerCount, "partial fire (2 of 3) must NOT collapse to a global banner")
-	assert.Equal(t, 2, perClusterCount, "each firing cluster must keep its inline cost callout when scope is partial")
-	assert.Equal(t, 2, szTradeoffCount, "each SZ cluster must keep its inline resilience tradeoff when scope is partial")
+	// Both firing clusters share identical rationale + identical extras,
+	// so they collapse to ONE bullet with both clusters listed and the
+	// inline cost callout rendered once. The non-firing cluster (c) is
+	// its own bullet with no callout. Pre-fix behavior rendered the
+	// same paragraph N times; post-fix collapses identical paragraphs.
+	assert.Equal(t, 1, perClusterCount, "identical inline cost callouts must collapse to one bullet across firing clusters")
+	assert.Equal(t, 1, szTradeoffCount, "identical SZ tradeoff callouts must collapse to one bullet across firing clusters")
+}
+
+// groupOpenQuestions collapses two OQs identical except for the
+// embedded `--region <X>` flag in HowToClose: the per-region command
+// difference must NOT defeat the grouping, and the renderer should
+// swap a `<region>` placeholder once multiple distinct regions exist
+// in the merged group.
+func TestGroupOpenQuestions_RegionFlagNormalizationCollapses(t *testing.T) {
+	oqs := []types.OpenQuestion{
+		{
+			ID:         "auth_posture_unknown",
+			ClusterID:  "a",
+			Title:      "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
+			Body:       "Body shared across regions",
+			HowToClose: "Re-run `kcp discover --region us-east-1` against the source AWS account.",
+		},
+		{
+			ID:         "auth_posture_unknown",
+			ClusterID:  "b",
+			Title:      "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
+			Body:       "Body shared across regions",
+			HowToClose: "Re-run `kcp discover --region eu-central-1` against the source AWS account.",
+		},
+	}
+	groups := groupOpenQuestions(oqs)
+	require.Len(t, groups, 1, "OQs identical except for --region must collapse to one group")
+	require.Len(t, groups[0].clusters, 2)
+	require.Len(t, groups[0].regions, 2, "the two distinct regions must be tracked")
+}
+
+// Renderer swap path: when a grouped OQ spans multiple regions, the
+// concrete `--region <X>` is replaced with `--region <region>` in the
+// rendered HowToClose so the user sees a generic command, not the
+// first-seen region.
+func TestActionsNeededRender_MultiRegionGroupSwapsPlaceholder(t *testing.T) {
+	cfg := defaultCfg(t)
+	p := &types.Plan{
+		OpenQuestions: []types.OpenQuestion{
+			{
+				ID:         "auth_posture_unknown",
+				ClusterID:  "a",
+				Title:      "No client-authentication methods detected — region a",
+				Body:       "shared body",
+				HowToClose: "Re-run `kcp discover --region us-east-1` against the source AWS account.",
+			},
+			{
+				ID:         "auth_posture_unknown",
+				ClusterID:  "b",
+				Title:      "No client-authentication methods detected — region a",
+				Body:       "shared body",
+				HowToClose: "Re-run `kcp discover --region eu-central-1` against the source AWS account.",
+			},
+		},
+	}
+	out, err := RenderMarkdown(p, cfg)
+	require.NoError(t, err)
+	body := string(out)
+	assert.Contains(t, body, "--region <region>", "multi-region grouped OQ must render a placeholder")
+	assert.NotContains(t, body, "--region us-east-1", "concrete first-seen region must be swapped out")
+	assert.NotContains(t, body, "--region eu-central-1")
+}
+
+// §5 Schema Migration "Scan gap" branch: when the customer declared
+// `migrate_existing_schema_registry` but the scan found no SR, both
+// the recommended-path line and the strategy-declared line should
+// surface the contradiction so the reader doesn't see a misleading
+// "Pending — declare the missing input".
+func TestSchemaLabels_ScanGapWhenDeclaredButNotScanned(t *testing.T) {
+	dec := &types.SchemaDecision{Source: types.SchemaSourceNone}
+	pathLabel := schemaPathsLabelForContext(nil, SchemaStrategyMigrateExistingSchemaRegistry, dec.Source)
+	assert.Contains(t, pathLabel, "Scan gap", "recommended-path should call out the scan gap explicitly")
+	assert.Contains(t, pathLabel, "re-run", "scan-gap label must nudge the customer to re-run the scan")
+
+	strategyLabel := schemaStrategyDeclaredLabel(SchemaStrategyMigrateExistingSchemaRegistry, dec)
+	assert.Contains(t, strategyLabel, "⚠", "declared strategy must carry the ⚠ marker when it contradicts the scan")
+	assert.Contains(t, strategyLabel, "no Schema Registry", "the strategy label must name the contradiction")
+}
+
+// formatUSDWithCommas handles the edge cases that broke the prior
+// implementation: small-magnitude negatives losing their sign, and
+// fractional carry on values just below an integer boundary.
+func TestFormatUSDWithCommas(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0.00"},
+		{0.5, "0.50"},
+		{1.999, "2.00"},      // fractional carry
+		{-0.99, "-0.99"},     // small-magnitude negative kept its sign
+		{1234.5, "1,234.50"}, // thousands separator
+		{1234567.89, "1,234,567.89"},
+		{-1234567.89, "-1,234,567.89"},
+		{1795.75, "1,795.75"}, // the canonical §Cost Reconciliation amount
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%v", c.in), func(t *testing.T) {
+			assert.Equal(t, c.want, formatUSDWithCommas(c.in))
+		})
+	}
 }
