@@ -9,13 +9,12 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 type MigrationInitializerOpts struct {
 	MigrationStateFile    string
-	MigrationState        types.MigrationState
-	MigrationConfig       types.MigrationConfig
+	MigrationState        migration.MigrationState
+	MigrationConfig       migration.MigrationConfig
 	ClusterApiKey         string
 	ClusterApiSecret      string
 	InsecureSkipTLSVerify bool

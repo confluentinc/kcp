@@ -11,7 +11,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 )
 
@@ -64,7 +63,7 @@ func (s *MigrationWorkflow) SetRolloutTimeout(d time.Duration) {
 
 func (s *MigrationWorkflow) Initialize(
 	ctx context.Context,
-	config *types.MigrationConfig,
+	config *MigrationConfig,
 	clusterApiKey, clusterApiSecret string,
 ) error {
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
@@ -166,7 +165,7 @@ func (s *MigrationWorkflow) Initialize(
 // CheckLags polls source and destination offsets until lag is below threshold
 func (s *MigrationWorkflow) CheckLags(
 	ctx context.Context,
-	config *types.MigrationConfig,
+	config *MigrationConfig,
 	lagThreshold int64,
 	clusterApiKey, clusterApiSecret string,
 ) error {
@@ -274,7 +273,7 @@ func formatLag64(n int64) string {
 // generation. The wait runs without a deadline by default — the operator
 // drives convergence and the user can Ctrl-C if a rollout wedges. An optional
 // per-workflow rolloutTimeout caps the wait when set (via SetRolloutTimeout).
-func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.MigrationConfig) error {
+func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
@@ -296,7 +295,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *types.Migr
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -417,7 +416,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *types.Mig
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent
 // Cloud and waits for the operator to report the gateway as Ready. The wait
 // uses the same no-deadline-by-default behavior as FenceGateway.
-func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *types.MigrationConfig) error {
+func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
