@@ -46,8 +46,8 @@ docker exec -e KAFKA_OPTS= $CONTAINER_NAME kafka-topics --bootstrap-server osk-k
     --create --if-not-exists --topic events --partitions 2 --replication-factor 1 > /dev/null || true
 echo "Test topics created."
 
-# Create test topics on JMX brokers
-for BROKER_CONTAINER in kcp-test-osk-kafka-jmx-auth kcp-test-osk-kafka-jmx-tls; do
+# Create test topics on additional brokers (SHA-512-only, JMX)
+for BROKER_CONTAINER in kcp-test-osk-kafka-sasl-sha512-only kcp-test-osk-kafka-jmx-auth kcp-test-osk-kafka-jmx-tls; do
     BROKER_HOST="${BROKER_CONTAINER#kcp-test-}"
     echo "Waiting for $BROKER_CONTAINER to be ready..."
     MAX_WAIT=60
@@ -103,8 +103,8 @@ docker exec -e KAFKA_OPTS= $CONTAINER_NAME kafka-acls --bootstrap-server osk-kaf
     --add --allow-principal User:team5 --operation Read --topic events > /dev/null || true
 echo "Test ACLs created."
 
-# Create test ACLs on JMX brokers
-for BROKER_CONTAINER in kcp-test-osk-kafka-jmx-auth kcp-test-osk-kafka-jmx-tls; do
+# Create test ACLs on additional brokers (SHA-512-only, JMX)
+for BROKER_CONTAINER in kcp-test-osk-kafka-sasl-sha512-only kcp-test-osk-kafka-jmx-auth kcp-test-osk-kafka-jmx-tls; do
     BROKER_HOST="${BROKER_CONTAINER#kcp-test-}"
     echo "Creating test ACLs on $BROKER_CONTAINER..."
     docker exec -e KAFKA_OPTS= $BROKER_CONTAINER kafka-acls --bootstrap-server ${BROKER_HOST}:29092 \
@@ -149,6 +149,7 @@ echo "Environment is ready."
 echo "  Plaintext:       localhost:9092"
 echo "  SASL/SCRAM-256:  localhost:9093"
 echo "  SASL/SCRAM-512:  localhost:9093 (same port, SHA-512 mechanism)"
+echo "  SCRAM-512-only:  localhost:9099 (dedicated broker, SHA-512 only)"
 echo "  TLS/mTLS:        localhost:9094"
 echo "  SASL+SSL:        localhost:9095"
 echo "  SASL/PLAIN:      localhost:9098"
