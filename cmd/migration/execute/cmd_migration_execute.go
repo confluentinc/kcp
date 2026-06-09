@@ -25,8 +25,9 @@ var (
 	useUnauthenticatedTLS       bool
 	useUnauthenticatedPlaintext bool
 
-	saslScramUsername string
-	saslScramPassword string
+	saslScramUsername  string
+	saslScramPassword  string
+	saslScramMechanism string
 
 	saslPlainUsername string
 	saslPlainPassword string
@@ -109,6 +110,7 @@ the migration state file and must be provided each time.`,
 	saslScramFlags.SortFlags = false
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
+	saslScramFlags.StringVar(&saslScramMechanism, "sasl-scram-mechanism", "SHA512", "SASL/SCRAM mechanism (SHA256 or SHA512). Defaults to SHA512 for MSK compatibility.")
 	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
@@ -181,6 +183,12 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+		switch saslScramMechanism {
+		case "SHA256", "SHA512":
+			// valid
+		default:
+			return fmt.Errorf("invalid --sasl-scram-mechanism %q: must be SHA256 or SHA512", saslScramMechanism)
+		}
 	}
 
 	if useSaslPlain {
@@ -253,6 +261,7 @@ func parseMigrationExecutorOpts(migrationState migration.MigrationState, config 
 		AuthType:              resolveAuthType(),
 		SaslScramUsername:     saslScramUsername,
 		SaslScramPassword:     saslScramPassword,
+		SaslScramMechanism:    saslScramMechanism,
 		SaslPlainUsername:     saslPlainUsername,
 		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
