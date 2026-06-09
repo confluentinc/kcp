@@ -1,0 +1,99 @@
+import { test, expect } from '@playwright/test'
+
+// Gating of linking-based wizards for Confluent Cloud for Government.
+// Each affected wizard asks the Standard/Gov destination question first; Gov
+// routes to a terminal blocked step (no path to generation) on the unsupported
+// paths, while Standard proceeds to the wizard's existing flow.
+
+const BLOCKED_TITLE = 'Unsupported on Confluent Cloud for Government'
+
+test.describe('CC for Government gating — migration-infra wizards', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('nav button', { timeout: 10000 })
+    await page.locator('nav button:has-text("Migrate")').click()
+  })
+
+  test('MSK infra wizard — Gov is blocked before generation (AE6)', async ({ page }) => {
+    await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
+    await page.locator('text=kcp-playground').click()
+    await page.waitForTimeout(500)
+
+    await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Gov (index 1)
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Terminal blocked step: names the product, explains Cluster Linking, and
+    // offers no route to generation.
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Cluster Linking')).toBeVisible()
+    await expect(page.locator('button[type="submit"]')).toHaveCount(0)
+    await expect(page.locator('button:has-text("Generate Terraform Files")')).toHaveCount(0)
+  })
+
+  test('MSK infra wizard — Standard proceeds to existing flow', async ({ page }) => {
+    await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
+    await page.locator('text=kcp-playground').click()
+    await page.waitForTimeout(500)
+
+    await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // The wizard's existing first question is now reachable.
+    await expect(page.locator('#root_has_public_brokers-0')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('MSK infra wizard — Back from blocked step returns to the destination question', async ({
+    page,
+  }) => {
+    await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
+    await page.locator('text=kcp-playground').click()
+    await page.waitForTimeout(500)
+
+    await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+
+    // Back must not be a dead-end — it returns to the destination question.
+    await page.locator('button:has-text("Back")').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('#root_cc_environment-0')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('OSK infra wizard — Gov is blocked, Standard proceeds', async ({ page }) => {
+    await page.waitForSelector('text=Open Source Kafka', { timeout: 10000 })
+    await page.locator('text=production-kafka-us-east').click()
+    await page.waitForTimeout(500)
+
+    await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Gov → blocked
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+
+    // Back to destination, then Standard → existing flow
+    await page.locator('button:has-text("Back")').click()
+    await page.waitForTimeout(500)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('#root_has_public_brokers-0')).toBeVisible({ timeout: 5000 })
+  })
+})
