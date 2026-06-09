@@ -82,6 +82,22 @@ func TestValidateModeFlags(t *testing.T) {
 			wantErr:         "--mode new",
 		},
 		{
+			// R13: the refusal names the linking technology it depends on.
+			name:            "gov mirror names Cluster Linking",
+			ccEnvironment:   "cc-gov",
+			mode:            "mirror",
+			clusterLinkName: "msk-to-cc-link",
+			wantErr:         "Cluster Linking",
+		},
+		{
+			// The gov gate fires before the mirror cluster-link-name requirement,
+			// so gov+mirror is refused even without a cluster-link-name.
+			name:          "gov mirror refused before cluster-link-name check",
+			ccEnvironment: "cc-gov",
+			mode:          "mirror",
+			wantErr:       "Confluent Cloud for Government",
+		},
+		{
 			// AE3: gov + new proceeds (no error).
 			name:          "gov new is allowed",
 			ccEnvironment: "cc-gov",
@@ -101,18 +117,29 @@ func TestValidateModeFlags(t *testing.T) {
 			err := validateModeFlags(tt.ccEnvironment, tt.mode, tt.clusterLinkName)
 			if tt.wantErr == "" {
 				if err != nil {
-					t.Fatalf("validateModeFlags(%q, %q) returned unexpected error: %v", tt.mode, tt.clusterLinkName, err)
+					t.Fatalf("validateModeFlags(%q, %q, %q) returned unexpected error: %v", tt.ccEnvironment, tt.mode, tt.clusterLinkName, err)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("validateModeFlags(%q, %q) expected error containing %q, got nil", tt.mode, tt.clusterLinkName, tt.wantErr)
+				t.Fatalf("validateModeFlags(%q, %q, %q) expected error containing %q, got nil", tt.ccEnvironment, tt.mode, tt.clusterLinkName, tt.wantErr)
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("validateModeFlags(%q, %q) error = %q, want substring %q", tt.mode, tt.clusterLinkName, err.Error(), tt.wantErr)
+				t.Fatalf("validateModeFlags(%q, %q, %q) error = %q, want substring %q", tt.ccEnvironment, tt.mode, tt.clusterLinkName, err.Error(), tt.wantErr)
 			}
 		})
 	}
+
+	t.Run("missing declaration error lists allowed values", func(t *testing.T) {
+		t.Parallel()
+		err := validateModeFlags("", "mirror", "")
+		if err == nil {
+			t.Fatal("expected required error for empty --cc-environment")
+		}
+		if !strings.Contains(err.Error(), "cc") || !strings.Contains(err.Error(), "cc-gov") {
+			t.Errorf("required error %q should list cc and cc-gov", err.Error())
+		}
+	})
 }
 
 func TestSelectTopics(t *testing.T) {

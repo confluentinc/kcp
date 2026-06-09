@@ -116,6 +116,15 @@ func preRunMigrateTopics(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Validate the destination declaration and mode here (PreRunE) — before
+	// cobra's required-flag check — so a missing/invalid --cc-environment or a
+	// Confluent Cloud for Government refusal surfaces consistently with the
+	// other create-asset commands rather than behind an unrelated required-flag
+	// error.
+	if err := validateModeFlags(ccEnvironment, mode, clusterLinkName); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -134,9 +143,8 @@ func runMigrateTopics(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
-	if err := validateModeFlags(ccEnvironment, mode, clusterLinkName); err != nil {
-		return nil, err
-	}
+	// --cc-environment / --mode / --cluster-link-name are validated in
+	// preRunMigrateTopics (PreRunE), so by here they are known-good.
 
 	// __consumer_offsets survives the internal-topic filter in mirror mode only:
 	// a cluster link can mirror the offset topic, but `--mode new` emits a

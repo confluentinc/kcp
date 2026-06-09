@@ -69,7 +69,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
 
     // Back must not be a dead-end — it returns to the destination question.
-    await page.locator('button:has-text("Back")').click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.waitForTimeout(500)
     await expect(page.locator('#root_cc_environment-0')).toBeVisible({ timeout: 5000 })
   })
@@ -87,9 +87,10 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('button[type="submit"]')).toHaveCount(0)
 
     // Back to destination, then Standard → existing flow
-    await page.locator('button:has-text("Back")').click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.waitForTimeout(500)
     await page.locator('#root_cc_environment-0').click()
     await page.locator('button[type="submit"]').click()
@@ -129,6 +130,7 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
 
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
     await expect(page.getByText('Cluster Linking')).toBeVisible()
+    await expect(page.locator('button[type="submit"]')).toHaveCount(0)
   })
 
   test('Gov + new proceeds to new-topic inputs (AE3)', async ({ page }) => {
@@ -164,6 +166,25 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
 
     // Mirror inputs include the existing cluster-link field.
     await expect(page.locator('#root_cluster_link_name')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toHaveCount(0)
+  })
+
+  test('Standard + new proceeds to new-topic inputs', async ({ page }) => {
+    await openTopicsWizard(page)
+
+    // Standard (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // New mode (index 1).
+    await page.locator('#root_mode-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // New-topic inputs reachable; no cluster-link field, no block.
+    await expect(page.locator('#root_target_cluster_id')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#root_cluster_link_name')).toHaveCount(0)
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toHaveCount(0)
   })
 
@@ -216,6 +237,7 @@ test.describe('CC for Government gating — schema registry (exporter) wizard', 
 
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
     await expect(page.getByText('Schema Linking')).toBeVisible()
+    await expect(page.locator('button[type="submit"]')).toHaveCount(0)
   })
 
   test('Exporter wizard — Standard proceeds to the CC SR URL step', async ({ page }) => {

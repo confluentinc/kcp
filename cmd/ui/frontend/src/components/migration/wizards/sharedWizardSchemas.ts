@@ -33,8 +33,8 @@ export const destinationTypeStepMeta = () => ({
         type: 'string' as const,
         title: 'Confluent Cloud destination type',
         oneOf: [
-          { title: 'Standard', const: DESTINATION_CC },
-          { title: `Gov (${CC_GOV_PRODUCT_NAME})`, const: DESTINATION_CC_GOV },
+          { type: 'string' as const, title: 'Standard', const: DESTINATION_CC },
+          { type: 'string' as const, title: `Gov (${CC_GOV_PRODUCT_NAME})`, const: DESTINATION_CC_GOV },
         ],
       },
     },

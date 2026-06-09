@@ -31,6 +31,13 @@ func TestValidateMigrateSchemasDestination(t *testing.T) {
 			wantErr:       "Confluent Cloud for Government",
 		},
 		{
+			// R13: the refusal names the linking technology it depends on.
+			name:          "gov url refusal names Schema Linking",
+			ccEnvironment: "cc-gov",
+			url:           "https://sr.example.com",
+			wantErr:       "Schema Linking",
+		},
+		{
 			// AE4: gov + glue (no url) proceeds.
 			name:          "gov glue is allowed",
 			ccEnvironment: "cc-gov",
@@ -82,4 +89,15 @@ func TestValidateMigrateSchemasDestination(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("missing declaration error lists allowed values", func(t *testing.T) {
+		t.Parallel()
+		err := validateMigrateSchemasDestination("", "https://sr.example.com")
+		if err == nil {
+			t.Fatal("expected required error for empty --cc-environment")
+		}
+		if !strings.Contains(err.Error(), "cc") || !strings.Contains(err.Error(), "cc-gov") {
+			t.Errorf("required error %q should list cc and cc-gov", err.Error())
+		}
+	})
 }
