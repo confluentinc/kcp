@@ -215,6 +215,42 @@ func TestMskConnectorMigrator_TranslateConnectorConfig_UnsupportedConnectorClass
 	assert.Contains(t, err.Error(), "failed to determine plugin name")
 }
 
+func TestMskConnectorMigrator_Run_WritesProvidersTfAndVariablesTf(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "connectors-output")
+
+	opts := MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "test-connector",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"topics":          "test-topic",
+				},
+			},
+		},
+		OutputDir: outputPath,
+	}
+
+	migrator := NewMskConnectorMigrator(opts)
+	// Run will fail at API call, but providers.tf and variables.tf should be written first.
+	_ = migrator.Run()
+
+	providersTf, err := os.ReadFile(filepath.Join(outputPath, "providers.tf"))
+	require.NoError(t, err, "providers.tf should exist")
+	assert.Contains(t, string(providersTf), "confluentinc/confluent", "providers.tf should declare the Confluent provider")
+	assert.Contains(t, string(providersTf), "required_providers", "providers.tf should contain required_providers block")
+
+	variablesTf, err := os.ReadFile(filepath.Join(outputPath, "variables.tf"))
+	require.NoError(t, err, "variables.tf should exist")
+	assert.Contains(t, string(variablesTf), "confluent_cloud_api_key", "variables.tf should declare API key variable")
+	assert.Contains(t, string(variablesTf), "confluent_cloud_api_secret", "variables.tf should declare API secret variable")
+}
+
 func TestMskConnectorMigrator_Run_CreatesOutputDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "connectors-output")
