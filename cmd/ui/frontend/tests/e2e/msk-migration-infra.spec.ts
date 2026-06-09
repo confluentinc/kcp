@@ -15,6 +15,11 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
     // Select "Yes" for public brokers (index 0)
     await page.locator('#root_has_public_brokers-0').click()
     await page.locator('button[type="submit"]').click()
@@ -49,6 +54,11 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
     // Select private (index 1 = No)
@@ -86,6 +96,11 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
     // Private (index 1 = No)
@@ -150,6 +165,11 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
     // Private (index 1 = No)

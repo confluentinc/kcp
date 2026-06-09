@@ -54,6 +54,26 @@ KCP supports two source types - **AWS MSK** and **Open Source Kafka (OSK)** - an
 
 </div>
 
+## Confluent Cloud destination
+
+The matrix above describes _source_ support. Independently, three `create-asset` commands require a `--cc-environment` declaration naming the Confluent Cloud _destination_ — `cc` (Standard) or `cc-gov` (**Confluent Cloud for Government**):
+
+- `kcp create-asset migration-infra`
+- `kcp create-asset migrate-topics`
+- `kcp create-asset migrate-schemas`
+
+The declaration is **required** on these three commands (there is no default). It is not accepted on any other command.
+
+**Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-environment cc-gov` is declared:
+
+| Path                                            | `cc` (Standard) | `cc-gov` (Government)                          |
+| :---------------------------------------------- | :-------------- | :-------------------------------------------- |
+| `migration-infra` (all `--type` values)         | Supported       | Refused — relies on Cluster Linking           |
+| `migrate-topics --mode mirror`                  | Supported       | Refused — use `--mode new` instead            |
+| `migrate-topics --mode new`                     | Supported       | Supported                                     |
+| `migrate-schemas --url` (Schema Exporter)       | Supported       | Refused — use `--glue-registry` instead       |
+| `migrate-schemas --glue-registry`               | Supported       | Supported                                     |
+
 ---
 
 If a row here doesn't match what you're seeing in practice, please open an [issue](https://github.com/confluentinc/kcp/issues/new/choose).
