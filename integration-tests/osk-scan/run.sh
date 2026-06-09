@@ -15,7 +15,7 @@ echo "  OSK Scan Tests (OSK scan broker)"
 echo "=========================================="
 
 # ── Kafka auth methods ─────────────────────────────────────────────────────────
-for method in plaintext sasl sasl-sha512 tls sasl-ssl sasl-plain; do
+for method in plaintext sasl sasl-sha512 sasl-sha512-only tls sasl-ssl sasl-plain; do
     echo ""
     echo "========================================"
     echo "  TEST: $method"
