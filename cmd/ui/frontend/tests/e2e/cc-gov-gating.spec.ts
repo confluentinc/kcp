@@ -97,3 +97,97 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await expect(page.locator('#root_has_public_brokers-0')).toBeVisible({ timeout: 5000 })
   })
 })
+
+test.describe('CC for Government gating — topic migration scripts wizard', () => {
+  // Opens the topic-scripts wizard for the MSK playground cluster, landing on
+  // the destination question.
+  const openTopicsWizard = async (page: import('@playwright/test').Page) => {
+    await page.goto('/')
+    await page.waitForSelector('nav button', { timeout: 10000 })
+    await page.locator('nav button:has-text("Migrate")').click()
+    await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
+    await page.locator('text=kcp-playground').click()
+    await page.waitForTimeout(500)
+    await page.locator('button:has-text("Generate Assets")').click()
+    await page.waitForTimeout(500)
+    await page.locator('button:has-text("Topic Migration Scripts")').click()
+    await page.waitForTimeout(500)
+  }
+
+  test('Gov + mirror is blocked (AE3 / AE6)', async ({ page }) => {
+    await openTopicsWizard(page)
+
+    // Gov (index 1)
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Mirror is the default mode — submit straight through.
+    await page.locator('#root_mode-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Cluster Linking')).toBeVisible()
+  })
+
+  test('Gov + new proceeds to new-topic inputs (AE3)', async ({ page }) => {
+    await openTopicsWizard(page)
+
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Select "new" mode (index 1) — allowed under Gov.
+    await page.locator('#root_mode-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // New-topic target inputs are reachable; no cluster-link field, no block.
+    await expect(page.locator('#root_target_cluster_id')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toHaveCount(0)
+    await expect(page.locator('#root_cluster_link_name')).toHaveCount(0)
+  })
+
+  test('Standard + mirror proceeds to mirror inputs', async ({ page }) => {
+    await openTopicsWizard(page)
+
+    // Standard (index 0)
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Mirror mode (default).
+    await page.locator('#root_mode-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Mirror inputs include the existing cluster-link field.
+    await expect(page.locator('#root_cluster_link_name')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toHaveCount(0)
+  })
+
+  test('Switching Gov→mirror then Back→new routes correctly (guard reads current allData)', async ({
+    page,
+  }) => {
+    await openTopicsWizard(page)
+
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    // Gov + mirror → blocked
+    await page.locator('#root_mode-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+
+    // Back to mode selection, switch to new → proceeds (still Gov).
+    await page.locator('button:has-text("Back")').click()
+    await page.waitForTimeout(500)
+    await page.locator('#root_mode-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('#root_target_cluster_id')).toBeVisible({ timeout: 5000 })
+  })
+})
