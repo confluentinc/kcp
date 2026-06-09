@@ -183,11 +183,70 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
 
     // Back to mode selection, switch to new → proceeds (still Gov).
-    await page.locator('button:has-text("Back")').click()
+    // Exact match avoids the wrapping "Back to Selection" button.
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.waitForTimeout(500)
     await page.locator('#root_mode-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
     await expect(page.locator('#root_target_cluster_id')).toBeVisible({ timeout: 5000 })
+  })
+})
+
+test.describe('CC for Government gating — schema registry (exporter) wizard', () => {
+  const openSchemaRegistryWizard = async (page: import('@playwright/test').Page) => {
+    await page.goto('/')
+    await page.waitForSelector('nav button', { timeout: 10000 })
+    await page.locator('nav button:has-text("Migrate")').click()
+    await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
+    await page.locator('text=kcp-playground').click()
+    await page.waitForTimeout(500)
+    await page.locator('button:has-text("Generate Assets")').click()
+    await page.waitForTimeout(500)
+    await page.locator('button:has-text("Schema Registry Migration Scripts")').click()
+    await page.waitForTimeout(500)
+  }
+
+  test('Exporter wizard — Gov is blocked (AE6)', async ({ page }) => {
+    await openSchemaRegistryWizard(page)
+
+    await page.locator('#root_cc_environment-1').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Schema Linking')).toBeVisible()
+  })
+
+  test('Exporter wizard — Standard proceeds to the CC SR URL step', async ({ page }) => {
+    await openSchemaRegistryWizard(page)
+
+    await page.locator('#root_cc_environment-0').click()
+    await page.locator('button[type="submit"]').click()
+    await page.waitForTimeout(500)
+
+    await expect(page.locator('#root_confluent_cloud_schema_registry_url')).toBeVisible({
+      timeout: 5000,
+    })
+  })
+
+  // AE7: untouched wizards never ask the destination question. target-infra is
+  // always available; the glue wizard is verified by code review (not modified)
+  // and is absent from this fixture's state.
+  test('target-infra wizard has no destination question (AE7)', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('nav button', { timeout: 10000 })
+    await page.locator('nav button:has-text("Migrate")').click()
+    await page.waitForSelector('text=Managed Streaming for Kafka', { timeout: 10000 })
+    await page.locator('text=kcp-playground').click()
+    await page.waitForTimeout(500)
+
+    // First phase "Generate Terraform" (nth 0) is target-infra.
+    await page.locator('button:has-text("Generate Terraform")').nth(0).click()
+    await page.waitForTimeout(500)
+
+    // No destination radio; the wizard's own first step is shown.
+    await expect(page.locator('#root_cc_environment-0')).toHaveCount(0)
+    await expect(page.locator('button[type="submit"]')).toBeVisible({ timeout: 5000 })
   })
 })

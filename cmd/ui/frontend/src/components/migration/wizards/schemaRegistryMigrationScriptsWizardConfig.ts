@@ -1,6 +1,12 @@
 import type { WizardConfig } from './types'
 import type { SchemaRegistry } from '@/types/api/state'
 import { getAllSchemaRegistries } from '@/stores/store'
+import {
+  destinationTypeStepMeta,
+  govUnsupportedStepMeta,
+  destinationGuards,
+  CC_GOV_PRODUCT_NAME,
+} from './sharedWizardSchemas'
 
 /**
  * Sanitize a URL to be a valid JSON schema property key
@@ -164,9 +170,34 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
     title: 'Schema Migration Scripts Wizard',
     description: 'Select subjects from each schema registry to migrate',
     apiEndpoint: '/assets/migration-scripts/schemas',
-    initial: 'confluent_cloud_schema_registry_url',
+    initial: 'destination_type',
 
     states: {
+      destination_type: {
+        meta: destinationTypeStepMeta(),
+        on: {
+          NEXT: [
+            {
+              target: 'gov_unsupported',
+              guard: 'is_gov',
+              actions: 'save_step_data',
+            },
+            {
+              target: 'confluent_cloud_schema_registry_url',
+              guard: 'is_standard',
+              actions: 'save_step_data',
+            },
+          ],
+        },
+      },
+      gov_unsupported: {
+        meta: govUnsupportedStepMeta(
+          `The Confluent Schema Registry (Schema Exporter) path is not supported on ${CC_GOV_PRODUCT_NAME}: it relies on Schema Linking, which ${CC_GOV_PRODUCT_NAME} does not provide. Use the AWS Glue Schema Registry migration instead.`
+        ),
+        on: {
+          BACK: { target: 'destination_type', actions: 'undo_save_step_data' },
+        },
+      },
       confluent_cloud_schema_registry_url: {
         meta: {
           title: 'Confluent Cloud Schema Registry URL',
@@ -192,6 +223,10 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
           NEXT: {
             target: 'subject_selection',
             actions: 'save_step_data',
+          },
+          BACK: {
+            target: 'destination_type',
+            actions: 'undo_save_step_data',
           },
         },
       },
@@ -237,7 +272,9 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
       },
     },
 
-    guards: {},
+    guards: {
+      ...destinationGuards,
+    },
 
     actions: {
       save_step_data: 'save_step_data',
