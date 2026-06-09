@@ -13,38 +13,84 @@ func TestValidateModeFlags(t *testing.T) {
 
 	tests := []struct {
 		name            string
+		ccEnvironment   string
 		mode            string
 		clusterLinkName string
 		wantErr         string
 	}{
 		{
-			name:            "mirror with cluster-link-name is valid",
+			name:            "cc mirror with cluster-link-name is valid",
+			ccEnvironment:   "cc",
 			mode:            "mirror",
 			clusterLinkName: "msk-to-cc-link",
 		},
 		{
-			name:    "missing mode errors with required-flag message",
-			wantErr: "--mode is required",
+			name:          "cc missing mode errors with required-flag message",
+			ccEnvironment: "cc",
+			wantErr:       "--mode is required",
 		},
 		{
-			name:    "mirror without cluster-link-name is rejected",
-			mode:    "mirror",
-			wantErr: "--cluster-link-name is required when --mode mirror",
+			name:          "cc mirror without cluster-link-name is rejected",
+			ccEnvironment: "cc",
+			mode:          "mirror",
+			wantErr:       "--cluster-link-name is required when --mode mirror",
 		},
 		{
-			name:            "new with cluster-link-name is rejected",
+			name:            "cc new with cluster-link-name is rejected",
+			ccEnvironment:   "cc",
 			mode:            "new",
 			clusterLinkName: "msk-to-cc-link",
 			wantErr:         "--cluster-link-name is not valid when --mode new",
 		},
 		{
-			name: "new without cluster-link-name is valid",
-			mode: "new",
+			name:          "cc new without cluster-link-name is valid",
+			ccEnvironment: "cc",
+			mode:          "new",
 		},
 		{
-			name:    "unknown mode value is rejected",
-			mode:    "foo",
-			wantErr: `invalid --mode: "foo"`,
+			name:          "cc unknown mode value is rejected",
+			ccEnvironment: "cc",
+			mode:          "foo",
+			wantErr:       `invalid --mode: "foo"`,
+		},
+		{
+			// AE1: missing declaration errors before mode is considered.
+			name:    "missing declaration is required error",
+			mode:    "mirror",
+			wantErr: "--cc-environment is required",
+		},
+		{
+			// R3: invalid declaration rejected.
+			name:          "invalid declaration rejected",
+			ccEnvironment: "ccgov",
+			mode:          "new",
+			wantErr:       "invalid --cc-environment",
+		},
+		{
+			// AE3 + R13/R14: gov + mirror refused, naming the --mode new alternative.
+			name:            "gov mirror is refused naming new alternative",
+			ccEnvironment:   "cc-gov",
+			mode:            "mirror",
+			clusterLinkName: "msk-to-cc-link",
+			wantErr:         "Confluent Cloud for Government",
+		},
+		{
+			name:            "gov mirror names mode new alternative",
+			ccEnvironment:   "cc-gov",
+			mode:            "mirror",
+			clusterLinkName: "msk-to-cc-link",
+			wantErr:         "--mode new",
+		},
+		{
+			// AE3: gov + new proceeds (no error).
+			name:          "gov new is allowed",
+			ccEnvironment: "cc-gov",
+			mode:          "new",
+		},
+		{
+			// Edge case: declaration validation precedes mode validation.
+			name:    "missing declaration and missing mode yields declaration error",
+			wantErr: "--cc-environment is required",
 		},
 	}
 
@@ -52,7 +98,7 @@ func TestValidateModeFlags(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateModeFlags(tt.mode, tt.clusterLinkName)
+			err := validateModeFlags(tt.ccEnvironment, tt.mode, tt.clusterLinkName)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("validateModeFlags(%q, %q) returned unexpected error: %v", tt.mode, tt.clusterLinkName, err)
