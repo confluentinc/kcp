@@ -2,8 +2,7 @@ import type { WizardConfig } from './types'
 import type { SchemaRegistry } from '@/types/api/state'
 import { getAllSchemaRegistries } from '@/stores/store'
 import {
-  destinationTypeStepMeta,
-  govUnsupportedStepMeta,
+  destinationGatingStates,
   destinationGuards,
   CC_GOV_PRODUCT_NAME,
 } from './sharedWizardSchemas'
@@ -173,31 +172,10 @@ export const createSchemaRegistryMigrationScriptsWizardConfig = (): WizardConfig
     initial: 'destination_type',
 
     states: {
-      destination_type: {
-        meta: destinationTypeStepMeta(),
-        on: {
-          NEXT: [
-            {
-              target: 'gov_unsupported',
-              guard: 'is_gov',
-              actions: 'save_step_data',
-            },
-            {
-              target: 'confluent_cloud_schema_registry_url',
-              guard: 'is_standard',
-              actions: 'save_step_data',
-            },
-          ],
-        },
-      },
-      gov_unsupported: {
-        meta: govUnsupportedStepMeta(
-          `The Confluent Schema Registry (Schema Exporter) path is not supported on ${CC_GOV_PRODUCT_NAME}: it relies on Schema Linking, which ${CC_GOV_PRODUCT_NAME} does not provide. Use the AWS Glue Schema Registry migration instead.`
-        ),
-        on: {
-          BACK: { target: 'destination_type', actions: 'undo_save_step_data' },
-        },
-      },
+      ...destinationGatingStates({
+        standardTarget: 'confluent_cloud_schema_registry_url',
+        blockedMessage: `The Confluent Schema Registry (Schema Exporter) path is not supported on ${CC_GOV_PRODUCT_NAME}: it relies on Schema Linking, which ${CC_GOV_PRODUCT_NAME} does not provide. Use the AWS Glue Schema Registry migration instead.`,
+      }),
       confluent_cloud_schema_registry_url: {
         meta: {
           title: 'Confluent Cloud Schema Registry URL',

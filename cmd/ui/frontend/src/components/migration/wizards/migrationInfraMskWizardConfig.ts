@@ -5,8 +5,7 @@ import {
   targetClusterUiSchema,
   jumpClusterTargetProperties,
   jumpClusterTargetUiSchema,
-  destinationTypeStepMeta,
-  govUnsupportedStepMeta,
+  destinationGatingStates,
   destinationGuards,
   CC_GOV_PRODUCT_NAME,
 } from './sharedWizardSchemas'
@@ -47,34 +46,10 @@ export const createMigrationInfraMskWizardConfig = (clusterArn: string): WizardC
     initial: 'destination_type',
 
     states: {
-      destination_type: {
-        meta: destinationTypeStepMeta(),
-        on: {
-          NEXT: [
-            {
-              target: 'gov_unsupported',
-              guard: 'is_gov',
-              actions: 'save_step_data',
-            },
-            {
-              target: 'confluent_cloud_endpoints_question',
-              guard: 'is_standard',
-              actions: 'save_step_data',
-            },
-          ],
-        },
-      },
-      gov_unsupported: {
-        meta: govUnsupportedStepMeta(
-          `Migration infrastructure is not supported on ${CC_GOV_PRODUCT_NAME}: every migration type relies on Cluster Linking, which ${CC_GOV_PRODUCT_NAME} does not provide.`
-        ),
-        on: {
-          BACK: {
-            target: 'destination_type',
-            actions: 'undo_save_step_data',
-          },
-        },
-      },
+      ...destinationGatingStates({
+        standardTarget: 'confluent_cloud_endpoints_question',
+        blockedMessage: `Migration infrastructure is not supported on ${CC_GOV_PRODUCT_NAME}: every migration type relies on Cluster Linking, which ${CC_GOV_PRODUCT_NAME} does not provide.`,
+      }),
       confluent_cloud_endpoints_question: {
         meta: {
           title: 'MSK Migration - Public or Private Networking',

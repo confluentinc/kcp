@@ -69,6 +69,35 @@ export const destinationGuards = {
     event.data?.[DESTINATION_FIELD] === DESTINATION_CC,
 }
 
+/**
+ * The destination-gating state pair for wizards that block Gov *entirely*:
+ * an initial `destination_type` step that routes Gov to a terminal
+ * `gov_unsupported` step and Standard to the wizard's existing first step.
+ * Spread into a wizard's `states` (and pair with `...destinationGuards` in its
+ * guards). Wizards with finer-grained gating (e.g. topics, blocking only
+ * Gov + mirror) wire their own states instead.
+ */
+export const destinationGatingStates = (opts: {
+  standardTarget: string
+  blockedMessage: string
+}) => ({
+  destination_type: {
+    meta: destinationTypeStepMeta(),
+    on: {
+      NEXT: [
+        { target: 'gov_unsupported', guard: 'is_gov', actions: 'save_step_data' },
+        { target: opts.standardTarget, guard: 'is_standard', actions: 'save_step_data' },
+      ],
+    },
+  },
+  gov_unsupported: {
+    meta: govUnsupportedStepMeta(opts.blockedMessage),
+    on: {
+      BACK: { target: 'destination_type', actions: 'undo_save_step_data' },
+    },
+  },
+})
+
 /** Target cluster properties for public cluster link path */
 export const targetClusterProperties = () => ({
   target_cluster_id: {
