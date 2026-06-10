@@ -10,7 +10,7 @@ import (
 // bytesPerMBps turns CloudWatch byte-rates into MBps (1024 * 1024).
 const bytesPerMBps = 1_048_576.0
 
-// ComputeClusterSizing implements the deterministic sizing formula:
+// computeClusterSizing implements the deterministic sizing formula:
 //
 //	max_ratio = max(P95In/per_eCKU_ingress_mbps,
 //	                P95Out/per_eCKU_egress_mbps,
@@ -26,7 +26,7 @@ const bytesPerMBps = 1_048_576.0
 // FinalECKU = SLA floor and Degraded = true rather than failing the whole
 // plan build. The renderer surfaces the gap so the customer knows the
 // sizing column is a placeholder.
-func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterSizing {
+func computeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterSizing {
 	caps := cfg.EnterpriseCaps
 	aggs := c.ClusterMetrics.Aggregates
 
@@ -122,7 +122,7 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 
 // normalizePercentile maps the customer's sizing_percentile input
 // (p95 | p99 | max) to the canonical lowercase form. Accepts legacy
-// uppercase variants (`P95`, `P99`) for back-compat with pre-spec
+// uppercase variants (`P95`, `P99`) for back-compat with older
 // inputs, but the canonical surface is lowercase to match Confluent
 // dashboards. Unknown values fall back to "p95".
 func normalizePercentile(s string) string {

@@ -1,4 +1,4 @@
-package types
+package migration
 
 import (
 	"os"

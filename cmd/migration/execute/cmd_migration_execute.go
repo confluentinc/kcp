@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -206,7 +207,7 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 
 func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
-	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
+	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
@@ -246,7 +247,7 @@ func resolveAuthType() types.AuthType {
 	}
 }
 
-func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
+func parseMigrationExecutorOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        migrationState,

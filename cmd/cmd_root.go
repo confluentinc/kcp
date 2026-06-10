@@ -27,9 +27,10 @@ import (
 var verbose bool
 
 var RootCmd = &cobra.Command{
-	Use:   "kcp",
-	Short: "A CLI tool for kafka cluster planning and migration",
-	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + build_info.DocsURL(),
+	Use:           "kcp",
+	Short:         "A CLI tool for kafka cluster planning and migration",
+	Long:          "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + build_info.DocsURL(),
+	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// --- Logging setup (must be here so --verbose flag is parsed) ---
 		lumberjackLogger := &lumberjack.Logger{

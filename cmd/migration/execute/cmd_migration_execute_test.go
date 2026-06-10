@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,7 +240,7 @@ func TestMigrationExecute_RolloutTimeout_DefaultIsZero(t *testing.T) {
 		"--use-unauthenticated-plaintext",
 	}))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, time.Duration(0), opts.RolloutTimeout, "default --rollout-timeout should be 0 (no deadline)")
 }
 
@@ -257,7 +257,7 @@ func TestMigrationExecute_RolloutTimeout_ExplicitValueParsed(t *testing.T) {
 		"--rollout-timeout", "10m",
 	}))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 10*time.Minute, opts.RolloutTimeout)
 }
 
@@ -291,6 +291,6 @@ func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 	}))
 	require.NoError(t, utils.BindEnvToFlags(cmd))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 7*time.Minute, opts.RolloutTimeout, "ROLLOUT_TIMEOUT env var should populate the flag")
 }
