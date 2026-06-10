@@ -1281,6 +1281,36 @@ func TestUpsertTargetedClusters(t *testing.T) {
 			t.Errorf("scan ACLs not preserved on targeted cluster: got %d, want 1", len(clusterA.KafkaAdminClientInformation.Acls))
 		}
 	})
+
+	t.Run("adds a new cluster to an existing region", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{clusterWithAcls, siblingCluster}, // A, B
+		}}}}
+
+		newCluster := DiscoveredCluster{
+			Arn:    "arn:aws:kafka:us-east-1:111:cluster/c/uuid",
+			Region: "us-east-1",
+		}
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{newCluster},
+		})
+
+		region := s.MSKSources.Regions[0]
+		if len(region.Clusters) != 3 {
+			t.Fatalf("got %d clusters, want 3 (A, B preserved + new C appended)", len(region.Clusters))
+		}
+		found := false
+		for _, c := range region.Clusters {
+			if c.Arn == "arn:aws:kafka:us-east-1:111:cluster/c/uuid" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("new cluster C was not appended to the existing region")
+		}
+	})
 }
 
 func TestFormatQueryDuration(t *testing.T) {

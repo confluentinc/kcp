@@ -941,6 +941,29 @@ func TestCredentials_UpsertTargetedClusters_NewRegion(t *testing.T) {
 	}
 }
 
+func TestCredentials_UpsertTargetedClusters_AppendsToExistingRegion(t *testing.T) {
+	c := &Credentials{Regions: []RegionAuth{{
+		Name: "us-east-1",
+		Clusters: []ClusterAuth{
+			{Name: "a", Arn: "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				AuthMethod: AuthMethodConfig{IAM: &IAMConfig{Use: true}}},
+		},
+	}}}
+
+	c.UpsertTargetedClusters(RegionAuth{
+		Name: "us-east-1",
+		Clusters: []ClusterAuth{
+			{Name: "c", Arn: "arn:aws:kafka:us-east-1:111:cluster/c/uuid",
+				AuthMethod: AuthMethodConfig{IAM: &IAMConfig{Use: true}}},
+		},
+	})
+
+	region := c.Regions[0]
+	if len(region.Clusters) != 2 {
+		t.Fatalf("got %d clusters, want 2 (existing a preserved + new c appended)", len(region.Clusters))
+	}
+}
+
 func TestCredentials_UpsertRegion(t *testing.T) {
 	tests := []struct {
 		name     string
