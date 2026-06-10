@@ -1,10 +1,14 @@
 package execute
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,6 +112,117 @@ func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "if any flags in the group")
+}
+
+// ===========================================================================
+// --sasl-scram-mechanism flag tests
+// ===========================================================================
+
+func TestMigrationExecute_SaslScramMechanism_DefaultIsSHA512(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "user",
+		"--sasl-scram-password", "pass",
+	}))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, "SHA512", opts.SaslScramMechanism, "default --sasl-scram-mechanism should be SHA512 for MSK compatibility")
+}
+
+func TestMigrationExecute_SaslScramMechanism_ExplicitSHA256(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "user",
+		"--sasl-scram-password", "pass",
+		"--sasl-scram-mechanism", "SHA256",
+	}))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, "SHA256", opts.SaslScramMechanism)
+}
+
+func TestMigrationExecute_SaslScramMechanism_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("SASL_SCRAM_MECHANISM", "SHA256")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "user",
+		"--sasl-scram-password", "pass",
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, "SHA256", opts.SaslScramMechanism, "SASL_SCRAM_MECHANISM env var should override the default")
+}
+
+func TestMigrationExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "user",
+		"--sasl-scram-password", "pass",
+		"--sasl-scram-mechanism", "MD5",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --sasl-scram-mechanism")
+}
+
+// ===========================================================================
+// SASL/SCRAM mechanism end-to-end test
+// ===========================================================================
+
+func TestMigrationExecute_SaslScramMechanism_ReachesKafkaClient(t *testing.T) {
+	// Verify the mechanism value propagates from opts through createSourceOffset
+	// into the Kafka client SASL configuration. We capture slog output to confirm
+	// configureSASLTypeSCRAMAuthentication receives the correct mechanism.
+	var buf bytes.Buffer
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	original := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(original)
+
+	executor := NewMigrationExecutor(MigrationExecutorOpts{
+		SourceBootstrap:    "localhost:19999", // bogus port, will fail to connect
+		AuthType:           types.AuthTypeSASLSCRAM,
+		SaslScramUsername:  "user",
+		SaslScramPassword:  "pass",
+		SaslScramMechanism: "SHA512",
+	})
+
+	_, err := executor.createSourceOffset(context.Background())
+	require.Error(t, err, "should fail to connect to bogus broker")
+
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "mechanism=SHA512",
+		"SASL/SCRAM configuration should log the mechanism that was passed through opts")
 }
 
 // ===========================================================================
