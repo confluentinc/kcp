@@ -141,15 +141,7 @@ func (d *Discoverer) discoverRegions() error {
 			continue
 		}
 
-		if len(d.clusterArns) == 0 {
-			// full-region discovery: replace the region's cluster list (prunes removed clusters)
-			state.UpsertRegion(*discoveredRegion)
-			credentials.UpsertRegion(*regionAuth)
-		} else {
-			// targeted discovery: create-or-replace only the targeted clusters, preserve the rest
-			state.UpsertTargetedClusters(*discoveredRegion)
-			credentials.UpsertTargetedClusters(*regionAuth)
-		}
+		persistDiscoveredRegion(state, credentials, *discoveredRegion, *regionAuth, len(d.clusterArns) > 0)
 
 		// track regions with/without clusters for reporting (full-region mode only;
 		// in targeted mode an unmatched ARN is reported via the warning below instead)
@@ -430,6 +422,20 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	md.AddParagraph("To view cost and metrics reports, including the queries used to gather data, run `kcp report` or explore in `kcp ui`.")
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
+}
+
+// persistDiscoveredRegion writes a freshly discovered region into state and credentials.
+// When targeted is true (a --cluster-arn run) only the discovered clusters are created or
+// replaced and every other cluster in the region is preserved; otherwise the region's cluster
+// list is fully replaced (full-region discovery, pruning clusters that no longer exist).
+func persistDiscoveredRegion(state *types.State, credentials *types.Credentials, region types.DiscoveredRegion, regionAuth types.RegionAuth, targeted bool) {
+	if targeted {
+		state.UpsertTargetedClusters(region)
+		credentials.UpsertTargetedClusters(regionAuth)
+	} else {
+		state.UpsertRegion(region)
+		credentials.UpsertRegion(regionAuth)
+	}
 }
 
 func getPublicAccess(cluster types.DiscoveredCluster) string {
