@@ -30,8 +30,8 @@ func fixtureCluster(name string, partitions int, p95InMBps, p95OutMBps, peakInMB
 	}
 }
 
-func defaultInputs() types.PlanInputsResolved {
-	return types.PlanInputsResolved{
+func defaultInputs() PlanInputsResolved {
+	return PlanInputsResolved{
 		SLATarget:                "99.9",
 		SizingPercentile:         "p95",
 		HeadroomFraction:         0.30,

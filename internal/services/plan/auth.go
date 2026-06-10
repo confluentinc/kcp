@@ -30,9 +30,9 @@ func knownTargetAuthMethod(t string) bool {
 // target across all source rows for that cluster — the renderer
 // surfaces the source/target pair and a `Note` so the customer can
 // see the trade-off.
-func decideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.AuthDecision {
+func decideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs PlanInputsResolved) AuthDecision {
 	sources := sourceAuthsDetected(c)
-	out := types.AuthDecision{
+	out := AuthDecision{
 		ClusterID:   c.Name,
 		SourceAuths: sources,
 	}
@@ -50,10 +50,10 @@ func decideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInpu
 			// Unknown source token (shouldn't happen given the closed enum
 			// in cluster_signals.go); emit a row with empty target rather
 			// than dropping it silently.
-			out.TargetMappings = append(out.TargetMappings, types.AuthMappingRow{SourceAuth: src})
+			out.TargetMappings = append(out.TargetMappings, AuthMappingRow{SourceAuth: src})
 			continue
 		}
-		row := types.AuthMappingRow{
+		row := AuthMappingRow{
 			SourceAuth:        src,
 			EffectiveTarget:   effectiveTarget(mapping, override),
 			GatewayCompatible: mapping.GatewayCompatible,
