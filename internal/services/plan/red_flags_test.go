@@ -12,7 +12,7 @@ import (
 
 // findRow returns the row matching `id` so tests don't depend on slice
 // ordering. Fails the test when the row is missing.
-func findRow(t *testing.T, section *types.RedFlagsSection, id string) types.RedFlag {
+func findRow(t *testing.T, section *RedFlagsSection, id string) RedFlag {
 	t.Helper()
 	require.NotNil(t, section)
 	for _, r := range section.Rows {
@@ -21,7 +21,7 @@ func findRow(t *testing.T, section *types.RedFlagsSection, id string) types.RedF
 		}
 	}
 	t.Fatalf("red flag row %q not present in section (got %d rows)", id, len(section.Rows))
-	return types.RedFlag{}
+	return RedFlag{}
 }
 
 // Row 1 — schemaless source. Suppressed when `schema_strategy` is
@@ -38,13 +38,13 @@ func TestRedFlags_SchemalessSource(t *testing.T) {
 	inputs := schemaInputs(SchemaStrategyUnknown)
 	plan := buildPlanForRedFlags(t, state, cfg, inputs)
 	row := findRow(t, plan.RedFlags, RedFlagIDSchemalessSource)
-	assert.Equal(t, types.RedFlagUnknown, row.Status, "strategy=unknown must not fire row 1")
+	assert.Equal(t, RedFlagUnknown, row.Status, "strategy=unknown must not fire row 1")
 
 	// strategy = adopt_schemas_during_migration → row fires.
 	inputs = schemaInputs(SchemaStrategyAdoptSchemasDuringMigration)
 	plan = buildPlanForRedFlags(t, state, cfg, inputs)
 	row = findRow(t, plan.RedFlags, RedFlagIDSchemalessSource)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 	assert.Contains(t, row.Evidence, "adopt_schemas_during_migration")
 }
 
@@ -55,7 +55,7 @@ func TestRedFlags_KafkaVersionBelowFloor(t *testing.T) {
 	state := wrapClusters(below, above)
 	plan := buildPlanForRedFlags(t, state, defaultCfg(t), defaultInputs())
 	row := findRow(t, plan.RedFlags, RedFlagIDKafkaVersionBelowCLFloor)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 	assert.Contains(t, row.Evidence, "old-cluster=2.2.1")
 	assert.NotContains(t, row.Evidence, "new-cluster")
 }
@@ -66,7 +66,7 @@ func TestRedFlags_ExpressBrokerTier(t *testing.T) {
 	standardCluster := redFlagCluster("standard-cluster", "3.5.0", "kafka.m5.large", "")
 	plan := buildPlanForRedFlags(t, wrapClusters(expressCluster, standardCluster), defaultCfg(t), defaultInputs())
 	row := findRow(t, plan.RedFlags, RedFlagIDMSKExpressBrokerTier)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 	assert.Contains(t, row.Evidence, "express-cluster=express.m7g.large")
 }
 
@@ -76,7 +76,7 @@ func TestRedFlags_TieredStorageInUse(t *testing.T) {
 	local := redFlagCluster("local-cluster", "3.5.0", "", string(kafkatypes.StorageModeLocal))
 	plan := buildPlanForRedFlags(t, wrapClusters(tiered, local), defaultCfg(t), defaultInputs())
 	row := findRow(t, plan.RedFlags, RedFlagIDTieredStorageInUse)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 	assert.Contains(t, row.Evidence, "tiered-cluster")
 }
 
@@ -88,20 +88,20 @@ func TestRedFlags_EOSInUse(t *testing.T) {
 	// nil → Unknown
 	plan := buildPlanForRedFlags(t, state, cfg, defaultInputs())
 	row := findRow(t, plan.RedFlags, RedFlagIDEOSInUse)
-	assert.Equal(t, types.RedFlagUnknown, row.Status)
+	assert.Equal(t, RedFlagUnknown, row.Status)
 
 	// true → Triggered
 	inputs := defaultInputs()
 	inputs.ExactlyOnceTransactionsInUse = ptrBool(true)
 	plan = buildPlanForRedFlags(t, state, cfg, inputs)
 	row = findRow(t, plan.RedFlags, RedFlagIDEOSInUse)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 
 	// false → NotTriggered
 	inputs.ExactlyOnceTransactionsInUse = ptrBool(false)
 	plan = buildPlanForRedFlags(t, state, cfg, inputs)
 	row = findRow(t, plan.RedFlags, RedFlagIDEOSInUse)
-	assert.Equal(t, types.RedFlagNotTriggered, row.Status)
+	assert.Equal(t, RedFlagNotTriggered, row.Status)
 }
 
 // Row 15 — broad topic-name pattern scan: catches MM2 / Connect /
@@ -115,7 +115,7 @@ func TestRedFlags_BroadTopicPatternMatch(t *testing.T) {
 	}}
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
 	row := findRow(t, plan.RedFlags, RedFlagIDBroadTopicPatternMatch)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 	assert.Contains(t, row.Evidence, "mm2-source-data")
 	assert.Contains(t, row.Evidence, "events-changelog")
 }
@@ -123,7 +123,7 @@ func TestRedFlags_BroadTopicPatternMatch(t *testing.T) {
 // Empty fleet (no MSK clusters) → detectRedFlags returns nil so the
 // renderer omits the §Red Flags section entirely.
 func TestDetectRedFlags_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, detectRedFlags(types.ProcessedState{}, &types.Plan{}, defaultCfg(t), defaultInputs()))
+	assert.Nil(t, detectRedFlags(types.ProcessedState{}, &Plan{}, defaultCfg(t), defaultInputs()))
 }
 
 // ----- helpers -----
@@ -168,7 +168,7 @@ func wrapClusters(clusters ...types.ProcessedCluster) types.ProcessedState {
 // the full integration (V2 detector + V1 plumbing) rather than
 // calling detectRedFlags in isolation. Same default time / cfg used
 // by the rest of the plan tests.
-func buildPlanForRedFlags(t *testing.T, state types.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.Plan {
+func buildPlanForRedFlags(t *testing.T, state types.ProcessedState, cfg *PlanConfig, inputs PlanInputsResolved) *Plan {
 	t.Helper()
 	svc := NewPlanService(cfg, fixedNow)
 	p, err := svc.Build(state, inputs, "redflags-test.json")
@@ -205,13 +205,13 @@ func TestRedFlags_ServerlessSkipsProvisionedOnlyRows(t *testing.T) {
 	require.NotNil(t, plan.RedFlags)
 
 	kafkaRow := findRow(t, plan.RedFlags, RedFlagIDKafkaVersionBelowCLFloor)
-	assert.Equal(t, types.RedFlagNotTriggered, kafkaRow.Status, "Serverless has no Kafka version — row must NOT fire Unknown")
+	assert.Equal(t, RedFlagNotTriggered, kafkaRow.Status, "Serverless has no Kafka version — row must NOT fire Unknown")
 
 	expressRow := findRow(t, plan.RedFlags, RedFlagIDMSKExpressBrokerTier)
-	assert.Equal(t, types.RedFlagNotTriggered, expressRow.Status, "Serverless is a distinct tier from Express")
+	assert.Equal(t, RedFlagNotTriggered, expressRow.Status, "Serverless is a distinct tier from Express")
 
 	tieredRow := findRow(t, plan.RedFlags, RedFlagIDTieredStorageInUse)
-	assert.Equal(t, types.RedFlagNotTriggered, tieredRow.Status, "Serverless has no StorageMode concept")
+	assert.Equal(t, RedFlagNotTriggered, tieredRow.Status, "Serverless has no StorageMode concept")
 }
 
 // Mixed-fleet variant: Serverless cluster alongside a Provisioned
@@ -226,7 +226,7 @@ func TestRedFlags_ServerlessDoesntPolluteVersionEvidence(t *testing.T) {
 	require.NotNil(t, plan.RedFlags)
 
 	row := findRow(t, plan.RedFlags, RedFlagIDKafkaVersionBelowCLFloor)
-	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Equal(t, RedFlagTriggered, row.Status)
 	assert.Contains(t, row.Evidence, "old-provisioned")
 	assert.NotContains(t, row.Evidence, "serverless-mixed", "Serverless cluster must not appear in version-row evidence")
 }
@@ -247,7 +247,7 @@ func TestRedFlags_ServerlessNoClientAuthentication(t *testing.T) {
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
 	require.NotNil(t, plan.RedFlags)
 	iamRow := findRow(t, plan.RedFlags, RedFlagIDIAMAuthEnabled)
-	assert.Equal(t, types.RedFlagNotTriggered, iamRow.Status, "no auth block → no IAM detected")
+	assert.Equal(t, RedFlagNotTriggered, iamRow.Status, "no auth block → no IAM detected")
 	// Cluster surfaces as Serverless and the auth fallback is empty.
 	require.Len(t, plan.Auth, 1)
 	assert.Empty(t, plan.Auth[0].SourceAuths)
@@ -277,10 +277,10 @@ func TestRedFlags_ServerlessMultiRegion(t *testing.T) {
 	require.NotNil(t, plan.RedFlags)
 
 	multiRegion := findRow(t, plan.RedFlags, RedFlagIDMultiRegionSource)
-	assert.Equal(t, types.RedFlagTriggered, multiRegion.Status, "two regions → multi-region fires")
+	assert.Equal(t, RedFlagTriggered, multiRegion.Status, "two regions → multi-region fires")
 
 	kafkaRow := findRow(t, plan.RedFlags, RedFlagIDKafkaVersionBelowCLFloor)
-	assert.Equal(t, types.RedFlagNotTriggered, kafkaRow.Status, "Serverless-only multi-region must not trip the version row")
+	assert.Equal(t, RedFlagNotTriggered, kafkaRow.Status, "Serverless-only multi-region must not trip the version row")
 }
 
 // Mixed fleet variant for Express + Tiered: a single Provisioned
@@ -295,12 +295,12 @@ func TestRedFlags_ServerlessDoesntPolluteExpressOrTieredEvidence(t *testing.T) {
 	require.NotNil(t, plan.RedFlags)
 
 	exp := findRow(t, plan.RedFlags, RedFlagIDMSKExpressBrokerTier)
-	assert.Equal(t, types.RedFlagTriggered, exp.Status)
+	assert.Equal(t, RedFlagTriggered, exp.Status)
 	assert.Contains(t, exp.Evidence, "prov-express=express.m7g.large")
 	assert.NotContains(t, exp.Evidence, "serverless-mixed")
 
 	tier := findRow(t, plan.RedFlags, RedFlagIDTieredStorageInUse)
-	assert.Equal(t, types.RedFlagTriggered, tier.Status)
+	assert.Equal(t, RedFlagTriggered, tier.Status)
 	assert.Contains(t, tier.Evidence, "prov-express")
 	assert.NotContains(t, tier.Evidence, "serverless-mixed")
 }
@@ -313,7 +313,7 @@ func TestRedFlags_ServerlessIAMMakesZeroACLsRowUnknown(t *testing.T) {
 	plan := buildPlanForRedFlags(t, wrapClusters(srv), defaultCfg(t), defaultInputs())
 	require.NotNil(t, plan.RedFlags)
 	row := findRow(t, plan.RedFlags, RedFlagIDZeroACLsWithIAM)
-	assert.Equal(t, types.RedFlagUnknown, row.Status, "Serverless+IAM clusters make the ACL row inconclusive — must be Unknown not Not Triggered")
+	assert.Equal(t, RedFlagUnknown, row.Status, "Serverless+IAM clusters make the ACL row inconclusive — must be Unknown not Not Triggered")
 	assert.Contains(t, row.Evidence, "srv-iam")
 }
 
@@ -332,7 +332,7 @@ func TestRedFlags_ZeroACLsWithIAM_MixedFleetSurfacesExclusion(t *testing.T) {
 	plan := buildPlanForRedFlags(t, wrapClusters(provIAM, srv), defaultCfg(t), defaultInputs())
 	require.NotNil(t, plan.RedFlags)
 	row := findRow(t, plan.RedFlags, RedFlagIDZeroACLsWithIAM)
-	assert.Equal(t, types.RedFlagTriggered, row.Status, "Provisioned IAM + 0 ACLs still triggers the row")
+	assert.Equal(t, RedFlagTriggered, row.Status, "Provisioned IAM + 0 ACLs still triggers the row")
 	assert.Contains(t, row.Evidence, "prov-iam")
 	assert.Contains(t, row.Evidence, "srv-iam", "Serverless+IAM exclusion must be surfaced in the row evidence")
 }
@@ -349,7 +349,7 @@ func TestRedFlags_ServerlessNoAuthFiresAuthPostureOQ(t *testing.T) {
 	}
 	c.KafkaAdminClientInformation.Topics = &types.Topics{Details: []types.TopicDetails{{Name: "t"}}}
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
-	var authOQ *types.OpenQuestion
+	var authOQ *OpenQuestion
 	for i, oq := range plan.OpenQuestions {
 		if oq.ID == "auth_posture_unknown" && oq.ClusterID == "srv-noauth" {
 			authOQ = &plan.OpenQuestions[i]
@@ -372,7 +372,7 @@ func TestRedFlags_ZeroACLs_SkipACLsCaseSurfacesAsUnknown(t *testing.T) {
 	// Acls left nil — simulates --skip-acls / scan-didn't-run case.
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
 	row := findRow(t, plan.RedFlags, RedFlagIDZeroACLsWithIAM)
-	assert.Equal(t, types.RedFlagUnknown, row.Status, "IAM cluster with nil ACLs makes the row Unknown")
+	assert.Equal(t, RedFlagUnknown, row.Status, "IAM cluster with nil ACLs makes the row Unknown")
 	assert.Contains(t, row.Evidence, "prov-iam-skipped")
 }
 
@@ -405,7 +405,7 @@ func TestRedFlags_ServerlessAdminProbeFallback(t *testing.T) {
 	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
 	require.NotNil(t, plan.RedFlags)
 	iamRow := findRow(t, plan.RedFlags, RedFlagIDIAMAuthEnabled)
-	assert.Equal(t, types.RedFlagTriggered, iamRow.Status)
+	assert.Equal(t, RedFlagTriggered, iamRow.Status)
 	require.Len(t, plan.Auth, 1)
 	assert.Equal(t, []string{SourceAuthIAM}, plan.Auth[0].SourceAuths)
 }

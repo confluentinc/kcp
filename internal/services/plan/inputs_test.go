@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,7 +70,7 @@ func TestResolvePlanInputsDefaults(t *testing.T) {
 		sla := "99.95"
 		egress := true
 		gateways := 3
-		in := &types.PlanInputs{
+		in := &PlanInputs{
 			HeadroomFraction:         &hf,
 			SLATarget:                &sla,
 			CCEgressRequired:         &egress,
@@ -96,9 +95,9 @@ func TestResolvePlanInputsForCluster_OverrideWins(t *testing.T) {
 	hf := 0.45
 	sla := "99.95"
 	enf := true
-	in := &types.PlanInputs{
+	in := &PlanInputs{
 		HeadroomFraction: &hf, // global override
-		Clusters: map[string]types.ClusterPlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {SLATarget: &sla, EnforceSchemasAtTheBroker: &enf},
 			"beta":  {}, // empty override entry — should still fall back
 		},
@@ -147,9 +146,9 @@ func TestApplyClusterOverride_EquivalentToResolvePlanInputsForCluster(t *testing
 	hf := 0.45
 	sla := "99.95"
 	enf := true
-	in := &types.PlanInputs{
+	in := &PlanInputs{
 		HeadroomFraction: &hf,
-		Clusters: map[string]types.ClusterPlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {SLATarget: &sla, EnforceSchemasAtTheBroker: &enf},
 			"beta":  {},
 		},
