@@ -63,7 +63,7 @@ func (ms *MigrationState) WriteToFile(filePath string) error {
 	}
 
 	if err := os.Rename(tmpFile, filePath); err != nil {
-		os.Remove(tmpFile) // Clean up temp file on error
+		_ = os.Remove(tmpFile) // Clean up temp file on error
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
