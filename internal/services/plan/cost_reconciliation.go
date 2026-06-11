@@ -223,7 +223,7 @@ func detectCostReconciliationOpenQuestions(state types.ProcessedState) []types.O
 		ID:         "cost_data_not_collected",
 		Title:      "Cost-vs-inventory reconciliation skipped — run `kcp report costs`",
 		Body:       "No AWS Cost Explorer data is present in the state file. The cost-vs-inventory diff (which surfaces MSK instance types billed by AWS but NOT discovered by `kcp discover`) needs cost data to run.",
-		HowToClose: "Run `kcp report costs --state-file <path> --region <region> --start <YYYY-MM-DD> --end <YYYY-MM-DD>` for each source region, then re-run `kcp report plan`.",
+		HowToClose: "Run `kcp report costs` for each source region. Use the same `--state-file` path you passed to `kcp report plan`, the regions listed in §1 Source Environment for `--region`, and the AWS Cost Explorer window for `--start` / `--end` (typically the last 30 days, YYYY-MM-DD format).",
 	}}
 }
 

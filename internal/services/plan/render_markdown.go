@@ -95,6 +95,7 @@ func writeOpenQuestions(b *bytes.Buffer, p *types.Plan, section int) {
 		return
 	}
 	fmt.Fprintf(b, "## %d. Actions Needed\n\n", section)
+	b.WriteString("_Address the items below in `plan-inputs.yaml` (or by re-scanning the source where indicated), then re-run `kcp report plan` to refresh this section._\n\n")
 	groups := groupOpenQuestions(p.OpenQuestions)
 	siblingIDs := oqIDSet(p.OpenQuestions)
 	// Build per-group rendered severity + title up front so the legend
@@ -250,16 +251,36 @@ func formatClusterList(ids []string) string {
 
 func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	caps := cfg.EnterpriseCaps
-	b.WriteString("## Definitions\n\n")
-	b.WriteString("- **Enterprise / Dedicated** — Confluent Cloud cluster tiers. Enterprise has elastic billing per eCKU; Dedicated is fixed-provisioned per CKU. **MZ** (Multi-Zone) is the default Dedicated topology; **SZ** (Single-Zone) fires only when `requires_99_95_sla_within_a_single_zone: true` is set in `plan-inputs.yaml`.\n")
+	b.WriteString("<details><summary><strong>Definitions</strong> — cluster tiers, sizing units, networking modes</summary>\n\n")
+	b.WriteString("- **Enterprise / Dedicated / Freight** — Confluent Cloud cluster tiers. **Enterprise** has elastic billing per eCKU; **Dedicated** is fixed-provisioned per CKU; **Freight** is a high-throughput / lower-cost tier with relaxed latency SLAs (suited to bulk-data and analytics workloads). kcp's hard-limit rules pick Enterprise vs Dedicated; Freight is not auto-selected and surfaces only when manually requested. **MZ** (Multi-Zone) is the default Dedicated topology; **SZ** (Single-Zone) fires only when `requires_99_95_sla_within_a_single_zone: true` is set in `plan-inputs.yaml`.\n")
 	fmt.Fprintf(b, "- **eCKU** — Elastic Confluent Kafka Unit, the throughput unit on Enterprise clusters. %d MB/s ingress + %d MB/s egress per eCKU at the per-eCKU caps used below.\n", caps.PerECKUIngressMBps, caps.PerECKUEgressMBps)
 	b.WriteString("- **CKU** — Confluent Kafka Unit, the Dedicated-tier equivalent of eCKU. Sizing math is the same; only the unit name changes. Dedicated clusters always render with `CKU`.\n")
 	b.WriteString("- **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 (override with `sizing_percentile`) so a transient spike doesn't permanently inflate the recommended cluster size.\n")
 	b.WriteString("- **Final size** — the recommended eCKU (Enterprise) or CKU (Dedicated) count for the cluster. `(floor)` next to a value means the SLA minimum was binding (the math came in below the floor and was rounded up).\n")
 	b.WriteString("- **Peak burst** — short-window peak throughput observed in metrics, expressed as eCKU. Surfaces in the spiky-workload note when peak diverges from P95 by more than the configured ratio.\n")
-	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to %d eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS).\n", caps.PNIMaxECKU)
-	fmt.Fprintf(b, "- **PrivateLink** — capped at %d eCKU on Enterprise. Fires when `target_cloud != \"aws\"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP.\n", caps.PrivateLinkMaxECKU)
-	fmt.Fprintf(b, "- **ACL cap (%d)** — Enterprise supports up to %d ACLs; exceeding the cap forces Dedicated. Source: [%s](%s).\n\n", caps.ACLCountCap, caps.ACLCountCap, caps.Source, caps.Source)
+	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to %d eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS). Source: [%s](%s).\n", caps.PNIMaxECKU, caps.Source, caps.Source)
+	fmt.Fprintf(b, "- **PrivateLink** — capped at %d eCKU on Enterprise. Fires when `target_cloud != \"aws\"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP. Source: [%s](%s).\n", caps.PrivateLinkMaxECKU, caps.Source, caps.Source)
+	fmt.Fprintf(b, "- **ACL cap (%d)** — Enterprise supports up to %d ACLs; exceeding the cap forces Dedicated. Source: [%s](%s).\n", caps.ACLCountCap, caps.ACLCountCap, caps.Source, caps.Source)
+	b.WriteString("- **CFK** — Confluent for Kubernetes. Customer-side operator that hosts the CC Gateway sidecar. Prerequisite when `prefer_gateway: true`.\n")
+	b.WriteString("- **Gateway Add-On license** — Confluent Cloud add-on entitlement that enables the gateway-mediated cutover. Acquired through your Confluent account team.\n")
+	b.WriteString("\n</details>\n\n")
+	// Cost-of-networking framing — feedback from production migrations
+	// shows customers often anchor on the kcp recommendation without
+	// understanding the trade-off. Surface both options side-by-side so
+	// the recommendation reads as a starting point, not a fixed answer.
+	b.WriteString("<details><summary>PNI vs PrivateLink — how to choose</summary>\n\n")
+	b.WriteString("Both are private (no public IP / no traffic over the open internet). The trade-off is reach, scale, and operational shape:\n\n")
+	b.WriteString("| Dimension | PNI | PrivateLink |\n")
+	b.WriteString("|---|---|---|\n")
+	fmt.Fprintf(b, "| Cap (Enterprise) | %d eCKU | %d eCKU |\n", caps.PNIMaxECKU, caps.PrivateLinkMaxECKU)
+	b.WriteString("| Target clouds | AWS only | AWS / Azure / GCP |\n")
+	b.WriteString("| CC→customer egress | Not native | Supported |\n")
+	b.WriteString("| Per-endpoint setup | Lighter (peering-like) | One endpoint per consuming VPC |\n")
+	b.WriteString("| Cost shape | Lower fixed; scales with throughput | Per-endpoint charges grow with consumer-VPC count |\n")
+	b.WriteString("\n**Pick PNI** when the source and target are both AWS, you don't need CC-side workloads to call back into your VPC, and a single (or small) projected gateway count fits the eCKU cap.\n\n")
+	b.WriteString("**Pick PrivateLink** when the target cloud isn't AWS, you need CC-to-customer egress, you're scaling past the PNI eCKU cap, or you'd rather pay per-endpoint than design around the cap.\n\n")
+	b.WriteString("Pricing varies by region and gateway count — check the latest [Confluent Cloud networking pricing](https://docs.confluent.io/cloud/current/networking/overview.html) before committing.\n\n")
+	b.WriteString("</details>\n\n")
 	// Cutover-style + plain-CL definitions live in a collapsible block —
 	// they're load-bearing context for §3 but expanding inline triples
 	// the Definitions wall before the reader has any context.
@@ -269,7 +290,7 @@ func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	b.WriteString("- **Restart-All-At-Once** — single window where every client reconfigures and reconnects at the same instant. Largest blast radius; one rollback point for the whole fleet.\n")
 	b.WriteString("- **Blue/Green** — parallel run on both sides via Cluster Linking. Zero downtime, highest operational complexity; customer-designed orchestration.\n")
 	b.WriteString("- **CC Gateway-mediated** — a sidecar component that absorbs the cutover with a 30–90 s `BROKER_NOT_AVAILABLE` window per service, after which clients auto-retry against CC. Removes the per-service producer restart; requires Confluent for Kubernetes + a Gateway Add-On license.\n")
-	b.WriteString("- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the simpler op model. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Fully supported; chosen via `prefer_gateway: false`.\n")
+	b.WriteString("- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the canonical migration path for most fleets. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Opt into the CC Gateway path via `prefer_gateway: true` when sub-minute cutovers or large client surfaces justify the extra infra.\n")
 	b.WriteString("\n</details>\n\n")
 }
 
@@ -984,7 +1005,11 @@ func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, overrides []types.C
 		return
 	}
 	fmt.Fprintf(b, "## %d. Cutover Approach\n\n", section)
-	b.WriteString("_The style below is the **fleet default** — applied to every cluster that doesn't carry a per-cluster override (`clusters[<name>].downtime_tolerance`). Any cluster-specific overrides land in the **Per-cluster overrides** sub-list below the fleet block._\n\n")
+	if len(overrides) > 0 {
+		b.WriteString("_The style below is the **fleet default** — applied to every cluster that doesn't carry a per-cluster override (`clusters[<name>].downtime_tolerance`). Cluster-specific overrides are listed under **Per-cluster overrides** below the fleet block._\n\n")
+	} else {
+		b.WriteString("_The style below applies to every cluster in the fleet. To override per-cluster, set `clusters[<name>].downtime_tolerance` in `plan-inputs.yaml`._\n\n")
+	}
 	fmt.Fprintf(b, "- **Style:** %s\n", cutoverStyleLabel(c.Style, c.SubPattern))
 	fmt.Fprintf(b, "- **Gateway mediation:** %s\n", cutoverGatewayLabel(c.GatewayMediated, c.RecommendationStatus))
 	if marker := recommendationStatusMarker(c.RecommendationStatus); marker != "" {
@@ -1051,7 +1076,7 @@ func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationSta
 		return "CC Gateway-mediated (transparent per-service cutover, 30–90 s `BROKER_NOT_AVAILABLE` window)"
 	case types.GatewayMediatedFalse:
 		if status == types.RecommendationCustomerChoice {
-			return "Plain Cluster Linking (gateway opted out via `prefer_gateway: false`). Simpler ops; requires per-service producer restart at cutover. Pick this when the CFK + Gateway Add-On license aren't justifiable for the fleet's downtime budget."
+			return "Plain Cluster Linking — the canonical migration path for most fleets. Simpler ops; requires per-service producer restart at cutover. Set `prefer_gateway: true` in plan-inputs.yaml to opt into the CC Gateway path (justifies the CFK + Gateway Add-On license when sub-minute cutovers or large client surfaces matter)."
 		}
 		return "Plain Cluster Linking"
 	case types.GatewayMediatedNotApplicable:
@@ -1070,9 +1095,9 @@ func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationSta
 func recommendationStatusMarker(status types.RecommendationStatus) string {
 	switch status {
 	case types.RecommendationDegradedAwaitingOQ:
-		return "ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose."
+		return "ℹ **Gateway opt-in started but not followed through** — `prefer_gateway: true` is set, but both gateway-infra prereqs are still at `not_started`. Plain Cluster Linking applies until at least one prereq advances. See **Actions Needed**."
 	case types.RecommendationDegradedPrereqsPending:
-		return "ℹ **Awaiting gateway prereqs** — gateway path requested but one or more prereqs are still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
+		return "ℹ **Awaiting gateway prereqs** — gateway path requested but at least one prereq is still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
 	default:
 		return ""
 	}
@@ -1112,26 +1137,23 @@ func cutoverAlternativeWhy(s types.CutoverStyle) string {
 // prereq list is empty (Blue/Green OR customer opted out), emits a
 // symmetric "no prereqs required" stub so both paths visually
 // balance — without it, a reader scanning multiple plans wonders
-// whether a row went missing. When IAM prereq is absent from a
-// non-empty list, adds a one-line note clarifying it was suppressed
-// because no IAM source was detected.
+// whether a row went missing. IAM-client re-credentialing is not a
+// gateway prereq (CC doesn't support IAM at all, so the workstream
+// applies to every cutover path) — it surfaces in §Auth and the
+// IAM-client effort signal, not here.
 func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
 	if len(prereqs) == 0 {
-		b.WriteString("- **Prerequisites:** _none required for this path._\n")
+		// Trailing blank line keeps spacing consistent with the
+		// non-empty branch — without it the next section's heading
+		// abuts the bullet and looks visually broken.
+		b.WriteString("- **Prerequisites:** _none required for this path._\n\n")
 		return
 	}
 	b.WriteString("- **Prerequisites:**\n\n")
 	b.WriteString("  | Prereq | Status |\n")
 	b.WriteString("  |---|---|\n")
-	var hasIAM bool
 	for _, p := range prereqs {
 		fmt.Fprintf(b, "  | %s | %s |\n", escapeMarkdownTableCell(p.Description), prereqStatusLabel(p.Status))
-		if strings.Contains(p.Description, "IAM") {
-			hasIAM = true
-		}
-	}
-	if !hasIAM {
-		b.WriteString("\n  _IAM pre-migration prereq omitted — no IAM source detected in this fleet._\n")
 	}
 	b.WriteString("\n")
 }
@@ -1192,11 +1214,31 @@ func prereqStatusLabel(s types.PrereqStatus) string {
 // complete` AND the gateway is mediated, the §4 source row is a
 // pre-migration snapshot and the prereq says clients have already
 // moved off IAM — surface that so §3 and §4 don't read as contradictory.
+// anyAuthUsesIAM reports whether any AuthDecision row's source auth
+// list contains IAM. Drives the §4 IAM-workstream narrative paragraph.
+func anyAuthUsesIAM(auths []types.AuthDecision) bool {
+	for _, a := range auths {
+		for _, src := range a.SourceAuths {
+			if src == SourceAuthIAM {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.CutoverDecision, inputs types.PlanInputsResolved, section int) {
 	if len(auths) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "## %d. Client Auth Migration\n\n", section)
+	// IAM modernization narrative — when ANY source row uses IAM,
+	// lead with the headline so the §1/§4/§6/§7 fragmented IAM story
+	// reads as one workstream. Confluent Cloud doesn't accept IAM at
+	// all, so the work is independent of cutover style / gateway.
+	if anyAuthUsesIAM(auths) {
+		b.WriteString("> **IAM workstream.** This fleet has AWS IAM clients on the source side. Confluent Cloud doesn't support IAM auth at all, so every IAM client has to re-credential to a CC-supported auth (SCRAM, mTLS, or OAuth) as part of this migration — independent of the cutover style or whether you pick the CC Gateway path. Effort Signal §7 sizes the workstream by client count; §6 surfaces the related Red Flags.\n\n")
+	}
 	b.WriteString("Per-cluster source→target mapping. Each source-auth method on every cluster maps to a recommended Confluent Cloud auth — the recommendation can be overridden globally via `target_auth_method` or per-cluster via `clusters[<name>].target_auth_method`. The **Works via CC Gateway** column describes whether this auth method *could* flow through the CC Gateway when the gateway path is in use — it's a property of the auth mapping, not a statement about which path §3 picked.\n\n")
 	// Notes column always renders (`—` placeholder for empty cells)
 	// so the §Auth table has identical column structure across all
@@ -1237,10 +1279,13 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 	if anyOverrideRejected {
 		b.WriteString("\n`*` = a `target_auth_method` override was supplied but didn't match a recognised value, so the per-source default applies for that row; see Actions Needed for the exact typo.\n")
 	}
-	// IAM-transition footnote — when prereq is `complete` and
-	// gateway is in play, the IAM rows above are a pre-migration
-	// snapshot, not the post-migration auth.
-	if cutover != nil && inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput && cutover.GatewayMediated == types.GatewayMediatedTrue {
+	// IAM-transition footnote — when the customer has marked
+	// `iam_pre_migration_status: complete`, the IAM rows above are a
+	// pre-migration snapshot, not the post-migration auth. Fires
+	// regardless of cutover path (CC doesn't support IAM at all, so
+	// the re-credentialing is path-agnostic).
+	if inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput {
+		_ = cutover // retained on signature for backwards compat with callers
 		anyIAM := false
 		for _, a := range auths {
 			for _, row := range a.TargetMappings {
@@ -1251,7 +1296,7 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 			}
 		}
 		if anyIAM {
-			b.WriteString("\n_The IAM rows above reflect the **pre-migration** auth recorded by `kcp discover`. With `iam_pre_migration_status: complete`, clients have moved off IAM (to SCRAM or mTLS) — re-run `kcp discover` / `kcp scan clusters` to refresh §4 against post-migration state._\n")
+			b.WriteString("\n_The IAM rows above reflect the **pre-migration** auth recorded by `kcp discover`. With `iam_pre_migration_status: complete`, clients have moved off IAM to a CC-supported auth (SCRAM, mTLS, or OAuth) — re-run `kcp discover` / `kcp scan clusters` to refresh §4 against post-migration state._\n")
 		}
 	}
 	writeAuthMappingProvenance(b, auths)

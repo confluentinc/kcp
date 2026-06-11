@@ -651,20 +651,19 @@ func TestDetectAuthFleetOpenQuestions_PerClusterTargetAuthTypo(t *testing.T) {
 	assert.Contains(t, oqs[0].Title, "oauthhh")
 }
 
-// ambiguousGatewayIntent ignores `iam_pre_migration_status` for fleets
-// that don't use IAM — otherwise a non-IAM fleet that accidentally
-// flipped that prereq would lose the `gateway_intent_unconfirmed` OQ.
-func TestAmbiguousGatewayIntent_IgnoresIAMPrereqWhenNoIAM(t *testing.T) {
+// ambiguousGatewayIntent ignores `iam_pre_migration_status` — IAM is
+// not a gateway prereq. Both infra prereqs must be at not_started AND
+// prefer_gateway: true for the ambiguous state to hold; advancing
+// only the IAM tracker doesn't move us past it.
+func TestAmbiguousGatewayIntent_IgnoresIAMPrereq(t *testing.T) {
 	inputs := types.PlanInputsResolved{
 		PreferGateway:                true,
 		ConfluentForKubernetesStatus: PrereqNotStarted,
 		CCGatewayLicenseStatus:       PrereqNotStarted,
 		IAMPreMigrationStatus:        PrereqStatusInProgressInput,
 	}
-	assert.True(t, ambiguousGatewayIntent(inputs, false),
-		"non-IAM fleet: stray iam_pre_migration_status must not disqualify the ambiguous state")
-	assert.False(t, ambiguousGatewayIntent(inputs, true),
-		"IAM fleet: an advanced iam_pre_migration_status moves past ambiguity")
+	assert.True(t, ambiguousGatewayIntent(inputs),
+		"IAM tracker must not affect ambiguous-intent detection — both infra prereqs at not_started → ambiguous")
 }
 
 // promoteSeverity flips gateway_intent_unconfirmed and
