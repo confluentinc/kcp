@@ -658,7 +658,7 @@ func evalCostInventoryHidden(state types.ProcessedState, plan *types.Plan) types
 		return rf
 	}
 	rf.Status = types.RedFlagUnknown
-	rf.Evidence = "no cost data in state file — run `kcp report costs --state-file <path> --region <region> --start <YYYY-MM-DD> --end <YYYY-MM-DD>` to evaluate this row"
+	rf.Evidence = "no cost data in state file — run `kcp report costs` (see `cost_data_not_collected` in Actions Needed) to evaluate this row"
 	return rf
 }
 

@@ -255,7 +255,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 					ClusterID: c.Name,
 					Title:     fmt.Sprintf("`target_auth_method: %s` set but source auth `%s` is gateway-incompatible", inputs.TargetAuthMethod, row.SourceAuth),
 					Body:      fmt.Sprintf("You've overridden the target auth to `%s`, but the source uses `%s` — the CC Gateway can't accept `%s` clients at all. The target-side override only changes the credential clients present to CC; it doesn't change which auth scheme CC accepts at the gateway. The gateway barrier is on the source side, so source clients have to move off `%s` on MSK before the gateway path is viable.", inputs.TargetAuthMethod, row.SourceAuth, row.SourceAuth, row.SourceAuth),
-					HowToClose: fmt.Sprintf("Pick one in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n"+
+					HowToClose: fmt.Sprintf("Pick one in `plan-inputs.yaml`:\n\n"+
 						"**Option A — drop the gateway opt-in and stay on plain Cluster Linking.** Plain CL accepts every auth scheme, including `%s`:\n"+
 						"```yaml\nprefer_gateway: false\n```\n\n"+
 						"**Option B — keep the gateway path and pre-migrate clients off `%s` on MSK** to a gateway-compatible auth (SCRAM or mTLS — see [MSK SASL/SCRAM docs](https://docs.aws.amazon.com/msk/latest/developerguide/msk-password.html)). Once done, re-scan the source so the change is reflected.\n\n"+
@@ -266,9 +266,16 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		}
 	}
 	if sizing.Degraded {
-		howToClose := fmt.Sprintf("Re-run `kcp discover%s` without `--skip-metrics` so CloudWatch metrics get backfilled into the state file.\n\nOR declare throughput directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    peak_ingress_mbps: <MBps>   # required\n    peak_egress_mbps: <MBps>    # required\n    p95_ingress_mbps: <MBps>    # optional; peak doubles as P95 when omitted\n    p95_egress_mbps:  <MBps>    # optional\n```", regionFlag(c.Region), c.Name)
+		howToClose := fmt.Sprintf("Pick one in `plan-inputs.yaml`:\n\n"+
+			"**Option A — backfill CloudWatch metrics.** Re-run discover with metrics enabled:\n"+
+			"```\nkcp discover%s   # without --skip-metrics\n```\n\n"+
+			"**Option B — declare throughput manually.** Use the actual observed (or projected) rates:\n"+
+			"```yaml\nclusters:\n  %s:\n    peak_ingress_mbps: 100   # required — replace with your MBps\n    peak_egress_mbps:  300   # required\n    p95_ingress_mbps:   80   # optional — peak doubles as P95 when omitted\n    p95_egress_mbps:   240   # optional\n```", regionFlag(c.Region), c.Name)
 		if isServerless(c) {
-			howToClose = fmt.Sprintf("Serverless throughput isn't auto-populated by `kcp discover` — declare ingress/egress targets in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    peak_ingress_mbps: <MBps>\n    peak_egress_mbps: <MBps>\n```\nOR work with your Confluent account team to size against actual workload rates.", c.Name)
+			howToClose = fmt.Sprintf("Serverless throughput isn't auto-populated by `kcp discover`. Pick one:\n\n"+
+				"**Option A — declare throughput manually** in `plan-inputs.yaml`:\n"+
+				"```yaml\nclusters:\n  %s:\n    peak_ingress_mbps: 100   # replace with your MBps\n    peak_egress_mbps:  300\n```\n\n"+
+				"**Option B — defer to the Confluent account team** to size against actual workload rates.", c.Name)
 		}
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "missing_p95_metrics",
@@ -284,7 +291,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 			ClusterID:  c.Name,
 			Title:      "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
 			Body:       "The `acl_count_exceeds_cap` hard-limit rule needs a successful ACL scan to evaluate. Either the scan didn't run, or `--skip-acls` was passed; without the ACL list the rule is treated as inconclusive and the verdict resolves on the other rules.",
-			HowToClose: fmt.Sprintf("Re-run `kcp scan clusters --source-type msk --credentials-file msk-credentials.yaml` without `--skip-acls`. The credentials file is a YAML with the admin Kafka credentials (SASL/IAM or SCRAM) — see `kcp scan clusters --help` for the schema, or [the kcp docs](https://confluentinc.github.io/kcp/command-reference/scan/clusters/) for a sample.\n\nSample `msk-credentials.yaml`:\n```yaml\nclusters:\n  - cluster_arn: <arn>\n    authentication_type: SASL_SCRAM        # or AWS_MSK_IAM\n    sasl_scram_username: <username>        # for SASL/SCRAM\n    sasl_scram_password: <password>\n```\n\nOR declare the ACL count directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    acl_count: <integer>\n```", c.Name),
+			HowToClose: fmt.Sprintf("Re-run `kcp scan clusters --source-type msk --credentials-file msk-credentials.yaml` without `--skip-acls`. The credentials file is a YAML with the admin Kafka credentials (SASL/IAM or SCRAM) — see `kcp scan clusters --help` for the schema, or [the kcp docs](https://confluentinc.github.io/kcp/command-reference/scan/clusters/) for a sample.\n\nSample `msk-credentials.yaml`:\n```yaml\nclusters:\n  - cluster_arn: <arn>\n    authentication_type: SASL_SCRAM        # or AWS_MSK_IAM\n    sasl_scram_username: <username>        # for SASL/SCRAM\n    sasl_scram_password: <password>\n```\n\nOR declare the ACL count directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    acl_count: 150   # replace with your actual ACL count\n```", c.Name),
 		})
 	}
 	if brokerInventoryGap(c) {
@@ -293,7 +300,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 			ClusterID:  c.Name,
 			Title:      "Source environment shows 0 brokers — likely an incomplete scan",
 			Body:       "`AWSClientInformation.Nodes` is empty for this cluster. The Source Environment table reads as `Brokers: 0`, which is almost certainly wrong for an MSK Provisioned cluster.",
-			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to populate the broker inventory.\n\nOR declare the broker count directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    broker_count: <integer>\n    broker_instance_type: kafka.m5.large   # optional; drives Express tier detection\n```", regionFlag(c.Region), c.Name),
+			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to populate the broker inventory.\n\nOR declare the broker count directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    broker_count: 6                       # replace with your actual broker count\n    broker_instance_type: kafka.m5.large   # optional; drives Express tier detection\n```", regionFlag(c.Region), c.Name),
 		})
 	}
 	if topicCount(c) == 0 {
@@ -312,7 +319,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 			ClusterID:  c.Name,
 			Title:      "Source environment shows 0 topics — likely an incomplete scan",
 			Body:       body,
-			HowToClose: fmt.Sprintf("Re-run `kcp scan clusters --source-type msk --credentials-file <msk-credentials.yaml>` with admin Kafka credentials (without `--skip-topics`) to populate the topic list.\n\nOR declare topic/partition counts directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    topic_count: <integer>          # user-topic count\n    partition_count: <integer>      # total user-partitions; drives the eCKU partition-cap check\n```", c.Name),
+			HowToClose: fmt.Sprintf("Re-run `kcp scan clusters --source-type msk --credentials-file <msk-credentials.yaml>` with admin Kafka credentials (without `--skip-topics`) to populate the topic list.\n\nOR declare topic / partition counts directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    topic_count: 80           # user-topic count — replace with your value\n    partition_count: 2400     # total user-partitions; drives the eCKU partition-cap check\n```", c.Name),
 		})
 	}
 	if hasUnknownClusterType(c) {
@@ -321,7 +328,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 			ClusterID:  c.Name,
 			Title:      "MSK cluster discriminator unrecognised — Plan treated as Provisioned with empty fields",
 			Body:       fmt.Sprintf("`MskClusterConfig.ClusterType` is %q. Recognised values are `PROVISIONED` and `SERVERLESS`. Without a recognised discriminator (or with `PROVISIONED` but `Provisioned == nil`), the Provisioned-shaped helpers — Kafka version, broker instance type, storage mode, mTLS detection — all return empty. The cluster appears in the Plan with most signals missing.", string(c.AWSClientInformation.MskClusterConfig.ClusterType)),
-			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to refresh `MskClusterConfig`. If the cluster legitimately uses a future MSK variant, file an issue against kcp so it can be added to the recognised set.\n\nOR declare the cluster shape directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    cluster_type: PROVISIONED      # or SERVERLESS\n    kafka_version: \"3.6.0\"\n    broker_instance_type: kafka.m5.large\n    storage_mode: LOCAL            # or TIERED\n```", regionFlag(c.Region), c.Name),
+			HowToClose: fmt.Sprintf("Re-run `kcp discover%s` against the source AWS account to refresh `MskClusterConfig`. If the cluster legitimately uses a future MSK variant, file an issue against kcp so it can be added to the recognised set.\n\nOR declare the cluster shape directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    cluster_type: PROVISIONED            # PROVISIONED | SERVERLESS\n    kafka_version: \"3.6.0\"\n    broker_instance_type: kafka.m5.large\n    storage_mode: LOCAL                  # LOCAL | TIERED\n```", regionFlag(c.Region), c.Name),
 		})
 	}
 	if privateLinkSizingExceedsCap(sizing, ct, net, cfg) {
@@ -331,7 +338,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 			ClusterID:  c.Name,
 			Title:      fmt.Sprintf("PrivateLink trigger fired but cluster sizing exceeds the %d-eCKU PrivateLink cap on Enterprise", cap),
 			Body:       fmt.Sprintf("PrivateLink networking on Enterprise is capped at %d eCKU. One or more clusters sized above that cap, and a PrivateLink trigger fired (target_cloud, cc_egress_required, or projected_pni_gateway_count), so the plan still recommends PrivateLink — an infeasible combination above the %d-eCKU cap. See the Sizing & Cluster Decisions table above for each affected cluster's final eCKU.", cap, cap),
-			HowToClose: fmt.Sprintf("Raise this with your Confluent account team — Dedicated supports PrivateLink without the %d-eCKU cap. Or remove the PrivateLink trigger in `plan-inputs.yaml` if it was misdeclared:\n```yaml\ntarget_cloud: aws                       # PNI is AWS-only; non-AWS forces PrivateLink\ncc_egress_required: false               # true → additive Egress PrivateLink Endpoint\nprojected_pni_gateway_count: 1          # ≥2 flips to PrivateLink\n```", cap),
+			HowToClose: fmt.Sprintf("Raise this with your Confluent account team — Dedicated supports PrivateLink without the %d-eCKU cap. OR remove the PrivateLink trigger in `plan-inputs.yaml` if it was misdeclared:\n```yaml\ntarget_cloud: aws                       # PNI is AWS-only; non-AWS forces PrivateLink\ncc_egress_required: false               # true → additive Egress PrivateLink Endpoint\nprojected_pni_gateway_count: 1          # ≥2 flips to PrivateLink\n```", cap),
 		})
 	}
 	// Spiky workload is an informational signal, not an Open Question:
@@ -434,7 +441,7 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 			ID:    "gateway_intent_unconfirmed",
 			Title: "Gateway opt-in started but not followed through — pick plain Cluster Linking or commit to the gateway",
 			Body:  "You set `prefer_gateway: true` in `plan-inputs.yaml`, but both gateway-infra prereqs are still at `not_started`. The Plan can't recommend the gateway path until at least one prereq is being worked on, so plain Cluster Linking applies in the meantime." + exemptSuffix,
-			HowToClose: "Pick one of these in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
+			HowToClose: "Pick one of these in `plan-inputs.yaml`:\n\n" +
 				"**Option A — stay on plain Cluster Linking** (the canonical path for most fleets). Remove the gateway opt-in:\n" +
 				"```yaml\nprefer_gateway: false\n```\n\n" +
 				"**Option B — commit to the gateway path.** Mark each infra prereq as you start it:\n" +
@@ -445,7 +452,7 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 			ID:    "gateway_prereqs_pending",
 			Title: "Gateway prereqs not yet at `in_progress` — advance them or fall back to plain Cluster Linking",
 			Body:  fmt.Sprintf("You set `prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete` to be recommended; plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs), exemptSuffix),
-			HowToClose: "Pick one of these in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
+			HowToClose: "Pick one of these in `plan-inputs.yaml`:\n\n" +
 				"**Option A — advance the pending prereq(s).** Each field accepts `not_started | in_progress | complete`:\n" +
 				"```yaml\nconfluent_for_kubernetes_status: in_progress\ncc_gateway_license_status:       in_progress\n```\n\n" +
 				"**Option B — drop the gateway opt-in and stay on plain Cluster Linking:**\n" +
@@ -507,7 +514,7 @@ func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs type
 			ClusterID:  name,
 			Title:      fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
 			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
-			HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value and re-run `kcp report plan`:\n\n"+
+			HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value:\n\n"+
 				"```yaml\nclusters:\n  %s:\n    target_auth_method: %s   # %s | %s | %s\n```\n\nOR remove the line to keep the per-source default from `auth_mapping`.", name, TargetAuthAPIKeys, TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth),
 		})
 	}
@@ -748,7 +755,7 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 					ClusterID: name,
 					Title:     fmt.Sprintf("`clusters[%s].downtime_tolerance: %s` is not a recognised value — treated as `let_confluent_choose` (Stop-Restart-Repeat) for this cluster", name, value),
 					Body:      "The Plan only recognises `zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose`. The override falls outside the enum, so this cluster's cutover style resolves to the Confluent default (Stop-Restart-Repeat) — note this can DIFFER from the fleet-wide default if the fleet itself selected another style, in which case this cluster appears in the **Per-cluster overrides** sub-list above.",
-					HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value and re-run `kcp report plan`:\n\n"+
+					HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value:\n\n"+
 						"```yaml\nclusters:\n  %s:\n    downtime_tolerance: let_confluent_choose   # zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose\n```\n\nOR remove the line to keep the fleet default.", name),
 				})
 			}
@@ -761,7 +768,7 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 					ClusterID: name,
 					Title:     fmt.Sprintf("`clusters[%s].sub_pattern: %s` is not a recognised value — `app-by-app` applied for this cluster", name, value),
 					Body:      "The Plan only recognises `app-by-app | topic-by-topic` for the Stop-Restart-Repeat sub-pattern. The override falls outside the enum, so the cluster inherits the default `app-by-app` cadence.",
-					HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value and re-run `kcp report plan`:\n\n"+
+					HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value:\n\n"+
 						"```yaml\nclusters:\n  %s:\n    sub_pattern: app-by-app   # app-by-app | topic-by-topic\n```\n\nOR remove the line to keep the default.", name),
 				})
 			}

@@ -155,8 +155,8 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 			ID:    "tiered_strategy_undeclared",
 			Title: "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",
 			Body:  "Cluster Linking does NOT carry historical tiered data forward. Pick the path that matches your operational constraints.",
-			HowToClose: "Pick one in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
-				"```yaml\nhistorical_data_strategy: defer_to_account_team   # uncomment ONE of:\n# historical_data_strategy: keep_msk_running_until_data_expires    # lowest engineering cost; highest infra cost (MSK runs through retention window)\n# historical_data_strategy: bulk_load_historical_via_external_tool # bulk-load via Kafka Connect / Replicator / custom tool\n# historical_data_strategy: defer_to_account_team                  # work with Confluent on the cascade decisions per topic\n```\n\nShortcut: if downstream consumers don't actually need history, set `consumer_history_requirement: not_required` and `historical_data_strategy` defaults to `defer_to_account_team` automatically.",
+			HowToClose: "In `plan-inputs.yaml`, set `historical_data_strategy`:\n\n" +
+				"```yaml\n# Pick ONE — uncomment the line that matches your operational constraints:\n# historical_data_strategy: keep_msk_running_until_data_expires    # lowest engineering cost; highest infra cost (MSK runs through retention window)\n# historical_data_strategy: bulk_load_historical_via_external_tool # bulk-load via Kafka Connect / Replicator / custom tool\n# historical_data_strategy: defer_to_account_team                  # work with Confluent on the cascade decisions per topic\n```\n\nShortcut: if downstream consumers don't actually need history, set `consumer_history_requirement: not_required` and `historical_data_strategy` defaults to `defer_to_account_team` automatically.",
 		})
 	}
 	return oqs
