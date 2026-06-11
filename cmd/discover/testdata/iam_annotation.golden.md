@@ -22,9 +22,7 @@ The following policy covers a full run. If you pass `--skip-topics`, `--skip-cos
         "kafka:ListNodes",
         "kafka:ListReplicators",
         "kafka:ListScramSecrets",
-        "kafka:ListVpcConnections",
-        "kafkaconnect:DescribeConnector",
-        "kafkaconnect:ListConnectors"
+        "kafka:ListVpcConnections"
       ],
       "Resource": "*"
     },
