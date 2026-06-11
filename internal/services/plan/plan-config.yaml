@@ -111,7 +111,7 @@ auth_mapping:
     target: confluent_cloud_api_keys
     gateway_compatible: false   # IAM clients cannot connect to the gateway
     transparent_swap: false
-    note: "Source-side IAM clients can't traverse the CC Gateway — the gateway barrier is on the MSK side, independent of which target auth you pick. Pre-migrate source clients to SCRAM or mTLS first."
+    note: "Confluent Cloud doesn't support AWS IAM auth — IAM clients have to re-credential to SCRAM, mTLS, or OAuth as part of any CC migration (auth modernization, not a gateway-specific prereq). Additionally, source-side IAM clients can't traverse the CC Gateway if you pick that cutover path."
     source: https://github.com/confluentinc/kcp/blob/main/docs/assets/getting-started-with-zero-cut-migrations.md
     last_verified: "2026-05-20"
   mtls:

@@ -1087,9 +1087,9 @@ func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationSta
 func recommendationStatusMarker(status types.RecommendationStatus) string {
 	switch status {
 	case types.RecommendationDegradedAwaitingOQ:
-		return "ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose."
+		return "ℹ **Gateway opt-in started but not followed through** — `prefer_gateway: true` is set, but both gateway-infra prereqs are still at `not_started`. Plain Cluster Linking applies until at least one prereq advances. See **Actions Needed**."
 	case types.RecommendationDegradedPrereqsPending:
-		return "ℹ **Awaiting gateway prereqs** — gateway path requested but one or more prereqs are still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
+		return "ℹ **Awaiting gateway prereqs** — gateway path requested but at least one prereq is still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
 	default:
 		return ""
 	}
@@ -1129,9 +1129,10 @@ func cutoverAlternativeWhy(s types.CutoverStyle) string {
 // prereq list is empty (Blue/Green OR customer opted out), emits a
 // symmetric "no prereqs required" stub so both paths visually
 // balance — without it, a reader scanning multiple plans wonders
-// whether a row went missing. When IAM prereq is absent from a
-// non-empty list, adds a one-line note clarifying it was suppressed
-// because no IAM source was detected.
+// whether a row went missing. IAM-client re-credentialing is not a
+// gateway prereq (CC doesn't support IAM at all, so the workstream
+// applies to every cutover path) — it surfaces in §Auth and the
+// IAM-client effort signal, not here.
 func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
 	if len(prereqs) == 0 {
 		b.WriteString("- **Prerequisites:** _none required for this path._\n")
@@ -1140,15 +1141,8 @@ func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
 	b.WriteString("- **Prerequisites:**\n\n")
 	b.WriteString("  | Prereq | Status |\n")
 	b.WriteString("  |---|---|\n")
-	var hasIAM bool
 	for _, p := range prereqs {
 		fmt.Fprintf(b, "  | %s | %s |\n", escapeMarkdownTableCell(p.Description), prereqStatusLabel(p.Status))
-		if strings.Contains(p.Description, "IAM") {
-			hasIAM = true
-		}
-	}
-	if !hasIAM {
-		b.WriteString("\n  _IAM pre-migration prereq omitted — no IAM source detected in this fleet._\n")
 	}
 	b.WriteString("\n")
 }

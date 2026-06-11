@@ -427,17 +427,25 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 	switch cutover.RecommendationStatus {
 	case types.RecommendationDegradedAwaitingOQ:
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "gateway_intent_unconfirmed",
-			Title:      "Gateway intent — confirm the CC Gateway opt-in",
-			Body:       "`prefer_gateway: true` is set but both gateway-infra prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`) are still at `not_started`. Plain Cluster Linking applies until the gateway opt-in is followed through on." + exemptSuffix,
-			HowToClose: "In `plan-inputs.yaml`, either (a) remove `prefer_gateway: true` (or set it to `false`) to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.",
+			ID:    "gateway_intent_unconfirmed",
+			Title: "Gateway opt-in started but not followed through — pick plain Cluster Linking or commit to the gateway",
+			Body:  "You set `prefer_gateway: true` in `plan-inputs.yaml`, but both gateway-infra prereqs are still at `not_started`. The Plan can't recommend the gateway path until at least one prereq is being worked on, so plain Cluster Linking applies in the meantime." + exemptSuffix,
+			HowToClose: "Pick one of these in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
+				"**Option A — stay on plain Cluster Linking** (the canonical path for most fleets). Remove the gateway opt-in:\n" +
+				"```yaml\nprefer_gateway: false\n```\n\n" +
+				"**Option B — commit to the gateway path.** Mark each infra prereq as you start it:\n" +
+				"```yaml\nprefer_gateway: true\nconfluent_for_kubernetes_status: in_progress   # not_started | in_progress | complete\ncc_gateway_license_status:       in_progress   # not_started | in_progress | complete\n```",
 		})
 	case types.RecommendationDegradedPrereqsPending:
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "gateway_prereqs_pending",
-			Title:      "Gateway prereqs — pending items before the gateway path can be recommended",
-			Body:       fmt.Sprintf("`prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete`. Plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs, iamInUse), exemptSuffix),
-			HowToClose: "Update the prereq statuses in `plan-inputs.yaml`:\n```yaml\nconfluent_for_kubernetes_status: in_progress   # or complete\ncc_gateway_license_status:       in_progress   # or complete\n```\nEach field accepts `not_started | in_progress | complete`. Re-run `kcp report plan` once they advance.",
+			ID:    "gateway_prereqs_pending",
+			Title: "Gateway prereqs not yet at `in_progress` — advance them or fall back to plain Cluster Linking",
+			Body:  fmt.Sprintf("You set `prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete` to be recommended; plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs, iamInUse), exemptSuffix),
+			HowToClose: "Pick one of these in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
+				"**Option A — advance the pending prereq(s).** Each field accepts `not_started | in_progress | complete`:\n" +
+				"```yaml\nconfluent_for_kubernetes_status: in_progress\ncc_gateway_license_status:       in_progress\n```\n\n" +
+				"**Option B — drop the gateway opt-in and stay on plain Cluster Linking:**\n" +
+				"```yaml\nprefer_gateway: false\n```",
 		})
 	}
 	// Cross-check: `seconds_per_service` is only achievable through the
