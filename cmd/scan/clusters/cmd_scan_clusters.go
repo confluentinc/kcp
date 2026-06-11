@@ -72,9 +72,7 @@ Metrics collection (OSK only):
 - ` + "`--metrics jolokia`" + ` polls each broker's Jolokia HTTP endpoint live for the duration set by ` + "`--metrics-duration`" + ` (interval: ` + "`--metrics-interval`" + `, default 10s).
 - ` + "`--metrics prometheus`" + ` queries a Prometheus server for historical metrics over ` + "`--metrics-range`" + ` (e.g. 7d, 30d).
 
-Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.
-
-For self-managed connector discovery, run ` + "`kcp scan self-managed-connectors`" + ` after this command — it queries the Kafka Connect REST API directly for connector configs and state. ` + "`kcp scan clusters`" + ` no longer derives connectors from Kafka Connect's internal topics.`,
+Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
@@ -316,10 +314,8 @@ func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 	// Apply results into state in-place. Merge old admin info into the new
 	// scan result before overwriting so previously-discovered data (topics,
 	// ACLs, self-managed connectors) is preserved when the new scan returns
-	// empty/nil for those fields. Mirrors the OSK merge path; required so a
-	// `kcp scan clusters` re-run after `kcp scan self-managed-connectors`
-	// does not wipe REST-discovered connectors (the new scan returns
-	// SelfManagedConnectors=nil).
+	// empty/nil for those fields. Mirrors the OSK merge path; ensures a
+	// re-run of `kcp scan clusters` does not wipe data already in state.
 	for i := range state.MSKSources.Regions {
 		for j := range state.MSKSources.Regions[i].Clusters {
 			cluster := &state.MSKSources.Regions[i].Clusters[j]
