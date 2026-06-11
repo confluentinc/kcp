@@ -40,8 +40,6 @@ func discoverIAMAnnotation() string {
 					"kafka:GetClusterPolicy",
 					"kafka:DescribeConfigurationRevision",
 					"kafka:DescribeReplicator",
-					"kafkaconnect:ListConnectors",
-					"kafkaconnect:DescribeConnector",
 				},
 			},
 			{
