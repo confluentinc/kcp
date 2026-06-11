@@ -233,9 +233,7 @@ This command requires the following permissions:
         "kafka:ListClientVpcConnections",
         "kafka:GetClusterPolicy",
         "kafka:DescribeConfigurationRevision",
-        "kafka:DescribeReplicator",
-        "kafkaconnect:ListConnectors",
-        "kafkaconnect:DescribeConnector"
+        "kafka:DescribeReplicator"
       ],
       "Resource": "*"
     },
