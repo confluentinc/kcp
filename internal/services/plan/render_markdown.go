@@ -260,6 +260,23 @@ func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	fmt.Fprintf(b, "- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to %d eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS).\n", caps.PNIMaxECKU)
 	fmt.Fprintf(b, "- **PrivateLink** — capped at %d eCKU on Enterprise. Fires when `target_cloud != \"aws\"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP.\n", caps.PrivateLinkMaxECKU)
 	fmt.Fprintf(b, "- **ACL cap (%d)** — Enterprise supports up to %d ACLs; exceeding the cap forces Dedicated. Source: [%s](%s).\n\n", caps.ACLCountCap, caps.ACLCountCap, caps.Source, caps.Source)
+	// Cost-of-networking framing — feedback from production migrations
+	// shows customers often anchor on the kcp recommendation without
+	// understanding the trade-off. Surface both options side-by-side so
+	// the recommendation reads as a starting point, not a fixed answer.
+	b.WriteString("<details><summary>PNI vs PrivateLink — how to choose</summary>\n\n")
+	b.WriteString("Both are private (no public IP / no traffic over the open internet). The trade-off is reach, scale, and operational shape:\n\n")
+	b.WriteString("| Dimension | PNI | PrivateLink |\n")
+	b.WriteString("|---|---|---|\n")
+	fmt.Fprintf(b, "| Cap (Enterprise) | %d eCKU | %d eCKU |\n", caps.PNIMaxECKU, caps.PrivateLinkMaxECKU)
+	b.WriteString("| Target clouds | AWS only | AWS / Azure / GCP |\n")
+	b.WriteString("| CC→customer egress | Not native | Supported |\n")
+	b.WriteString("| Per-endpoint setup | Lighter (peering-like) | One endpoint per consuming VPC |\n")
+	b.WriteString("| Cost shape | Lower fixed; scales with throughput | Per-endpoint charges grow with consumer-VPC count |\n")
+	b.WriteString("\n**Pick PNI** when the source and target are both AWS, you don't need CC-side workloads to call back into your VPC, and a single (or small) projected gateway count fits the eCKU cap.\n\n")
+	b.WriteString("**Pick PrivateLink** when the target cloud isn't AWS, you need CC-to-customer egress, you're scaling past the PNI eCKU cap, or you'd rather pay per-endpoint than design around the cap.\n\n")
+	b.WriteString("Pricing varies by region and gateway count — check the latest [Confluent Cloud networking pricing](https://docs.confluent.io/cloud/current/networking/overview.html) before committing.\n\n")
+	b.WriteString("</details>\n\n")
 	// Cutover-style + plain-CL definitions live in a collapsible block —
 	// they're load-bearing context for §3 but expanding inline triples
 	// the Definitions wall before the reader has any context.

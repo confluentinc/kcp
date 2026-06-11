@@ -30,6 +30,7 @@ const (
 	RedFlagIDKafkaStreamsInUse         = "kafka_streams_in_use"
 	RedFlagIDBroadTopicPatternMatch    = "broad_topic_pattern_match"
 	RedFlagIDCostInventoryHidden       = "cost_inventory_hidden_clusters"
+	RedFlagIDMidMigrationDetected      = "mid_migration_detected"
 )
 
 // expressInstanceFamilies are the MSK Express broker instance-type
@@ -82,8 +83,98 @@ func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfi
 		evalKafkaStreamsInUse(clusters, inputs),
 		evalBroadTopicPatternMatch(clusters),
 		evalCostInventoryHidden(state, plan),
+		evalMidMigrationDetected(clusters),
 	}
 	return &types.RedFlagsSection{Rows: rows}
+}
+
+// ----- Row 17: mid-migration detection -----
+
+// Triggered when the source shows any signal of an active migration to
+// Confluent Cloud. Two signal classes:
+//
+//  1. `_confluent-link-*` internal topics — Confluent Cloud creates
+//     them on the source MSK when a Cluster Link is active.
+//  2. Connector configs (MSK Connect OR self-managed Connect)
+//     containing a `*.confluent.cloud` bootstrap server — the
+//     connector is pointing at a CC destination (Replicator / MM2 /
+//     Sink to CC).
+//
+// Presence of either means the source is already mid-migration (or
+// running parallel-run); the plan should NOT frame the cutover as
+// greenfield. Each signal degrades independently: topic-pattern signal
+// resolves Unknown when no Topics scan is available; the connector
+// signal needs no scan beyond the discovery pass.
+func evalMidMigrationDetected(clusters []types.ProcessedCluster) types.RedFlag {
+	rf := types.RedFlag{ID: RedFlagIDMidMigrationDetected, Title: "Source already mid-migration (active Cluster Link / replicator to Confluent Cloud detected)"}
+	var topicHits []string
+	var connectorHits []string
+	unscannedTopics := 0
+	for _, c := range clusters {
+		if c.KafkaAdminClientInformation.Topics == nil {
+			unscannedTopics++
+		} else if ok, topic := topicPatternFound(c, confluentLinkPattern); ok {
+			topicHits = append(topicHits, fmt.Sprintf("%s (`%s`)", c.Name, topic))
+		}
+		if key := mskConnectCCBootstrap(c); key != "" {
+			connectorHits = append(connectorHits, fmt.Sprintf("%s MSK Connect (`%s`)", c.Name, key))
+		}
+		if key := selfManagedConnectCCBootstrap(c); key != "" {
+			connectorHits = append(connectorHits, fmt.Sprintf("%s self-managed Connect (`%s`)", c.Name, key))
+		}
+	}
+	if len(topicHits) == 0 && len(connectorHits) == 0 {
+		if unscannedTopics == len(clusters) {
+			rf.Status = types.RedFlagUnknown
+			rf.Evidence = "no Topics scan available on any cluster (the topic-pattern signal can't evaluate); connector configs scanned, no CC bootstrap found. Re-run `kcp scan clusters` with topics enumeration to fully evaluate this row."
+			return rf
+		}
+		rf.Status = types.RedFlagNotTriggered
+		return rf
+	}
+	var parts []string
+	if len(topicHits) > 0 {
+		parts = append(parts, "`_confluent-link-*` topics on: "+strings.Join(topicHits, ", "))
+	}
+	if len(connectorHits) > 0 {
+		parts = append(parts, "connectors pointing at CC: "+strings.Join(connectorHits, ", "))
+	}
+	rf.Status = types.RedFlagTriggered
+	rf.Evidence = strings.Join(parts, "; ") + ". Confirm whether this is an in-progress migration vs a parallel-run posture — the plan's cutover framing assumes greenfield by default."
+	return rf
+}
+
+// mskConnectCCBootstrap scans MSK Connect connector configurations for
+// any value containing `.confluent.cloud` — the canonical bootstrap
+// suffix for Confluent Cloud Kafka endpoints. Returns the first
+// `connector_name:config_key` match for evidence, or "" when none.
+func mskConnectCCBootstrap(c types.ProcessedCluster) string {
+	for _, conn := range c.AWSClientInformation.Connectors {
+		for k, v := range conn.ConnectorConfiguration {
+			if strings.Contains(v, ".confluent.cloud") {
+				return conn.ConnectorName + ":" + k
+			}
+		}
+	}
+	return ""
+}
+
+// selfManagedConnectCCBootstrap mirrors mskConnectCCBootstrap for the
+// self-managed Connect path. Config values are `any`, so we coerce to
+// string before substring matching.
+func selfManagedConnectCCBootstrap(c types.ProcessedCluster) string {
+	smc := c.KafkaAdminClientInformation.SelfManagedConnectors
+	if smc == nil {
+		return ""
+	}
+	for _, conn := range smc.Connectors {
+		for k, raw := range conn.Config {
+			if v, ok := raw.(string); ok && strings.Contains(v, ".confluent.cloud") {
+				return conn.Name + ":" + k
+			}
+		}
+	}
+	return ""
 }
 
 // ----- Row 1: schemaless source -----

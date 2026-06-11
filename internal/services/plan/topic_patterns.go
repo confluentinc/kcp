@@ -56,6 +56,14 @@ func connectInternalTopicPrefix(topic string) (prefix, kind string, ok bool) {
 // Signal note surfaces that caveat to the customer).
 var mm2CheckpointPattern = regexp.MustCompile(`\.checkpoints\.internal$`)
 
+// Cluster Linking source-side internal topic. Confluent Cloud creates
+// `_confluent-link-*` topics on the source MSK when a Cluster Link is
+// active against this source. Presence means the source is mid-
+// migration (or post-migration in a parallel-run shape) — the plan
+// must not frame the cutover as greenfield. Matches both the
+// metadata coordinate topic and any prefixed variant.
+var confluentLinkPattern = regexp.MustCompile(`^_confluent-link`)
+
 // Kafka Streams internal topic suffixes. Both the broad-pattern Red
 // Flag row (15) and the Streams cross-check (`kafkaStreamsTopicsHit`)
 // match against these — defined here so changing one suffix doesn't

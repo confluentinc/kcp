@@ -460,3 +460,95 @@ func TestRedFlags_ServerlessAdminProbeFallback(t *testing.T) {
 	require.Len(t, plan.Auth, 1)
 	assert.Equal(t, []string{SourceAuthIAM}, plan.Auth[0].SourceAuths)
 }
+
+// ----- Row 17: mid-migration detected -----
+
+// Row 17 fires when `_confluent-link-*` internal topics are present on
+// the source — CC creates them when a Cluster Link is active. The
+// plan should NOT frame the cutover as greenfield in that case.
+func TestRedFlags_MidMigrationDetected_FiresOnConfluentLinkTopic(t *testing.T) {
+	c := redFlagCluster("mid-migration-source", "3.5.0", "kafka.m5.large", "")
+	c.KafkaAdminClientInformation.Topics.Details = append(
+		c.KafkaAdminClientInformation.Topics.Details,
+		types.TopicDetails{Name: "_confluent-link-metadata"},
+	)
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDMidMigrationDetected)
+	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Contains(t, row.Evidence, "mid-migration-source")
+	assert.Contains(t, row.Evidence, "_confluent-link-metadata")
+}
+
+// No `_confluent-link-*` topics → row stays NotTriggered.
+func TestRedFlags_MidMigrationDetected_NotTriggeredWhenNoLinkTopics(t *testing.T) {
+	c := redFlagCluster("greenfield-source", "3.5.0", "kafka.m5.large", "")
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDMidMigrationDetected)
+	assert.Equal(t, types.RedFlagNotTriggered, row.Status)
+}
+
+// No topics scan available → row resolves Unknown rather than
+// false-negating a partial scan.
+func TestRedFlags_MidMigrationDetected_UnknownWhenNoTopicScan(t *testing.T) {
+	c := redFlagCluster("unscanned-topics", "3.5.0", "kafka.m5.large", "")
+	c.KafkaAdminClientInformation.Topics = nil
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDMidMigrationDetected)
+	assert.Equal(t, types.RedFlagUnknown, row.Status)
+}
+
+// MSK Connect connector pointing at a CC bootstrap → row 17 fires.
+// Catches Replicator / Sink connectors targeting Confluent Cloud even
+// when no `_confluent-link-*` topics are present.
+func TestRedFlags_MidMigrationDetected_FiresOnMSKConnectCCBootstrap(t *testing.T) {
+	c := redFlagCluster("source", "3.5.0", "kafka.m5.large", "")
+	c.AWSClientInformation.Connectors = []types.ConnectorSummary{{
+		ConnectorName: "replicator-to-cc",
+		ConnectorConfiguration: map[string]string{
+			"dest.kafka.bootstrap.servers": "pkc-abc12.us-east-1.aws.confluent.cloud:9092",
+		},
+	}}
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDMidMigrationDetected)
+	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Contains(t, row.Evidence, "MSK Connect")
+	assert.Contains(t, row.Evidence, "replicator-to-cc")
+}
+
+// Self-managed Connect connector pointing at a CC bootstrap.
+func TestRedFlags_MidMigrationDetected_FiresOnSelfManagedConnectCCBootstrap(t *testing.T) {
+	c := redFlagCluster("source", "3.5.0", "kafka.m5.large", "")
+	c.KafkaAdminClientInformation.SelfManagedConnectors = &types.SelfManagedConnectors{
+		Connectors: []types.SelfManagedConnector{{
+			Name: "mm2-source",
+			Config: map[string]any{
+				"target.cluster.bootstrap.servers": "pkc-xyz98.us-west-2.aws.confluent.cloud:9092",
+			},
+		}},
+	}
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDMidMigrationDetected)
+	assert.Equal(t, types.RedFlagTriggered, row.Status)
+	assert.Contains(t, row.Evidence, "self-managed Connect")
+	assert.Contains(t, row.Evidence, "mm2-source")
+}
+
+// Topic scan missing AND connectors clean → row stays Unknown,
+// evidence calls out which signal is degraded.
+func TestRedFlags_MidMigrationDetected_UnknownWhenTopicScanMissingAndConnectorsClean(t *testing.T) {
+	c := redFlagCluster("source", "3.5.0", "kafka.m5.large", "")
+	c.KafkaAdminClientInformation.Topics = nil
+	c.AWSClientInformation.Connectors = []types.ConnectorSummary{{
+		ConnectorName:          "intra-msk-sink",
+		ConnectorConfiguration: map[string]string{"file": "/tmp/x"},
+	}}
+	plan := buildPlanForRedFlags(t, wrapClusters(c), defaultCfg(t), defaultInputs())
+	require.NotNil(t, plan.RedFlags)
+	row := findRow(t, plan.RedFlags, RedFlagIDMidMigrationDetected)
+	assert.Equal(t, types.RedFlagUnknown, row.Status)
+}
