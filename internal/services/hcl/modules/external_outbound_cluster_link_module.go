@@ -15,7 +15,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ExtOutboundSubnetId
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "security_group_id",
@@ -28,7 +28,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ExtOutboundSecurityGroupId
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "confluent_cloud_cluster_api_key",
@@ -41,7 +41,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "confluent_cloud_cluster_api_secret",
@@ -54,7 +54,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "target_cluster_rest_endpoint",
@@ -67,7 +67,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetRestEndpoint
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "target_cluster_id",
@@ -80,7 +80,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "cluster_link_name",
@@ -93,7 +93,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.ClusterLinkName
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "msk_cluster_id",
@@ -106,7 +106,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
 				return request.MskClusterId
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "msk_cluster_bootstrap_servers",
@@ -122,7 +122,7 @@ func GetExternalOutboundClusterLinkingVariables() []ModuleVariable[types.Migrati
 				}
 				return request.MskSaslScramBootstrapServers
 			},
-			Condition:        nil,
+			Condition: nil,
 		},
 		{
 			Name: "msk_sasl_scram_username",

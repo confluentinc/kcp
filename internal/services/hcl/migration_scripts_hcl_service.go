@@ -73,14 +73,6 @@ func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.M
 	return ms, nil
 }
 
-func (s *MigrationScriptsHCLService) generateMigrateConnectorsFiles() (types.TerraformFiles, error) {
-	return types.TerraformFiles{
-		MainTf:      s.generateMigrateConnectorsMainTf(),
-		ProvidersTf: s.generateProvidersTf(),
-		VariablesTf: s.generateMigrateConnectorsVariablesTf(),
-	}, nil
-}
-
 func (s *MigrationScriptsHCLService) generateProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
@@ -243,24 +235,6 @@ func (s *MigrationScriptsHCLService) generateMigrateACLsInputsAutoTfvars(request
 
 	rootBody.SetAttributeValue("confluent_cloud_cluster_id", cty.StringVal(request.TargetClusterId))
 	rootBody.SetAttributeValue("confluent_cloud_cluster_rest_endpoint", cty.StringVal(request.TargetClusterRestEndpoint))
-
-	return string(f.Bytes())
-}
-
-// ============================================================================
-// Migrate Connectors Generation Methods
-// ============================================================================
-
-func (s *MigrationScriptsHCLService) generateMigrateConnectorsMainTf() string {
-	f := hclwrite.NewEmptyFile()
-	// rootBody := f.Body()
-
-	return string(f.Bytes())
-}
-
-func (s *MigrationScriptsHCLService) generateMigrateConnectorsVariablesTf() string {
-	f := hclwrite.NewEmptyFile()
-	// rootBody := f.Body()
 
 	return string(f.Bytes())
 }
