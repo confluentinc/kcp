@@ -215,42 +215,5 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 		}
 	}
 
-	connectorsByState := cs.getConnectorsByState(allClusters)
-	if len(connectorsByState) > 0 {
-		md.AddHeading("Self-Managed Connectors", 2)
-		headers := []string{"State", "Count"}
-		data := [][]string{}
-		for state, count := range connectorsByState {
-			data = append(data, []string{state, strconv.Itoa(count)})
-		}
-		md.AddTable(headers, data)
-	}
-
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
-}
-
-func (cs *ClustersScanner) getACLsByPrincipal(clusters []types.DiscoveredCluster) map[string]int {
-	aclsByPrincipal := make(map[string]int)
-	for _, cluster := range clusters {
-		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
-			aclsByPrincipal[acl.Principal]++
-		}
-	}
-	return aclsByPrincipal
-}
-
-func (cs *ClustersScanner) getConnectorsByState(clusters []types.DiscoveredCluster) map[string]int {
-	connectorsByState := make(map[string]int)
-	for _, cluster := range clusters {
-		if cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil {
-			for _, connector := range cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors {
-				state := connector.State
-				if state == "" {
-					state = "unknown state"
-				}
-				connectorsByState[state]++
-			}
-		}
-	}
-	return connectorsByState
 }
