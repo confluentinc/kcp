@@ -205,9 +205,10 @@ func serverlessSourceAuths(c types.ProcessedCluster) []string {
 }
 
 // fleetUsesIAM reports whether any cluster in the processed fleet has
-// IAM enabled on the source side. Drives gateway eligibility —
-// IAM clients cannot connect to the CC Gateway and must pre-migrate
-// to SCRAM or mTLS first.
+// IAM enabled on the source side. Drives the IAM-client effort signal
+// and the §Auth modernization framing — CC doesn't support IAM at
+// all, so IAM clients have to re-credential to SCRAM, mTLS, or OAuth
+// regardless of the cutover path chosen.
 func fleetUsesIAM(clusters []types.ProcessedCluster) bool {
 	for _, c := range clusters {
 		for _, auth := range sourceAuthsDetected(c) {

@@ -100,19 +100,23 @@ func TestDecideCutover_DegradedPrereqsPending(t *testing.T) {
 	assert.Equal(t, types.GatewayMediatedFalse, d.GatewayMediated)
 }
 
-// IAM prereq is only consulted when the fleet actually has IAM enabled.
-func TestDecideCutover_IAMPrereqOnlyMattersWhenIAMInFleet(t *testing.T) {
+// IAM in the fleet does NOT block gateway eligibility. CC doesn't
+// support IAM at all, so IAM clients have to migrate regardless of
+// cutover path — gating the gateway on it would punish the customer
+// for engaging with the gateway when the underlying work is the same
+// either way.
+func TestDecideCutover_IAMDoesNotGateGatewayEligibility(t *testing.T) {
 	inputs := styleInputs(DowntimeMinutesPerService)
-	// IAM prereq at not_started; the other two complete.
+	// IAM prereq at not_started; the two infra prereqs complete.
 	inputs.IAMPreMigrationStatus = PrereqNotStarted
 
-	// Without IAM in the fleet, still eligible / canonical.
+	// Without IAM in the fleet: canonical (as before).
 	d := decideCutover([]types.ProcessedCluster{withSourceAuth("nofleetiam", SourceAuthSCRAM)}, inputs)
-	assert.Equal(t, types.RecommendationCanonical, d.RecommendationStatus, "no IAM in fleet → IAM prereq irrelevant")
+	assert.Equal(t, types.RecommendationCanonical, d.RecommendationStatus, "no IAM in fleet → canonical")
 
-	// With IAM in the fleet, the IAM-not-started prereq now blocks eligibility.
+	// With IAM in the fleet: still canonical — IAM is not a gateway prereq.
 	d = decideCutover([]types.ProcessedCluster{withSourceAuth("fleetiam", SourceAuthIAM)}, inputs)
-	assert.Equal(t, types.RecommendationDegradedPrereqsPending, d.RecommendationStatus, "IAM in fleet → IAM prereq required")
+	assert.Equal(t, types.RecommendationCanonical, d.RecommendationStatus, "IAM in fleet must not gate the gateway path")
 }
 
 func TestDecideCutover_AlternativesShown(t *testing.T) {
@@ -123,24 +127,19 @@ func TestDecideCutover_AlternativesShown(t *testing.T) {
 	assert.Contains(t, d.AlternativesShown, types.CutoverBlueGreen)
 }
 
-// IAM prereq row only appears in the rendered prereq table when IAM is
-// in the fleet — otherwise it's irrelevant noise.
-func TestDecideCutover_IAMPrereqRowOnlyWhenIAMInFleet(t *testing.T) {
+// IAM never appears as a gateway prereq row. The IAM workstream lives
+// in §Auth + the IAM-client effort signal; including it in the
+// gateway prereq table would frame it as gateway-specific when it
+// applies to every cutover path.
+func TestDecideCutover_IAMNeverAppearsInGatewayPrereqs(t *testing.T) {
 	inputs := styleInputs(DowntimeMinutesPerService)
 
-	noIAM := decideCutover([]types.ProcessedCluster{withSourceAuth("c", SourceAuthSCRAM)}, inputs)
-	for _, p := range noIAM.Prereqs {
-		assert.False(t, strings.Contains(p.Description, "IAM"), "IAM prereq must NOT appear when fleet has no IAM")
-	}
-
-	iam := decideCutover([]types.ProcessedCluster{withSourceAuth("c", SourceAuthIAM)}, inputs)
-	var sawIAM bool
-	for _, p := range iam.Prereqs {
-		if strings.Contains(p.Description, "IAM") {
-			sawIAM = true
+	for _, auth := range []string{SourceAuthSCRAM, SourceAuthIAM} {
+		d := decideCutover([]types.ProcessedCluster{withSourceAuth("c", auth)}, inputs)
+		for _, p := range d.Prereqs {
+			assert.False(t, strings.Contains(p.Description, "IAM"), "IAM must never appear as a gateway prereq (auth=%s)", auth)
 		}
 	}
-	assert.True(t, sawIAM, "IAM prereq row must appear when fleet has IAM")
 }
 
 // withSourceAuth returns a minimal ProcessedCluster with the named
@@ -411,41 +410,37 @@ func TestPerCluster_BlueGreenOverrideOnIAMClusterWithCompletePrereqs(t *testing.
 
 // Per-cluster cutover overrides inherit the fleet's GatewayMediated
 // for non-Blue/Green styles — gateway prereqs are fleet-scoped, so
-// the override can't be re-evaluated against just this cluster's auth
-// (which is what `decideCutover([]{c}, ...)` would do via
-// `fleetUsesIAM`). Regression guard: a non-IAM override cluster in a
-// mixed IAM/non-IAM fleet must NOT flip the IAM-prereq gate.
+// computing them against a single-cluster slice via decideCutover
+// could in principle drift from the fleet decision. Regression guard:
+// a non-BG override must surface the fleet's GatewayMediated verbatim.
 func TestComputeCutoverOverrides_GatewayMediationInheritedFromFleet(t *testing.T) {
 	base := styleInputs(DowntimeMinutesPerService)
+	base.PreferGateway = true
+	// One infra prereq complete, the other still not_started → fleet
+	// lands on degraded_prereqs_pending (not gateway-mediated).
 	base.ConfluentForKubernetesStatus = PrereqStatusCompleteInput
-	base.CCGatewayLicenseStatus = PrereqStatusCompleteInput
-	base.IAMPreMigrationStatus = PrereqNotStarted // not_started — relevant ONLY if fleet uses IAM
-	// Fleet has an IAM cluster → IAM prereq is consulted → fleet is
-	// degraded (not gateway-mediated).
+	base.CCGatewayLicenseStatus = PrereqNotStarted
 	clusters := []types.ProcessedCluster{
-		withSourceAuth("iam-cluster", SourceAuthIAM),
-		withSourceAuth("scram-override", SourceAuthSCRAM),
+		withSourceAuth("c1", SourceAuthSCRAM),
+		withSourceAuth("c2", SourceAuthSCRAM),
 	}
 	srr := DowntimeMinutesPerService
 	tbt := string(types.SubPatternTopicByTopic)
 	raw := &types.PlanInputs{
 		Clusters: map[string]types.ClusterPlanInputs{
-			// scram-override flips sub-pattern only — same style as fleet.
-			// Pre-fix, decideCutover on a single SCRAM cluster would
-			// IGNORE the IAM prereq (fleetUsesIAM=false for this slice)
-			// and emit GatewayMediated=true, contradicting the fleet.
-			"scram-override": {DowntimeTolerance: &srr, SubPattern: &tbt},
+			// c2 flips sub-pattern only — same style as fleet.
+			"c2": {DowntimeTolerance: &srr, SubPattern: &tbt},
 		},
 	}
 	base.Raw = raw
 	fleet := decideCutover(clusters, base)
-	require.NotEqual(t, types.GatewayMediatedTrue, fleet.GatewayMediated, "fleet must be degraded by the IAM-not-started prereq")
+	require.NotEqual(t, types.GatewayMediatedTrue, fleet.GatewayMediated, "fleet must be degraded by the pending infra prereq")
 
 	overrides := computeCutoverOverrides(clusters, fleet, base)
-	require.Len(t, overrides, 1, "scram-override must surface (sub-pattern differs)")
-	assert.Equal(t, "scram-override", overrides[0].ClusterID)
+	require.Len(t, overrides, 1, "c2 must surface (sub-pattern differs)")
+	assert.Equal(t, "c2", overrides[0].ClusterID)
 	assert.Equal(t, fleet.GatewayMediated, overrides[0].GatewayMediated,
-		"non-BG override must inherit fleet's GatewayMediated — not re-evaluate IAM prereqs against this single cluster")
+		"non-BG override must inherit fleet's GatewayMediated, not re-evaluate against the single cluster")
 }
 
 // Per-cluster `downtime_tolerance: seconds_per_service` against a

@@ -269,7 +269,7 @@ func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	b.WriteString("- **Restart-All-At-Once** — single window where every client reconfigures and reconnects at the same instant. Largest blast radius; one rollback point for the whole fleet.\n")
 	b.WriteString("- **Blue/Green** — parallel run on both sides via Cluster Linking. Zero downtime, highest operational complexity; customer-designed orchestration.\n")
 	b.WriteString("- **CC Gateway-mediated** — a sidecar component that absorbs the cutover with a 30–90 s `BROKER_NOT_AVAILABLE` window per service, after which clients auto-retry against CC. Removes the per-service producer restart; requires Confluent for Kubernetes + a Gateway Add-On license.\n")
-	b.WriteString("- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the simpler op model. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Fully supported; chosen via `prefer_gateway: false`.\n")
+	b.WriteString("- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the canonical migration path for most fleets. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Opt into the CC Gateway path via `prefer_gateway: true` when sub-minute cutovers or large client surfaces justify the extra infra.\n")
 	b.WriteString("\n</details>\n\n")
 }
 
@@ -1051,7 +1051,7 @@ func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationSta
 		return "CC Gateway-mediated (transparent per-service cutover, 30–90 s `BROKER_NOT_AVAILABLE` window)"
 	case types.GatewayMediatedFalse:
 		if status == types.RecommendationCustomerChoice {
-			return "Plain Cluster Linking (gateway opted out via `prefer_gateway: false`). Simpler ops; requires per-service producer restart at cutover. Pick this when the CFK + Gateway Add-On license aren't justifiable for the fleet's downtime budget."
+			return "Plain Cluster Linking — the canonical migration path for most fleets. Simpler ops; requires per-service producer restart at cutover. Set `prefer_gateway: true` in plan-inputs.yaml to opt into the CC Gateway path (justifies the CFK + Gateway Add-On license when sub-minute cutovers or large client surfaces matter)."
 		}
 		return "Plain Cluster Linking"
 	case types.GatewayMediatedNotApplicable:

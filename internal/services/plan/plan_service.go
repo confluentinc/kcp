@@ -428,16 +428,16 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 	case types.RecommendationDegradedAwaitingOQ:
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "gateway_intent_unconfirmed",
-			Title:      "Gateway intent — pick CC Gateway or plain Cluster Linking",
-			Body:       "`prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open." + exemptSuffix,
-			HowToClose: "In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.",
+			Title:      "Gateway intent — confirm the CC Gateway opt-in",
+			Body:       "`prefer_gateway: true` is set but both gateway-infra prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`) are still at `not_started`. Plain Cluster Linking applies until the gateway opt-in is followed through on." + exemptSuffix,
+			HowToClose: "In `plan-inputs.yaml`, either (a) remove `prefer_gateway: true` (or set it to `false`) to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.",
 		})
 	case types.RecommendationDegradedPrereqsPending:
 		oqs = append(oqs, types.OpenQuestion{
 			ID:         "gateway_prereqs_pending",
 			Title:      "Gateway prereqs — pending items before the gateway path can be recommended",
-			Body:       fmt.Sprintf("`prefer_gateway: true` and at least one gateway prereq is still at `not_started`: %s. The gateway-mediated path needs all applicable prereqs at `in_progress` or `complete`. Plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs, iamInUse), exemptSuffix),
-			HowToClose: "Update the prereq statuses in `plan-inputs.yaml`:\n```yaml\nconfluent_for_kubernetes_status: in_progress   # or complete\ncc_gateway_license_status:       in_progress   # or complete\niam_pre_migration_status:        in_progress   # or complete (only required when source has IAM)\n```\nEach field accepts `not_started | in_progress | complete`. Re-run `kcp report plan` once they advance.",
+			Body:       fmt.Sprintf("`prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete`. Plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs, iamInUse), exemptSuffix),
+			HowToClose: "Update the prereq statuses in `plan-inputs.yaml`:\n```yaml\nconfluent_for_kubernetes_status: in_progress   # or complete\ncc_gateway_license_status:       in_progress   # or complete\n```\nEach field accepts `not_started | in_progress | complete`. Re-run `kcp report plan` once they advance.",
 		})
 	}
 	// Cross-check: `seconds_per_service` is only achievable through the
@@ -458,7 +458,7 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 			ID:         "downtime_tolerance_requires_gateway",
 			Title:      "`downtime_tolerance: seconds_per_service` requires the gateway but the recommendation is plain Cluster Linking",
 			Body:       body,
-			HowToClose: "Either commit to the gateway path in `plan-inputs.yaml`:\n```yaml\nprefer_gateway: true                            # true | false; true is the kcp default\nconfluent_for_kubernetes_status: in_progress    # not_started | in_progress | complete\ncc_gateway_license_status:       in_progress    # not_started | in_progress | complete\niam_pre_migration_status:        in_progress    # not_started | in_progress | complete (only required when source uses IAM)\n```\nOR relax the downtime requirement:\n```yaml\ndowntime_tolerance: minutes_per_service         # zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose\n```\nThe `minutes_per_service` value works without the gateway; the other recognised values that don't need the gateway are `scheduled_window_sequential`, `scheduled_window_all_at_once`, and `let_confluent_choose`.",
+			HowToClose: "Either commit to the gateway path in `plan-inputs.yaml`:\n```yaml\nprefer_gateway: true                            # opt-in; kcp default is false (plain Cluster Linking)\nconfluent_for_kubernetes_status: in_progress    # not_started | in_progress | complete\ncc_gateway_license_status:       in_progress    # not_started | in_progress | complete\n```\nOR relax the downtime requirement:\n```yaml\ndowntime_tolerance: minutes_per_service         # zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose\n```\nThe `minutes_per_service` value works without the gateway; the other recognised values that don't need the gateway are `scheduled_window_sequential`, `scheduled_window_all_at_once`, and `let_confluent_choose`.",
 		})
 	}
 	return oqs
@@ -680,7 +680,7 @@ func detectPerClusterGatewayIncompat(clusters []types.ProcessedCluster, fleet ty
 			Title:     fmt.Sprintf("`clusters[%s].downtime_tolerance: seconds_per_service` requires the gateway but the fleet's recommendation is plain Cluster Linking", name),
 			Body: "seconds_per_service downtime tolerance requires CC-Gateway mediation, and gateway prereqs are fleet-scoped — there's no per-cluster gateway path. " +
 				"The per-cluster override is honoured for the cutover style (Stop-Restart-Repeat), but the sub-minute window depends on the fleet committing to the gateway path.",
-			HowToClose: fmt.Sprintf("Either advance the fleet's gateway prereqs in `plan-inputs.yaml`:\n```yaml\nconfluent_for_kubernetes_status: in_progress    # not_started | in_progress | complete\ncc_gateway_license_status:       in_progress    # not_started | in_progress | complete\niam_pre_migration_status:        in_progress    # not_started | in_progress | complete (only required when source uses IAM)\n```\nOR relax the per-cluster downtime requirement:\n```yaml\nclusters:\n  %s:\n    downtime_tolerance: minutes_per_service     # zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose\n```", name),
+			HowToClose: fmt.Sprintf("Either advance the fleet's gateway prereqs in `plan-inputs.yaml`:\n```yaml\nprefer_gateway: true                            # opt-in; kcp default is false (plain Cluster Linking)\nconfluent_for_kubernetes_status: in_progress    # not_started | in_progress | complete\ncc_gateway_license_status:       in_progress    # not_started | in_progress | complete\n```\nOR relax the per-cluster downtime requirement:\n```yaml\nclusters:\n  %s:\n    downtime_tolerance: minutes_per_service     # zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose\n```", name),
 		})
 	}
 	return oqs
@@ -758,16 +758,13 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 // pendingPrereqList renders the list of gateway prereqs still at
 // `not_started`, for inclusion in an OQ body. Inline rather than a
 // helper-with-cases because the body string is one-shot per Plan.
-func pendingPrereqList(inputs types.PlanInputsResolved, iamInUse bool) string {
+func pendingPrereqList(inputs types.PlanInputsResolved, _ bool) string {
 	var pending []string
 	if inputs.ConfluentForKubernetesStatus == PrereqNotStarted {
 		pending = append(pending, "`confluent_for_kubernetes_status`")
 	}
 	if inputs.CCGatewayLicenseStatus == PrereqNotStarted {
 		pending = append(pending, "`cc_gateway_license_status`")
-	}
-	if iamInUse && inputs.IAMPreMigrationStatus == PrereqNotStarted {
-		pending = append(pending, "`iam_pre_migration_status`")
 	}
 	if len(pending) == 0 {
 		return "(none — but eligibility check failed for another reason)"
