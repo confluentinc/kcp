@@ -17,8 +17,6 @@ type MockKafkaAdmin struct {
 	GetClusterKafkaMetadataFunc     func() (*client.ClusterKafkaMetadata, error)
 	DescribeConfigFunc              func() ([]sarama.ConfigEntry, error)
 	ListAclsFunc                    func() ([]sarama.ResourceAcls, error)
-	GetAllMessagesWithKeyFilterFunc func(topicName string, keyPrefix string) (map[string]string, error)
-	GetConnectorStatusMessagesFunc  func(topicName string) (map[string]string, error)
 	CloseFunc                       func() error
 }
 
@@ -36,14 +34,6 @@ func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
 
 func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
 	return m.ListAclsFunc()
-}
-
-func (m *MockKafkaAdmin) GetAllMessagesWithKeyFilter(topicName string, keyPrefix string) (map[string]string, error) {
-	return m.GetAllMessagesWithKeyFilterFunc(topicName, keyPrefix)
-}
-
-func (m *MockKafkaAdmin) GetConnectorStatusMessages(topicName string) (map[string]string, error) {
-	return m.GetConnectorStatusMessagesFunc(topicName)
 }
 
 func (m *MockKafkaAdmin) Close() error {
