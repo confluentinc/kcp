@@ -130,4 +130,3 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 
 	return flattenedAcls, nil
 }
-

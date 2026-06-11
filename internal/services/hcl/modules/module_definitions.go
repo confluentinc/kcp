@@ -153,4 +153,3 @@ func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) [
 
 	return definitions
 }
-

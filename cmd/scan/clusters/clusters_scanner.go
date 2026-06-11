@@ -217,14 +217,3 @@ func (cs *ClustersScanner) outputExecutiveSummary() error {
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
 }
-
-func (cs *ClustersScanner) getACLsByPrincipal(clusters []types.DiscoveredCluster) map[string]int {
-	aclsByPrincipal := make(map[string]int)
-	for _, cluster := range clusters {
-		for _, acl := range cluster.KafkaAdminClientInformation.Acls {
-			aclsByPrincipal[acl.Principal]++
-		}
-	}
-	return aclsByPrincipal
-}
-

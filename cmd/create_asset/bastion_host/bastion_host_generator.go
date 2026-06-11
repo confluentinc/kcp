@@ -46,7 +46,7 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 func (bh *BastionHostAssetGenerator) Run() error {
 	fmt.Printf("🚀 Generating bastion host environment assets\n")
 
-	outputDir := filepath.Join("bastion_host")
+	outputDir := "bastion_host"
 	if err := utils.ValidateOutputDir(outputDir, false); err != nil {
 		return err
 	}
