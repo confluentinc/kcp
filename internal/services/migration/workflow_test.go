@@ -10,7 +10,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -44,7 +43,7 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		MigrationId:         "test-1",
 		K8sNamespace:        "ns",
 		InitialCrName:       "my-gw",
@@ -72,7 +71,7 @@ func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
 	cl := &mockClusterLinkService{}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		K8sNamespace:  "ns",
 		InitialCrName: "my-gw",
 	}
@@ -99,7 +98,7 @@ func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		K8sNamespace:        "ns",
 		InitialCrName:       "my-gw",
 		ClusterRestEndpoint: "https://cluster",
@@ -133,7 +132,7 @@ func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		K8sNamespace:        "ns",
 		InitialCrName:       "my-gw",
 		ClusterRestEndpoint: "https://cluster",
@@ -170,7 +169,7 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		K8sNamespace:        "ns",
 		InitialCrName:       "my-gw",
 		ClusterRestEndpoint: "https://cluster",
@@ -218,7 +217,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
 	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
 		return map[string]string{"consumer.offset.sync.enable": "true"}, nil
 	})
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		ClusterLinkName:         "link-pause",
 		PauseConsumerOffsetSync: true,
 	}
@@ -233,7 +232,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
 	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
 		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
 	})
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		ClusterLinkName:         "link-falsey",
 		PauseConsumerOffsetSync: true,
 	}
@@ -249,7 +248,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
 	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
 		return map[string]string{"other.key": "value"}, nil
 	})
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		ClusterLinkName:         "link-absent",
 		PauseConsumerOffsetSync: true,
 	}
@@ -266,7 +265,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testi
 	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
 		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
 	})
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		ClusterLinkName:         "link-offset-disabled",
 		PauseConsumerOffsetSync: false,
 	}
@@ -288,7 +287,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t 
 	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
 		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
 	})
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		ClusterLinkName:                "link-mid-flight",
 		PauseConsumerOffsetSync:        true,
 		PauseConsumerOffsetSyncFlipped: true,
@@ -317,7 +316,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t 
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		ClusterLinkName:                "link-mid-flight",
 		PauseConsumerOffsetSync:        true,
 		PauseConsumerOffsetSyncFlipped: true,
@@ -353,7 +352,7 @@ func TestWorkflow_CheckLags_ImmediatelyBelowThreshold(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics: []string{"topic-1", "topic-2"},
 	}
 
@@ -377,7 +376,7 @@ func TestWorkflow_CheckLags_NoTopics(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics: []string{},
 	}
 
@@ -390,7 +389,7 @@ func TestWorkflow_CheckLags_NilOffsetServices(t *testing.T) {
 	cl := &mockClusterLinkService{}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics: []string{"topic-1"},
 	}
 
@@ -416,7 +415,7 @@ func TestWorkflow_CheckLags_ContextCancelled(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics: []string{"topic-1"},
 	}
 
@@ -444,7 +443,7 @@ func TestWorkflow_CheckLags_DestinationAhead(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics: []string{"topic-1"},
 	}
 
@@ -487,7 +486,7 @@ func TestWorkflow_PromoteTopics_AllAtZeroLag(t *testing.T) {
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	wf.promotePollInterval = time.Millisecond
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics:              []string{"topic-1", "topic-2"},
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
@@ -536,7 +535,7 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	wf.promotePollInterval = time.Millisecond
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics:              []string{"topic-1", "topic-2"},
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
@@ -579,7 +578,7 @@ func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	wf.promotePollInterval = time.Millisecond
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics:              []string{"topic-1"},
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
@@ -596,7 +595,7 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 	cl := &mockClusterLinkService{}
 
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{
+	config := &MigrationConfig{
 		Topics: []string{"topic-1"},
 	}
 
@@ -626,7 +625,7 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -651,7 +650,7 @@ func TestWorkflow_FenceGateway_DoesNotCallUIDDiffingMethods(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -666,7 +665,7 @@ func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -686,7 +685,7 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
 	wf.SetRolloutTimeout(100 * time.Millisecond)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -705,7 +704,7 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -729,7 +728,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -747,7 +746,7 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -768,7 +767,7 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -784,7 +783,7 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationWorkflow(gw, cl)
-	config := &types.MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)

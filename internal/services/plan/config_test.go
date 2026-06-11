@@ -13,7 +13,7 @@ func TestLoadPlanConfigEmbedded(t *testing.T) {
 	cfg, err := LoadPlanConfig("")
 	require.NoError(t, err)
 
-	assert.Equal(t, ExpectedSchemaVersion, cfg.SchemaVersion)
+	assert.Equal(t, expectedSchemaVersion, cfg.SchemaVersion)
 	assert.Equal(t, 60, cfg.EnterpriseCaps.PerECKUIngressMBps)
 	assert.Equal(t, 180, cfg.EnterpriseCaps.PerECKUEgressMBps)
 	assert.Equal(t, 3000, cfg.EnterpriseCaps.PerECKUPartitionRate)

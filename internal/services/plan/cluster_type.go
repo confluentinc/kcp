@@ -77,6 +77,9 @@ var hardLimitCatalog = []hardLimit{
 				return skipped("acl_count_cap not configured")
 			}
 			if !aclScanRan(cluster) {
+				if isServerless(cluster) {
+					return skipped("MSK Serverless does not expose ACLs via the admin API path kcp scans; this rule is N/A for Serverless clusters")
+				}
 				return skipped("no ACL list in state file — scan likely didn't run or used `--skip-acls`; rule resolves on the other rules")
 			}
 			count := len(cluster.KafkaAdminClientInformation.Acls)
@@ -142,7 +145,14 @@ var hardLimitCatalog = []hardLimit{
 // sourceUsesMTLS reads `MskClusterConfig.Provisioned.ClientAuthentication.Tls.Enabled`
 // from `kcp scan clusters` output. Returns false when any layer is unpopulated
 // (the admin scan didn't run, or the cluster is OSK).
+//
+// Serverless clusters always return false — AWS MSK Serverless supports
+// only IAM SASL (no mTLS); its ClientAuthentication block lives on the
+// `Serverless` struct (not `Provisioned`) and has no TLS field.
 func sourceUsesMTLS(c types.ProcessedCluster) bool {
+	if isServerless(c) {
+		return false
+	}
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.ClientAuthentication == nil || prov.ClientAuthentication.Tls == nil {
 		return false
@@ -151,7 +161,7 @@ func sourceUsesMTLS(c types.ProcessedCluster) bool {
 	return tls.Enabled != nil && *tls.Enabled
 }
 
-// DecideClusterType returns the recommended Confluent Cloud cluster type
+// decideClusterType returns the recommended Confluent Cloud cluster type
 // for one source cluster.
 //
 // Standard is intentionally not a verdict: MSK migration workloads
@@ -159,7 +169,7 @@ func sourceUsesMTLS(c types.ProcessedCluster) bool {
 // that Standard doesn't offer. Enterprise is the default; hard-limit
 // rules escalate to Dedicated when a cap is exceeded or a workload
 // constraint can't be served on Enterprise.
-func DecideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterTypeDecision {
+func decideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterTypeDecision {
 	var firedTriggers []types.HardLimitTrigger
 	evaluated := make([]types.RuleEvaluation, 0, len(hardLimitCatalog))
 	for _, hl := range hardLimitCatalog {

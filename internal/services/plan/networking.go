@@ -14,10 +14,6 @@ const (
 	vpcConnectivityVPCPeering     = "vpc_peering"
 )
 
-// pniGatewayBreakeven is the projected-gateway count at which the
-// recommendation flips from PNI to PrivateLink.
-const pniGatewayBreakeven = 2
-
 // netDecision constructs a NetworkingDecision from the sizing context
 // (peak burst, percentage-of-PL-cap) plus the verdict and reason. Used
 // to keep the 8 decision branches below uniform — every branch must
@@ -52,7 +48,7 @@ func privateLinkSizingExceedsCap(sizing types.ClusterSizing, ct types.ClusterTyp
 	return sizing.FinalECKU > cfg.EnterpriseCaps.PrivateLinkMaxECKU
 }
 
-// DecideNetworking picks the Confluent Cloud networking product for one
+// decideNetworking picks the Confluent Cloud networking product for one
 // cluster.
 //
 //	Dedicated + target_cloud != "aws"                        → PrivateLink (PNI / TGW / VPC Peering are AWS-only)
@@ -66,7 +62,7 @@ func privateLinkSizingExceedsCap(sizing types.ClusterSizing, ct types.ClusterTyp
 //
 // `existing_vpc_connectivity` is only honored on the AWS-Dedicated path —
 // Transit Gateway and VPC Peering are Dedicated-only AWS products.
-func DecideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) types.NetworkingDecision {
+func decideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) types.NetworkingDecision {
 	target := targetCloud(inputs)
 
 	if ct.Verdict == types.ClusterTypeDedicated {
@@ -99,9 +95,9 @@ func DecideNetworking(sizing types.ClusterSizing, ct types.ClusterTypeDecision, 
 		return netDecision(sizing, types.NetworkingPrivateLink,
 			"cc_egress_required=true — PNI does not natively support egress from CC into customer infrastructure (set `cc_egress_required: false` in `plan-inputs.yaml` if this wasn't intentional)")
 	}
-	if inputs.ProjectedPNIGatewayCount >= pniGatewayBreakeven {
+	if inputs.ProjectedPNIGatewayCount >= cfg.Thresholds.PNIGatewayBreakeven {
 		return netDecision(sizing, types.NetworkingPrivateLink,
-			fmt.Sprintf("projected_pni_gateway_count=%d (≥ %d) — flip to PrivateLink (lower `projected_pni_gateway_count` in `plan-inputs.yaml` to stay on PNI)", inputs.ProjectedPNIGatewayCount, pniGatewayBreakeven))
+			fmt.Sprintf("projected_pni_gateway_count=%d (≥ %d) — flip to PrivateLink (lower `projected_pni_gateway_count` in `plan-inputs.yaml` to stay on PNI)", inputs.ProjectedPNIGatewayCount, cfg.Thresholds.PNIGatewayBreakeven))
 	}
 	return netDecision(sizing, types.NetworkingPNI,
 		fmt.Sprintf("default for AWS Enterprise (scales to %d eCKU vs PrivateLink's %d-eCKU cap)", cfg.EnterpriseCaps.PNIMaxECKU, cfg.EnterpriseCaps.PrivateLinkMaxECKU))

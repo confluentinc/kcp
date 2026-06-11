@@ -49,6 +49,16 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 		ExistingVPCConnectivity:              defaults.ExistingVPCConnectivity,
 		CCEgressRequired:                     defaults.CCEgressRequired,
 		ProjectedPNIGatewayCount:             defaults.ProjectedPNIGatewayCount,
+		DowntimeTolerance:                    defaults.DowntimeTolerance,
+		SubPattern:                           defaults.SubPattern,
+		PreferGateway:                        defaults.PreferGateway,
+		ConfluentForKubernetesStatus:         defaults.ConfluentForKubernetesStatus,
+		CCGatewayLicenseStatus:               defaults.CCGatewayLicenseStatus,
+		IAMPreMigrationStatus:                defaults.IAMPreMigrationStatus,
+		TargetAuthMethod:                     defaults.TargetAuthMethod,
+		SchemaStrategy:                       defaults.SchemaStrategy,
+		ConfluentSRCPVersion:                 defaults.ConfluentSRCPVersion,
+		ConfluentSRCPEdition:                 defaults.ConfluentSRCPEdition,
 	}
 	if in == nil {
 		return out
@@ -85,6 +95,56 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	}
 	if in.ProjectedPNIGatewayCount != nil {
 		out.ProjectedPNIGatewayCount = *in.ProjectedPNIGatewayCount
+	}
+	if in.DowntimeTolerance != nil {
+		out.DowntimeTolerance = *in.DowntimeTolerance
+	}
+	if in.SubPattern != nil {
+		out.SubPattern = *in.SubPattern
+	}
+	if in.PreferGateway != nil {
+		out.PreferGateway = *in.PreferGateway
+	}
+	if in.ConfluentForKubernetesStatus != nil {
+		out.ConfluentForKubernetesStatus = *in.ConfluentForKubernetesStatus
+	}
+	if in.CCGatewayLicenseStatus != nil {
+		out.CCGatewayLicenseStatus = *in.CCGatewayLicenseStatus
+	}
+	if in.IAMPreMigrationStatus != nil {
+		out.IAMPreMigrationStatus = *in.IAMPreMigrationStatus
+	}
+	if in.TargetAuthMethod != nil {
+		out.TargetAuthMethod = *in.TargetAuthMethod
+	}
+	if in.SchemaStrategy != nil {
+		out.SchemaStrategy = *in.SchemaStrategy
+	}
+	if in.SourceSROutboundReachableToCC != nil {
+		// Copy the value (not the pointer) so a later mutation of the
+		// caller-owned PlanInputs doesn't bleed into Resolved.
+		v := *in.SourceSROutboundReachableToCC
+		out.SourceSROutboundReachableToCC = &v
+	}
+	if in.ConfluentSRCPVersion != nil {
+		out.ConfluentSRCPVersion = *in.ConfluentSRCPVersion
+	}
+	if in.ConfluentSRCPEdition != nil {
+		out.ConfluentSRCPEdition = *in.ConfluentSRCPEdition
+	}
+	if in.ExactlyOnceTransactionsInUse != nil {
+		v := *in.ExactlyOnceTransactionsInUse
+		out.ExactlyOnceTransactionsInUse = &v
+	}
+	if in.KafkaStreamsInUse != nil {
+		v := *in.KafkaStreamsInUse
+		out.KafkaStreamsInUse = &v
+	}
+	if in.ConsumerHistoryRequirement != nil {
+		out.ConsumerHistoryRequirement = *in.ConsumerHistoryRequirement
+	}
+	if in.HistoricalDataStrategy != nil {
+		out.HistoricalDataStrategy = *in.HistoricalDataStrategy
 	}
 	return out
 }
@@ -147,6 +207,15 @@ func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, cl
 	}
 	if override.ProjectedPNIGatewayCount != nil {
 		out.ProjectedPNIGatewayCount = *override.ProjectedPNIGatewayCount
+	}
+	if override.TargetAuthMethod != nil {
+		out.TargetAuthMethod = *override.TargetAuthMethod
+	}
+	if override.DowntimeTolerance != nil {
+		out.DowntimeTolerance = *override.DowntimeTolerance
+	}
+	if override.SubPattern != nil {
+		out.SubPattern = *override.SubPattern
 	}
 	return out
 }

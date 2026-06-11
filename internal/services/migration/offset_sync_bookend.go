@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 )
 
@@ -42,13 +41,13 @@ func DisableOffsetSync(
 	ctx context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
-	config *types.MigrationConfig,
+	config *MigrationConfig,
 	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
 		return nil
 	}
-	if config.CurrentState == types.StateSwitched {
+	if config.CurrentState == StateSwitched {
 		slog.Debug("disable bookend skipped: migration already switched", "migrationId", config.MigrationId)
 		return nil
 	}
@@ -119,7 +118,7 @@ func RestoreOffsetSync(
 	_ context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
-	config *types.MigrationConfig,
+	config *MigrationConfig,
 	persist func() error,
 ) {
 	if !config.PauseConsumerOffsetSyncFlipped {
@@ -264,7 +263,7 @@ func RestoreOffsetSync(
 //
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
-func WarnIfPausedOnExecuteFailure(config *types.MigrationConfig, execErr error) {
+func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
@@ -281,7 +280,7 @@ func WarnIfPausedOnExecuteFailure(config *types.MigrationConfig, execErr error) 
 // BuildClusterLinkConfig assembles a clusterlink.Config from a migration
 // config plus runtime API credentials. Centralized here so the bookend
 // callers in cmd/migration/execute don't duplicate the field layout.
-func BuildClusterLinkConfig(config *types.MigrationConfig, apiKey, apiSecret string) clusterlink.Config {
+func BuildClusterLinkConfig(config *MigrationConfig, apiKey, apiSecret string) clusterlink.Config {
 	return clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,

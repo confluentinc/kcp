@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,14 +27,14 @@ var (
 func NewReportPlanCmd() *cobra.Command {
 	reportPlanCmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate a deterministic Migration Plan from a kcp state file",
-		Long: "Generate a deterministic Migration Plan from a kcp-state.json produced by `kcp discover` and `kcp scan ...`. " +
-			"The same state file + same plan-inputs + same KCP version produce a byte-identical plan (modulo the `generated_at` timestamp), so the output is auditable.\n\n" +
+		Short: "Generate a Migration Plan to migrate to Confluent Cloud (Experimental / WIP)",
+		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan` (Experimental / WIP). " +
+			"The plan provides technical recommendations on target cluster sizing, networking, authentication, and migration approach for each source cluster, and surfaces open questions to capture your intent so the generated plan fits your use case.\n\n" +
 			"**Output:** writes `plan.md` and/or `plan.json` to `--output-dir` (default `./plan-output`).",
 		Example: `  # Minimal: state file in, plan.md/plan.json out
   kcp report plan --state-file kcp-state.json
 
-  # With customer overrides
+  # With your overrides
   kcp report plan --state-file kcp-state.json --plan-inputs plan-inputs.yaml
 
   # JSON only
@@ -48,17 +49,18 @@ func NewReportPlanCmd() *cobra.Command {
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to the kcp state file written by `kcp discover` + `kcp scan ...`.")
+	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan).")
 	reportPlanCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with per-customer overrides. All fields optional.")
+	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides. All fields optional.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "./plan-output", "Directory to write plan.md / plan.json into.")
 	optionalFlags.StringVar(&output, "output", "md,json", "Comma-separated output formats: md, json, or both.")
 	optionalFlags.StringVar(&configPath, "config", "", "Path to a plan-config.yaml override. Embedded config is the default.")
 	reportPlanCmd.Flags().AddFlagSet(optionalFlags)
+	_ = reportPlanCmd.Flags().MarkHidden("config")
 	groups[optionalFlags] = "Optional Flags"
 
 	reportPlanCmd.SetUsageFunc(func(c *cobra.Command) error {
@@ -148,31 +150,179 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// loadState reads the state file and falls back to a pre-0.7 layout —
-// `regions` at the top level instead of `msk_sources.regions` — when the
-// modern unmarshal produces a state with no source data. The fallback uses
-// a typed decode (not a map round-trip), so byte ordering of the original
-// state file does not influence the resulting `*types.State`.
+// loadState reads the state file and tolerates two pre-0.7 layouts the
+// strict decoder rejects on its own: (1) `regions` at the top level
+// instead of `msk_sources.regions`, and (2) `schema_registries` as a
+// flat array (entries discriminated by a `type` field) instead of an
+// object with `confluent_schema_registry` / `aws_glue` buckets. When
+// the strict decode succeeds the file is taken as-is; only on strict
+// failure do we attempt the lenient legacy decode and rebuild into the
+// modern shape. The fallback uses typed decodes (not map round-trips),
+// so byte ordering of the original state file does not influence the
+// resulting `*types.State`.
 func loadState(path string) (*types.State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	state, err := types.NewStateFromBytes(data)
+	state, strictErr := types.NewStateFromBytes(data)
+	if strictErr == nil {
+		return state, nil
+	}
+	migrated, mErr := migrateLegacyState(data)
+	if mErr != nil {
+		// Surface the original strict-decode error (more actionable
+		// for genuine version mismatches than the legacy attempt's
+		// own failure).
+		return nil, strictErr
+	}
+	return migrated, nil
+}
+
+// migrateLegacyState rebuilds a *types.State from a pre-0.7 state-file
+// JSON layout. Strips known-legacy top-level keys (`regions`,
+// `schema_registries`-as-array) from the raw JSON before the lenient
+// decode so a type mismatch on a legacy field can't block migration,
+// then re-attaches each legacy field into the modern shape. Returns an
+// error if no recognised legacy shape is found so the caller falls
+// back to surfacing the original strict-decode error.
+func migrateLegacyState(data []byte) (*types.State, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	// Refuse to migrate when the state file claims it was produced by
+	// kcp >= 0.7. The legacy shapes only existed pre-0.7; a newer file
+	// hitting this path means we encountered a forward-incompatible
+	// shape (not a legacy one) and should NOT silently mutate it into
+	// the modern layout. The strict-decode error path is the correct
+	// signal in that case.
+	if v := stateFileKCPVersion(raw); v != "" && isPostLegacyVersion(v) {
+		return nil, fmt.Errorf("state file claims kcp_build_info.version=%q, which is post-legacy; refusing to apply pre-0.7 migration shim", v)
+	}
+	legacyRegions := raw["regions"]
+	legacySchemaRegistries := raw["schema_registries"]
+	// Only strip schema_registries if it's a JSON array (legacy shape);
+	// modern files have it as an object and should be preserved as-is.
+	isLegacySR := len(legacySchemaRegistries) > 0 && legacySchemaRegistries[0] == '['
+	if len(legacyRegions) == 0 && !isLegacySR {
+		return nil, fmt.Errorf("no legacy state-file shape detected")
+	}
+	delete(raw, "regions")
+	if isLegacySR {
+		delete(raw, "schema_registries")
+	}
+	stripped, err := json.Marshal(raw)
 	if err != nil {
 		return nil, err
 	}
-	if state.MSKSources != nil || state.OSKSources != nil {
-		return state, nil
+	var state types.State
+	if err := json.Unmarshal(stripped, &state); err != nil {
+		return nil, err
 	}
-	// Legacy MSK-only shape: try `{ "regions": [...] }`.
-	var legacy struct {
-		Regions []types.DiscoveredRegion `json:"regions"`
+	if len(legacyRegions) > 0 && state.MSKSources == nil {
+		var regions []types.DiscoveredRegion
+		if err := json.Unmarshal(legacyRegions, &regions); err == nil && len(regions) > 0 {
+			state.MSKSources = &types.MSKSourcesState{Regions: regions}
+		}
 	}
-	if jerr := json.Unmarshal(data, &legacy); jerr == nil && len(legacy.Regions) > 0 {
-		state.MSKSources = &types.MSKSourcesState{Regions: legacy.Regions}
+	if isLegacySR && state.SchemaRegistries == nil {
+		var entries []json.RawMessage
+		if err := json.Unmarshal(legacySchemaRegistries, &entries); err == nil {
+			srs := &types.SchemaRegistriesState{}
+			for _, raw := range entries {
+				var disc struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal(raw, &disc); err != nil {
+					continue
+				}
+				switch disc.Type {
+				case "glue", "aws_glue":
+					var g types.GlueSchemaRegistryInformation
+					if err := json.Unmarshal(raw, &g); err == nil {
+						srs.AWSGlue = append(srs.AWSGlue, g)
+					}
+				default:
+					var sr types.SchemaRegistryInformation
+					if err := json.Unmarshal(raw, &sr); err == nil {
+						srs.ConfluentSchemaRegistry = append(srs.ConfluentSchemaRegistry, sr)
+					}
+				}
+			}
+			if len(srs.ConfluentSchemaRegistry) > 0 || len(srs.AWSGlue) > 0 {
+				state.SchemaRegistries = srs
+			}
+		}
 	}
-	return state, nil
+	if state.MSKSources == nil && state.OSKSources == nil && state.SchemaRegistries == nil {
+		return nil, fmt.Errorf("legacy keys present but nothing populated after migration")
+	}
+	slog.Warn("loaded pre-0.7 state-file layout in legacy-compatibility mode; re-run `kcp discover` / `kcp scan` to refresh the file in the current schema")
+	return &state, nil
+}
+
+// stateFileKCPVersion extracts kcp_build_info.version from the raw
+// state-file JSON map. Returns "" when the field is absent or
+// unparseable — the caller treats absent / unparseable as "no signal"
+// and proceeds with the legacy migration.
+func stateFileKCPVersion(raw map[string]json.RawMessage) string {
+	bi, ok := raw["kcp_build_info"]
+	if !ok {
+		return ""
+	}
+	var info struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(bi, &info); err != nil {
+		return ""
+	}
+	return info.Version
+}
+
+// isPostLegacyVersion reports whether the state-file version string
+// represents kcp 0.7 or later (the cutoff where legacy `regions` /
+// flat `schema_registries` shapes ceased to be produced). The
+// localdev sentinel "0.0.0-localdev" is treated as pre-0.7 by virtue
+// of its leading zeros — fine, since dev builds shouldn't be loading
+// production state files.
+func isPostLegacyVersion(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	// Strip leading "v" if present.
+	if strings.HasPrefix(v, "v") || strings.HasPrefix(v, "V") {
+		v = v[1:]
+	}
+	// Strip pre-release / build suffix at the first '-' or '+'.
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	major, mErr := parseInt(parts[0])
+	minor, nErr := parseInt(parts[1])
+	if mErr != nil || nErr != nil {
+		return false
+	}
+	if major > 0 {
+		return true
+	}
+	return minor >= 7
+}
+
+func parseInt(s string) (int, error) {
+	var n int
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, fmt.Errorf("not a non-negative integer: %q", s)
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n, nil
 }
 
 // parseOutputFormats accepts a comma-separated `md,json` list (or the legacy

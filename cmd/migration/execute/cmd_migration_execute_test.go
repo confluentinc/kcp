@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
@@ -131,7 +132,7 @@ func TestMigrationExecute_SaslScramMechanism_DefaultIsSHA512(t *testing.T) {
 		"--sasl-scram-password", "pass",
 	}))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, "SHA512", opts.SaslScramMechanism, "default --sasl-scram-mechanism should be SHA512 for MSK compatibility")
 }
 
@@ -150,7 +151,7 @@ func TestMigrationExecute_SaslScramMechanism_ExplicitSHA256(t *testing.T) {
 		"--sasl-scram-mechanism", "SHA256",
 	}))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, "SHA256", opts.SaslScramMechanism)
 }
 
@@ -170,7 +171,7 @@ func TestMigrationExecute_SaslScramMechanism_BindFromEnvVar(t *testing.T) {
 	}))
 	require.NoError(t, utils.BindEnvToFlags(cmd))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, "SHA256", opts.SaslScramMechanism, "SASL_SCRAM_MECHANISM env var should override the default")
 }
 
@@ -240,7 +241,7 @@ func TestMigrationExecute_RolloutTimeout_DefaultIsZero(t *testing.T) {
 		"--use-unauthenticated-plaintext",
 	}))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, time.Duration(0), opts.RolloutTimeout, "default --rollout-timeout should be 0 (no deadline)")
 }
 
@@ -257,7 +258,7 @@ func TestMigrationExecute_RolloutTimeout_ExplicitValueParsed(t *testing.T) {
 		"--rollout-timeout", "10m",
 	}))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 10*time.Minute, opts.RolloutTimeout)
 }
 
@@ -291,6 +292,6 @@ func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 	}))
 	require.NoError(t, utils.BindEnvToFlags(cmd))
 
-	opts := parseMigrationExecutorOpts(types.MigrationState{}, types.MigrationConfig{})
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 7*time.Minute, opts.RolloutTimeout, "ROLLOUT_TIMEOUT env var should populate the flag")
 }
