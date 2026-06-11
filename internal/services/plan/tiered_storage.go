@@ -152,10 +152,11 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 	consumerHistory := defaultedConsumerHistory(inputs.ConsumerHistoryRequirement)
 	if section.HistoricalDataStrategy == "" && consumerHistory != ConsumerHistoryNotRequired {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "tiered_strategy_undeclared",
-			Title:      "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",
-			Body:       "Cluster Linking does NOT carry historical tiered data forward. Pick the path that matches your operational constraints: keep MSK running until your retention window expires (lowest engineering cost, highest infra cost), bulk-load historical data via an external tool, or defer the cascade to your Confluent account team.",
-			HowToClose: "Set `historical_data_strategy` in `plan-inputs.yaml` to `keep_msk_running_until_data_expires` | `bulk_load_historical_via_external_tool` | `defer_to_account_team`, then re-run `kcp report plan`. If you set `consumer_history_requirement: not_required`, the Plan defaults this to `defer_to_account_team` automatically.",
+			ID:    "tiered_strategy_undeclared",
+			Title: "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",
+			Body:  "Cluster Linking does NOT carry historical tiered data forward. Pick the path that matches your operational constraints.",
+			HowToClose: "Pick one in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
+				"```yaml\nhistorical_data_strategy: defer_to_account_team   # uncomment ONE of:\n# historical_data_strategy: keep_msk_running_until_data_expires    # lowest engineering cost; highest infra cost (MSK runs through retention window)\n# historical_data_strategy: bulk_load_historical_via_external_tool # bulk-load via Kafka Connect / Replicator / custom tool\n# historical_data_strategy: defer_to_account_team                  # work with Confluent on the cascade decisions per topic\n```\n\nShortcut: if downstream consumers don't actually need history, set `consumer_history_requirement: not_required` and `historical_data_strategy` defaults to `defer_to_account_team` automatically.",
 		})
 	}
 	return oqs

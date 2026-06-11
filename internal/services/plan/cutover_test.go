@@ -182,7 +182,7 @@ func TestDetectCutoverOpenQuestions_AmbiguousIntent(t *testing.T) {
 	inputs.CCGatewayLicenseStatus = PrereqNotStarted
 	inputs.IAMPreMigrationStatus = PrereqNotStarted
 	d := decideCutover(nil, inputs)
-	oqs := detectCutoverOpenQuestions(d, nil, inputs, false)
+	oqs := detectCutoverOpenQuestions(d, nil, inputs)
 	assert.True(t, hasOQ(oqs, "gateway_intent_unconfirmed"))
 	assert.False(t, hasOQ(oqs, "gateway_prereqs_pending"))
 }
@@ -192,7 +192,7 @@ func TestDetectCutoverOpenQuestions_PrereqsPending(t *testing.T) {
 	inputs.ConfluentForKubernetesStatus = PrereqStatusInProgressInput
 	inputs.CCGatewayLicenseStatus = PrereqNotStarted
 	d := decideCutover(nil, inputs)
-	oqs := detectCutoverOpenQuestions(d, nil, inputs, false)
+	oqs := detectCutoverOpenQuestions(d, nil, inputs)
 	assert.True(t, hasOQ(oqs, "gateway_prereqs_pending"))
 	assert.False(t, hasOQ(oqs, "gateway_intent_unconfirmed"))
 }
@@ -203,7 +203,7 @@ func TestDetectCutoverOpenQuestions_SecondsPerServiceOptOut(t *testing.T) {
 	inputs := styleInputs(DowntimeSecondsPerService)
 	inputs.PreferGateway = false
 	d := decideCutover(nil, inputs)
-	oqs := detectCutoverOpenQuestions(d, nil, inputs, false)
+	oqs := detectCutoverOpenQuestions(d, nil, inputs)
 	assert.True(t, hasOQ(oqs, "downtime_tolerance_requires_gateway"))
 }
 
@@ -215,7 +215,7 @@ func TestDetectCutoverOpenQuestions_SecondsPerServiceAmbiguous(t *testing.T) {
 	inputs.CCGatewayLicenseStatus = PrereqNotStarted
 	inputs.IAMPreMigrationStatus = PrereqNotStarted
 	d := decideCutover(nil, inputs)
-	oqs := detectCutoverOpenQuestions(d, nil, inputs, false)
+	oqs := detectCutoverOpenQuestions(d, nil, inputs)
 	assert.True(t, hasOQ(oqs, "downtime_tolerance_requires_gateway"))
 	assert.True(t, hasOQ(oqs, "gateway_intent_unconfirmed"))
 }
@@ -226,20 +226,20 @@ func TestDetectCutoverOpenQuestions_SecondsPerServiceAmbiguous(t *testing.T) {
 func TestDetectCutoverOpenQuestions_BlueGreenSkipsCrossCheck(t *testing.T) {
 	inputs := styleInputs(DowntimeZero)
 	d := decideCutover(nil, inputs)
-	oqs := detectCutoverOpenQuestions(d, nil, inputs, false)
+	oqs := detectCutoverOpenQuestions(d, nil, inputs)
 	assert.False(t, hasOQ(oqs, "downtime_tolerance_requires_gateway"))
 }
 
 func TestDetectCutoverOpenQuestions_UnknownTolerance(t *testing.T) {
 	inputs := styleInputs("scheduled_window_quarterly") // typo
 	d := decideCutover(nil, inputs)
-	oqs := detectCutoverOpenQuestions(d, nil, inputs, false)
+	oqs := detectCutoverOpenQuestions(d, nil, inputs)
 	assert.True(t, hasOQ(oqs, "downtime_tolerance_unknown"))
 }
 
 func TestDetectCutoverOpenQuestions_CanonicalEmits_NoOQs(t *testing.T) {
 	d := decideCutover(nil, styleInputs(DowntimeLetConfluentChoose))
-	oqs := detectCutoverOpenQuestions(d, nil, styleInputs(DowntimeLetConfluentChoose), false)
+	oqs := detectCutoverOpenQuestions(d, nil, styleInputs(DowntimeLetConfluentChoose))
 	assert.Empty(t, oqs, "canonical recommendation has nothing to ask")
 }
 
@@ -401,7 +401,7 @@ func TestPerCluster_BlueGreenOverrideOnIAMClusterWithCompletePrereqs(t *testing.
 	assert.Equal(t, types.CutoverBlueGreen, overrides[0].Style)
 	assert.Equal(t, types.GatewayMediatedNotApplicable, overrides[0].GatewayMediated, "BG override on IAM cluster still sidesteps the gateway")
 
-	oqs := detectCutoverOpenQuestions(fleet, overrides, base, fleetUsesIAM(clusters))
+	oqs := detectCutoverOpenQuestions(fleet, overrides, base)
 	for _, oq := range oqs {
 		assert.NotEqual(t, "gateway_intent_unconfirmed", oq.ID, "canonical fleet must not fire gateway-intent OQ")
 		assert.NotEqual(t, "gateway_prereqs_pending", oq.ID, "complete prereqs must not fire prereqs-pending OQ")

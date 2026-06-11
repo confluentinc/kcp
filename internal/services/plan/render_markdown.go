@@ -1248,10 +1248,13 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 	if anyOverrideRejected {
 		b.WriteString("\n`*` = a `target_auth_method` override was supplied but didn't match a recognised value, so the per-source default applies for that row; see Actions Needed for the exact typo.\n")
 	}
-	// IAM-transition footnote — when prereq is `complete` and
-	// gateway is in play, the IAM rows above are a pre-migration
-	// snapshot, not the post-migration auth.
-	if cutover != nil && inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput && cutover.GatewayMediated == types.GatewayMediatedTrue {
+	// IAM-transition footnote — when the customer has marked
+	// `iam_pre_migration_status: complete`, the IAM rows above are a
+	// pre-migration snapshot, not the post-migration auth. Fires
+	// regardless of cutover path (CC doesn't support IAM at all, so
+	// the re-credentialing is path-agnostic).
+	if inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput {
+		_ = cutover // retained on signature for backwards compat with callers
 		anyIAM := false
 		for _, a := range auths {
 			for _, row := range a.TargetMappings {
@@ -1262,7 +1265,7 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 			}
 		}
 		if anyIAM {
-			b.WriteString("\n_The IAM rows above reflect the **pre-migration** auth recorded by `kcp discover`. With `iam_pre_migration_status: complete`, clients have moved off IAM (to SCRAM or mTLS) — re-run `kcp discover` / `kcp scan clusters` to refresh §4 against post-migration state._\n")
+			b.WriteString("\n_The IAM rows above reflect the **pre-migration** auth recorded by `kcp discover`. With `iam_pre_migration_status: complete`, clients have moved off IAM to a CC-supported auth (SCRAM, mTLS, or OAuth) — re-run `kcp discover` / `kcp scan clusters` to refresh §4 against post-migration state._\n")
 		}
 	}
 	writeAuthMappingProvenance(b, auths)

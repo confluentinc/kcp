@@ -288,10 +288,11 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	// because the Confluent arm requires the strategy.
 	if strategy == SchemaStrategyUnknown && dec.Source != types.SchemaSourceGlue {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "schema_strategy_unknown",
-			Title:      "Schema migration strategy not declared — set `schema_strategy` in `plan-inputs.yaml`",
-			Body:       "First-run Plans default `schema_strategy: unknown` so we don't silently emit a schemaless verdict (which would suppress the Red Flag for shops that genuinely have a Schema Registry). Pick the strategy that matches your migration: `no_schemas` (workloads carry no schemas), `adopt_schemas_during_migration` (you want CC Schema Registry but don't have one on-prem), or `migrate_existing_schema_registry` (you have an SR and want it mirrored).",
-			HowToClose: "Set `schema_strategy` in `plan-inputs.yaml` to one of `no_schemas | adopt_schemas_during_migration | migrate_existing_schema_registry`, then re-run `kcp report plan`.",
+			ID:    "schema_strategy_unknown",
+			Title: "Schema migration strategy not declared — set `schema_strategy` in `plan-inputs.yaml`",
+			Body:  "First-run Plans default `schema_strategy: unknown` so we don't silently emit a schemaless verdict (which would suppress the Red Flag for shops that genuinely have a Schema Registry). Pick the strategy that matches your migration.",
+			HowToClose: "In `plan-inputs.yaml`, pick the value that matches your migration and re-run `kcp report plan`:\n\n" +
+				"```yaml\nschema_strategy: migrate_existing_schema_registry   # uncomment ONE of:\n# schema_strategy: no_schemas                       # your workloads carry no schemas\n# schema_strategy: adopt_schemas_during_migration   # you want CC Schema Registry but don't have one on-prem\n# schema_strategy: migrate_existing_schema_registry # you have a source SR and want it mirrored to CC\n```",
 		})
 	}
 
@@ -311,10 +312,15 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	mismatch := strategy == SchemaStrategyNoSchemas && dec.Source != types.SchemaSourceNone
 	if mismatch {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "schema_state_strategy_mismatch",
-			Title:      "`schema_strategy: no_schemas` but the scan found a Schema Registry on the source",
-			Body:       "If you intend to retire the source SR during the migration, this is fine — leave the setting and acknowledge this OQ. If the SR was scanned in error (e.g. it belongs to a different team), narrow the scan scope. Otherwise switch `schema_strategy` to `migrate_existing_schema_registry` so the Plan applies the SR-detected path.",
-			HowToClose: "Either keep `schema_strategy: no_schemas` (acknowledge the gap), narrow `kcp scan schema-registry` / `kcp scan glue-schema-registry`, or switch `schema_strategy` to `migrate_existing_schema_registry` and re-run.",
+			ID:    "schema_state_strategy_mismatch",
+			Title: "`schema_strategy: no_schemas` but the scan found a Schema Registry on the source",
+			Body:  "The mismatch could be deliberate (you intend to retire the source SR during migration) or accidental (the scan picked up an SR you didn't realise was there). The Plan needs you to confirm which.",
+			HowToClose: "Pick one of these in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
+				"**Option A — you DO want the SR migrated.** Switch the strategy so the Plan applies the SR-detected path:\n" +
+				"```yaml\nschema_strategy: migrate_existing_schema_registry\n```\n\n" +
+				"**Option B — the SR shouldn't have been scanned** (belongs to a different team / out of migration scope). Narrow the scan scope and re-scan:\n" +
+				"```\nkcp scan schema-registry --state-file <path>   # rerun with a tighter scope\n```\n\n" +
+				"**Option C — you DO intend to retire the source SR during migration.** Keep `schema_strategy: no_schemas` and acknowledge this OQ.",
 		})
 		return oqs
 	}
@@ -327,10 +333,11 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	if sourceTouchesConfluent(dec.Source) &&
 		schemaLinkingEligibilityVerdict(dec) == eligibilityVerdictUnknown {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "schema_linking_eligibility_unknown",
-			Title:      "Declare source SR CP version, edition, and outbound reachability in `plan-inputs.yaml`",
-			Body:       fmt.Sprintf("Schema Linking requires the source SR to (1) be on CP %s or later, (2) run the `%s` edition (other editions do not ship Schema Linking), and (3) be able to make outbound TCP connections to your CC Schema Registry endpoint. Until all three are declared, the Plan can't pick between the Schema Linking path and the account-team-handoff path.", cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition),
-			HowToClose: "Set `confluent_sr_cp_version`, `confluent_sr_cp_edition`, and `source_sr_outbound_reachable_to_cc` (true|false) in `plan-inputs.yaml`, then re-run `kcp report plan`. If any constraint fails after declaring, the path becomes an account-team conversation — REST API export/import is not a kcp-automated fallback.",
+			ID:    "schema_linking_eligibility_unknown",
+			Title: "Declare source SR CP version, edition, and outbound reachability in `plan-inputs.yaml`",
+			Body:  fmt.Sprintf("Schema Linking requires the source SR to (1) be on CP %s or later, (2) run the `%s` edition (other editions do not ship Schema Linking), and (3) be able to make outbound TCP connections to your CC Schema Registry endpoint. Until all three are declared, the Plan can't pick between the Schema Linking path and the account-team-handoff path.", cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition),
+			HowToClose: fmt.Sprintf("Add all three fields to `plan-inputs.yaml` and re-run `kcp report plan`:\n\n"+
+				"```yaml\nconfluent_sr_cp_version: \"%s\"             # or later — e.g. \"7.5.1\"\nconfluent_sr_cp_edition: %s             # %s | community\nsource_sr_outbound_reachable_to_cc: true   # true | false — can the source SR reach the CC SR endpoint outbound?\n```\n\nIf any constraint fails after declaring (CP version too old, wrong edition, or no outbound reach), Schema Linking isn't viable — the path becomes an account-team conversation. REST API export/import is not a kcp-automated fallback.", cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.RequiresCPEdition),
 		})
 	}
 

@@ -139,7 +139,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		cutover := decideCutover(clusters, inputs)
 		plan.Cutover = &cutover
 		plan.CutoverOverrides = computeCutoverOverrides(clusters, cutover, inputs)
-		plan.OpenQuestions = append(plan.OpenQuestions, detectCutoverOpenQuestions(cutover, plan.CutoverOverrides, inputs, fleetUsesIAM(clusters))...)
+		plan.OpenQuestions = append(plan.OpenQuestions, detectCutoverOpenQuestions(cutover, plan.CutoverOverrides, inputs)...)
 		plan.OpenQuestions = append(plan.OpenQuestions, detectAuthFleetOpenQuestions(clusters, inputs)...)
 		plan.OpenQuestions = append(plan.OpenQuestions, detectClusterCutoverOpenQuestions(clusters, inputs)...)
 		plan.OpenQuestions = append(plan.OpenQuestions, detectPerClusterGatewayIncompat(clusters, cutover, inputs)...)
@@ -251,11 +251,15 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		for _, row := range auth.TargetMappings {
 			if !row.GatewayCompatible {
 				oqs = append(oqs, types.OpenQuestion{
-					ID:         "auth_target_gateway_incompatible",
-					ClusterID:  c.Name,
-					Title:      fmt.Sprintf("`target_auth_method: %s` set but source auth `%s` is gateway-incompatible", inputs.TargetAuthMethod, row.SourceAuth),
-					Body:       fmt.Sprintf("You've overridden the target auth to `%s`, but the source uses `%s` — the CC Gateway can't accept `%s` clients at all (regardless of where they land on the CC side). The target-side override changes the credential clients present to CC; it does not change which auth scheme CC accepts at the gateway. Source clients need to pre-migrate to a gateway-compatible auth (SCRAM or mTLS) on MSK before the gateway path is viable.", inputs.TargetAuthMethod, row.SourceAuth, row.SourceAuth),
-					HowToClose: fmt.Sprintf("Two paths: (a) pre-migrate source clients off `%s` on MSK — typical replacement is SASL/SCRAM (see [MSK SASL/SCRAM docs](https://docs.aws.amazon.com/msk/latest/developerguide/msk-password.html)); flip the matching pre-migration prereq to `complete` and re-run the plan. OR (b) unset `target_auth_method` and let the per-source default apply — the override doesn't help here because the gateway barrier is on the source side.", row.SourceAuth),
+					ID:        "auth_target_gateway_incompatible",
+					ClusterID: c.Name,
+					Title:     fmt.Sprintf("`target_auth_method: %s` set but source auth `%s` is gateway-incompatible", inputs.TargetAuthMethod, row.SourceAuth),
+					Body:      fmt.Sprintf("You've overridden the target auth to `%s`, but the source uses `%s` — the CC Gateway can't accept `%s` clients at all. The target-side override only changes the credential clients present to CC; it doesn't change which auth scheme CC accepts at the gateway. The gateway barrier is on the source side, so source clients have to move off `%s` on MSK before the gateway path is viable.", inputs.TargetAuthMethod, row.SourceAuth, row.SourceAuth, row.SourceAuth),
+					HowToClose: fmt.Sprintf("Pick one in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n"+
+						"**Option A — drop the gateway opt-in and stay on plain Cluster Linking.** Plain CL accepts every auth scheme, including `%s`:\n"+
+						"```yaml\nprefer_gateway: false\n```\n\n"+
+						"**Option B — keep the gateway path and pre-migrate clients off `%s` on MSK** to a gateway-compatible auth (SCRAM or mTLS — see [MSK SASL/SCRAM docs](https://docs.aws.amazon.com/msk/latest/developerguide/msk-password.html)). Once done, re-scan the source so the change is reflected.\n\n"+
+						"**Option C — remove the `target_auth_method` override** and let the per-source default apply (the override doesn't help here because the gateway barrier is on the source side).", row.SourceAuth, row.SourceAuth),
 				})
 				break // one OQ per cluster, not one per gateway-incompatible row
 			}
@@ -404,7 +408,7 @@ func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDa
 // overrides to Blue/Green, the gateway-intent / prereq OQs add a note
 // that those clusters are exempt — otherwise the OQ reads as if it
 // applies to the entire fleet.
-func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types.ClusterCutoverOverride, inputs types.PlanInputsResolved, iamInUse bool) []types.OpenQuestion {
+func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types.ClusterCutoverOverride, inputs types.PlanInputsResolved) []types.OpenQuestion {
 	var oqs []types.OpenQuestion
 	if !knownDowntimeTolerance(inputs.DowntimeTolerance) {
 		oqs = append(oqs, types.OpenQuestion{
@@ -440,7 +444,7 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 		oqs = append(oqs, types.OpenQuestion{
 			ID:    "gateway_prereqs_pending",
 			Title: "Gateway prereqs not yet at `in_progress` — advance them or fall back to plain Cluster Linking",
-			Body:  fmt.Sprintf("You set `prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete` to be recommended; plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs, iamInUse), exemptSuffix),
+			Body:  fmt.Sprintf("You set `prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete` to be recommended; plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs), exemptSuffix),
 			HowToClose: "Pick one of these in `plan-inputs.yaml` and re-run `kcp report plan`:\n\n" +
 				"**Option A — advance the pending prereq(s).** Each field accepts `not_started | in_progress | complete`:\n" +
 				"```yaml\nconfluent_for_kubernetes_status: in_progress\ncc_gateway_license_status:       in_progress\n```\n\n" +
@@ -503,7 +507,8 @@ func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs type
 			ClusterID:  name,
 			Title:      fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
 			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
-			HowToClose: fmt.Sprintf("Set `clusters[%s].target_auth_method` in `plan-inputs.yaml` to one of the recognised values, OR remove the override to keep the per-source default.", name),
+			HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value and re-run `kcp report plan`:\n\n"+
+				"```yaml\nclusters:\n  %s:\n    target_auth_method: %s   # %s | %s | %s\n```\n\nOR remove the line to keep the per-source default from `auth_mapping`.", name, TargetAuthAPIKeys, TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth),
 		})
 	}
 	return oqs
@@ -739,11 +744,12 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 			value := *cluster.DowntimeTolerance
 			if !knownDowntimeTolerance(value) {
 				oqs = append(oqs, types.OpenQuestion{
-					ID:         "downtime_tolerance_unknown",
-					ClusterID:  name,
-					Title:      fmt.Sprintf("`clusters[%s].downtime_tolerance: %s` is not a recognised value — treated as `let_confluent_choose` (Stop-Restart-Repeat) for this cluster", name, value),
-					Body:       "The Plan only recognises `zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose`. The override falls outside the enum, so this cluster's cutover style resolves to the Confluent default (Stop-Restart-Repeat) — note this can DIFFER from the fleet-wide default if the fleet itself selected another style, in which case this cluster appears in the **Per-cluster overrides** sub-list above.",
-					HowToClose: fmt.Sprintf("Set `clusters[%s].downtime_tolerance` in `plan-inputs.yaml` to one of the recognised values, OR remove the override to keep the fleet default.", name),
+					ID:        "downtime_tolerance_unknown",
+					ClusterID: name,
+					Title:     fmt.Sprintf("`clusters[%s].downtime_tolerance: %s` is not a recognised value — treated as `let_confluent_choose` (Stop-Restart-Repeat) for this cluster", name, value),
+					Body:      "The Plan only recognises `zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose`. The override falls outside the enum, so this cluster's cutover style resolves to the Confluent default (Stop-Restart-Repeat) — note this can DIFFER from the fleet-wide default if the fleet itself selected another style, in which case this cluster appears in the **Per-cluster overrides** sub-list above.",
+					HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value and re-run `kcp report plan`:\n\n"+
+						"```yaml\nclusters:\n  %s:\n    downtime_tolerance: let_confluent_choose   # zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose\n```\n\nOR remove the line to keep the fleet default.", name),
 				})
 			}
 		}
@@ -751,11 +757,12 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 			value := *cluster.SubPattern
 			if !knownCutoverSubPattern(value) {
 				oqs = append(oqs, types.OpenQuestion{
-					ID:         "sub_pattern_unknown",
-					ClusterID:  name,
-					Title:      fmt.Sprintf("`clusters[%s].sub_pattern: %s` is not a recognised value — `app-by-app` applied for this cluster", name, value),
-					Body:       "The Plan only recognises `app-by-app | topic-by-topic` for the Stop-Restart-Repeat sub-pattern. The override falls outside the enum, so the cluster inherits the default `app-by-app` cadence.",
-					HowToClose: fmt.Sprintf("Set `clusters[%s].sub_pattern` in `plan-inputs.yaml` to `app-by-app` or `topic-by-topic`, OR remove the override.", name),
+					ID:        "sub_pattern_unknown",
+					ClusterID: name,
+					Title:     fmt.Sprintf("`clusters[%s].sub_pattern: %s` is not a recognised value — `app-by-app` applied for this cluster", name, value),
+					Body:      "The Plan only recognises `app-by-app | topic-by-topic` for the Stop-Restart-Repeat sub-pattern. The override falls outside the enum, so the cluster inherits the default `app-by-app` cadence.",
+					HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value and re-run `kcp report plan`:\n\n"+
+						"```yaml\nclusters:\n  %s:\n    sub_pattern: app-by-app   # app-by-app | topic-by-topic\n```\n\nOR remove the line to keep the default.", name),
 				})
 			}
 		}
@@ -766,7 +773,7 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 // pendingPrereqList renders the list of gateway prereqs still at
 // `not_started`, for inclusion in an OQ body. Inline rather than a
 // helper-with-cases because the body string is one-shot per Plan.
-func pendingPrereqList(inputs types.PlanInputsResolved, _ bool) string {
+func pendingPrereqList(inputs types.PlanInputsResolved) string {
 	var pending []string
 	if inputs.ConfluentForKubernetesStatus == PrereqNotStarted {
 		pending = append(pending, "`confluent_for_kubernetes_status`")

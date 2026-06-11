@@ -77,6 +77,11 @@ plan_input_defaults:
   prefer_gateway: false
   confluent_for_kubernetes_status: not_started
   cc_gateway_license_status: not_started
+  # `iam_pre_migration_status` is informational only — IAM client
+  # re-credentialing is not a gateway prereq (CC doesn't support IAM at
+  # all, so the workstream applies to every cutover path). Render code
+  # uses `complete` as a hint that §4 Auth rows reflect post-migration
+  # state and the customer should re-scan.
   iam_pre_migration_status: not_started
 
   # Auth default target. Intentionally empty — the per-source

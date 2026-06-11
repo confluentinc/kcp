@@ -47,7 +47,7 @@ const (
 // **Input contract:** `inputs` MUST come from `ResolvePlanInputs` (or
 // `applyClusterOverride` on top of it). Callers from tests should
 // construct inputs via the resolver, not by struct literal.
-func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
+func decideCutover(_ []types.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
 	style, sub := resolveStyle(inputs)
 
 	// Blue/Green sidesteps the gateway question entirely — the gateway
@@ -59,13 +59,12 @@ func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsRes
 			GatewayMediated:      types.GatewayMediatedNotApplicable,
 			RecommendationStatus: types.RecommendationCustomerChoice,
 			AlternativesShown:    alternativesShown(style),
-			Prereqs:              prereqsForStyle(style, inputs, fleetUsesIAM(clusters)),
+			Prereqs:              prereqsForStyle(style, inputs),
 		}
 	}
 
-	iamInUse := fleetUsesIAM(clusters)
-	eligible := gatewayEligible(inputs, iamInUse)
-	ambiguous := ambiguousGatewayIntent(inputs, iamInUse)
+	eligible := gatewayEligible(inputs)
+	ambiguous := ambiguousGatewayIntent(inputs)
 
 	var mediated types.GatewayMediated
 	var status types.RecommendationStatus
@@ -91,7 +90,7 @@ func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsRes
 	// Linking, so showing "not started" against them is misleading.
 	var prereqs []types.Prereq
 	if mediated != types.GatewayMediatedFalse || status != types.RecommendationCustomerChoice {
-		prereqs = prereqsForStyle(style, inputs, iamInUse)
+		prereqs = prereqsForStyle(style, inputs)
 	}
 	return types.CutoverDecision{
 		Style:                style,
@@ -173,7 +172,7 @@ func knownCutoverSubPattern(sub string) bool {
 // all, so IAM clients have to migrate regardless of the cutover path.
 // The IAM workstream is captured in §Auth + the IAM client effort
 // signal, not here.
-func gatewayEligible(inputs types.PlanInputsResolved, _ bool) bool {
+func gatewayEligible(inputs types.PlanInputsResolved) bool {
 	if !prereqAdvanced(inputs.ConfluentForKubernetesStatus) {
 		return false
 	}
@@ -195,7 +194,7 @@ func prereqAdvanced(status string) bool {
 // which doesn't reach this branch — so this fires only when the
 // customer explicitly opted into the gateway path and then left both
 // infra prereqs untouched.
-func ambiguousGatewayIntent(inputs types.PlanInputsResolved, _ bool) bool {
+func ambiguousGatewayIntent(inputs types.PlanInputsResolved) bool {
 	if !inputs.PreferGateway {
 		return false
 	}
@@ -234,7 +233,7 @@ func alternativesShown(recommended types.CutoverStyle) []types.CutoverStyle {
 // gateway-infra prereqs. Blue/Green has no kcp-emitted prereqs. IAM
 // migration is not a gateway prereq (CC doesn't support IAM at all,
 // so any path requires it) — it surfaces in §Auth instead.
-func prereqsForStyle(style types.CutoverStyle, inputs types.PlanInputsResolved, _ bool) []types.Prereq {
+func prereqsForStyle(style types.CutoverStyle, inputs types.PlanInputsResolved) []types.Prereq {
 	if style == types.CutoverBlueGreen {
 		return nil
 	}
